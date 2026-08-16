@@ -12,32 +12,30 @@
 	"app": {
 		"windows": [
 			{
-				"label": "init",
-				"title": "Nori Desktop Pet",
-				"width": 480,
-				"height": 320,
-				"decorations": false,
-				"transparent": true,
-				"alwaysOnTop": true,
-				"center": true,
-				"resizable": false,
-				"skipTaskbar": true,
-				"shadow": true,
-				"visible": false
-			},
-			{
 				"label": "first-run",
 				"title": "Nori Desktop Pet",
 				"width": 720,
 				"height": 480,
+				"resizable": false,
+				"maximizable": false,
+				"center": true,
+				"visible": false,
 				"decorations": false,
 				"transparent": true,
-				"alwaysOnTop": true,
-				"center": true,
+				"shadow": false
+			},
+			{
+				"label": "init",
+				"title": "Nori Desktop Pet",
+				"width": 480,
+				"height": 320,
 				"resizable": false,
-				"skipTaskbar": true,
-				"shadow": true,
-				"visible": false
+				"maximizable": false,
+				"center": true,
+				"visible": false,
+				"decorations": false,
+				"transparent": true,
+				"shadow": false
 			}
 		],
 		"security": {
