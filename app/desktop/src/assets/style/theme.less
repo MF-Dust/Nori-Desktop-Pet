@@ -1,0 +1,96 @@
+// ============================================================
+// Nori Desktop Pet — 全局设计规范
+// 配色参考先导页面设计规范
+// ============================================================
+
+// ---------- 基础重置 ----------
+* {
+	padding: 0;
+	box-sizing: border-box;
+	margin: 0;
+	background: transparent;
+}
+
+html, body, #app {
+	width: 100%;
+	height: 100%;
+}
+
+// 品牌色
+@nori-teal: #5eead4; // 品牌主色(青绿)
+@nori-teal-bright: #7de3ff; // 高光青(强调/光晕)
+@nori-teal-soft: #7fd4e8; // 柔青(次级强调)
+
+// 深色背景层级 (由深到浅,本家网页渐变 #0f2d47 → #081a2e → #050e1a)
+@bg-base: #05070a; // 全局最底
+@bg-abyss: #050e1a; // 最深
+@bg-deep: #081a2e; // 深
+@bg-panel: #0f2d47; // 面板/渐变顶
+
+// 文字
+@text-primary: #dcf3ff; // 主文字(亮)
+@text-body: #cfdde5; // 正文
+@text-muted: #748895; // 次要(灰蓝)
+@text-faint: #9db3c0; // 弱化
+
+// 边框 / 分隔
+@line-subtle: rgba(125, 227, 255, 0.14);
+@line-strong: rgba(125, 227, 255, 0.28);
+
+// 状态色
+@warning: #f1b24a; // 警告/停滞
+@danger: #fb2c36; // 危险/错误
+
+// 光晕
+@glow-teal: rgba(125, 227, 255, 0.45);
+@glow-teal-soft: rgba(125, 227, 255, 0.25);
+
+// 圆角 / 阴影
+@radius-sm: 8px;
+@radius-md: 12px;
+@radius-lg: 16px;
+@shadow-soft: 0 4px 24px rgba(0, 0, 0, 0.35);
+
+// ---------- CSS 变量(供组件运行时使用) ----------
+:root {
+	--nori-teal: @nori-teal;
+	--nori-teal-bright: @nori-teal-bright;
+	--nori-teal-soft: @nori-teal-soft;
+
+	--bg-base: @bg-base;
+	--bg-abyss: @bg-abyss;
+	--bg-deep: @bg-deep;
+	--bg-panel: @bg-panel;
+
+	--text-primary: @text-primary;
+	--text-body: @text-body;
+	--text-muted: @text-muted;
+	--text-faint: @text-faint;
+
+	--line-subtle: @line-subtle;
+	--line-strong: @line-strong;
+
+	--warning: @warning;
+	--danger: @danger;
+
+	--radius-sm: @radius-sm;
+	--radius-md: @radius-md;
+	--radius-lg: @radius-lg;
+	--shadow-soft: @shadow-soft;
+}
+
+// ---------- 通用工具类 ----------
+// 窗口根容器(无边框窗口的标准画布)
+.window-root {
+	width: 100vw;
+	height: 100vh;
+	background: linear-gradient(160deg, @bg-panel 0%, @bg-abyss 100%);
+	border-radius: var(--radius-lg);
+	overflow: hidden;
+	user-select: none;
+}
+
+// 青绿文字光晕
+.glow-teal {
+	text-shadow: 0 0 18px @glow-teal, 0 0 60px @glow-teal-soft;
+}

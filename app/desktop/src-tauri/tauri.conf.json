@@ -1,0 +1,58 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "Nori Desktop Pet",
+	"version": "0.1.0",
+	"identifier": "cn.erhio.noriDesktopPet",
+	"build": {
+		"beforeDevCommand": "pnpm dev",
+		"devUrl": "http://localhost:1420",
+		"beforeBuildCommand": "pnpm build",
+		"frontendDist": "../dist"
+	},
+	"app": {
+		"windows": [
+			{
+				"label": "init",
+				"title": "Nori Desktop Pet",
+				"width": 480,
+				"height": 320,
+				"decorations": false,
+				"transparent": true,
+				"alwaysOnTop": true,
+				"center": true,
+				"resizable": false,
+				"skipTaskbar": true,
+				"shadow": true,
+				"visible": false
+			},
+			{
+				"label": "first-run",
+				"title": "Nori Desktop Pet",
+				"width": 720,
+				"height": 480,
+				"decorations": false,
+				"transparent": true,
+				"alwaysOnTop": true,
+				"center": true,
+				"resizable": false,
+				"skipTaskbar": true,
+				"shadow": true,
+				"visible": false
+			}
+		],
+		"security": {
+			"csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		]
+	}
+}
