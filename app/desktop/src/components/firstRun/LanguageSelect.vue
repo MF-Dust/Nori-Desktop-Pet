@@ -24,11 +24,9 @@ const NAME_MAP: Record<string, string> = {
 	"en-US": "English (US)",
 }
 
-//
 const flagOf = (code: string): string => FLAG_MAP[code] ?? FLAG_MAP[code.split("-")[0]] ?? ""
 
-const nameOf = (code: string): string =>
-	NAME_MAP[code] ?? new Intl.DisplayNames([code], {type: "language"}).of(code.split("-")[0]) ?? code
+const nameOf = (code: string): string => NAME_MAP[code] ?? new Intl.DisplayNames([code], {type: "language"}).of(code.split("-")[0]) ?? code
 
 // 可用语言列表
 const languages = ref<string[]>([])
@@ -83,10 +81,10 @@ const select = async (code: string) => {
 
 <style scoped lang="less">
 .lang {
+	width: 100%;
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
-	width: 100%;
 }
 
 .lang-head {
@@ -107,25 +105,24 @@ const select = async (code: string) => {
 	color: var(--text-muted);
 }
 
-// 可向下滚动的语言列表
 .lang-list {
+	padding: 2px;
+	width: 100%;
+	max-height: 240px;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	max-height: 240px;
 	overflow-y: auto;
-	width: 100%;
-	padding: 2px;
 }
 
 .lang-item {
+	padding: 8px 12px;
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 8px 12px;
 	border: 1px solid var(--line-subtle);
 	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
+	background-color: rgba(255, 255, 255, 0.04);
 	color: var(--text-primary);
 	font-size: 13px;
 	font-family: inherit;
@@ -134,13 +131,13 @@ const select = async (code: string) => {
 	transition: all 0.2s ease;
 
 	&:hover {
-		background: rgba(125, 227, 255, 0.08);
+		background-color: rgba(125, 227, 255, 0.08);
 		border-color: var(--nori-teal-soft);
 	}
 
 	&.active {
 		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.12);
+		background-color: rgba(125, 227, 255, 0.12);
 		box-shadow: 0 0 10px var(--glow-teal-soft);
 	}
 }
@@ -154,7 +151,7 @@ const select = async (code: string) => {
 	box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
 
 	&.lang-flag-empty {
-		background: rgba(255, 255, 255, 0.1);
+		background-color: rgba(255, 255, 255, 0.1);
 	}
 }
 
