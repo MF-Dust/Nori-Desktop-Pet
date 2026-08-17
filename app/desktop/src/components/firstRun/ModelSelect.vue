@@ -13,22 +13,22 @@ interface Model {
 
 // 模型列表
 const models: Model[] = [
-	{id: "nori", name: "Nori", thumb: nori},
-	{id: "arg-nori", name: "ARG Nori", thumb: arNori}
+	{id: "arg-nori", name: "ARG Nori", thumb: arNori},
+	{id: "nori", name: "Nori", thumb: nori}
 ]
 
 // 配置键名
 const CONFIG_KEY = "selected_model"
 
 // 选中的模型 id
-const selected = ref("nori")
+const selected = ref("arg-nori")
 
 // 组件挂载时读取已保存的配置
 onMounted(async () => {
 	try {
-		const SAVED = await invoke<{ String?: string }>("get_config", {key: CONFIG_KEY})
-		if (SAVED?.String && models.some(m => m.id === SAVED.String)) {
-			selected.value = SAVED.String
+		const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
+		if (SAVED && models.some(m => m.id === SAVED)) {
+			selected.value = SAVED
 		}
 	} catch (error) {
 		console.error("读取模型配置失败:", error)

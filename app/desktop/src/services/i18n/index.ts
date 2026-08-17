@@ -48,8 +48,8 @@ const useLanguage = {
 	 */
 	async getLanguage(): Promise<LanguageType> {
 		try {
-			const SAVED = await invoke<{ String?: string }>("get_config", {key: CONFIG_KEY})
-			if (SAVED?.String) return SAVED.String
+			const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
+			if (typeof SAVED === "string" && SAVED) return SAVED
 		} catch (error) {
 			console.error("读取语言配置失败:", error)
 		}
