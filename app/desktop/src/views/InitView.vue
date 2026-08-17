@@ -45,19 +45,19 @@ onMounted(() => {
 }
 
 .titlebar {
-	height: 44px;
+	height: 4.4rem;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0 12px 0 16px;
+	padding: 0 1.2rem 0 1.6rem;
 	flex-shrink: 0;
 }
 
 .title {
 	color: var(--text-primary);
-	font-size: 13px;
+	font-size: 1.3rem;
 	font-weight: 600;
-	letter-spacing: 0.5px;
+	letter-spacing: 0.05rem;
 }
 
 .body {
@@ -66,33 +66,33 @@ onMounted(() => {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 18px;
-	padding-bottom: 20px;
+	gap: 1.8rem;
+	padding-bottom: 2rem;
 }
 
 .avatar {
-	width: 72px;
-	height: 72px;
+	width: 7.2rem;
+	height: 7.2rem;
 	object-fit: contain;
 	animation: breathe 2.2s ease-in-out infinite;
 }
 
 .status {
 	color: var(--text-body);
-	font-size: 13px;
+	font-size: 1.3rem;
 }
 
 .progress-track {
-	width: 200px;
-	height: 4px;
-	border-radius: 2px;
+	width: 20rem;
+	height: 0.4rem;
+	border-radius: 0.2rem;
 	background: rgba(255, 255, 255, 0.08);
 	overflow: hidden;
 }
 
 .progress-bar {
 	height: 100%;
-	border-radius: 2px;
+	border-radius: 0.2rem;
 	background: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
 	transition: width 0.4s ease;
 }

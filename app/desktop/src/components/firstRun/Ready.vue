@@ -12,20 +12,20 @@
 
 <style scoped lang="less">
 .page {
-	position: absolute;
-	inset: 0;
+	width: 100%;
+	height: 100%;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 16px;
-	padding-bottom: 6px;
+	gap: 1.6rem;
+	padding-bottom: 0.6rem;
 }
 
 .ready-star {
-	font-size: 56px;
+	font-size: 5.6rem;
 	animation: star-pop 2.4s ease-in-out infinite;
-	filter: drop-shadow(0 0 22px rgba(125, 227, 255, 0.6));
+	filter: drop-shadow(0 0 2.2rem rgba(125, 227, 255, 0.6));
 }
 
 @keyframes star-pop {
@@ -38,24 +38,24 @@
 }
 
 .ready-title {
-	font-size: 28px;
+	font-size: 2.8rem;
 	font-weight: 700;
 	color: var(--text-primary);
 }
 
 .ready-desc {
-	font-size: 14px;
+	font-size: 1.4rem;
 	line-height: 1.8;
 	color: var(--text-body);
 	text-align: center;
 }
 
 .ready-tip {
-	font-size: 12px;
+	font-size: 1.2rem;
 	color: var(--text-faint);
-	padding: 6px 14px;
-	border-radius: 999px;
+	padding: 0.6rem 1.4rem;
+	border-radius: 99.9rem;
 	background: rgba(255, 255, 255, 0.05);
-	border: 1px solid var(--line-subtle);
+	border: 0.1rem solid var(--line-subtle);
 }
 </style>

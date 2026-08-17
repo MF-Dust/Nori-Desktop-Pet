@@ -84,47 +84,47 @@ const select = async (code: string) => {
 	width: 100%;
 	display: flex;
 	flex-direction: column;
-	gap: 10px;
+	gap: 1rem;
 }
 
 .lang-head {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 2px;
+	gap: 0.2rem;
 }
 
 .lang-title {
-	font-size: 16px;
+	font-size: 1.6rem;
 	font-weight: 600;
 	color: var(--text-primary);
 }
 
 .lang-sub {
-	font-size: 11px;
+	font-size: 1.1rem;
 	color: var(--text-muted);
 }
 
 .lang-list {
-	padding: 2px;
+	padding: 0.2rem;
 	width: 100%;
-	max-height: 240px;
+	max-height: 24rem;
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
+	gap: 0.6rem;
 	overflow-y: auto;
 }
 
 .lang-item {
-	padding: 8px 12px;
+	padding: 0.8rem 1.2rem;
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	border: 1px solid var(--line-subtle);
+	gap: 1rem;
+	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	background-color: rgba(255, 255, 255, 0.04);
 	color: var(--text-primary);
-	font-size: 13px;
+	font-size: 1.3rem;
 	font-family: inherit;
 	cursor: pointer;
 	text-align: left;
@@ -138,17 +138,17 @@ const select = async (code: string) => {
 	&.active {
 		border-color: var(--nori-teal);
 		background-color: rgba(125, 227, 255, 0.12);
-		box-shadow: 0 0 10px var(--glow-teal-soft);
+		box-shadow: 0 0 1rem var(--glow-teal-soft);
 	}
 }
 
 .lang-flag {
-	width: 26px;
-	height: 17px;
+	width: 2.6rem;
+	height: 1.7rem;
 	object-fit: cover;
-	border-radius: 2px;
+	border-radius: 0.2rem;
 	flex-shrink: 0;
-	box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+	box-shadow: 0 0 0.4rem rgba(0, 0, 0, 0.3);
 
 	&.lang-flag-empty {
 		background-color: rgba(255, 255, 255, 0.1);
@@ -161,7 +161,7 @@ const select = async (code: string) => {
 
 .lang-check {
 	color: var(--nori-teal);
-	font-size: 12px;
+	font-size: 1.2rem;
 	opacity: 0;
 	transition: opacity 0.2s ease;
 
@@ -171,7 +171,7 @@ const select = async (code: string) => {
 }
 
 .lang-empty {
-	font-size: 12px;
+	font-size: 1.2rem;
 	color: var(--text-faint);
 	text-align: center;
 }

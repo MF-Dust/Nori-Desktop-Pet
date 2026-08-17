@@ -11,6 +11,11 @@
 	background: transparent;
 }
 
+// 根字号: 1rem = 10px (浏览器默认 16px × 62.5%), 组件内一律用 rem
+html {
+	font-size: 62.5%;
+}
+
 html, body, #app {
 	width: 100%;
 	height: 100%;
@@ -46,10 +51,10 @@ html, body, #app {
 @glow-teal-soft: rgba(125, 227, 255, 0.25);
 
 // 圆角 / 阴影
-@radius-sm: 8px;
-@radius-md: 12px;
-@radius-lg: 16px;
-@shadow-soft: 0 4px 24px rgba(0, 0, 0, 0.35);
+@radius-sm: 0.8rem;
+@radius-md: 1.2rem;
+@radius-lg: 1.6rem;
+@shadow-soft: 0 0.4rem 2.4rem rgba(0, 0, 0, 0.35);
 
 // ---------- CSS 变量 (供组件运行时使用) ----------
 :root {
@@ -95,5 +100,5 @@ html, body, #app {
 
 // 青绿文字光晕
 .glow-teal {
-	text-shadow: 0 0 18px @glow-teal, 0 0 60px @glow-teal-soft;
+	text-shadow: 0 0 1.8rem @glow-teal, 0 0 6rem @glow-teal-soft;
 }

@@ -3,7 +3,6 @@ import {ref, watch, onMounted} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import nori from "../../assets/images/live2D/Nori.webp"
 import arNori from "../../assets/images/live2D/ARGNori.webp"
-import LanguageSelect from "./LanguageSelect.vue"
 
 // 可选模型列表
 interface Model {
@@ -63,9 +62,9 @@ watch(selected, async (newVal) => {
 			>
 				<span class="model-thumb-wrap">
 					<img class="model-thumb" :src="model.thumb" :alt="model.name"/>
+					<span class="model-check">✓</span>
 				</span>
 				<span class="model-name">{{ model.name }}</span>
-				<span class="model-check">✓</span>
 			</button>
 		</div>
 	</section>
@@ -73,14 +72,14 @@ watch(selected, async (newVal) => {
 
 <style scoped lang="less">
 .page {
-	position: absolute;
-	inset: 0;
+	width: 100%;
+	height: 100%;
+	padding: 0.6rem 5.6rem 0.8rem;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 18px;
-	padding: 6px 56px 8px;
+	gap: 1.8rem;
 	text-align: center;
 }
 
@@ -88,34 +87,33 @@ watch(selected, async (newVal) => {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 6px;
+	gap: 0.6rem;
 }
 
 .model-title {
-	font-size: 24px;
+	font-size: 2.4rem;
 	font-weight: 700;
 	color: var(--text-primary);
 }
 
 .model-sub {
-	font-size: 12px;
+	font-size: 1.2rem;
 	color: var(--text-faint);
 }
 
 .model-grid {
 	display: flex;
 	flex-direction: row;
-	gap: 24px;
+	gap: 2.4rem;
 }
 
 .model-card {
-	position: relative;
+	padding: 0.8rem 0.8rem 1.0rem;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 8px;
-	padding: 8px 8px 10px;
-	border: 2px solid var(--line-subtle);
+	gap: 0.8rem;
+	border: 0.2rem solid var(--line-subtle);
 	border-radius: var(--radius-md);
 	background: rgba(255, 255, 255, 0.04);
 	cursor: pointer;
@@ -125,48 +123,50 @@ watch(selected, async (newVal) => {
 	&:hover {
 		background: rgba(125, 227, 255, 0.08);
 		border-color: var(--nori-teal-soft);
-		transform: translateY(-2px);
+		transform: translateY(-0.2rem);
 	}
 
 	&.active {
 		border-color: var(--nori-teal);
 		background: rgba(125, 227, 255, 0.1);
-		box-shadow: 0 0 16px var(--glow-teal-soft);
+		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
 	}
 }
 
 // 图片分辨率 300x512, 保持较小尺寸避免放大模糊
 .model-thumb-wrap {
-	display: flex;
-	align-items: center;
-	justify-content: center;
+	display: grid;
+	grid-template-areas: "thumb";
+	place-items: center;
 	overflow: hidden;
 	border-radius: var(--radius-sm);
 }
 
 .model-thumb {
-	width: 128px;
-	height: 212px;
+	grid-area: thumb;
+	width: 12.8rem;
+	height: 21.2rem;
 	object-fit: contain;
 }
 
 .model-name {
-	font-size: 13px;
+	font-size: 1.3rem;
 	font-weight: 500;
 	color: var(--text-primary);
 }
 
 .model-check {
-	position: absolute;
-	top: 6px;
-	right: 6px;
-	width: 18px;
-	height: 18px;
+	grid-area: thumb;
+	align-self: start;
+	justify-self: end;
+	margin: 0.6rem;
+	width: 1.8rem;
+	height: 1.8rem;
 	border-radius: 50%;
 	background: var(--nori-teal);
 	color: #05121a;
-	font-size: 11px;
-	line-height: 18px;
+	font-size: 1.1rem;
+	line-height: 1.8rem;
 	text-align: center;
 	opacity: 0;
 	transform: scale(0.6);

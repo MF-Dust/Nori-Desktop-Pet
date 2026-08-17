@@ -103,24 +103,24 @@ const finish = async () => {
 
 	// 每页不同的背景: 渐变 + 位置/明度不同的光晕
 	&.bg-step-1 {
-		background-image: radial-gradient(560px 340px at 88% 36%, rgba(94, 234, 212, 0.16), transparent 65%),
+		background-image: radial-gradient(56rem 34rem at 88% 36%, rgba(94, 234, 212, 0.16), transparent 65%),
 		linear-gradient(160deg, #10304b 0%, var(--bg-deep) 58%, var(--bg-abyss) 100%);
 	}
 
 	&.bg-step-2 {
-		background-image: radial-gradient(620px 420px at 50% 115%, rgba(127, 212, 232, 0.18), transparent 60%),
+		background-image: radial-gradient(62rem 42rem at 50% 115%, rgba(127, 212, 232, 0.18), transparent 60%),
 		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
 	}
 
 	&.bg-step-3 {
-		background-image: radial-gradient(420px 340px at 50% 52%, rgba(125, 227, 255, 0.14), transparent 68%),
+		background-image: radial-gradient(42rem 34rem at 50% 52%, rgba(125, 227, 255, 0.14), transparent 68%),
 		linear-gradient(160deg, #0c2440 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
 	}
 }
 
 .titlebar {
-	padding: 0 12px 0 16px;
-	height: 44px;
+	padding: 0 1.2rem 0 1.6rem;
+	height: 4.4rem;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -128,49 +128,49 @@ const finish = async () => {
 
 	.title {
 		color: var(--text-primary);
-		font-size: 13px;
+		font-size: 1.3rem;
 		font-weight: 600;
-		letter-spacing: 0.5px;
+		letter-spacing: 0.05rem;
 	}
 
 	.titlebar-right {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 1rem;
 
 		.steps-indicator {
 			display: flex;
-			gap: 4px;
+			gap: 0.24rem;
 		}
 
 		.seg {
-			width: 22px;
-			height: 3px;
-			border-radius: 2px;
+			width: 2.2rem;
+			height: 0.3rem;
+			border-radius: 0.02rem;
 			background-color: rgba(255, 255, 255, 0.14);
 			transition: all 0.3s ease;
 
 			&.active {
 				background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-				box-shadow: 0 0 6px var(--glow-teal-soft);
+				box-shadow: 0 0 0.6rem var(--glow-teal-soft);
 			}
 		}
 
 		.step-count {
-			font-size: 11px;
+			font-size: 1.1rem;
 			color: var(--text-faint);
 			font-variant-numeric: tabular-nums;
-			letter-spacing: 0.5px;
+			letter-spacing: 0.05rem;
 		}
 
 		.close-btn {
-			width: 26px;
-			height: 26px;
+			width: 2.6rem;
+			height: 2.6rem;
 			border: none;
 			border-radius: 50%;
 			background-color: transparent;
 			color: var(--text-muted);
-			font-size: 12px;
+			font-size: 1.2rem;
 			cursor: pointer;
 			display: flex;
 			align-items: center;
@@ -187,7 +187,8 @@ const finish = async () => {
 // 舞台
 .stage {
 	flex: 1;
-	position: relative;
+	width: 100%;
+	height: 100%;
 	min-height: 0;
 }
 
@@ -201,43 +202,43 @@ const finish = async () => {
 
 .page-next-enter-from {
 	opacity: 0;
-	transform: translateX(36px);
+	transform: translateX(3.6rem);
 }
 
 .page-next-leave-to {
 	opacity: 0;
-	transform: translateX(-36px);
+	transform: translateX(-3.6rem);
 }
 
 .page-prev-enter-from {
 	opacity: 0;
-	transform: translateX(-36px);
+	transform: translateX(-3.6rem);
 }
 
 .page-prev-leave-to {
 	opacity: 0;
-	transform: translateX(36px);
+	transform: translateX(3.6rem);
 }
 
 // 底部导航
 .footer {
-	padding: 0 32px;
-	height: 64px;
+	padding: 0 3.2rem;
+	height: 6.4rem;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	flex-shrink: 0;
 
 	.btn {
-		padding: 9px 22px;
+		padding: 0.9rem 2.2rem;
 		border: none;
 		border-radius: var(--radius-sm);
-		font-size: 14px;
+		font-size: 1.4rem;
 		cursor: pointer;
 		transition: all 0.2s ease;
 
 		&:hover {
-			transform: translateY(-1px);
+			transform: translateY(-0.1rem);
 		}
 	}
 
@@ -247,14 +248,14 @@ const finish = async () => {
 		font-weight: 600;
 
 		&:hover {
-			box-shadow: 0 0 16px var(--glow-teal-soft);
+			box-shadow: 0 0 1.6rem var(--glow-teal-soft);
 		}
 	}
 
 	.btn-ghost {
 		background-color: transparent;
 		color: var(--text-muted);
-		border: 1px solid var(--line-subtle);
+		border: 0.1rem solid var(--line-subtle);
 
 		&:hover {
 			color: var(--text-primary);

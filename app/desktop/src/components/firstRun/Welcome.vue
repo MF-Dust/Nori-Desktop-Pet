@@ -99,16 +99,16 @@ const handleLink = async (link: Link) => {
 
 <style scoped lang="less">
 .page {
-	position: absolute;
-	inset: 0;
+	width: 100%;
+	height: 100%;
 	display: flex;
 }
 
 .page-welcome {
-	padding: 8px 56px 4px;
+	padding: 0.8rem 5.6rem 0.4rem;
 	flex-direction: row;
 	align-items: center;
-	gap: 40px;
+	gap: 4rem;
 }
 
 .hero-copy {
@@ -117,52 +117,52 @@ const handleLink = async (link: Link) => {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-start;
-	gap: 12px;
+	gap: 1.2rem;
 }
 
 .badge {
-	padding: 4px 12px;
+	padding: 0.4rem 1.2rem;
 	display: inline-flex;
 	align-items: center;
-	border-radius: 999px;
+	border-radius: 99.9rem;
 	background-color: rgba(125, 227, 255, 0.08);
-	border: 1px solid var(--line-subtle);
+	border: 0.1rem solid var(--line-subtle);
 	color: var(--nori-teal);
-	font-size: 11px;
-	letter-spacing: 0.4px;
+	font-size: 1.1rem;
+	letter-spacing: 0.04rem;
 }
 
 .hero-title {
-	font-size: 30px;
+	font-size: 3.0rem;
 	font-weight: 700;
 	line-height: 1.2;
 	color: var(--text-primary);
 }
 
 .hero-desc {
-	font-size: 13px;
+	font-size: 1.3rem;
 	line-height: 1.7;
 	color: var(--text-body);
 }
 
 .links {
-	margin-top: 2px;
+	margin-top: 0.2rem;
 	width: 100%;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 0.8rem;
 }
 
 .link-card {
-	padding: 9px 14px;
+	padding: 0.9rem 1.4rem;
 	display: flex;
 	align-items: center;
-	gap: 12px;
+	gap: 1.2rem;
 	border-radius: var(--radius-sm);
 	background: rgba(125, 227, 255, 0.04);
-	border: 1px solid var(--line-subtle);
+	border: 0.1rem solid var(--line-subtle);
 	color: var(--text-primary);
-	font-size: 13px;
+	font-size: 1.3rem;
 	font-family: inherit;
 	cursor: pointer;
 	text-align: left;
@@ -171,14 +171,14 @@ const handleLink = async (link: Link) => {
 	&:hover {
 		background: rgba(125, 227, 255, 0.1);
 		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 12px var(--glow-teal-soft);
-		transform: translateX(3px);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
+		transform: translateX(0.3rem);
 	}
 }
 
 .link-icon {
-	width: 22px;
-	height: 22px;
+	width: 2.2rem;
+	height: 2.2rem;
 	flex-shrink: 0;
 	color: var(--nori-teal);
 }
@@ -188,50 +188,60 @@ const handleLink = async (link: Link) => {
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	gap: 0.1rem;
 }
 
 .link-label {
 	color: var(--text-primary);
-	font-size: 13px;
+	font-size: 1.3rem;
 	font-weight: 500;
 }
 
 .link-sub {
 	color: var(--text-faint);
-	font-size: 11px;
+	font-size: 1.1rem;
 }
 
 .link-arrow {
 	color: var(--nori-teal);
-	font-size: 13px;
+	font-size: 1.3rem;
 	flex-shrink: 0;
 }
 
 .hero-art {
 	flex: 0 0 auto;
-	position: relative;
-	width: 200px;
-	height: 240px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
+	display: grid;
+	grid-template-areas: "art";
+	width: 20rem;
+	height: 24rem;
+	place-items: center center;
+}
+
+.halo,
+.hero-logo,
+.hero-hint {
+	grid-area: art;
 }
 
 .halo {
-	position: absolute;
-	width: 190px;
-	height: 190px;
+	align-self: center;
+	justify-self: center;
+	display: grid;
+	grid-template-areas: "ring";
+	place-items: center;
+	width: 19rem;
+	height: 19rem;
 	border-radius: 50%;
 	background-image: radial-gradient(circle, rgba(94, 234, 212, 0.22) 0%, rgba(94, 234, 212, 0.06) 45%, transparent 70%);
 	animation: halo-spin 9s linear infinite;
 
 	&::before {
 		content: "";
-		position: absolute;
-		inset: 10px;
+		grid-area: ring;
+		width: calc(100% - 2rem);
+		height: calc(100% - 2rem);
 		border-radius: 50%;
-		border: 1px dashed rgba(125, 227, 255, 0.35);
+		border: 0.1rem dashed rgba(125, 227, 255, 0.35);
 	}
 }
 
@@ -245,19 +255,21 @@ const handleLink = async (link: Link) => {
 }
 
 .hero-logo {
-	position: relative;
-	width: 104px;
-	height: 104px;
+	align-self: center;
+	justify-self: center;
+	width: 10.4rem;
+	height: 10.4rem;
 	object-fit: contain;
 	animation: breathe 2.6s ease-in-out infinite;
-	filter: drop-shadow(0 0 18px rgba(94, 234, 212, 0.45));
+	filter: drop-shadow(0 0 1.8rem rgba(94, 234, 212, 0.45));
 }
 
 .hero-hint {
-	position: absolute;
-	bottom: 6px;
-	font-size: 12px;
-	letter-spacing: 4px;
+	align-self: end;
+	justify-self: center;
+	margin-bottom: 0.6rem;
+	font-size: 1.2rem;
+	letter-spacing: 0.4rem;
 	color: var(--text-faint);
 }
 
