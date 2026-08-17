@@ -1,13 +1,14 @@
 <script setup lang="ts">
+import {computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {openUrl} from "@tauri-apps/plugin-opener"
 import {writeText} from "@tauri-apps/plugin-clipboard-manager"
-import useLanguage from "../../services/i18n"
+import useLanguages from "../../services/i18n/useLanguages.ts"
 import {EkIcon} from "../ui"
 import type {IconMode, IconName} from "../../services/icon"
 import logo from "../../assets/images/logo.png"
 
-const I18N = useLanguage.useLang.components.firstRun.welcome
+const I18N = computed(() => useLanguages().components.firstRun.welcome)
 
 // 推广链接
 interface Link {
@@ -19,37 +20,37 @@ interface Link {
 	icon: IconName
 }
 
-// 推广链接
-const links: Link[] = [
+// 推广链接 (响应式: 随语言重算)
+const links = computed<Link[]>(() => [
 	{
-		label: I18N.links.steam.label,
-		sub: I18N.links.steam.sub,
+		label: I18N.value.links.steam.label,
+		sub: I18N.value.links.steam.sub,
 		url: "https://store.steampowered.com/app/4996280/I_NORI/",
 		mode: "fill",
 		icon: "steam"
 	},
 	{
-		label: I18N.links.noriOS.label,
-		sub: I18N.links.noriOS.sub,
+		label: I18N.value.links.noriOS.label,
+		sub: I18N.value.links.noriOS.sub,
 		url: "https://os.inori.ai/landing",
 		mode: "stroke",
 		icon: "noriOS"
 	},
 	{
-		label: I18N.links.qq.label,
-		sub: I18N.links.qq.sub,
+		label: I18N.value.links.qq.label,
+		sub: I18N.value.links.qq.sub,
 		qq: "1041616195",
 		mode: "fill",
 		icon: "qq"
 	},
 	{
-		label: I18N.links.bilibili.label,
-		sub: I18N.links.bilibili.sub,
+		label: I18N.value.links.bilibili.label,
+		sub: I18N.value.links.bilibili.sub,
 		url: "https://space.bilibili.com/326505494",
 		mode: "fill",
 		icon: "bilibili"
 	}
-]
+])
 
 // 点击链接卡片: 有 qq 属性则复制群号, 否则打开网页
 const handleLink = async (link: Link) => {
@@ -85,7 +86,9 @@ const handleLink = async (link: Link) => {
 						<span class="link-label">{{ link.label }}</span>
 						<span class="link-sub">{{ link.sub }}</span>
 					</span>
-					<span class="link-arrow">→</span>
+					<span class="link-arrow">
+						<ek-icon name="arrow-right"/>
+					</span>
 				</button>
 			</div>
 		</div>
@@ -204,8 +207,14 @@ const handleLink = async (link: Link) => {
 
 .link-arrow {
 	color: var(--nori-teal);
-	font-size: 1.3rem;
 	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+
+	:deep(svg) {
+		width: 1.5rem;
+		height: 1.5rem;
+	}
 }
 
 .hero-art {

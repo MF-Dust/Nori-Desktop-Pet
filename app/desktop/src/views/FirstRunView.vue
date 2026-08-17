@@ -2,10 +2,14 @@
 import {computed, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {getCurrentWindow} from "@tauri-apps/api/window"
+import useLanguages from "../services/i18n/useLanguages.ts"
+import {EkIcon} from "../components/ui"
 import Welcome from "../components/firstRun/Welcome.vue"
 import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
 import Ready from "../components/firstRun/Ready.vue"
+
+const I18N = computed(() => useLanguages().views.firstRun)
 
 // 初始化步骤数量
 const STEPS_COUNT = 3
@@ -80,9 +84,15 @@ const finish = async () => {
 
 		<!-- 底部导航 -->
 		<div class="footer">
-			<button v-if="!isFirst" class="btn btn-ghost" @click="prev">← 上一步</button>
+			<button v-if="!isFirst" class="btn btn-ghost" @click="prev">
+				<ek-icon name="arrow-left" class="btn-icon"/>
+				{{ I18N.back }}
+			</button>
 			<span v-else/>
-			<button v-if="!isLast" class="btn btn-primary" @click="next">下一步 →</button>
+			<button v-if="!isLast" class="btn btn-primary" @click="next">
+				{{ I18N.next }}
+				<ek-icon name="arrow-right" class="btn-icon"/>
+			</button>
 			<button v-else class="btn btn-primary" @click="finish">开始 ✨</button>
 		</div>
 	</div>
@@ -236,10 +246,20 @@ const finish = async () => {
 		font-size: 1.4rem;
 		cursor: pointer;
 		transition: all 0.2s ease;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.6rem;
 
 		&:hover {
 			transform: translateY(-0.1rem);
 		}
+	}
+
+	.btn-icon {
+		width: 1.5rem;
+		height: 1.5rem;
+		color: inherit;
+		flex-shrink: 0;
 	}
 
 	.btn-primary {

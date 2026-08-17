@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import {ref, watch, onMounted} from "vue"
+import {ref, watch, onMounted, computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
+import useLanguages from "../../services/i18n/useLanguages.ts"
+import {EkIcon} from "../ui"
 import nori from "../../assets/images/live2D/Nori.webp"
 import arNori from "../../assets/images/live2D/ARGNori.webp"
+
+const I18N = computed(() => useLanguages().components.firstRun.modelSelect)
 
 // 可选模型列表
 interface Model {
@@ -49,8 +53,8 @@ watch(selected, async (newVal) => {
 <template>
 	<section key="model-select" class="page page-model">
 		<div class="model-head">
-			<h2 class="model-title glow-teal">选择模型</h2>
-			<p class="model-sub">可后期更改</p>
+			<h2 class="model-title glow-teal">{{ I18N.title }}</h2>
+			<p class="model-sub">{{ I18N.sub }}</p>
 		</div>
 		<div class="model-grid">
 			<button
@@ -62,7 +66,7 @@ watch(selected, async (newVal) => {
 			>
 				<span class="model-thumb-wrap">
 					<img class="model-thumb" :src="model.thumb" :alt="model.name"/>
-					<span class="model-check">✓</span>
+					<span class="model-check"><ek-icon name="check"/></span>
 				</span>
 				<span class="model-name">{{ model.name }}</span>
 			</button>
@@ -165,12 +169,17 @@ watch(selected, async (newVal) => {
 	border-radius: 50%;
 	background: var(--nori-teal);
 	color: #05121a;
-	font-size: 1.1rem;
-	line-height: 1.8rem;
-	text-align: center;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	opacity: 0;
 	transform: scale(0.6);
 	transition: all 0.2s ease;
+
+	:deep(svg) {
+		width: 1.1rem;
+		height: 1.1rem;
+	}
 
 	.active & {
 		opacity: 1;

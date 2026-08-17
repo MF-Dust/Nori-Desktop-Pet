@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import {ref, onMounted} from "vue"
+import {computed, ref, onMounted} from "vue"
 import useLanguage from "../../services/i18n"
+import useLanguages from "../../services/i18n/useLanguages.ts"
 import type {LanguageType} from "../../services/i18n"
 import zhCn from "../../assets/images/flags/cn.png"
 import enGb from "../../assets/images/flags/gb.png"
 import enUs from "../../assets/images/flags/us.png"
+import {EkIcon} from "../ui"
 
 const language = useLanguage
+
+const I18N = computed(() => useLanguages().components.firstRun.languageSelect)
 
 // 语言 code → 本地国旗图片 (来自 flagcdn 下载, 存于 src/assets/images/flags)
 const FLAG_MAP: Record<string, string> = {
@@ -58,7 +62,7 @@ const select = async (code: string) => {
 <template>
 	<div class="lang">
 		<div class="lang-head">
-			<h3 class="lang-title glow-teal">选择语言</h3>
+			<h3 class="lang-title glow-teal">{{ I18N.title }}</h3>
 			<p class="lang-sub">{{ current }}</p>
 		</div>
 		<div class="lang-list">
@@ -72,9 +76,9 @@ const select = async (code: string) => {
 				<img v-if="flagOf(code)" class="lang-flag" :src="flagOf(code)" :alt="nameOf(code)"/>
 				<span v-else class="lang-flag lang-flag-empty"></span>
 				<span class="lang-name">{{ nameOf(code) }}</span>
-				<span class="lang-check">✓</span>
+				<span class="lang-check"><ek-icon name="check"/></span>
 			</button>
-			<p v-if="languages.length === 0" class="lang-empty">暂无可用语言</p>
+			<p v-if="languages.length === 0" class="lang-empty">{{ I18N.langEmpty }}</p>
 		</div>
 	</div>
 </template>
@@ -106,7 +110,7 @@ const select = async (code: string) => {
 }
 
 .lang-list {
-	padding: 0.2rem;
+	padding: 0.2rem 1rem;
 	width: 100%;
 	max-height: 24rem;
 	display: flex;
@@ -161,9 +165,15 @@ const select = async (code: string) => {
 
 .lang-check {
 	color: var(--nori-teal);
-	font-size: 1.2rem;
+	display: inline-flex;
+	align-items: center;
 	opacity: 0;
 	transition: opacity 0.2s ease;
+
+	:deep(svg) {
+		width: 1.4rem;
+		height: 1.4rem;
+	}
 
 	.active & {
 		opacity: 1;

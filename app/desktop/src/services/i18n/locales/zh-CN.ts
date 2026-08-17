@@ -22,7 +22,21 @@ export default {
 						sub: "关注老大的更新和开发日志",
 					}
 				}
+			},
+			languageSelect: {
+				title: "选择语言",
+				langEmpty: "暂无可用语言"
+			},
+			modelSelect: {
+				title: "选择模型",
+				sub: "可后期切换"
 			}
+		}
+	},
+	views: {
+		firstRun: {
+			back: "上一步",
+			next: "下一步"
 		}
 	}
 }

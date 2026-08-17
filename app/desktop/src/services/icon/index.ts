@@ -58,6 +58,40 @@ export const icon = {
 		stroke: [
 			"M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.48-8.48l2.83-2.83M2 12h4m12 0h4m-3.93 7.07l-2.83-2.83M6.34 6.34L3.51 3.51"
 		]
+	},
+	// 左箭头
+	"arrow-left": {
+		stroke: [
+			"M19 12H5",
+			"m12 19-7-7 7-7"
+		]
+	},
+	// 右箭头
+	"arrow-right": {
+		stroke: [
+			"M5 12h14",
+			"m12 5 7 7-7 7"
+		]
+	},
+	// 上箭头
+	"arrow-up": {
+		stroke: [
+			"M12 19V5",
+			"m5 12 7-7 7 7"
+		]
+	},
+	// 下箭头
+	"arrow-down": {
+		stroke: [
+			"M12 5v14",
+			"m19 12-7 7-7-7"
+		]
+	},
+	// 对勾
+	check: {
+		stroke: [
+			"M20 6 9 17l-5-5"
+		]
 	}
 } satisfies Record<string, IconData>
 

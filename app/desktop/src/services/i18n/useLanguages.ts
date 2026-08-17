@@ -26,7 +26,21 @@ export default () => {
 							sub: t("components.firstRun.welcome.links.bilibili.sub"),
 						}
 					}
+				},
+				languageSelect: {
+					title: t("components.firstRun.languageSelect.title"),
+					langEmpty: t("components.firstRun.languageSelect.langEmpty"),
+				},
+				modelSelect: {
+					title: t("components.firstRun.modelSelect.title"),
+					sub: t("components.firstRun.modelSelect.sub"),
 				}
+			}
+		},
+		views: {
+			firstRun: {
+				back: t("views.firstRun.back"),
+				next: t("views.firstRun.next"),
 			}
 		}
 	}
