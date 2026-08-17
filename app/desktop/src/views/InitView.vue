@@ -7,13 +7,6 @@ const status = ref("正在初始化...")
 const progress = ref(0)
 
 onMounted(() => {
-	const STEPS = ["正在加载 Nori 核心...", "即将唤醒 Nori"]
-	STEPS.forEach((text, i) => {
-		setTimeout(() => {
-			status.value = text
-			progress.value = Math.round(((i + 1) / STEPS.length) * 100)
-		}, 800 * (i + 1))
-	})
 })
 </script>
 
@@ -24,7 +17,7 @@ onMounted(() => {
 		<div class="body">
 			<img class="avatar" :src="logo" alt="Nori"/>
 			<div class="status">{{ status }}</div>
-			<div class="progress-track">
+			<div class="progress-track" v-if="progress > 0">
 				<div class="progress-bar" :style="{width: progress + '%'}"/>
 			</div>
 		</div>
