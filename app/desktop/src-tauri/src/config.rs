@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::error::Error as StdError;
 
+use crate::log::{self, LogSource};
+
 pub type ConfigResult<T> = Result<T, Box<dyn StdError>>;
 
 /// 配置值类型: 支持基础类型和 JSON
@@ -59,23 +61,34 @@ pub fn get(conn: &Connection, key: &str) -> ConfigResult<Option<ConfigValue>> {
     match result {
         Ok(s) => Ok(Some(ConfigValue::from_storage(&s)?)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+        Err(e) => {
+            let _ = log::write(&LogSource::Backend, "error", &format!("读取配置失败 key={key}: {e}"));
+            Err(e.into())
+        }
     }
 }
 
 /// 写入配置项 (不存在则插入, 存在则更新)
+/// 日志只记录 key, 不记录 value 明文 (避免 api key 等敏感值泄露)
 pub fn set(conn: &Connection, key: &str, value: &ConfigValue) -> ConfigResult<()> {
     conn.execute(
         "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
         params![key, value.to_storage()],
     )?;
+    let _ = log::write(&LogSource::Backend, "info", &format!("写入配置 key={key}"));
     Ok(())
 }
 
 /// 删除配置项
 pub fn delete(conn: &Connection, key: &str) -> ConfigResult<bool> {
     let count = conn.execute("DELETE FROM config WHERE key = ?1", params![key])?;
-    Ok(count > 0)
+    let removed = count > 0;
+    let _ = log::write(
+        &LogSource::Backend,
+        "info",
+        &format!("删除配置 key={key} removed={removed}"),
+    );
+    Ok(removed)
 }
 
 /// 检查配置项是否存在

@@ -107,3 +107,51 @@ html, body, #app {
 .glow-teal {
 	text-shadow: 0 0 1.8rem @glow-teal, 0 0 6rem @glow-teal-soft;
 }
+
+// ---------- 通用组件工具类 ----------
+
+// 主按钮 (青绿渐变)
+.btn-primary {
+	padding: 0.9rem 2.2rem;
+	border: none;
+	border-radius: var(--radius-sm);
+	font-size: 1.4rem;
+	font-family: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	color: #05121a;
+	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	transition: all 0.2s ease;
+
+	&:hover:not(:disabled) {
+		transform: translateY(-0.1rem);
+		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
+	}
+}
+
+// 呼吸动画 (logo / 头像 呼吸效果)
+@keyframes breathe {
+	0%, 100% {
+		transform: scale(1);
+	}
+	50% {
+		transform: scale(1.08);
+	}
+}
+
+// 旋转动画 (加载图标)
+@keyframes rotate {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.spin {
+	animation: rotate 1s linear infinite;
+}

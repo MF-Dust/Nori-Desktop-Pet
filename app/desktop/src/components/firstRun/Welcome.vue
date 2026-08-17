@@ -281,13 +281,4 @@ const handleLink = async (link: Link) => {
 	letter-spacing: 0.4rem;
 	color: var(--text-faint);
 }
-
-@keyframes breathe {
-	0%, 100% {
-		transform: scale(1);
-	}
-	50% {
-		transform: scale(1.08);
-	}
-}
 </style>

@@ -4,9 +4,11 @@ import {invoke} from "@tauri-apps/api/core"
 import {getCurrentWindow} from "@tauri-apps/api/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "../components/Icon.vue"
+import TitleBar from "../components/TitleBar.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
 import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
+import LlmConnect from "../components/firstRun/LlmConnect.vue"
 import Ready from "../components/firstRun/Ready.vue"
 
 const I18N = computed(() => useLanguages().views.firstRun)
@@ -58,8 +60,7 @@ const finish = async () => {
 
 <template>
 	<div class="first-run-window" :class="`bg-step-${currentStep + 1}`">
-		<div class="titlebar" data-tauri-drag-region>
-			<span class="title" data-tauri-drag-region>Nori</span>
+		<TitleBar>
 			<div class="titlebar-right">
 				<div class="steps-indicator">
 					<span
@@ -72,13 +73,14 @@ const finish = async () => {
 				<span class="step-count">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
 				<button class="close-btn" title="关闭" @click="closeWindow">✕</button>
 			</div>
-		</div>
+		</TitleBar>
 
 		<div class="stage">
 			<Transition :name="direction > 0 ? 'page-next' : 'page-prev'" mode="out-in">
 				<Welcome v-if="currentStep === 0"/>
 				<LanguageSelect v-else-if="currentStep === 1"/>
 				<ModelSelect v-else-if="currentStep === 2"/>
+				<LlmConnect v-else-if="currentStep === 3"/>
 				<Ready v-else/>
 			</Transition>
 		</div>
@@ -127,70 +129,64 @@ const finish = async () => {
 		background-image: radial-gradient(42rem 34rem at 50% 52%, rgba(125, 227, 255, 0.14), transparent 68%),
 		linear-gradient(160deg, #0c2440 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
 	}
+
+	&.bg-step-4 {
+		background-image: radial-gradient(42rem 34rem at 50% 58%, rgba(94, 234, 212, 0.14), transparent 68%),
+		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
+	}
+
+	&.bg-step-5 {
+		background-image: radial-gradient(42rem 34rem at 50% 46%, rgba(94, 234, 212, 0.16), transparent 68%),
+		linear-gradient(160deg, #10304b 0%, var(--bg-deep) 58%, var(--bg-abyss) 100%);
+	}
 }
 
-.titlebar {
-	padding: 0 1.2rem 0 1.6rem;
-	height: 4.4rem;
+.titlebar-right {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	flex-shrink: 0;
+	gap: 1rem;
 
-	.title {
-		color: var(--text-primary);
-		font-size: 1.3rem;
-		font-weight: 600;
+	.steps-indicator {
+		display: flex;
+		gap: 0.24rem;
+	}
+
+	.seg {
+		width: 2.2rem;
+		height: 0.3rem;
+		border-radius: 0.02rem;
+		background-color: rgba(255, 255, 255, 0.14);
+		transition: all 0.3s ease;
+
+		&.active {
+			background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
+			box-shadow: 0 0 0.6rem var(--glow-teal-soft);
+		}
+	}
+
+	.step-count {
+		font-size: 1.1rem;
+		color: var(--text-faint);
+		font-variant-numeric: tabular-nums;
 		letter-spacing: 0.05rem;
 	}
 
-	.titlebar-right {
+	.close-btn {
+		width: 2.6rem;
+		height: 2.6rem;
+		border: none;
+		border-radius: 50%;
+		background-color: transparent;
+		color: var(--text-muted);
+		font-size: 1.2rem;
+		cursor: pointer;
 		display: flex;
 		align-items: center;
-		gap: 1rem;
+		justify-content: center;
 
-		.steps-indicator {
-			display: flex;
-			gap: 0.24rem;
-		}
-
-		.seg {
-			width: 2.2rem;
-			height: 0.3rem;
-			border-radius: 0.02rem;
-			background-color: rgba(255, 255, 255, 0.14);
-			transition: all 0.3s ease;
-
-			&.active {
-				background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-				box-shadow: 0 0 0.6rem var(--glow-teal-soft);
-			}
-		}
-
-		.step-count {
-			font-size: 1.1rem;
-			color: var(--text-faint);
-			font-variant-numeric: tabular-nums;
-			letter-spacing: 0.05rem;
-		}
-
-		.close-btn {
-			width: 2.6rem;
-			height: 2.6rem;
-			border: none;
-			border-radius: 50%;
-			background-color: transparent;
-			color: var(--text-muted);
-			font-size: 1.2rem;
-			cursor: pointer;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-
-			&:hover {
-				background-color: rgba(255, 255, 255, 0.08);
-				color: var(--danger);
-			}
+		&:hover {
+			background-color: rgba(255, 255, 255, 0.08);
+			color: var(--danger);
 		}
 	}
 }
@@ -261,16 +257,6 @@ const finish = async () => {
 		height: 1.5rem;
 		color: inherit;
 		flex-shrink: 0;
-	}
-
-	.btn-primary {
-		background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-		color: #05121a;
-		font-weight: 600;
-
-		&:hover {
-			box-shadow: 0 0 1.6rem var(--glow-teal-soft);
-		}
 	}
 
 	.btn-ghost {

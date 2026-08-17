@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue"
 import logo from "../assets/images/logo.png"
+import TitleBar from "../components/TitleBar.vue"
 
 const status = ref("正在初始化...")
 const progress = ref(0)
@@ -18,9 +19,7 @@ onMounted(() => {
 
 <template>
 	<div class="init-window">
-		<div class="titlebar" data-tauri-drag-region>
-			<span class="title" data-tauri-drag-region>Nori</span>
-		</div>
+		<TitleBar/>
 
 		<div class="body">
 			<img class="avatar" :src="logo" alt="Nori"/>
@@ -42,22 +41,6 @@ onMounted(() => {
 	flex-direction: column;
 	overflow: hidden;
 	user-select: none;
-}
-
-.titlebar {
-	height: 4.4rem;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0 1.2rem 0 1.6rem;
-	flex-shrink: 0;
-}
-
-.title {
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-weight: 600;
-	letter-spacing: 0.05rem;
 }
 
 .body {
@@ -95,14 +78,5 @@ onMounted(() => {
 	border-radius: 0.2rem;
 	background: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
 	transition: width 0.4s ease;
-}
-
-@keyframes breathe {
-	0%, 100% {
-		transform: scale(1);
-	}
-	50% {
-		transform: scale(1.12);
-	}
 }
 </style>

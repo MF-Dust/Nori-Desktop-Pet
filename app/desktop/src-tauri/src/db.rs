@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use tauri::AppHandle;
 
 use crate::config::{self, ConfigValue};
+use crate::log::{self, LogSource};
 
 /// 统一错误类型: 可向上兼容 tauri setup(Box<dyn Error>)与 command(String)
 pub type DbResult<T> = Result<T, Box<dyn StdError>>;
@@ -29,6 +30,11 @@ pub fn init(app: &AppHandle) -> DbResult<Db> {
     std::fs::create_dir_all(&dir)?;
     let conn = Connection::open(dir.join("nori.db"))?;
     conn.execute_batch(SCHEMA)?;
+    let _ = log::write(
+        &LogSource::Backend,
+        "info",
+        &format!("数据库已打开: {}", dir.join("nori.db").display()),
+    );
     Ok(Db(Mutex::new(conn)))
 }
 
@@ -41,12 +47,18 @@ fn data_dir(_app: &AppHandle) -> DbResult<PathBuf> {
 
 /// 是否首次启动: config 表中不存在 first_run_completed 标记或标记值为 "0"
 pub fn is_first_run(conn: &Connection) -> DbResult<bool> {
-    match config::get(conn, KEY_FIRST_RUN_COMPLETED)? {
-        None => Ok(true),
-        Some(ConfigValue::String(s)) => Ok(s == "0"),
-        Some(ConfigValue::Boolean(b)) => Ok(!b),
-        _ => Ok(false),
-    }
+    let first = match config::get(conn, KEY_FIRST_RUN_COMPLETED)? {
+        None => true,
+        Some(ConfigValue::String(s)) => s == "0",
+        Some(ConfigValue::Boolean(b)) => !b,
+        _ => false,
+    };
+    let _ = log::write(
+        &LogSource::Backend,
+        "info",
+        &format!("首次运行判定: {}", if first { "是" } else { "否" }),
+    );
+    Ok(first)
 }
 
 /// 写入 first_run_completed 标记 (幂等)

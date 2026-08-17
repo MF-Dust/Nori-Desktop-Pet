@@ -34,6 +34,20 @@ export default () => {
 				modelSelect: {
 					title: t("components.firstRun.modelSelect.title"),
 					sub: t("components.firstRun.modelSelect.sub"),
+				},
+				llmConnect: {
+					error: {
+						apiBaseUrl: t("components.firstRun.llmConnect.error.apiBaseUrl"),
+						apiKey: t("components.firstRun.llmConnect.error.apiKey"),
+					},
+					title: t("components.firstRun.llmConnect.title"),
+					sub: t("components.firstRun.llmConnect.sub"),
+					apiBaseUrl: t("components.firstRun.llmConnect.apiBaseUrl"),
+					apiKey: t("components.firstRun.llmConnect.apiKey"),
+					model: t("components.firstRun.llmConnect.model"),
+					modelEmpty: t("components.firstRun.llmConnect.modelEmpty"),
+					getModel: t("components.firstRun.llmConnect.getModel"),
+					getting: t("components.firstRun.llmConnect.getting"),
 				}
 			}
 		},

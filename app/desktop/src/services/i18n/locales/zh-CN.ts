@@ -30,6 +30,20 @@ export default {
 			modelSelect: {
 				title: "选择模型",
 				sub: "可后期切换"
+			},
+			llmConnect: {
+				error: {
+					apiBaseUrl: "请填写 API 地址",
+					apiKey: "请填写 API Key",
+				},
+				title: "连接 LLM 模型",
+				sub: "仅支持 OpenAI 协议接口",
+				apiBaseUrl: "API 地址",
+				apiKey: "API Key",
+				model: "模型",
+				modelEmpty: "暂无可用模型",
+				getModel: "获取模型",
+				getting: "获取中...",
 			}
 		}
 	},
