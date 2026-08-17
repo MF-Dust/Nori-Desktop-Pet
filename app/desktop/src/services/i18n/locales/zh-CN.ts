@@ -57,6 +57,17 @@ export default {
 			back: "上一步",
 			next: "下一步",
 			start: "开始"
+		},
+		init: {
+			title: "正在初始化...",
+			live2d: "正在初始化 Live2D 模型...",
+			downloading: "正在下载...",
+			downloadDone: "下载完成",
+			extracting: "正在解压...",
+			ready: "初始化完成",
+			installed: "安装完成",
+			downloadFailed: "下载失败",
+			check: "正在检查..."
 		}
 	}
 }

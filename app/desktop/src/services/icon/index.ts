@@ -92,6 +92,13 @@ export const icon = {
 		stroke: [
 			"M20 6 9 17l-5-5"
 		]
+	},
+	// 关闭叉号
+	close: {
+		stroke: [
+			"M18 6 6 18",
+			"m6 6 12 12"
+		]
 	}
 } satisfies Record<string, IconData>
 

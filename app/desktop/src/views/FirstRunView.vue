@@ -86,7 +86,9 @@ const finish = async () => {
 					/>
 				</div>
 				<span class="step-count">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
-				<button class="close-btn" title="关闭" @click="closeApp">✕</button>
+				<button class="close-btn" title="关闭" @click="closeApp">
+					<Icon name="close" class="close-icon"/>
+				</button>
 			</div>
 		</TitleBar>
 
@@ -183,25 +185,6 @@ const finish = async () => {
 		color: var(--text-faint);
 		font-variant-numeric: tabular-nums;
 		letter-spacing: 0.05rem;
-	}
-
-	.close-btn {
-		width: 2.6rem;
-		height: 2.6rem;
-		border: none;
-		border-radius: 50%;
-		background-color: transparent;
-		color: var(--text-muted);
-		font-size: 1.2rem;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-
-		&:hover {
-			background-color: rgba(255, 255, 255, 0.08);
-			color: var(--danger);
-		}
 	}
 }
 

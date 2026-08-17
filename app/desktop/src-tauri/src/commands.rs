@@ -1,6 +1,26 @@
 use crate::db::Db;
 use crate::log;
 use tauri::Manager;
+use tauri::Emitter;
+
+/// 资源下载进度事件载荷: 通过全局事件 `resource-download` 推送给前端.
+/// 不绑定具体资源类型, 通用地表达检查/下载/解压流程.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ResourceDownloadEvent {
+    /// 资源类型 (如 "live2d", 与 config / 目录 / 未来扩展对应)
+    resource_type: String,
+    /// 阶段: installed | downloading | download-done | extracting | done | error
+    step: String,
+    /// 下载进度百分比 (0-100), downloading 阶段有值
+    progress: Option<f32>,
+    /// 已下载字节数, downloading 阶段有值 (供前端按大小计算真实进度)
+    downloaded: Option<u64>,
+    /// 总字节数, downloading 阶段有值 (Content-Length 缺失时为 None)
+    total: Option<u64>,
+    /// 错误信息, error 阶段有值
+    message: Option<String>,
+}
 
 /// 退出应用
 #[tauri::command]
@@ -133,4 +153,137 @@ pub fn fetch_llm_models(base_url: String, api_key: String) -> Result<Vec<String>
         &format!("拉取模型成功, 共 {} 个", ids.len()),
     );
     Ok(ids)
+}
+
+/// 解析资源类型字符串, 未知类型返回 None
+fn parse_resource_type(s: &str) -> Option<crate::resource::types::ResourceType> {
+    crate::resource::types::ResourceType::from_str(s)
+}
+
+/// 消毒资源名称: 仅保留文件名部分, 防止 `../` 或其他路径片段带进资源目录
+fn sanitize_name(raw: &str) -> Result<String, String> {
+    let name = std::path::Path::new(raw)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if name.is_empty() {
+        Err("非法的资源名".into())
+    } else {
+        Ok(name)
+    }
+}
+
+/// 检查指定类型的资源是否已安装
+/// 前端 invoke("check_resource", { resourceType, name })
+#[tauri::command]
+pub fn check_resource(
+    app: tauri::AppHandle,
+    resource_type: String,
+    name: String,
+) -> Result<bool, String> {
+    let rt = parse_resource_type(&resource_type).ok_or_else(|| format!("未知的资源类型: {resource_type}"))?;
+    let name = sanitize_name(&name)?;
+    let data_dir = crate::db::data_dir(&app).map_err(|e| e.to_string())?;
+
+    let installed = crate::resource::is_installed(&data_dir, &rt, &name);
+    let _ = log::write(
+        &log::LogSource::Backend,
+        "info",
+        &format!("检查资源: type={resource_type} name={name} installed={installed}"),
+    );
+    Ok(installed)
+}
+
+/// 确保指定类型的资源就位: 已安装则直接返回, 否则下载并解压.
+/// 整个过程通过全局事件 `resource-download` 推送给前端:
+///   downloading{progress} → download-done → extracting → done | installed | error
+/// 前端 invoke("ensure_resource", { resourceType, name }) 后订阅该事件即可拿到实时进度.
+#[tauri::command]
+pub fn ensure_resource(
+    app: tauri::AppHandle,
+    resource_type: String,
+    name: String,
+) -> Result<(), String> {
+    let rt = parse_resource_type(&resource_type).ok_or_else(|| format!("未知的资源类型: {resource_type}"))?;
+    let name = sanitize_name(&name)?;
+    let data_dir = crate::db::data_dir(&app).map_err(|e| e.to_string())?;
+
+    // 发送指定阶段事件 (不阻塞). 下载阶段携带真实字节进度供前端计算进度条.
+    let emit = |step: &str,
+                progress: Option<f32>,
+                downloaded: Option<u64>,
+                total: Option<u64>,
+                message: Option<&str>| {
+        let _ = app.emit(
+            "resource-download",
+            ResourceDownloadEvent {
+                resource_type: resource_type.clone(),
+                step: step.to_string(),
+                progress,
+                downloaded,
+                total,
+                message: message.map(|s| s.to_string()),
+            },
+        );
+    };
+
+    // 已安装: 直接通知并返回
+    if crate::resource::is_installed(&data_dir, &rt, &name) {
+        let _ = log::write(
+            &log::LogSource::Backend,
+            "info",
+            &format!("资源已安装, 无需下载: type={resource_type} name={name}"),
+        );
+        emit("installed", Some(100.0), None, None, None);
+        return Ok(());
+    }
+
+    let _ = log::write(
+        &log::LogSource::Backend,
+        "info",
+        &format!("开始下载资源: type={resource_type} name={name}"),
+    );
+    emit("downloading", Some(0.0), Some(0), None, None);
+
+    // 下载 zip (进度回调 → downloading 事件, 携带真实字节)
+    let progress_cb = |p: crate::resource::types::DownloadProgress| {
+        emit(
+            "downloading",
+            Some(p.percentage),
+            Some(p.downloaded),
+            (p.total > 0).then_some(p.total),
+            None,
+        );
+    };
+    let zip_path = crate::resource::downloader::download_to_zip(&rt, &name, &data_dir, progress_cb)
+        .map_err(|e| {
+            emit("error", None, None, None, Some(&e.to_string()));
+            format!("下载资源失败: {e}")
+        })?;
+
+    // 下载完成 → 解压 (前端负责让文案停留)
+    emit("download-done", Some(100.0), None, None, None);
+    emit("extracting", None, None, None, None);
+
+    let target_dir = data_dir.join(rt.dir_name()).join(&name);
+    crate::resource::downloader::extract_zip(&zip_path, &target_dir).map_err(|e| {
+        emit("error", None, None, None, Some(&e.to_string()));
+        let _ = log::write(
+            &log::LogSource::Backend,
+            "error",
+            &format!("解压资源失败: type={resource_type} name={name} err={e}"),
+        );
+        format!("解压资源失败: {e}")
+    })?;
+
+    // 清理临时文件
+    let _ = std::fs::remove_file(&zip_path);
+
+    emit("done", Some(100.0), None, None, None);
+    let _ = log::write(
+        &log::LogSource::Backend,
+        "info",
+        &format!("资源就位: type={resource_type} name={name}"),
+    );
+    Ok(())
 }

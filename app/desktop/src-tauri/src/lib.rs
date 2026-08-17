@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod db;
 mod log;
+mod resource;
 
 use tauri::Manager;
 
@@ -58,7 +59,9 @@ pub fn run() {
             config::delete_config,
             config::has_config,
             config::get_all_configs,
-            config::get_init_config
+            config::get_init_config,
+            commands::check_resource,
+            commands::ensure_resource
         ])
         .run(tauri::generate_context!())
         .expect("运行应用时出错")

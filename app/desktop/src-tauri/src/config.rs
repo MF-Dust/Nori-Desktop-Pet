@@ -206,7 +206,7 @@ fn system_language() -> String {
 }
 
 /// 读取字符串配置, 缺失/类型不符时返回 fallback
-fn get_str_or(conn: &Connection, key: &str, fallback: &str) -> String {
+pub fn get_str_or(conn: &Connection, key: &str, fallback: &str) -> String {
     match get(conn, key) {
         Ok(Some(ConfigValue::String(s))) if !s.is_empty() => s,
         Ok(Some(ConfigValue::Integer(i))) => i.to_string(),

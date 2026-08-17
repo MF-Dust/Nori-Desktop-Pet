@@ -44,7 +44,7 @@ pub fn init(app: &AppHandle) -> DbResult<Db> {
 
 /// 数据目录: 软件安装目录 (可执行文件所在目录) 下的 data 文件夹,
 /// dev 时为 src-tauri/target/debug/data, 打包后为安装目录/data
-fn data_dir(_app: &AppHandle) -> DbResult<PathBuf> {
+pub fn data_dir(_app: &AppHandle) -> DbResult<PathBuf> {
     let exe = std::env::current_exe()?;
     Ok(exe.parent().unwrap_or(Path::new(".")).join("data"))
 }

@@ -61,6 +61,17 @@ export default () => {
 				back: t("views.firstRun.back"),
 				next: t("views.firstRun.next"),
 				start: t("views.firstRun.start"),
+			},
+			init: {
+				title: t("views.init.title"),
+				live2d: t("views.init.live2d"),
+				downloading: t("views.init.downloading"),
+				downloadDone: t("views.init.downloadDone"),
+				extracting: t("views.init.extracting"),
+				ready: t("views.init.ready"),
+				installed: t("views.init.installed"),
+				downloadFailed: t("views.init.downloadFailed"),
+				check: t("views.init.check"),
 			}
 		}
 	}

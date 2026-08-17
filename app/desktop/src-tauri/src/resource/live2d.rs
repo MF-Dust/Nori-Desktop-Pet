@@ -3,9 +3,35 @@ use std::fs;
 use std::path::Path;
 
 /// 检查 Live2D 资源是否存在
+///
+/// 要求 `data/live2D/<name>/` 目录存在, 且其中包含至少一个模型清单文件
+/// (`.model3.json`), 即"里面真有模型", 避免把空目录误判为已安装.
 pub fn exists(data_dir: &Path, name: &str) -> bool {
     let resource_dir = data_dir.join(ResourceType::Live2D.dir_name()).join(name);
-    resource_dir.exists() && resource_dir.is_dir()
+    if !resource_dir.is_dir() {
+        return false;
+    }
+    has_model3_json(&resource_dir)
+}
+
+/// 递归判断目录下是否存在 `.model3.json` 模型清单文件
+fn has_model3_json(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if has_model3_json(&path) {
+                return true;
+            }
+        } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.ends_with(".model3.json") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 列出所有 Live2D 资源

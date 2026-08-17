@@ -132,6 +132,31 @@ html, body, #app {
 	}
 }
 
+// 关闭按钮
+.close-btn {
+	width: 2.6rem;
+	height: 2.6rem;
+	border: none;
+	border-radius: 50%;
+	background-color: transparent;
+	color: var(--text-muted);
+	font-size: 1.2rem;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+
+	&:hover {
+		background-color: rgba(255, 255, 255, 0.08);
+		color: var(--danger);
+	}
+}
+
+.close-icon {
+	width: 1.5rem;
+	height: 1.5rem;
+}
+
 // 呼吸动画 (logo / 头像 呼吸效果)
 @keyframes breathe {
 	0%, 100% {
