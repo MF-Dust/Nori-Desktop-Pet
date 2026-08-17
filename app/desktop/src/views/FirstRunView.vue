@@ -96,7 +96,7 @@ const finish = async () => {
 				{{ I18N.next }}
 				<icon name="arrow-right" class="btn-icon"/>
 			</button>
-			<button v-else class="btn btn-primary" @click="finish">开始 ✨</button>
+			<button v-else class="btn btn-primary" @click="finish">{{ I18N.start }}</button>
 		</div>
 	</div>
 </template>

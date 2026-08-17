@@ -44,13 +44,19 @@ export default {
 				modelEmpty: "暂无可用模型",
 				getModel: "获取模型",
 				getting: "获取中...",
+			},
+			ready: {
+				title: "准备就绪",
+				desc: "点击「开始」完成初始化，Nori 期待与你见面。",
+				initDesc: "🐾 初始化大约只需几秒钟"
 			}
 		}
 	},
 	views: {
 		firstRun: {
 			back: "上一步",
-			next: "下一步"
+			next: "下一步",
+			start: "开始"
 		}
 	}
 }

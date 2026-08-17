@@ -1,17 +1,23 @@
 <script setup lang="ts">
+import {computed} from "vue";
+import useLanguages from "../../services/i18n/useLanguages.ts"
+import logo from "../../assets/images/logo.png"
+
+const I18N = computed(() => useLanguages().components.firstRun.ready)
 </script>
 
 <template>
 	<section key="ready" class="page page-ready">
-		<span class="ready-star">✨</span>
-		<h2 class="ready-title glow-teal">准备好了吗</h2>
-		<p class="ready-desc">点击「开始」完成初始化, Nori 即将与你见面。</p>
-		<span class="ready-tip">🐾 初始化大约只需几秒钟</span>
+		<img class="ready-star" :src="logo" alt="Nori"/>
+		<h2 class="ready-title glow-teal">{{ I18N.title }}</h2>
+		<p class="ready-desc">{{ I18N.desc }}</p>
+		<span class="ready-tip">{{ I18N.initDesc }}</span>
 	</section>
 </template>
 
 <style scoped lang="less">
 .page {
+	padding-bottom: 0.6rem;
 	width: 100%;
 	height: 100%;
 	display: flex;
@@ -19,22 +25,14 @@
 	align-items: center;
 	justify-content: center;
 	gap: 1.6rem;
-	padding-bottom: 0.6rem;
 }
 
 .ready-star {
-	font-size: 5.6rem;
-	animation: star-pop 2.4s ease-in-out infinite;
+	width: 10.4rem;
+	height: 10.4rem;
+	object-fit: contain;
+	animation: breathe 2.6s ease-in-out infinite;
 	filter: drop-shadow(0 0 2.2rem rgba(125, 227, 255, 0.6));
-}
-
-@keyframes star-pop {
-	0%, 100% {
-		transform: scale(1) rotate(0deg);
-	}
-	50% {
-		transform: scale(1.12) rotate(8deg);
-	}
 }
 
 .ready-title {

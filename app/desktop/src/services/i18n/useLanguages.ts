@@ -48,6 +48,11 @@ export default () => {
 					modelEmpty: t("components.firstRun.llmConnect.modelEmpty"),
 					getModel: t("components.firstRun.llmConnect.getModel"),
 					getting: t("components.firstRun.llmConnect.getting"),
+				},
+				ready: {
+					title: t("components.firstRun.ready.title"),
+					desc: t("components.firstRun.ready.desc"),
+					initDesc: t("components.firstRun.ready.initDesc"),
 				}
 			}
 		},
@@ -55,6 +60,7 @@ export default () => {
 			firstRun: {
 				back: t("views.firstRun.back"),
 				next: t("views.firstRun.next"),
+				start: t("views.firstRun.start"),
 			}
 		}
 	}
