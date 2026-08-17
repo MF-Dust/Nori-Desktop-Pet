@@ -30,6 +30,10 @@ pub fn init(app: &AppHandle) -> DbResult<Db> {
     std::fs::create_dir_all(&dir)?;
     let conn = Connection::open(dir.join("nori.db"))?;
     conn.execute_batch(SCHEMA)?;
+    // 首次加载: 初始化默认配置 (幂等, 只补缺失键, 不覆盖用户已有配置)
+    config::init_defaults(&conn)?;
+    // 校验配置结构版本, 为未来迁移预留
+    config::ensure_schema_version(&conn)?;
     let _ = log::write(
         &LogSource::Backend,
         "info",

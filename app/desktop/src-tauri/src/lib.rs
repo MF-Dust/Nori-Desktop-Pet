@@ -27,25 +27,28 @@ pub fn run() {
             if first_run {
                 if let Some(win) = app.get_webview_window("first-run") {
                     win.show()?;
+                	log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 first-run")?;
                 }
                 if let Some(win) = app.get_webview_window("init") {
                     win.hide()?;
+                	log::write(&log::LogSource::Backend, "info", "窗口调度: 隐藏 init")?;
                 }
-                log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 first-run, 隐藏 init")?;
             } else {
                 if let Some(win) = app.get_webview_window("init") {
                     win.show()?;
+                	log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 init")?;
                 }
                 if let Some(win) = app.get_webview_window("first-run") {
                     win.hide()?;
+                	log::write(&log::LogSource::Backend, "info", "窗口调度: 隐藏 first-run")?;
                 }
-                log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 init, 隐藏 first-run")?;
             }
 
             app.manage(db_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::exit_app,
             commands::complete_first_run,
             commands::write_log,
             commands::get_system_language,
@@ -54,7 +57,8 @@ pub fn run() {
             config::set_config,
             config::delete_config,
             config::has_config,
-            config::get_all_configs
+            config::get_all_configs,
+            config::get_init_config
         ])
         .run(tauri::generate_context!())
         .expect("运行应用时出错")

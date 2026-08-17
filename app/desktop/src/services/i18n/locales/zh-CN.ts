@@ -48,7 +48,7 @@ export default {
 			ready: {
 				title: "准备就绪",
 				desc: "点击「开始」完成初始化，Nori 期待与你见面。",
-				initDesc: "🐾 初始化大约只需几秒钟"
+				initDesc: "🐾 初始化大约只需1分钟"
 			}
 		}
 	},

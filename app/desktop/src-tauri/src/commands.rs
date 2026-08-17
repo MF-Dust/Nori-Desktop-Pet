@@ -2,6 +2,12 @@ use crate::db::Db;
 use crate::log;
 use tauri::Manager;
 
+/// 退出应用
+#[tauri::command]
+pub fn exit_app() {
+    std::process::exit(0);
+}
+
 /// 首次启动完成后由前端调用: 写入标记 + 切换窗口(first-run → init)
 /// 仅允许 first-run 窗口调用
 #[tauri::command]
@@ -27,6 +33,8 @@ pub fn complete_first_run(
     }
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     crate::db::mark_first_run_completed(&conn).map_err(|e| e.to_string())?;
+    // 记录首次初始化完成时间 (幂等)
+    crate::config::mark_initialized(&conn).map_err(|e| e.to_string())?;
     drop(conn);
     log::write(&log::LogSource::Backend, "info", "首次初始化完成").map_err(|e| e.to_string())?;
     if let Some(win) = app.get_webview_window("first-run") {

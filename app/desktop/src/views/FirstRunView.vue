@@ -1,20 +1,32 @@
 <script setup lang="ts">
 import {computed, ref} from "vue"
+import {onMounted} from "vue"
 import {invoke} from "@tauri-apps/api/core"
-import {getCurrentWindow} from "@tauri-apps/api/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
+import {getInitConfig} from "../services/initConfig"
 import Icon from "../components/Icon.vue"
 import TitleBar from "../components/TitleBar.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
 import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
-import LlmConnect from "../components/firstRun/LlmConnect.vue"
 import Ready from "../components/firstRun/Ready.vue"
 
 const I18N = computed(() => useLanguages().views.firstRun)
 
+// 首次初始化配置
+const initConfig = ref<Awaited<ReturnType<typeof getInitConfig>>>(null)
+
+// 组件挂载后拉取首次初始化配置 (语言/模型/版本/时间)
+onMounted(async () => {
+	try {
+		initConfig.value = await getInitConfig()
+	} catch (error) {
+		console.error("加载初始化配置失败:", error)
+	}
+})
+
 // 初始化步骤数量
-const STEPS_COUNT = 5
+const STEPS_COUNT = 4
 
 // 当前步骤索引
 const currentStep = ref(0)
@@ -43,15 +55,18 @@ const prev = () => {
 }
 
 // 关闭窗口
-const closeWindow = () => {
-	getCurrentWindow().close()
+const closeApp = () => {
+	invoke("exit_app")
 }
 
 // 完成初始化
 const finish = async () => {
 	try {
 		await invoke("complete_first_run")
-		await invoke("write_log", {level: "info", message: "初始化完成"})
+		// 记录初始化版本信息 (来自首次初始化配置快照)
+		const VERSION = initConfig.value?.appVersion ?? "unknown"
+		const MODEL = initConfig.value?.selectedModel ?? "unknown"
+		await invoke("write_log", {level: "info", message: `初始化完成 (v${VERSION}, model=${MODEL})`})
 	} catch (error) {
 		console.error("finish first run failed:", error)
 	}
@@ -71,7 +86,7 @@ const finish = async () => {
 					/>
 				</div>
 				<span class="step-count">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
-				<button class="close-btn" title="关闭" @click="closeWindow">✕</button>
+				<button class="close-btn" title="关闭" @click="closeApp">✕</button>
 			</div>
 		</TitleBar>
 
@@ -80,7 +95,6 @@ const finish = async () => {
 				<Welcome v-if="currentStep === 0"/>
 				<LanguageSelect v-else-if="currentStep === 1"/>
 				<ModelSelect v-else-if="currentStep === 2"/>
-				<LlmConnect v-else-if="currentStep === 3"/>
 				<Ready v-else/>
 			</Transition>
 		</div>
