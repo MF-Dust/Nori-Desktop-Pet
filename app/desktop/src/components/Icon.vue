@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
-import {icon, type IconName, type IconMode, type IconData} from "../../services/icon"
+import {icon, type IconName, type IconMode, type IconData} from "../services/icon"
 
 const props = withDefaults(defineProps<{
 	name: IconName

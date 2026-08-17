@@ -3,7 +3,7 @@ import {computed, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {getCurrentWindow} from "@tauri-apps/api/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
-import {EkIcon} from "../components/ui"
+import Icon from "../components/Icon.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
 import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
@@ -12,7 +12,7 @@ import Ready from "../components/firstRun/Ready.vue"
 const I18N = computed(() => useLanguages().views.firstRun)
 
 // 初始化步骤数量
-const STEPS_COUNT = 3
+const STEPS_COUNT = 5
 
 // 当前步骤索引
 const currentStep = ref(0)
@@ -45,10 +45,11 @@ const closeWindow = () => {
 	getCurrentWindow().close()
 }
 
-// 完成初始化:写标记, Rust 侧会切换窗口 (first-run → init)
+// 完成初始化
 const finish = async () => {
 	try {
 		await invoke("complete_first_run")
+		await invoke("write_log", {level: "info", message: "初始化完成"})
 	} catch (error) {
 		console.error("finish first run failed:", error)
 	}
@@ -85,13 +86,13 @@ const finish = async () => {
 		<!-- 底部导航 -->
 		<div class="footer">
 			<button v-if="!isFirst" class="btn btn-ghost" @click="prev">
-				<ek-icon name="arrow-left" class="btn-icon"/>
+				<icon name="arrow-left" class="btn-icon"/>
 				{{ I18N.back }}
 			</button>
 			<span v-else/>
 			<button v-if="!isLast" class="btn btn-primary" @click="next">
 				{{ I18N.next }}
-				<ek-icon name="arrow-right" class="btn-icon"/>
+				<icon name="arrow-right" class="btn-icon"/>
 			</button>
 			<button v-else class="btn btn-primary" @click="finish">开始 ✨</button>
 		</div>

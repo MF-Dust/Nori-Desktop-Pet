@@ -4,7 +4,7 @@ import {invoke} from "@tauri-apps/api/core"
 import {openUrl} from "@tauri-apps/plugin-opener"
 import {writeText} from "@tauri-apps/plugin-clipboard-manager"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {EkIcon} from "../ui"
+import Icon from "../../components/Icon.vue"
 import type {IconMode, IconName} from "../../services/icon"
 import logo from "../../assets/images/logo.png"
 
@@ -81,13 +81,13 @@ const handleLink = async (link: Link) => {
 			<p class="hero-desc">{{I18N.subtitle}}</p>
 			<div class="links">
 				<button v-for="link in links" :key="link.qq || link.url" class="link-card" @click="handleLink(link)">
-					<ek-icon :name="link.icon" :mode="link.mode" class="link-icon"/>
+					<icon :name="link.icon" :mode="link.mode" class="link-icon"/>
 					<span class="link-text">
 						<span class="link-label">{{ link.label }}</span>
 						<span class="link-sub">{{ link.sub }}</span>
 					</span>
 					<span class="link-arrow">
-						<ek-icon name="arrow-right"/>
+						<icon name="arrow-right"/>
 					</span>
 				</button>
 			</div>

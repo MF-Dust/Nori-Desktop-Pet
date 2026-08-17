@@ -39,9 +39,14 @@ fn data_dir(_app: &AppHandle) -> DbResult<PathBuf> {
     Ok(exe.parent().unwrap_or(Path::new(".")).join("data"))
 }
 
-/// 是否首次启动:config 表中不存在 first_run_completed 标记
+/// 是否首次启动: config 表中不存在 first_run_completed 标记或标记值为 "0"
 pub fn is_first_run(conn: &Connection) -> DbResult<bool> {
-    Ok(!config::exists(conn, KEY_FIRST_RUN_COMPLETED)?)
+    match config::get(conn, KEY_FIRST_RUN_COMPLETED)? {
+        None => Ok(true),
+        Some(ConfigValue::String(s)) => Ok(s == "0"),
+        Some(ConfigValue::Boolean(b)) => Ok(!b),
+        _ => Ok(false),
+    }
 }
 
 /// 写入 first_run_completed 标记 (幂等)

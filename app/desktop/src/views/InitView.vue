@@ -6,11 +6,11 @@ const status = ref("正在初始化...")
 const progress = ref(0)
 
 onMounted(() => {
-	const steps = ["正在加载 Nori 核心...", "正在连接语音服务...", "即将唤醒 Nori"]
-	steps.forEach((text, i) => {
+	const STEPS = ["正在加载 Nori 核心...", "即将唤醒 Nori"]
+	STEPS.forEach((text, i) => {
 		setTimeout(() => {
 			status.value = text
-			progress.value = Math.round(((i + 1) / steps.length) * 100)
+			progress.value = Math.round(((i + 1) / STEPS.length) * 100)
 		}, 800 * (i + 1))
 	})
 })

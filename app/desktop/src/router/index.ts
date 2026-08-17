@@ -7,6 +7,10 @@ const router = createRouter({
 	routes: [
 		{
 			path: "/",
+			redirect: "/init"
+		},
+		{
+			path: "/init",
 			name: "init",
 			component: InitView
 		},

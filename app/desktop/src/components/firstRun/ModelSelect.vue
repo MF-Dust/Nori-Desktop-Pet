@@ -2,7 +2,7 @@
 import {ref, watch, onMounted, computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {EkIcon} from "../ui"
+import Icon from "../../components/Icon.vue"
 import nori from "../../assets/images/live2D/Nori.webp"
 import arNori from "../../assets/images/live2D/ARGNori.webp"
 
@@ -66,7 +66,7 @@ watch(selected, async (newVal) => {
 			>
 				<span class="model-thumb-wrap">
 					<img class="model-thumb" :src="model.thumb" :alt="model.name"/>
-					<span class="model-check"><ek-icon name="check"/></span>
+					<span class="model-check"><icon name="check"/></span>
 				</span>
 				<span class="model-name">{{ model.name }}</span>
 			</button>

@@ -6,7 +6,7 @@ import type {LanguageType} from "../../services/i18n"
 import zhCn from "../../assets/images/flags/cn.png"
 import enGb from "../../assets/images/flags/gb.png"
 import enUs from "../../assets/images/flags/us.png"
-import {EkIcon} from "../ui"
+import Icon from "../../components/Icon.vue"
 
 const language = useLanguage
 
@@ -76,7 +76,7 @@ const select = async (code: string) => {
 				<img v-if="flagOf(code)" class="lang-flag" :src="flagOf(code)" :alt="nameOf(code)"/>
 				<span v-else class="lang-flag lang-flag-empty"></span>
 				<span class="lang-name">{{ nameOf(code) }}</span>
-				<span class="lang-check"><ek-icon name="check"/></span>
+				<span class="lang-check"><icon name="check"/></span>
 			</button>
 			<p v-if="languages.length === 0" class="lang-empty">{{ I18N.langEmpty }}</p>
 		</div>
