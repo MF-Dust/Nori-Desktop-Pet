@@ -3,6 +3,8 @@ import {computed, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {getCurrentWindow} from "@tauri-apps/api/window"
 import Welcome from "../components/firstRun/Welcome.vue"
+import ModelSelect from "../components/firstRun/ModelSelect.vue"
+import Ready from "../components/firstRun/Ready.vue"
 
 // 初始化步骤数量
 const STEPS_COUNT = 3
@@ -10,16 +12,8 @@ const STEPS_COUNT = 3
 // 当前步骤索引
 const currentStep = ref(0)
 
-// 切换方向: 1 = 下一步, -1 = 上一步(决定过渡动画方向)
+// 切换方向: 1 = 下一步, -1 = 上一步 (决定动画方向)
 const direction = ref(1)
-
-
-// 第 2 页: 功能特性
-const features = [
-	{emoji: "💬", title: "聊天对话", desc: "随时和 Nori 聊两句, 它会记得你。"},
-	{emoji: "🎤", title: "语音交互", desc: "动动嘴就能吩咐 Nori, 解放双手。"},
-	{emoji: "🎭", title: "Live2D 动画", desc: "栩栩如生的角色, 常伴桌面左右。"}
-]
 
 // 当前步骤是否为第一个
 const isFirst = computed(() => currentStep.value === 0)
@@ -77,6 +71,8 @@ const finish = async () => {
 		<div class="stage">
 			<Transition :name="direction > 0 ? 'page-next' : 'page-prev'" mode="out-in">
 				<Welcome v-if="currentStep === 0"/>
+				<ModelSelect v-else-if="currentStep === 2"/>
+				<Ready v-else/>
 			</Transition>
 		</div>
 

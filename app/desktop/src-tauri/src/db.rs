@@ -1,8 +1,10 @@
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use std::error::Error as StdError;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::AppHandle;
+
+use crate::config::{self, ConfigValue};
 
 /// 统一错误类型: 可向上兼容 tauri setup(Box<dyn Error>)与 command(String)
 pub type DbResult<T> = Result<T, Box<dyn StdError>>;
@@ -12,13 +14,6 @@ pub struct Db(pub Mutex<Connection>);
 
 /// 建表
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS logs (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
-    level      TEXT    NOT NULL,
-    message    TEXT    NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS config (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -46,28 +41,11 @@ fn data_dir(_app: &AppHandle) -> DbResult<PathBuf> {
 
 /// 是否首次启动:config 表中不存在 first_run_completed 标记
 pub fn is_first_run(conn: &Connection) -> DbResult<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM config WHERE key = ?1",
-        params![KEY_FIRST_RUN_COMPLETED],
-        |row| row.get(0),
-    )?;
-    Ok(count == 0)
+    Ok(!config::exists(conn, KEY_FIRST_RUN_COMPLETED)?)
 }
 
 /// 写入 first_run_completed 标记 (幂等)
 pub fn mark_first_run_completed(conn: &Connection) -> DbResult<()> {
-    conn.execute(
-        "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
-        params![KEY_FIRST_RUN_COMPLETED, "1"],
-    )?;
-    Ok(())
-}
-
-/// 写一条日志
-pub fn write_log(conn: &Connection, level: &str, message: &str) -> DbResult<()> {
-    conn.execute(
-        "INSERT INTO logs (level, message) VALUES (?1, ?2)",
-        params![level, message],
-    )?;
+    config::set(conn, KEY_FIRST_RUN_COMPLETED, &ConfigValue::Boolean(true))?;
     Ok(())
 }

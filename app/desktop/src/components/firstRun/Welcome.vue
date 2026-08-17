@@ -52,6 +52,10 @@ const handleLink = async (link: Link) => {
 	if (link.qq) {
 		try {
 			await writeText(link.qq)
+			await invoke("write_log", {
+				level: "info",
+				message: `复制 QQ 群号 ${link.qq} 成功`
+			})
 		} catch (error) {
 			await invoke("write_log", {
 				level: "error",

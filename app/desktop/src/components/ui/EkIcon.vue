@@ -26,10 +26,14 @@ const renderMode = computed<IconMode>(() => {
 	if (DATA.stroke) return "stroke"
 	if (DATA.fill) return "fill"
 	if (DATA.duotone) 	return "duotone"
-	invoke("write_log", {
-		level: "warn",
-		message: `图标 ${props.name} 不支持 ${props.mode} 模式`
-	})
+	try {
+		invoke("write_log", {
+			level: "warn",
+			message: `图标 ${props.name} 不支持 ${props.mode} 模式`
+		})
+	} catch (error) {
+		console.error("写入日志失败:", error)
+	}
 	return "stroke"
 })
 
