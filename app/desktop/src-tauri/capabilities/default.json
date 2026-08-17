@@ -1,16 +1,23 @@
 {
 	"$schema": "../gen/schemas/desktop-schema.json",
 	"identifier": "default",
-	"description": "Capability for init and first-run windows",
+	"description": "Capability for init, first-run and pet windows",
 	"windows": [
 		"init",
-		"first-run"
+		"first-run",
+		"pet"
 	],
 	"permissions": [
 		"core:default",
 		"core:window:allow-close",
 		"core:window:allow-start-dragging",
-		"opener:default",
-		"clipboard-manager:allow-write-text"
+		"core:window:allow-set-always-on-top",
+		"core:window:allow-show",
+		"core:window:allow-hide",
+		"core:window:allow-set-focus",
+		"core:event:allow-emit",
+		"core:event:allow-emit-to",
+		"core:event:allow-listen",
+		"core:event:allow-unlisten"
 	]
 }

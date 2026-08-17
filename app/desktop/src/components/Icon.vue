@@ -2,6 +2,7 @@
 import {computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {icon, type IconName, type IconMode, type IconData} from "../services/icon"
+import {i18n} from "../services/i18n"
 
 const props = withDefaults(defineProps<{
 	name: IconName
@@ -29,10 +30,10 @@ const renderMode = computed<IconMode>(() => {
 	try {
 		invoke("write_log", {
 			level: "warn",
-			message: `图标 ${props.name} 不支持 ${props.mode} 模式`
+			message: i18n.global.t("log.icon.unsupportedMode", {name: props.name, mode: props.mode})
 		})
 	} catch (error) {
-		console.error("写入日志失败:", error)
+		console.error(i18n.global.t("log.icon.logWriteFailed", {error: String(error)}))
 	}
 	return "stroke"
 })

@@ -36,6 +36,10 @@ pub fn complete_first_run(
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
+    if let Some(pet) = app.get_webview_window("pet") {
+        pet.show().map_err(|e| e.to_string())?;
+        pet.set_always_on_top(true).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

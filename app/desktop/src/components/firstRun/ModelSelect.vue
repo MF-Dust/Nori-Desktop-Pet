@@ -3,6 +3,7 @@ import {ref, watch, onMounted, computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
+import {i18n} from "../../services/i18n"
 import nori from "../../assets/images/live2D/Nori.webp"
 import arNori from "../../assets/images/live2D/ARGNori.webp"
 
@@ -35,7 +36,7 @@ onMounted(async () => {
 			selected.value = SAVED
 		}
 	} catch (error) {
-		console.error("读取模型配置失败:", error)
+		console.error(i18n.global.t("log.firstRun.modelConfigReadFailed", {error: String(error)}))
 	}
 })
 
@@ -43,9 +44,9 @@ onMounted(async () => {
 watch(selected, async (newVal) => {
 	try {
 		await invoke("set_config", {key: CONFIG_KEY, value: newVal})
-		await invoke("write_log", {level: "info", message: `切换模型: ${newVal}`})
+		await invoke("write_log", {level: "info", message: i18n.global.t("log.model.switch", {id: newVal})})
 	} catch (error) {
-		console.error("保存模型配置失败:", error)
+		console.error(i18n.global.t("log.firstRun.modelConfigSaveFailed", {error: String(error)}))
 	}
 })
 </script>

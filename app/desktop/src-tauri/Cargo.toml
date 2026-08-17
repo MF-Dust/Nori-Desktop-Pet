@@ -2,7 +2,7 @@
 name = "nori-desktop-pet"
 version = "0.1.0"
 description = "Nori Desktop Pet - a desktop pet application"
-authors = ["erhio", "Nori"]
+authors = ["erhio", "Nori", "qicajie"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

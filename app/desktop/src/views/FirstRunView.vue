@@ -3,6 +3,7 @@ import {computed, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {getCurrentWindow} from "@tauri-apps/api/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
+import {i18n} from "../services/i18n"
 import Icon from "../components/Icon.vue"
 import TitleBar from "../components/TitleBar.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
@@ -51,9 +52,9 @@ const closeWindow = () => {
 const finish = async () => {
 	try {
 		await invoke("complete_first_run")
-		await invoke("write_log", {level: "info", message: "初始化完成"})
+		await invoke("write_log", {level: "info", message: i18n.global.t("log.firstRun.initComplete")})
 	} catch (error) {
-		console.error("finish first run failed:", error)
+		console.error(i18n.global.t("log.firstRun.finishFailed", {error: String(error)}))
 	}
 }
 </script>

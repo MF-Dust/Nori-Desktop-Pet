@@ -3,6 +3,7 @@ import {ref, watch, onMounted, computed} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {invoke} from "@tauri-apps/api/core"
 import Icon from "../../components/Icon.vue"
+import {i18n} from "../../services/i18n"
 
 const I18N = computed(() => useLanguages().components.firstRun.llmConnect)
 
@@ -42,7 +43,7 @@ onMounted(async () => {
 		if (MODEL) selectedModel.value = MODEL
 		if (BASE && KEY) await fetchModels()
 	} catch (error) {
-		console.error("读取 LLM 配置失败:", error)
+		console.error(i18n.global.t("log.firstRun.llmConfigReadFailed", {error: String(error)}))
 	}
 })
 
@@ -56,9 +57,9 @@ const saveOnChange = (key: string, get: () => string) => {
 		if (!VALUE) return
 		try {
 			invoke("set_config", {key, value: VALUE})
-			if (key !== KEY_APIKEY) invoke("write_log", {level: "info", message: `保存配置键 ${key} 为: ${VALUE}`})
+			if (key !== KEY_APIKEY) invoke("write_log", {level: "info", message: i18n.global.t("log.firstRun.configSaved", {key, value: VALUE})})
 		} catch (error) {
-			console.error("保存 LLM 配置失败:", error)
+			console.error(i18n.global.t("log.firstRun.llmConfigSaveFailed", {error: String(error)}))
 		}
 	}, 400))
 }
@@ -71,9 +72,9 @@ watch(selectedModel, value => {
 	if (!value) return
 	try {
 		invoke("set_config", {key: KEY_MODEL, value: value})
-		invoke("write_log", {level: "info", message: `保存配置键 ${KEY_MODEL} 为: ${value}`})
+		invoke("write_log", {level: "info", message: i18n.global.t("log.firstRun.configSaved", {key: KEY_MODEL, value})})
 	} catch (error) {
-		console.error("保存模型失败:", error)
+		console.error(i18n.global.t("log.firstRun.modelSaveFailed", {error: String(error)}))
 	}
 })
 
@@ -99,7 +100,7 @@ const fetchModels = async () => {
 		}
 	} catch (error) {
 		errorMsg.value = String(error)
-		console.error("获取模型失败:", error)
+		console.error(i18n.global.t("log.firstRun.modelFetchFailed", {error: String(error)}))
 	} finally {
 		loading.value = false
 	}
