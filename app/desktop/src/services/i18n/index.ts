@@ -18,7 +18,7 @@ const getSystemLanguage = async (): Promise<string> => {
 		lang = await invoke<string>("get_system_language")
 	} catch (error) {
 		lang = navigator.language
-		console.error(i18n.global.t("log.i18n.systemLanguageFailed", {error: String(error)}))
+		console.error("获取系统语言失败:", error)
 	}
 	const KEY = `./locales/${lang}.ts`
 	if (MESSAGES[KEY]) return lang
@@ -51,7 +51,7 @@ const useLanguage = {
 			const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
 			if (typeof SAVED === "string" && SAVED) return SAVED
 		} catch (error) {
-			console.error(i18n.global.t("log.i18n.languageConfigReadFailed", {error: String(error)}))
+			console.error("读取语言配置失败:", error)
 		}
 		return getSystemLanguage()
 	},
@@ -68,9 +68,9 @@ const useLanguage = {
 	async setLanguage(lang: LanguageType): Promise<void> {
 		try {
 			await invoke("set_config", {key: CONFIG_KEY, value: lang})
-			await invoke("write_log", {level: "info", message: i18n.global.t("log.language.switch", {lang})})
+			await invoke("write_log", {level: "info", message: `切换语言: ${lang}`})
 		} catch (error) {
-			console.error(i18n.global.t("log.i18n.languageConfigSaveFailed", {error: String(error)}))
+			console.error("保存语言配置失败:", error)
 		}
 		if (!i18n.global.availableLocales.includes(lang)) {
 			const LOADER = this.getLoader(lang)
@@ -88,10 +88,10 @@ const useLanguage = {
 	async getLanguages(): Promise<string[]> {
 		try {
 			const LANGUAGES = Object.keys(MESSAGES).map((key) => key.replace("./locales/", "").replace(".ts", ""))
-			await invoke("write_log", {level: "info", message: i18n.global.t("log.language.list", {list: LANGUAGES})})
+			await invoke("write_log", {level: "info", message: `可用语言列表: ${LANGUAGES}`})
 			return LANGUAGES
 		} catch (error) {
-			console.error(i18n.global.t("log.i18n.availableLanguagesFailed", {error: String(error)}))
+			console.error("获取可用语言列表失败:", error)
 		}
 		return []
 	},

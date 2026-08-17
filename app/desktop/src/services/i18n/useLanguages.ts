@@ -54,45 +54,6 @@ export default () => {
 					desc: t("components.firstRun.ready.desc"),
 					initDesc: t("components.firstRun.ready.initDesc"),
 				}
-			},
-			main: {
-				live2d: {
-					title: t("components.main.live2d.title"),
-					notReady: t("components.main.live2d.notReady"),
-					hint: t("components.main.live2d.hint"),
-					state: {
-						unmounted: t("components.main.live2d.state.unmounted"),
-						loading: t("components.main.live2d.state.loading"),
-						ready: t("components.main.live2d.state.ready"),
-						missing: t("components.main.live2d.state.missing"),
-						error: t("components.main.live2d.state.error"),
-					}
-				},
-				settings: {
-					model: {
-						title: t("components.main.settings.model.title"),
-						sub: t("components.main.settings.model.sub"),
-						notInstalled: t("components.main.settings.model.notInstalled"),
-						installed: t("components.main.settings.model.installed"),
-						current: t("components.main.settings.model.current"),
-					},
-					language: {
-						title: t("components.main.settings.language.title"),
-						sub: t("components.main.settings.language.sub"),
-						current: t("components.main.settings.language.current"),
-					}
-				}
-			},
-			pet: {
-				bubble: {
-					default: t("components.pet.bubble.default"),
-					thinking: t("components.pet.bubble.thinking"),
-				},
-				dialog: {
-					placeholder: t("components.pet.dialog.placeholder"),
-					send: t("components.pet.dialog.send"),
-				},
-				hint: t("components.pet.hint"),
 			}
 		},
 		views: {
@@ -100,18 +61,6 @@ export default () => {
 				back: t("views.firstRun.back"),
 				next: t("views.firstRun.next"),
 				start: t("views.firstRun.start"),
-			},
-			main: {
-				title: t("views.main.title"),
-				collapse: t("views.main.collapse"),
-				expand: t("views.main.expand"),
-				empty: t("views.main.empty"),
-				close: t("views.main.close"),
-				minimize: t("views.main.minimize"),
-				nav: {
-					live2d: t("views.main.nav.live2d"),
-					settings: t("views.main.nav.settings"),
-				}
 			}
 		}
 	}

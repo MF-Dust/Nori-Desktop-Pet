@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 窗口通用标题栏: 标题 + 拖拽区, 右侧内容通过 slot 注入
 defineSlots<{
 	default: () => unknown
 }>()

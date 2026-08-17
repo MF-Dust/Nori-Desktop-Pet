@@ -4,7 +4,6 @@ import {invoke} from "@tauri-apps/api/core"
 import {openUrl} from "@tauri-apps/plugin-opener"
 import {writeText} from "@tauri-apps/plugin-clipboard-manager"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {i18n} from "../../services/i18n"
 import Icon from "../../components/Icon.vue"
 import type {IconMode, IconName} from "../../services/icon"
 import logo from "../../assets/images/logo.png"
@@ -60,12 +59,12 @@ const handleLink = async (link: Link) => {
 			await writeText(link.qq)
 			await invoke("write_log", {
 				level: "info",
-				message: i18n.global.t("log.firstRun.qqCopySuccess", {qq: link.qq})
+				message: `复制 QQ 群号 ${link.qq} 成功`
 			})
 		} catch (error) {
 			await invoke("write_log", {
 				level: "error",
-				message: i18n.global.t("log.firstRun.qqCopyFailed", {qq: link.qq})
+				message: `复制 QQ 群号 ${link.qq} 失败`
 			})
 		}
 	} else if (link.url) {

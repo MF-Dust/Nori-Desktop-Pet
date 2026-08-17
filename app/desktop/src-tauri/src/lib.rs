@@ -1,7 +1,6 @@
 mod commands;
 mod config;
 mod db;
-mod live2d;
 mod log;
 
 use tauri::Manager;

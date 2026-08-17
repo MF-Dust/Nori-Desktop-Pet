@@ -3,7 +3,6 @@ import {computed, ref, onMounted} from "vue"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import type {LanguageType} from "../../services/i18n"
-import {i18n} from "../../services/i18n"
 import zhCn from "../../assets/images/flags/cn.png"
 import enGb from "../../assets/images/flags/gb.png"
 import enUs from "../../assets/images/flags/us.png"
@@ -45,7 +44,7 @@ onMounted(async () => {
 		languages.value = await language.getLanguages()
 		current.value = await language.getLanguage()
 	} catch (error) {
-		console.error(i18n.global.t("log.firstRun.languageListFailed", {error: String(error)}))
+		console.error("加载语言列表失败:", error)
 	}
 })
 
@@ -55,7 +54,7 @@ const select = async (code: string) => {
 	try {
 		await language.setLanguage(code)
 	} catch (error) {
-		console.error(i18n.global.t("log.firstRun.languageSwitchFailed", {error: String(error)}))
+		console.error("切换语言失败:", error)
 	}
 }
 </script>

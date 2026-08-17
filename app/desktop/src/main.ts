@@ -1,6 +1,6 @@
 import {createApp} from "vue"
 import App from "./App.vue"
-import router from "./services/router"
+import router from "./router"
 import useLanguage, {i18n} from "./services/i18n"
 import "./assets/style/theme.less"
 
