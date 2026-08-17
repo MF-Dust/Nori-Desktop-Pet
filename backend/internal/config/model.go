@@ -19,8 +19,18 @@ type LoggerConfig struct {
 	Compress       bool   `yaml:"compress"`
 }
 
+// OSSConfig OSS配置
+type OSSConfig struct {
+	Endpoint         string `yaml:"endpoint"`
+	AccessKeyID      string `yaml:"access-key-id"`
+	AccessKeySecret  string `yaml:"access-key-secret"`
+	BucketName       string `yaml:"bucket-name"`
+	URLExpireSeconds int    `yaml:"url-expire-seconds"`
+}
+
 // Config 配置
 type Config struct {
 	Gateway gatewayConfig `yaml:"gateway"`
 	Logger  LoggerConfig  `yaml:"logger"`
+	OSS     OSSConfig     `yaml:"oss"`
 }

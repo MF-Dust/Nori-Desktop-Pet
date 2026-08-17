@@ -32,10 +32,7 @@ pub fn run() {
                 if let Some(win) = app.get_webview_window("init") {
                     win.hide()?;
                 }
-                if let Some(win) = app.get_webview_window("pet") {
-                    win.hide()?;
-                }
-                log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 first-run, 隐藏 init/pet")?;
+                log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 first-run, 隐藏 init")?;
             } else {
                 if let Some(win) = app.get_webview_window("init") {
                     win.show()?;
@@ -43,11 +40,7 @@ pub fn run() {
                 if let Some(win) = app.get_webview_window("first-run") {
                     win.hide()?;
                 }
-                if let Some(pet) = app.get_webview_window("pet") {
-                    pet.show()?;
-                    pet.set_always_on_top(true)?;
-                }
-                log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 init/pet, 隐藏 first-run")?;
+                log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 init, 隐藏 first-run")?;
             }
 
             app.manage(db_handle);
@@ -62,9 +55,7 @@ pub fn run() {
             config::set_config,
             config::delete_config,
             config::has_config,
-            config::get_all_configs,
-            live2d::list_live2d_models,
-            live2d::resolve_live2d_model_path
+            config::get_all_configs
         ])
         .run(tauri::generate_context!())
         .expect("运行应用时出错")

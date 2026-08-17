@@ -5,7 +5,30 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="210919e2-a2ee-43fc-a5b7-62f989dc696c" name="更改" comment="">
-      <change beforePath="$PROJECT_DIR$/../app/desktop/src/views/InitView.vue" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/src/views/InitView.vue" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/src/live2d.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/src/resource/downloader.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/src/resource/live2d.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/src/resource/mod.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/src/resource/types.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/build.bat" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/internal/controller/api/resource.go" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/internal/service/oss.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src-tauri/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src-tauri/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/src-tauri/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src/components/TitleBar.vue" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/src/components/TitleBar.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src/main.ts" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/src/main.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src/router/index.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src/services/icon/index.ts" beforeDir="false" afterPath="$PROJECT_DIR$/../app/desktop/src/services/icon/index.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../app/desktop/src/views/InitView.vue" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/configs/config.yaml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/g.sql" beforeDir="false" afterPath="$PROJECT_DIR$/g.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/go.mod" beforeDir="false" afterPath="$PROJECT_DIR$/go.mod" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/go.sum" beforeDir="false" afterPath="$PROJECT_DIR$/go.sum" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/config/model.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/model.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/router/register.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/router/register.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -29,12 +52,12 @@
     &quot;assignee&quot;: &quot;erhiolab&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "git@github.com:erhiolab/Nori-Desktop-Pet.git",
-    "accountId": "72213a6c-7995-4c27-9041-6c3889f263a3"
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:erhiolab/Nori-Desktop-Pet.git&quot;,
+    &quot;accountId&quot;: &quot;72213a6c-7995-4c27-9041-6c3889f263a3&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 7
 }</component>

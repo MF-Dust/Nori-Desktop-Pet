@@ -8,4 +8,5 @@ import (
 // Register 注册路由
 func Register(r *Router) {
 	r.handleFunc(http.MethodGet, "/ping", api.Ping())
+	r.handleFunc(http.MethodGet, "/resource/download_url", api.GetResourceDownloadURL())
 }
