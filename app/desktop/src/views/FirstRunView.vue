@@ -3,6 +3,7 @@ import {computed, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import {getCurrentWindow} from "@tauri-apps/api/window"
 import Welcome from "../components/firstRun/Welcome.vue"
+import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
 import Ready from "../components/firstRun/Ready.vue"
 
@@ -40,7 +41,7 @@ const closeWindow = () => {
 	getCurrentWindow().close()
 }
 
-// 完成初始化:写标记,Rust 侧会切换窗口(first-run → init)
+// 完成初始化:写标记, Rust 侧会切换窗口 (first-run → init)
 const finish = async () => {
 	try {
 		await invoke("complete_first_run")
@@ -71,6 +72,7 @@ const finish = async () => {
 		<div class="stage">
 			<Transition :name="direction > 0 ? 'page-next' : 'page-prev'" mode="out-in">
 				<Welcome v-if="currentStep === 0"/>
+				<LanguageSelect v-else-if="currentStep === 1"/>
 				<ModelSelect v-else-if="currentStep === 2"/>
 				<Ready v-else/>
 			</Transition>
@@ -88,8 +90,8 @@ const finish = async () => {
 
 <style scoped lang="less">
 .first-run-window {
-	width: 100vw;
-	height: 100vh;
+	width: 100%;
+	height: 100%;
 	border-radius: var(--radius-lg);
 	display: flex;
 	flex-direction: column;

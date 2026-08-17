@@ -7,6 +7,11 @@ const host = process.env.TAURI_DEV_HOST
 // https://vite.dev/config/
 export default defineConfig(async () => ({
 	plugins: [vue()],
+	// Tauri 桌面端使用现代 WebView(WebView2/系统 webview), 放宽构建目标以支持
+	// import.meta.glob 等生成的 top-level await, 避免 es2020 转译失败
+	build: {
+		target: "esnext"
+	},
 	// Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
 	//
 	// 1. prevent Vite from obscuring rust errors

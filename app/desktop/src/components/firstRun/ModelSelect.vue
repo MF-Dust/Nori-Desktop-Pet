@@ -3,6 +3,7 @@ import {ref, watch, onMounted} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import nori from "../../assets/images/live2D/Nori.webp"
 import arNori from "../../assets/images/live2D/ARGNori.webp"
+import LanguageSelect from "./LanguageSelect.vue"
 
 // 可选模型列表
 interface Model {
@@ -35,7 +36,7 @@ onMounted(async () => {
 	}
 })
 
-// 监听选中的模型 id 变化，写入配置和日志
+// 监听选中的模型 id 变化, 写入配置和日志
 watch(selected, async (newVal) => {
 	try {
 		await invoke("set_config", {key: CONFIG_KEY, value: newVal})
@@ -48,24 +49,34 @@ watch(selected, async (newVal) => {
 
 <template>
 	<section key="model-select" class="page page-model">
-		<div class="model-head">
-			<h2 class="model-title glow-teal">选择模型</h2>
-			<p class="model-sub">可后期更改</p>
-		</div>
-		<div class="model-grid">
-			<button
-				v-for="model in models"
-				:key="model.id"
-				class="model-card"
-				:class="{active: selected === model.id}"
-				@click="selected = model.id"
-			>
-				<span class="model-thumb-wrap">
-					<img class="model-thumb" :src="model.thumb" :alt="model.name"/>
-				</span>
-				<span class="model-name">{{ model.name }}</span>
-				<span class="model-check">✓</span>
-			</button>
+		<div class="model-panels">
+			<!-- 左栏: 模型选择 -->
+			<div class="panel">
+				<div class="panel-head">
+					<h2 class="panel-title glow-teal">选择模型</h2>
+					<p class="panel-sub">可后期更改</p>
+				</div>
+				<div class="model-grid">
+					<button
+						v-for="model in models"
+						:key="model.id"
+						class="model-card"
+						:class="{active: selected === model.id}"
+						@click="selected = model.id"
+					>
+						<span class="model-thumb-wrap">
+							<img class="model-thumb" :src="model.thumb" :alt="model.name"/>
+						</span>
+						<span class="model-name">{{ model.name }}</span>
+						<span class="model-check">✓</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- 右栏: 语言选择 -->
+			<div class="panel panel-lang">
+				<LanguageSelect/>
+			</div>
 		</div>
 	</section>
 </template>
@@ -79,32 +90,58 @@ watch(selected, async (newVal) => {
 	align-items: center;
 	justify-content: center;
 	gap: 18px;
-	padding: 6px 56px 8px;
+	padding: 6px 48px 8px;
 	text-align: center;
 }
 
-.model-head {
+// 左右分栏
+.model-panels {
+	display: flex;
+	flex-direction: row;
+	align-items: flex-start;
+	justify-content: center;
+	gap: 40px;
+	width: 100%;
+}
+
+.panel {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 6px;
+	gap: 14px;
+	flex: 0 1 auto;
+
+	// 语言栏卡片, 顶部对齐
+	&.panel-lang {
+		flex: 1 1 0;
+		max-width: 280px;
+		align-items: stretch;
+		padding-top: 8px;
+	}
 }
 
-.model-title {
-	font-size: 24px;
+.panel-head {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+}
+
+.panel-title {
+	font-size: 20px;
 	font-weight: 700;
 	color: var(--text-primary);
 }
 
-.model-sub {
-	font-size: 12px;
+.panel-sub {
+	font-size: 11px;
 	color: var(--text-faint);
 }
 
 .model-grid {
 	display: flex;
 	flex-direction: row;
-	gap: 24px;
+	gap: 16px;
 }
 
 .model-card {
@@ -144,8 +181,8 @@ watch(selected, async (newVal) => {
 }
 
 .model-thumb {
-	width: 128px;
-	height: 212px;
+	width: 104px;
+	height: 172px;
 	object-fit: contain;
 }
 

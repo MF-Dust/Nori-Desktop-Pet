@@ -25,7 +25,7 @@ fn complete_first_run(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::mark_first_run_completed(&conn).map_err(|e| e.to_string())?;
     drop(conn);
-    log::write("info", "首次初始化完成").map_err(|e| e.to_string())?;
+    log::write(&log::LogSource::Backend, "info", "首次初始化完成").map_err(|e| e.to_string())?;
     if let Some(win) = app.get_webview_window("first-run") {
         win.hide().map_err(|e| e.to_string())?;
     }
@@ -51,7 +51,14 @@ fn write_log(
     if !matches!(level.as_str(), "info" | "warn" | "error") {
         return Err(format!("非法的日志级别: {level}"));
     }
-    log::write(&level, &message).map_err(|e| e.to_string())
+    log::write(&log::LogSource::Frontend, &level, &message).map_err(|e| e.to_string())
+}
+
+/// 获取系统语言: 前端 invoke("get_system_language")
+/// 返回如 "zh-CN", "en-US" 等
+#[tauri::command]
+fn get_system_language() -> String {
+    sys_locale::get_locale().unwrap_or_else(|| "zh-CN".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -67,6 +74,7 @@ pub fn run() {
             let first_run = db::is_first_run(&conn)?;
             drop(conn);
             log::write(
+                &log::LogSource::Backend,
                 "info",
                 if first_run { "首次启动应用" } else { "应用启动完成" },
             )?;
@@ -94,6 +102,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             complete_first_run,
             write_log,
+            get_system_language,
             config::get_config,
             config::set_config,
             config::delete_config,

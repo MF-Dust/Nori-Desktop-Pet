@@ -2,9 +2,12 @@
 import {invoke} from "@tauri-apps/api/core"
 import {openUrl} from "@tauri-apps/plugin-opener"
 import {writeText} from "@tauri-apps/plugin-clipboard-manager"
-import logo from "../../assets/images/logo.png"
+import useLanguage from "../../services/i18n"
 import {EkIcon} from "../ui"
 import type {IconMode, IconName} from "../../services/icon"
+import logo from "../../assets/images/logo.png"
+
+const I18N = useLanguage.useLang.components.firstRun.welcome
 
 // 推广链接
 interface Link {
@@ -16,31 +19,32 @@ interface Link {
 	icon: IconName
 }
 
+// 推广链接
 const links: Link[] = [
 	{
-		label: "Steam 页面",
-		sub: "加入愿望单支持老大!",
+		label: I18N.links.steam.label,
+		sub: I18N.links.steam.sub,
 		url: "https://store.steampowered.com/app/4996280/I_NORI/",
 		mode: "fill",
 		icon: "steam"
 	},
 	{
-		label: "Nori 先导页",
-		sub: "抢先了解 Nori 的世界",
+		label: I18N.links.noriOS.label,
+		sub: I18N.links.noriOS.sub,
 		url: "https://os.inori.ai/landing",
 		mode: "stroke",
 		icon: "noriOS"
 	},
 	{
-		label: "QQ 交流群",
-		sub: "点击复制群号: 1041616195",
+		label: I18N.links.qq.label,
+		sub: I18N.links.qq.sub,
 		qq: "1041616195",
 		mode: "fill",
 		icon: "qq"
 	},
 	{
-		label: "Bilibili",
-		sub: "关注官方账号",
+		label: I18N.links.bilibili.label,
+		sub: I18N.links.bilibili.sub,
 		url: "https://space.bilibili.com/326505494",
 		mode: "fill",
 		icon: "bilibili"
@@ -72,8 +76,8 @@ const handleLink = async (link: Link) => {
 	<section key="welcome" class="page page-welcome">
 		<div class="hero-copy">
 			<span class="badge">✨ Desktop Pet</span>
-			<h1 class="hero-title glow-teal">欢迎来到 Nori</h1>
-			<p class="hero-desc">一只会陪你上班、学习、摸鱼的桌面伙伴。先认识一下它吧。</p>
+			<h1 class="hero-title glow-teal">{{I18N.title}}</h1>
+			<p class="hero-desc">{{I18N.subtitle}}</p>
 			<div class="links">
 				<button v-for="link in links" :key="link.qq || link.url" class="link-card" @click="handleLink(link)">
 					<ek-icon :name="link.icon" :mode="link.mode" class="link-icon"/>
