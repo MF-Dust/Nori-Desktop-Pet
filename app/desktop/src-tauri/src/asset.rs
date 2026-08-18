@@ -1,167 +1,271 @@
-//! 资源文件通道: 自定义 `asset` URI scheme, 把运行期 `data` 目录 serve 给前端.
-//!
-//! `live2d-easy-control` 等只认 HTTP/fetch 的加载方式需要一条能访问本地模型 /
-//! SDK 文件的通道. 这里注册一个 Tauri 自定义协议, 暴露整个 `data` 目录:
-//!
-//! - Windows/Android:  `http://asset.localhost/<data 内相对路径>`
-//! - macOS / iOS / Linux: `asset://localhost/<data 内相对路径>`
-//!
-//! 协议只 serve `data_dir` 内的相对路径, 并对解析后的真实路径做越界校验,
-//! 杜绝 `../` 之类的路径穿越, 不暴露 data 目录以外的任何文件.
+//! 资源模块
 
 use std::borrow::Cow;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use tauri::http::{header, Response, StatusCode};
 use tauri::UriSchemeContext;
 use tauri::Wry;
-use tauri::http::{Response, StatusCode};
 
-/// 资源协议名. 保持两端 (Rust 注册 / 前端构造 URL) 一致.
-pub const SCHEME: &str = "asset";
+/// 自定义协议名称
+pub const SCHEME: &str = "nori-asset";
 
-/// 处理 `asset` scheme 请求: 解析相对路径 → 映射到 data 目录 → 校验 → 返回文件.
-///
-/// 桌面端 Tauri 运行时为 Wry, 因此这里固定绑定到 `Wry`.
+/// 处理 <SCHEME>:// 请求
 pub fn handle(
     ctx: &UriSchemeContext<'_, Wry>,
     request: tauri::http::Request<Vec<u8>>,
 ) -> Response<Cow<'static, [u8]>> {
-    // 取 URL 的 path 部分 (如 `/live2d/arg-nori/ARGNori.model3.json`), 去掉前导 `/`.
     let raw_path = request.uri().path();
-    let relative = raw_path.trim_start_matches('/');
+    // URL 路径解码
+    let decoded = match percent_decode(raw_path) {
+        Some(value) => value,
+        None => {
+            return bad_request("URL 路径编码非法");
+        }
+    };
+    let relative = decoded.trim_start_matches('/');
     if relative.is_empty() {
         return not_found("空路径");
     }
-
-    // 解 URL 编码 (%20 等), 拒绝绝对路径形态.
-    let decoded = decode_url(relative);
-    if decoded.starts_with('/') || decoded.contains(":\\") || decoded.split(['/', '\\']).any(|seg| seg == "..") {
-        return not_found("非法路径");
+    // 路径安全检查
+    if !is_safe_relative_path(relative) {
+        return forbidden("非法资源路径");
     }
-    if decoded.is_empty() {
-        return not_found("空路径");
-    }
-
-    // live2d-easy-control 约定模型存储为 `<模型名>/<模型名>.model3.json` 的嵌套结构,
-    // 而我们运行时 `data/live2d/<name>/` 是扁平存放的 (模型清单与 moc3/纹理同级).
-    // 故对 URL 做一次"首层模型名目录剥离": `live2d/<name>/<modelDir>/<rest>` → `live2d/<name>/<rest>`.
+    // 获取 data 目录
     let data_root = match crate::db::data_dir(ctx.app_handle()) {
-        Ok(dir) => dir,
-        Err(_) => return not_found("data 目录不可用"),
+        Ok(path) => path,
+        Err(error) => {
+            let _ = error;
+            return internal_error("data 目录不可用");
+        }
     };
+    // data 目录本身不存在时直接返回 404
+    if !data_root.exists() {
+        return not_found("data 目录不存在");
+    }
+    // canonicalize data root
     let data_root = match data_root.canonicalize() {
-        Ok(dir) => dir,
-        Err(_) => return not_found("data 目录不可用"),
+        Ok(path) => path,
+        Err(_) => {
+            return internal_error("data 目录不可用");
+        }
     };
-
-    // 依次尝试候选路径(原始 + 各"剥离冗余目录层"变体), 取第一个能命中真实文件的.
-    for candidate in path_candidates(&decoded) {
-        let path_buf = std::path::PathBuf::from(&candidate);
-        let Ok(file_path) = data_root.join(&path_buf).canonicalize() else {
-            continue;
+    // 构造候选路径
+    for candidate in path_candidates(relative) {
+        let candidate_path = data_root.join(&candidate);
+        let file_path = match candidate_path.canonicalize() {
+            Ok(path) => path,
+            Err(_) => continue,
         };
-        if !file_path.starts_with(&data_root) || !file_path.is_file() {
+        // 防止路径穿越 / symlink 逃逸
+        if !file_path.starts_with(&data_root) {
+            continue;
+        }
+        // 只允许文件
+        if !file_path.is_file() {
             continue;
         }
         return serve_file(&file_path, &candidate);
     }
-
-    not_found(&format!("文件不存在: {relative}"))
+    not_found(&format!("资源不存在: {}", relative))
 }
 
-/// 生成可能的文件路径候选: 先试原始路径, 再尝试去掉其中每一层"可能是 modelDir 冗余目录"的段.
-///
-/// live2d-easy-control 固定以 `resourcesPath(modelDir 外前缀) + modelDir + "/"` 拼出模型目录,
-/// 即 `live2d/<name>/<modelDir>/<真实相对路径>`. 我们的运行时目录是扁平的 (`live2d/<name>/<真实路径>`),
-/// 因此 `modelDir` 这一层即唯一冗余. 此处对每个段尝试删除其一, 构造多种候选交由调用方探测.
+/// 判断 URL 解码后的路径是否为安全的相对路径
+fn is_safe_relative_path(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    // Unix absolute path
+    if path.starts_with('/') {
+        return false;
+    }
+    // Windows / UNC absolute path
+    if path.starts_with('\\') {
+        return false;
+    }
+    // Windows:
+    //
+    // C:\foo
+    // C:/foo
+    //
+    if is_windows_absolute_path(path) {
+        return false;
+    }
+    // 分隔符统一
+    for segment in path.split(['/', '\\']) {
+        if segment.is_empty() {
+            continue;
+        }
+        if segment == ".." {
+            return false;
+        }
+        if segment == "." {
+            return false;
+        }
+    }
+    true
+}
+
+/// 判断 Windows 风格绝对路径
+fn is_windows_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    // C:\xxx
+    // C:/xxx
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return true;
+    }
+    false
+}
+
+/// 生成资源路径候选
 fn path_candidates(path: &str) -> Vec<String> {
-    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segs.len() < 3 {
+    let segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.len() < 3 {
         return vec![path.to_string()];
     }
-    let mut out = Vec::with_capacity(segs.len());
-    out.push(path.to_string());
-    // 从第 2 个段起(第 0 段是 live2d), 逐个移除一段生成候选.
-    for i in 1..segs.len() {
-        let mut clone = segs.clone();
-        clone.remove(i);
-        out.push(clone.join("/"));
-    }
-    out
-}
-
-/// 读取文件并以正确的 MIME 返回.
-fn serve_file(file_path: &std::path::Path, logical: &str) -> Response<Cow<'static, [u8]>> {
-    match std::fs::read(file_path) {
-        Ok(bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header(tauri::http::header::CONTENT_TYPE, mime_for(logical))
-            .header("Access-Control-Allow-Origin", "*")
-            .header("Cache-Control", "no-store")
-            .body(Cow::Owned(bytes))
-            .unwrap_or_else(|_| not_found("构造响应失败")),
-        Err(e) => {
-            let _ = crate::log::write(
-                &crate::log::LogSource::Backend,
-                "warn",
-                &format!("asset 协议读取失败: {logical} ({e})"),
-            );
-            not_found(&format!("读取失败: {logical}"))
-        }
-    }
-}
-
-/// 简易 URL 解码: 仅处理最常见的 `%XX` 字节序列, 未识别字符原样保留.
-fn decode_url(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                out.push((hi << 4) | lo);
-                i += 3;
-                continue;
+    let mut candidates = Vec::with_capacity(segments.len());
+    // 原始路径优先
+    candidates.push(segments.join("/"));
+    // 从第二层开始尝试删除一个目录
+    // live2d/arg-nori/arg-nori/model.json
+    // → live2d/arg-nori/model.json
+    for index in 1..segments.len() {
+        let mut candidate = Vec::with_capacity(segments.len() - 1);
+        for (i, segment) in segments.iter().enumerate() {
+            if i != index {
+                candidate.push(*segment);
             }
         }
-        out.push(bytes[i]);
-        i += 1;
+        candidates.push(candidate.join("/"));
     }
-    String::from_utf8_lossy(&out).into_owned()
+    candidates
 }
 
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
+/// 读取文件并返回 HTTP Response
+fn serve_file(file_path: &Path, logical_path: &str) -> Response<Cow<'static, [u8]>> {
+    let bytes = match fs::read(file_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return not_found(&format!("读取资源失败: {}", logical_path));
+        }
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime_for(logical_path))
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Cache-Control", "public, max-age=3600")
+        .body(Cow::Owned(bytes))
+        .unwrap_or_else(|_| internal_error("构造资源响应失败"))
+}
+
+/// Percent Decode
+/// 如果发现 `%` 后面不是合法 HEX, 则返回 None
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return None;
+            }
+            let high = hex_value(bytes[index + 1])?;
+            let low = hex_value(bytes[index + 2])?;
+            output.push((high << 4) | low);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).ok()
+}
+
+/// HEX 字符
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
 }
 
-/// 根据扩展名返回 MIME 类型.
+/// 根据文件扩展名返回 MIME
 fn mime_for(path: &str) -> &'static str {
-    let lower = path.to_lowercase();
-    if lower.ends_with(".png") {
-        "image/png"
-    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-        "image/jpeg"
-    } else if lower.ends_with(".webp") {
-        "image/webp"
-    } else if lower.ends_with(".moc3") {
-        "application/octet-stream"
-    } else if lower.ends_with(".json") {
-        "application/json"
-    } else if lower.ends_with(".zip") {
-        "application/zip"
-    } else {
-        "application/octet-stream"
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("json") => "application/json; charset=utf-8",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("moc3") => "application/octet-stream",
+        Some("motion3") => "application/json; charset=utf-8",
+        Some("physics3") => "application/json; charset=utf-8",
+        Some("exp3") => "application/json; charset=utf-8",
+        Some("zip") => "application/zip",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("mp4") => "video/mp4",
+        _ => "application/octet-stream",
     }
 }
 
-fn not_found(message: &str) -> Response<Cow<'static, [u8]>> {
+/// 构造 HTTP Response
+fn response(
+    status: StatusCode,
+    content_type: &'static str,
+    message: &str,
+) -> Response<Cow<'static, [u8]>> {
     Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header(tauri::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
         .header("Access-Control-Allow-Origin", "*")
         .body(Cow::Owned(message.as_bytes().to_vec()))
         .unwrap_or_else(|_| Response::new(Cow::Borrowed(&b""[..])))
+}
+
+/// 构造 HTTP Response
+fn bad_request(message: &str) -> Response<Cow<'static, [u8]>> {
+    response(
+        StatusCode::BAD_REQUEST,
+        "text/plain; charset=utf-8",
+        message,
+    )
+}
+
+/// 构造 HTTP Response
+fn forbidden(message: &str) -> Response<Cow<'static, [u8]>> {
+    response(StatusCode::FORBIDDEN, "text/plain; charset=utf-8", message)
+}
+
+/// 构造 HTTP Response
+fn not_found(message: &str) -> Response<Cow<'static, [u8]>> {
+    response(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", message)
+}
+
+/// 构造 HTTP Response
+fn internal_error(message: &str) -> Response<Cow<'static, [u8]>> {
+    response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "text/plain; charset=utf-8",
+        message,
+    )
 }

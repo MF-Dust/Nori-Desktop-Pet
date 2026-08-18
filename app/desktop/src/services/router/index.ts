@@ -1,7 +1,7 @@
 import {createRouter, createWebHashHistory} from "vue-router"
-import InitView from "../views/InitView.vue"
-import FirstRunView from "../views/FirstRunView.vue"
-import PetView from "../views/PetView.vue"
+import InitView from "../../views/InitView.vue"
+import FirstRunView from "../../views/FirstRunView.vue"
+import PetView from "../../views/PetView.vue"
 
 const router = createRouter({
 	history: createWebHashHistory(),

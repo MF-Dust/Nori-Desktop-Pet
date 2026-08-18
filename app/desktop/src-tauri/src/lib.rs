@@ -11,46 +11,88 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         // 资源文件通道: 通过 `asset://` / `http://asset.localhost` 把 `data` 目录
-        // serve 给前端, 供 live2d-easy-control 等 fetch 本地模型 / SDK 文件.
-        .register_uri_scheme_protocol(asset::SCHEME, |ctx, request| {
-            asset::handle(&ctx, request)
-        })
+        .register_uri_scheme_protocol(asset::SCHEME, |ctx, request| asset::handle(&ctx, request))
+        // 插件: 打开文件
         .plugin(tauri_plugin_opener::init())
+        // 插件: 粘贴板管理
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            // 初始化日志 (创建 data/log 目录) 与数据库 (建库建表)
-            log::init()?;
-            let db_handle = db::init(app.handle())?;
-            let conn = db_handle.0.lock().map_err(|e| e.to_string())?;
-            let first_run = db::is_first_run(&conn)?;
-            drop(conn);
+            let app_handle = app.handle();
+            // 初始化日志
+            log::init(app_handle)?;
             log::write(
+                app_handle,
                 &log::LogSource::Backend,
                 "info",
-                if first_run { "首次启动应用" } else { "应用启动完成" },
+                "日志系统初始化完成",
             )?;
-
-            // 控制窗口显隐: 首次启动 → first-run, 否则启动完成 → init
+            // 初始化数据库
+            let db_handle = db::init(app_handle)?;
+            // 初始化资源目录 (资源和下载临时目录)
+            resource::init(app_handle).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let _ = log::write(
+                app_handle,
+                &log::LogSource::Backend,
+                "info",
+                "资源目录初始化完成",
+            )?;
+            // 判断是否第一次运行
+            let first_run = {
+                let conn = db_handle.0.lock().map_err(|e| e.to_string())?;
+                config::is_first_run(&conn)?
+            };
+            log::write(
+                app_handle,
+                &log::LogSource::Backend,
+                "info",
+                if first_run {
+                    "首次启动应用"
+                } else {
+                    "应用启动完成"
+                },
+            )?;
+            // 窗口调度
             if first_run {
+                // 首次启动
                 if let Some(win) = app.get_webview_window("first-run") {
                     win.show()?;
-                	log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 first-run")?;
+                    log::write(
+                        app_handle,
+                        &log::LogSource::Backend,
+                        "info",
+                        "窗口调度: 显示 first-run",
+                    )?;
                 }
                 if let Some(win) = app.get_webview_window("init") {
                     win.hide()?;
-                	log::write(&log::LogSource::Backend, "info", "窗口调度: 隐藏 init")?;
+                    log::write(
+                        app_handle,
+                        &log::LogSource::Backend,
+                        "info",
+                        "窗口调度: 隐藏 init",
+                    )?;
                 }
             } else {
+                // 正常启动
                 if let Some(win) = app.get_webview_window("init") {
                     win.show()?;
-                	log::write(&log::LogSource::Backend, "info", "窗口调度: 显示 init")?;
+                    log::write(
+                        app_handle,
+                        &log::LogSource::Backend,
+                        "info",
+                        "窗口调度: 显示 init",
+                    )?;
                 }
                 if let Some(win) = app.get_webview_window("first-run") {
                     win.hide()?;
-                	log::write(&log::LogSource::Backend, "info", "窗口调度: 隐藏 first-run")?;
+                    log::write(
+                        app_handle,
+                        &log::LogSource::Backend,
+                        "info",
+                        "窗口调度: 隐藏 first-run",
+                    )?;
                 }
             }
-
             app.manage(db_handle);
             Ok(())
         })
