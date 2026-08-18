@@ -29,4 +29,7 @@ chrono = "0.4"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 # 压缩算法精简, 仅启用 deflate(纯 Rust miniz_oxide 后端), 避免编译依赖 cmake 的 zlib-ng/zstd 等 C 依赖
 zip = { version = "1", default-features = false, features = ["deflate"] }
+# 全局鼠标位置 (桌宠头部跟踪, 光标在窗口外时仍可跟踪)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
+import {listen, type UnlistenFn} from "@tauri-apps/api/event"
+import {getCurrentWebviewWindow} from "@tauri-apps/api/webviewWindow"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import {createResourceDownload, formatBytes} from "../services/resourceDownload"
 import {closeWindow, showWindow} from "../services/window"
@@ -59,9 +61,33 @@ const closeApp = () => {
 	invoke("exit_app")
 }
 
+let unlistenInitStart: UnlistenFn | null = null
+
 onBeforeUnmount(() => {
 	DOWNLOAD.stop()
+	if (unlistenInitStart) unlistenInitStart()
 })
+
+// 初始化流程: 检查/下载 Live2D 资源, 完成后打开主窗口并关闭 init 窗口
+const startInitFlow = async () => {
+	// 检查是否已安装, 未安装则触发下载+解压
+	const INSTALLED = await DOWNLOAD.check(RESOURCE_TYPE, modelName.value)
+	if (!INSTALLED) await DOWNLOAD.ensure(RESOURCE_TYPE, modelName.value)
+	// 初始化完成: 打开主窗口, 桌宠不自动召唤 (由主窗口 召唤/收起 按钮控制)
+	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+	await showWindow("main")
+	await sleep(600)
+	await closeWindow("init")
+}
+
+// 当前窗口是否可见 (非 Tauri 环境视为可见, 保持原行为)
+const isWindowVisible = async (): Promise<boolean> => {
+	try {
+		return await getCurrentWebviewWindow().isVisible()
+	} catch {
+		return true
+	}
+}
 
 onMounted(async () => {
 	// 读取 Live2D 模型名
@@ -72,14 +98,15 @@ onMounted(async () => {
 	} catch (error) {
 		console.error("读取模型配置失败:", error)
 	}
-	// 检查是否已安装, 未安装则触发下载+解压
-	const INSTALLED = await DOWNLOAD.check(RESOURCE_TYPE, modelName.value)
-	if (!INSTALLED) await DOWNLOAD.ensure(RESOURCE_TYPE, modelName.value)
-	// 初始化完成: 先打开桌宠窗口, 延迟后再关闭 init 窗口 (避免窗口销毁打断后续逻辑)
-	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
-	await showWindow("pet")
-	await sleep(600)
-	await closeWindow("init")
+	// 首次运行路径下 init 窗口隐藏启动: 若直接执行会静默下载资源并在引导页旁弹出主窗口,
+	// 因此等待 Rust 在向导完成后 emit 事件 (nori:init-start) 再执行
+	if (await isWindowVisible()) {
+		await startInitFlow()
+		return
+	}
+	unlistenInitStart = await listen("nori:init-start", () => {
+		void startInitFlow()
+	})
 })
 </script>
 

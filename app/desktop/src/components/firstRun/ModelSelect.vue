@@ -3,23 +3,12 @@ import {ref, watch, onMounted, computed} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
-import nori from "../../assets/images/live2D/Nori.webp"
-import arNori from "../../assets/images/live2D/ARGNori.webp"
+import {MODEL_LIST} from "../../services/live2d/models"
 
 const I18N = computed(() => useLanguages().components.firstRun.modelSelect)
 
 // 可选模型列表
-interface Model {
-	id: string
-	name: string
-	thumb: string
-}
-
-// 模型列表
-const models: Model[] = [
-	{id: "arg-nori", name: "ARG Nori", thumb: arNori},
-	{id: "nori", name: "Nori", thumb: nori}
-]
+const models = MODEL_LIST
 
 // 配置键名
 const CONFIG_KEY = "selected_model"

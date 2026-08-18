@@ -1,38 +1,49 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
+import useLanguages from "../services/i18n/useLanguages.ts"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
 import type {IconName} from "../services/icon"
-import {hideWindow, showWindow} from "../services/window"
+import {showWindow, hideWindow} from "../services/window"
+import AiSettings from "../components/settings/AiSettings.vue"
+import ModelManagement from "../components/settings/ModelManagement.vue"
+import ChatView from "../components/ChatView.vue"
+
+const I18N = computed(() => useLanguages().views.main)
 
 // ---- 侧边导航项 ----
-type NavKey = "home" | "talk" | "model" | "settings"
+type NavKey = "home" | "talk" | "model" | "settings" | "about"
 
-const NAV_ITEMS: {key: NavKey; label: string; icon: IconName}[] = [
-	{key: "home", label: "主页", icon: "noriOS"},
-	{key: "talk", label: "对话", icon: "send"},
-	{key: "model", label: "模型", icon: "arrow-up"},
-	{key: "settings", label: "设置", icon: "loading"},
-]
+const NAV_ITEMS = computed<{key: NavKey; label: string; icon: IconName}[]>(() => [
+	{key: "home", label: I18N.value.nav.home, icon: "noriOS"},
+	{key: "talk", label: I18N.value.nav.talk, icon: "send"},
+	{key: "model", label: I18N.value.nav.model, icon: "package"},
+	{key: "settings", label: I18N.value.nav.settings, icon: "settings"},
+	{key: "about", label: I18N.value.nav.about, icon: "info"},
+])
 
 const activeNav = ref<NavKey>("home")
-const currentNav = computed(() => NAV_ITEMS.find((item) => item.key === activeNav.value))
+const currentNav = computed(() => NAV_ITEMS.value.find((item) => item.key === activeNav.value))
 
 // 窗口操作
 const closeWindow = () => {
 	invoke("exit_app")
 }
 
-// 最小化: 收进桌宠, 关闭主窗口面板 (桌宠窗口仍可见)
-const minimizeToPet = async () => {
-	await hideWindow("main")
-}
+// 桌宠当前是否显示 (启动时不自动召唤, 由本按钮控制)
+const petVisible = ref(false)
 
-// 唤出桌宠: 记录日志 (桌宠窗口由 Rust 侧管理置顶)
-const summonPet = async () => {
-	await showWindow("pet")
-	await invoke("write_log", {level: "info", message: "主窗口唤出桌宠"})
+// 召唤 / 收起桌宠
+const togglePet = async () => {
+	if (petVisible.value) {
+		await hideWindow("pet")
+		await invoke("write_log", {level: "info", message: "主窗口收起 Nori"})
+	} else {
+		await showWindow("pet")
+		await invoke("write_log", {level: "info", message: "主窗口唤出 Nori"})
+	}
+	petVisible.value = !petVisible.value
 }
 
 onMounted(() => {
@@ -45,9 +56,6 @@ onMounted(() => {
 		<TitleBar>
 			<span class="nav-title">{{ currentNav?.label }}</span>
 			<div class="titlebar-right">
-				<button class="icon-btn" title="最小化到桌宠" @click="minimizeToPet">
-					<Icon name="arrow-down" :size="16"/>
-				</button>
 				<button class="close-btn" title="退出" @click="closeWindow">
 					<Icon name="close" class="close-icon"/>
 				</button>
@@ -69,15 +77,37 @@ onMounted(() => {
 			</aside>
 
 			<main class="content">
-				<h1 class="content-title glow-teal">{{ currentNav?.label }}</h1>
-				<p class="content-desc">此区域为 {{ currentNav?.label }} 页面占位, 功能将在此处实现。</p>
+				<!-- 对话 -->
+				<ChatView v-if="activeNav === 'talk'" @go-settings="activeNav = 'settings'"/>
+
+				<!-- 模型管理 -->
+				<ModelManagement v-else-if="activeNav === 'model'"/>
+
+				<!-- 设置: AI 接入 -->
+				<AiSettings v-else-if="activeNav === 'settings'"/>
+
+				<!-- 声明 -->
+				<section v-else-if="activeNav === 'about'" class="about-panel">
+					<h2 class="about-title glow-teal">{{ I18N.about.title }}</h2>
+					<p class="about-line">{{ I18N.about.license }}</p>
+					<p class="about-line">{{ I18N.about.authors }}</p>
+					<p class="about-desc">{{ I18N.about.desc }}</p>
+				</section>
+
+				<!-- 其余页面占位 -->
+				<template v-else>
+					<h1 class="content-title glow-teal">{{ currentNav?.label }}</h1>
+					<p class="content-desc">
+						{{ I18N.placeholderPrefix }} {{ currentNav?.label }} {{ I18N.placeholderSuffix }}
+					</p>
+				</template>
 			</main>
 		</div>
 
 		<div class="footer">
-			<button class="btn-primary" @click="summonPet">
+			<button class="btn-primary" @click="togglePet">
 				<Icon name="send" :size="16"/>
-				唤出桌宠
+				{{ petVisible ? I18N.hidePet : I18N.summonPet }}
 			</button>
 		</div>
 	</div>
@@ -105,24 +135,6 @@ onMounted(() => {
 	font-size: 1.3rem;
 	color: var(--text-muted);
 	letter-spacing: 0.04rem;
-}
-
-.icon-btn {
-	width: 2.6rem;
-	height: 2.6rem;
-	border: none;
-	border-radius: 50%;
-	background-color: transparent;
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-
-	&:hover {
-		background-color: rgba(255, 255, 255, 0.08);
-		color: var(--nori-teal-bright);
-	}
 }
 
 .body {
@@ -186,6 +198,36 @@ onMounted(() => {
 .content-desc {
 	font-size: 1.3rem;
 	color: var(--text-faint);
+}
+
+// 声明页
+.about-panel {
+	width: 100%;
+	max-width: 52rem;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1.2rem;
+	padding: 2rem;
+}
+
+.about-title {
+	font-size: 2.2rem;
+	font-weight: 700;
+	color: var(--text-primary);
+}
+
+.about-line {
+	font-size: 1.3rem;
+	color: var(--text-body);
+	line-height: 1.6;
+}
+
+.about-desc {
+	font-size: 1.2rem;
+	color: var(--text-faint);
+	line-height: 1.6;
+	text-align: center;
 }
 
 .footer {

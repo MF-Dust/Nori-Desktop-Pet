@@ -2419,6 +2419,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-opener",
+ "windows-sys 0.59.0",
  "zip",
 ]
 

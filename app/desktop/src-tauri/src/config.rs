@@ -4,6 +4,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::error::Error as StdError;
+use tauri::Emitter;
 
 pub type ConfigResult<T> = Result<T, Box<dyn StdError>>;
 
@@ -327,12 +328,19 @@ pub fn get_config(
 /// 前端写入配置
 #[tauri::command]
 pub fn set_config(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::db::Db>,
     key: String,
     value: ConfigValue,
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    set(&conn, &key, &value).map_err(|e| e.to_string())
+    set(&conn, &key, &value).map_err(|e| e.to_string())?;
+    // 全局广播配置变更, 桌宠窗口据此热更新模型/显示参数
+    let _ = app.emit(
+        "nori:config-changed",
+        serde_json::json!({"key": key, "value": value.to_storage()}),
+    );
+    Ok(())
 }
 
 /// 前端删除配置

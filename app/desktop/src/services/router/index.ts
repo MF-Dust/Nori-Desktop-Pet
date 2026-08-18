@@ -30,6 +30,11 @@ const router = createRouter({
 			path: "/pet",
 			name: "pet",
 			component: PetView
+		},
+		{
+			path: "/main",
+			name: "main",
+			component: MainView
 		}
 	]
 })

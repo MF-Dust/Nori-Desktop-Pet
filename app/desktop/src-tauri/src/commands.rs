@@ -117,10 +117,8 @@ pub fn complete_first_run(
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     }
-    if let Some(window) = app.get_webview_window("pet") {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_always_on_top(true).map_err(|e| e.to_string())?;
-    }
+    // 通知 init 窗口 (首次运行路径下为隐藏启动) 开始初始化流程
+    let _ = app.emit("nori:init-start", ());
     Ok(())
 }
 

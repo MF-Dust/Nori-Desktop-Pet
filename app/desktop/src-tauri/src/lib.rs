@@ -1,9 +1,11 @@
 mod asset;
+mod chat;
 mod commands;
 mod config;
 mod db;
 mod log;
 mod resource;
+mod system;
 
 use tauri::Manager;
 
@@ -108,8 +110,11 @@ pub fn run() {
             config::has_config,
             config::get_all_configs,
             config::get_init_config,
-            commands::check_resource,
-            commands::ensure_resource
+commands::check_resource,
+			commands::ensure_resource,
+			system::get_cursor_pos,
+            chat::get_chat_history,
+            chat::chat_completion
         ])
         .run(tauri::generate_context!())
         .expect("运行应用时出错")

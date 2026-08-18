@@ -1,3 +1,4 @@
+import {emit} from "@tauri-apps/api/event"
 import {getCurrentWebviewWindow, WebviewWindow} from "@tauri-apps/api/webviewWindow"
 
 /**
@@ -66,6 +67,10 @@ export async function showWindow(label: WindowLabel) {
 	if (WINDOW) {
 		await WINDOW.show()
 		await WINDOW.setFocus()
+		// 桌宠窗口显示后通知其前端加载模型
+		if (label === NAMESPACE.pet) {
+			await emit("nori:pet-start")
+		}
 	}
 }
 
