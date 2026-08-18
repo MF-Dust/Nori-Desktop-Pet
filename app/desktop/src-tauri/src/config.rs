@@ -257,9 +257,11 @@ pub fn is_first_run(conn: &Connection) -> ConfigResult<bool> {
     match get(conn, KEY_FIRST_RUN_COMPLETED)? {
         None => Ok(true),
         Some(ConfigValue::Boolean(value)) => Ok(!value),
-        Some(ConfigValue::String(value)) => Ok(value == "0" || value.eq_ignore_ascii_case("false")),
         Some(ConfigValue::Integer(value)) => Ok(value == 0),
-        _ => Ok(false),
+        Some(ConfigValue::String(value)) => {
+            Ok(value == "0" || value.eq_ignore_ascii_case("false"))
+        }
+        Some(ConfigValue::Json(_)) => Ok(false),
     }
 }
 

@@ -4,6 +4,7 @@ mod config;
 mod db;
 mod log;
 mod resource;
+mod tray;
 
 use tauri::Manager;
 
@@ -18,6 +19,8 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let app_handle = app.handle();
+            // 初始化托盘
+            tray::init(app_handle).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             // 初始化日志
             log::init(app_handle)?;
             log::write(
