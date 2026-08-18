@@ -10,8 +10,6 @@ use std::path::PathBuf;
 pub enum ResourceType {
     /// Live2D 模型
     Live2D,
-    /// Live2D SDK
-    Live2DSdk,
 }
 
 impl ResourceType {
@@ -19,7 +17,6 @@ impl ResourceType {
     pub const fn dir_name(self) -> &'static str {
         match self {
             Self::Live2D => "live2d",
-            Self::Live2DSdk => "live2d-sdk",
         }
     }
 
@@ -31,7 +28,6 @@ impl ResourceType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Live2D => "live2d",
-            Self::Live2DSdk => "live2d-sdk",
         }
     }
 
@@ -39,7 +35,6 @@ impl ResourceType {
     pub fn from_str(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "live2d" => Some(Self::Live2D),
-            "live2dsdk" | "live2d-sdk" | "live2d_sdk" => Some(Self::Live2DSdk),
             _ => None,
         }
     }
@@ -47,11 +42,6 @@ impl ResourceType {
     /// 判断当前资源类型是否为 Live2D 模型
     pub const fn is_live2d(self) -> bool {
         matches!(self, Self::Live2D)
-    }
-
-    /// 判断当前资源类型是否为 SDK
-    pub const fn is_sdk(self) -> bool {
-        matches!(self, Self::Live2DSdk)
     }
 }
 

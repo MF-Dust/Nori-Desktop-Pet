@@ -68,7 +68,7 @@ const finish = async () => {
 		const MODEL = initConfig.value?.selectedModel ?? "unknown"
 		await invoke("write_log", {level: "info", message: `初始化完成 (v${VERSION}, model=${MODEL})`})
 	} catch (error) {
-		console.error("finish first run failed:", error)
+		console.error("首次运行失败:", error)
 	}
 }
 </script>

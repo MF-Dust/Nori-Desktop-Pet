@@ -1,6 +1,7 @@
 import {createRouter, createWebHashHistory} from "vue-router"
 import InitView from "../../views/InitView.vue"
 import FirstRunView from "../../views/FirstRunView.vue"
+import MainView from "../../views/Main.vue"
 import PetView from "../../views/PetView.vue"
 
 const router = createRouter({
@@ -19,6 +20,11 @@ const router = createRouter({
 			path: "/init",
 			name: "init",
 			component: InitView
+		},
+		{
+			path: "/main",
+			name: "main",
+			component: MainView
 		},
 		{
 			path: "/pet",

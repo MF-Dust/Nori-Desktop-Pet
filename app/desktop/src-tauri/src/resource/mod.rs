@@ -66,14 +66,7 @@ pub fn is_installed(
     validate_resource_name(name)?;
     let data_dir = db::data_dir(app).map_err(|e| e.to_string())?;
     match resource_type {
-        ResourceType::Live2D => Ok(live2d::exists(&data_dir, name)),
-        ResourceType::Live2DSdk => {
-            let path = data_dir
-                .join(RESOURCES_DIR)
-                .join(resource_type.dir_name())
-                .join(name);
-            Ok(path.is_dir())
-        }
+        ResourceType::Live2D => Ok(live2d::exists(&data_dir, name))
     }
 }
 
@@ -82,7 +75,6 @@ pub fn list(app: &AppHandle, resource_type: ResourceType) -> Result<Vec<Resource
     let data_dir = db::data_dir(app).map_err(|e| e.to_string())?;
     match resource_type {
         ResourceType::Live2D => Ok(live2d::list(&data_dir)),
-        ResourceType::Live2DSdk => list_directory_resources(&data_dir, resource_type),
     }
 }
 
@@ -96,22 +88,6 @@ pub fn get(
     let data_dir = db::data_dir(app).map_err(|e| e.to_string())?;
     match resource_type {
         ResourceType::Live2D => live2d::get(&data_dir, name),
-        ResourceType::Live2DSdk => {
-            let path = data_dir
-                .join(RESOURCES_DIR)
-                .join(resource_type.dir_name())
-                .join(name);
-            if !path.is_dir() {
-                return Err(format!("资源不存在: {name}"));
-            }
-            let size = calculate_dir_size(&path).unwrap_or(0);
-            Ok(ResourceInfo {
-                name: name.to_string(),
-                resource_type,
-                path,
-                size,
-            })
-        }
     }
 }
 
@@ -121,16 +97,6 @@ pub fn delete(app: &AppHandle, resource_type: ResourceType, name: &str) -> Resul
     let data_dir = db::data_dir(app).map_err(|e| e.to_string())?;
     match resource_type {
         ResourceType::Live2D => live2d::delete(&data_dir, name),
-        ResourceType::Live2DSdk => {
-            let path = data_dir
-                .join(RESOURCES_DIR)
-                .join(resource_type.dir_name())
-                .join(name);
-            if !path.exists() {
-                return Err(format!("资源不存在: {name}"));
-            }
-            std::fs::remove_dir_all(&path).map_err(|e| format!("删除资源失败: {e}"))
-        }
     }
 }
 
