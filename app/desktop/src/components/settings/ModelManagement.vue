@@ -2,7 +2,7 @@
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {createResourceDownload, formatBytes} from "../../services/resourceDownload"
+import {createResourceDownload} from "../../services/resourceDownload"
 import {MODEL_LIST, type ModelInfo} from "../../services/live2d/models"
 import {createLive2D} from "../../services/live2d"
 import {
@@ -13,7 +13,6 @@ import {
 	resolveModelFileBase,
 } from "../../services/live2d/config"
 import {applyCanvasLayout} from "../../services/live2d/stage"
-import ProgressBar from "../ProgressBar.vue"
 import Icon from "../Icon.vue"
 import AdjustControls from "./AdjustControls.vue"
 
@@ -39,37 +38,6 @@ const activeModelId = ref<string | null>(null)
 
 // 是否有下载进行中
 const downloading = computed(() => activeModelId.value !== null)
-
-// 下载阶段文案 (仅下载中的模型卡显示)
-const downloadStatusText = computed(() => {
-	switch (DOWNLOAD.state.step) {
-		case "downloading":
-			return I18N.value.downloading
-		case "download-done":
-			return I18N.value.downloadDone
-		case "extracting":
-			return I18N.value.extracting
-		case "done":
-			return I18N.value.ready
-		case "installed":
-			return I18N.value.installed
-		case "error":
-			return DOWNLOAD.state.message || I18N.value.downloadFailed
-		default:
-			return ""
-	}
-})
-
-// 进度明细文案 (仅下载中显示字节)
-const progressText = computed(() =>
-	DOWNLOAD.state.step === "downloading"
-		? DOWNLOAD.state.total
-			? `${formatBytes(DOWNLOAD.state.downloaded ?? 0)} / ${formatBytes(DOWNLOAD.state.total)}`
-			: DOWNLOAD.state.downloaded != null
-				? formatBytes(DOWNLOAD.state.downloaded)
-				: ""
-		: ""
-)
 
 // 展开蒙版菜单的模型 id
 const cardMenuFor = ref<string | null>(null)
@@ -124,7 +92,7 @@ const downloadModel = async (model: ModelInfo) => {
 	await refreshStatus()
 }
 
-// 点击模型卡: 已安装时展开/收起蒙版菜单 (点击不会切换模型)
+// 点击模型卡: 展开/收起蒙版菜单 (未下载模型同样可打开, 蒙版仅显示下载按钮)
 const toggleCardMenu = (model: ModelInfo) => {
 	if (adjustFor.value) return
 	cardMenuFor.value = cardMenuFor.value === model.id ? null : model.id
@@ -256,7 +224,7 @@ const closeAdjust = () => {
 				:key="model.id"
 				class="mm-card"
 				:class="{active: selectedModel === model.id}"
-				@click="installedMap[model.id] && toggleCardMenu(model)"
+				@click="toggleCardMenu(model)"
 			>
 				<div class="mm-thumb-wrap">
 					<img class="mm-thumb" :src="model.thumb" :alt="model.name"/>
@@ -271,17 +239,12 @@ const closeAdjust = () => {
 					<span v-if="selectedModel === model.id" class="mm-tag current">{{ I18N.current }}</span>
 				</div>
 
-				<!-- 下载进度 -->
-				<div v-if="activeModelId === model.id" class="mm-progress" @click.stop>
-					<ProgressBar :percent="DOWNLOAD.state.percent" :text="progressText"/>
-					<p class="mm-status">{{ downloadStatusText }}</p>
-				</div>
-
 				<!-- 点击卡片: 蒙版菜单 (再点一次卡片收起) -->
 				<Transition name="mask">
 					<div v-if="cardMenuFor === model.id" class="mm-card-mask" @click.stop="cardMenuFor = null">
 						<div class="mm-card-menu" @click.stop>
 							<button
+								v-if="installedMap[model.id]"
 								class="mm-menu-btn"
 								:class="{enabled: selectedModel === model.id}"
 								:disabled="!installedMap[model.id] || selectedModel === model.id"
@@ -290,6 +253,7 @@ const closeAdjust = () => {
 								{{ selectedModel === model.id ? I18N.enabled : I18N.enable }}
 							</button>
 							<button
+								v-if="installedMap[model.id]"
 								class="mm-menu-btn"
 								:disabled="!installedMap[model.id]"
 								@click="openAdjust(model)"
@@ -303,7 +267,7 @@ const closeAdjust = () => {
 								@click="downloadModel(model)"
 							>
 								<Icon name="arrow-down" class="mm-menu-btn-icon"/>
-								{{ I18N.download }}
+								{{ activeModelId === model.id ? I18N.downloading : I18N.download }}
 							</button>
 						</div>
 					</div>
@@ -400,8 +364,8 @@ const closeAdjust = () => {
 
 // 统一展示尺寸: 固定外框 + cover 铺满, 避免不同图片尺寸导致大小不一
 .mm-thumb-wrap {
-	width: 12.8rem;
-	height: 21.2rem;
+	width: 15.2rem;
+	height: 25.2rem;
 	overflow: hidden;
 	border-radius: var(--radius-sm);
 }
@@ -442,20 +406,6 @@ const closeAdjust = () => {
 		color: var(--nori-teal-bright);
 		background: rgba(125, 227, 255, 0.12);
 	}
-}
-
-.mm-progress {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 0.6rem;
-	width: 100%;
-}
-
-.mm-status {
-	font-size: 1.05rem;
-	color: var(--text-faint);
-	text-align: center;
 }
 
 // ---- 卡片蒙版菜单 ----

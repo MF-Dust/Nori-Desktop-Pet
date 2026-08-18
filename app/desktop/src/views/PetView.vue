@@ -42,7 +42,7 @@ const applyCanvas = () => {
 	CANVAS.style.opacity = String(opacity.value)
 }
 
-// ---- 窗口尺寸动态适配: 跟随模型尺寸变化, 始终保持窗口中心不动 ----
+// ---- 窗口尺寸动态适配: 固定基础尺寸 × 缩放系数, 始终保持窗口中心不动 ----
 const applyWindowSize = async (): Promise<void> => {
 	const WEBVIEW = getCurrentWebviewWindow()
 	try {
@@ -58,81 +58,6 @@ const applyWindowSize = async (): Promise<void> => {
 	} catch (error) {
 		console.error("窗口尺寸适配失败:", error)
 	}
-}
-
-// ---- 测量模型可视范围: 读取画布像素, 找到不透明区域的边界 ----
-// (库已补丁开启 preserveDrawingBuffer, 可以随时读像素)
-const measureVisualBounds = async (): Promise<void> => {
-	const CANVAS = L2D.canvas()
-	if (!CANVAS) return
-	const GL = CANVAS.getContext("webgl2")
-	if (!GL) return
-	const W = CANVAS.width
-	const H = CANVAS.height
-	if (W === 0 || H === 0) return
-	let minX = Infinity
-	let minY = Infinity
-	let maxX = -Infinity
-	let maxY = -Infinity
-
-	// 纹理加载需要时间: 轮询等待画布渲染出内容, 最多等 6 秒
-	const DEADLINE = Date.now() + 6000
-	while (Date.now() < DEADLINE) {
-		const PIXELS = new Uint8Array(W * H * 4)
-		GL.readPixels(0, 0, W, H, GL.RGBA, GL.UNSIGNED_BYTE, PIXELS)
-		let found = false
-		for (let index = 0; index < W * H; index++) {
-			if (PIXELS[index * 4 + 3] <= 8) continue
-			found = true
-			const X = index % W
-			const Y = (index / W) | 0
-			if (X < minX) minX = X
-			if (X > maxX) maxX = X
-			if (Y < minY) minY = Y
-			if (Y > maxY) maxY = Y
-		}
-		if (found) {
-			// 先按当前范围立即调整窗口, 再继续采样细化
-			applyVisualBounds(W, H, minX, minY, maxX, maxY, CANVAS)
-			break
-		}
-		await new Promise((resolve) => setTimeout(resolve, 200))
-	}
-	if (minX === Infinity) return
-
-	// 内容出现后长时采样 (约 3 秒), 覆盖待机动画各姿态的最大范围
-	for (let sample = 0; sample < 12; sample++) {
-		await new Promise((resolve) => setTimeout(resolve, 250))
-		const PIXELS = new Uint8Array(W * H * 4)
-		GL.readPixels(0, 0, W, H, GL.RGBA, GL.UNSIGNED_BYTE, PIXELS)
-		for (let index = 0; index < W * H; index++) {
-			if (PIXELS[index * 4 + 3] <= 8) continue
-			const X = index % W
-			const Y = (index / W) | 0
-			if (X < minX) minX = X
-			if (X > maxX) maxX = X
-			if (Y < minY) minY = Y
-			if (Y > maxY) maxY = Y
-		}
-	}
-	applyVisualBounds(W, H, minX, minY, maxX, maxY, CANVAS)
-}
-
-// 按测量范围设置基础尺寸 (留 12% 边距, 防止动画/转头时被窗口边缘裁切)
-const applyVisualBounds = (
-	bitmapW: number,
-	bitmapH: number,
-	minX: number,
-	minY: number,
-	maxX: number,
-	maxY: number,
-	canvas: HTMLCanvasElement
-) => {
-	const WIDTH = ((maxX - minX + 1) / bitmapW) * canvas.clientWidth
-	const HEIGHT = ((maxY - minY + 1) / bitmapH) * canvas.clientHeight
-	baseWidth.value = Math.max(40, WIDTH + Math.max(16, WIDTH * 0.12))
-	baseHeight.value = Math.max(40, HEIGHT + Math.max(16, HEIGHT * 0.12))
-	void applyWindowSize()
 }
 
 // ---- 配置读取 ----
@@ -169,66 +94,6 @@ const applyExpressions = async (list: string[]): Promise<void> => {
 	}
 }
 
-// ---- 拖动: 指针捕获式实时拖动 ----
-// setPointerCapture 后光标移出窗口仍持续收到指针事件, 拖动不会中断,
-// 位移实时应用 (rAF 节流), 无系统级拖动的延迟与丢事件问题
-let dragging = false
-let startClientX = 0
-let startClientY = 0
-let startWinX = 0
-let startWinY = 0
-let winScale = 1
-let pendingX = 0
-let pendingY = 0
-let posRafId: number | null = null
-
-const onStagePointerDown = async (e: PointerEvent) => {
-	if (e.button !== 0 || dragging) return
-	e.preventDefault()
-	startClientX = e.clientX
-	startClientY = e.clientY
-	// 先取窗口位置再进入拖动状态, 避免位移基准未就绪时窗口乱跳
-	let POS: {x: number; y: number} | null = null
-	try {
-		const WEBVIEW = getCurrentWebviewWindow()
-		POS = await WEBVIEW.outerPosition()
-		winScale = await WEBVIEW.scaleFactor()
-	} catch {
-		/* 非 Tauri 环境忽略 */
-	}
-	if (!POS) return
-	startWinX = POS.x
-	startWinY = POS.y
-	dragging = true
-	try {
-		;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-	} catch {
-		/* 指针捕获失败时降级为窗口内拖动 */
-	}
-}
-
-const onStagePointerMove = (e: PointerEvent) => {
-	if (!dragging) return
-	pendingX = Math.round(startWinX + (e.clientX - startClientX) * winScale)
-	pendingY = Math.round(startWinY + (e.clientY - startClientY) * winScale)
-	if (posRafId == null) {
-		posRafId = requestAnimationFrame(() => {
-			posRafId = null
-			void getCurrentWebviewWindow().setPosition(new PhysicalPosition(pendingX, pendingY))
-		})
-	}
-}
-
-const onStagePointerUp = (e: PointerEvent) => {
-	if (!dragging) return
-	dragging = false
-	try {
-		;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
-	} catch {
-		/* 忽略 */
-	}
-}
-
 // ---- 全局头部跟踪: 光标在窗口外也持续跟踪 ----
 let tracking = false
 let trackRafId: number | null = null
@@ -262,7 +127,6 @@ let mountedOnce = false
 
 const afterMount = async () => {
 	applyCanvas()
-	await measureVisualBounds()
 	await applyWindowSize()
 	await applyExpressions(expressionList.value)
 }
@@ -385,9 +249,28 @@ onMounted(async () => {
 	unlistenPetStart = await listen("nori:pet-start", () => {
 		void mountModel()
 	})
+
+	// 兜底: pet-start 事件可能在监听注册前就发出 (用户点唤出时桌宠 webview 尚未就绪),
+	// 轮询窗口可见性补挂载, 最多 30 次 × 500ms
+	void ensurePetMounted()
 })
 
+// 兜底补挂载: 窗口已显示但模型未加载时, 触发 mountModel (成功后自停)
+const ensurePetMounted = async (attempt = 0): Promise<void> => {
+	if (disposed || mountedOnce || attempt >= 30) return
+	await new Promise((resolve) => setTimeout(resolve, 500))
+	if (disposed || mountedOnce) return
+	if (await isWindowVisible()) {
+		await mountModel()
+		return
+	}
+	void ensurePetMounted(attempt + 1)
+}
+
+let disposed = false
+
 onBeforeUnmount(() => {
+	disposed = true
 	tracking = false
 	if (trackRafId != null) cancelAnimationFrame(trackRafId)
 	void L2D.destroy()
@@ -397,13 +280,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div
-		class="pet-stage"
-		@pointerdown="onStagePointerDown"
-		@pointermove="onStagePointerMove"
-		@pointerup="onStagePointerUp"
-		@pointercancel="onStagePointerUp"
-	/>
+	<div class="pet-stage"/>
 </template>
 
 <style scoped lang="less">
@@ -413,7 +290,6 @@ onBeforeUnmount(() => {
 	height: 100%;
 	overflow: visible;
 	background: transparent;
-	cursor: grab;
 	user-select: none;
 }
 </style>
