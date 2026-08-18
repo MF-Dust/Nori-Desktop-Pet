@@ -278,11 +278,13 @@ pub fn check_resource(
 ///   name: "arg-nori"
 /// })
 #[tauri::command]
-pub fn ensure_resource(
+pub async fn ensure_resource(
     app: tauri::AppHandle,
     resource_type: String,
     name: String,
 ) -> Result<(), String> {
+    // 下载 + 解压为阻塞操作, 放到后台线程执行, 避免卡死主线程导致窗口未响应
+    tauri::async_runtime::spawn_blocking(move || {
     let resource_type = parse_resource_type(&resource_type)?;
     let name = validate_resource_name(&name)?;
     let type_name = resource_type.as_str().to_string();
@@ -433,4 +435,7 @@ pub fn ensure_resource(
         ),
     );
     Ok(())
+    })
+    .await
+    .map_err(|error| format!("后台任务失败: {error}"))?
 }

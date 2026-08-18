@@ -1,4 +1,12 @@
-import {load, playExpression, setAngle, stop, stopExpression} from "live2d-easy-control"
+import {
+	getAllMotionsInfo,
+	load,
+	playExpression,
+	playMotion,
+	setAngle,
+	stop,
+	stopExpression,
+} from "live2d-easy-control"
 import {assetUrl} from "./config"
 
 /**
@@ -8,6 +16,26 @@ export interface Live2DModelSpec {
 	directory: string
 	fileBase: string
 }
+
+/**
+ * 动作组: 组名 + 该组下的动作名数组
+ * (动作名为 motion3.json 文件名, 不含扩展名, 与模型目录一致)
+ */
+export interface MotionGroup {
+	group: string
+	names: string[]
+}
+
+/**
+ * 动作播放优先级 (与 Cubism 一致)
+ * 0 = 无 / 1 = 待机 / 2 = 普通 / 3 = 强制 (可打断当前动作)
+ */
+export const MOTION_PRIORITY = {
+	none: 0,
+	idle: 1,
+	normal: 2,
+	force: 3,
+} as const
 
 /**
  * Live2D 挂载选项
@@ -64,6 +92,36 @@ export const createLive2D = () => {
 		canvasEl = null
 	}
 
+	// 获取模型全部动作组: [{group, names[]}] (模型未加载时返回 null)
+	const getMotions = async (): Promise<MotionGroup[] | null> => {
+		try {
+			return await getAllMotionsInfo()
+		} catch {
+			return null
+		}
+	}
+
+	// 按组 + 序号播放动作 (默认强制优先级, 可打断待机/普通动作)
+	const playMotionByIndex = async (group: string, no: number, priority = MOTION_PRIORITY.force): Promise<boolean> => {
+		try {
+			await playMotion(group, no, priority)
+			return true
+		} catch {
+			return false
+		}
+	}
+
+	// 按动作名播放: 在所有组中查找该名字并播放 (找不到返回 false)
+	const playMotionByName = async (name: string, priority = MOTION_PRIORITY.force): Promise<boolean> => {
+		const GROUPS = await getMotions()
+		if (!GROUPS) return false
+		for (const GROUP of GROUPS) {
+			const INDEX = GROUP.names.findIndex((n) => n === name)
+			if (INDEX >= 0) return playMotionByIndex(GROUP.group, INDEX, priority)
+		}
+		return false
+	}
+
 	return {
 		mount,
 		lookAt: (e: MouseEvent, duration?: number) => setAngle(e, duration),
@@ -71,6 +129,9 @@ export const createLive2D = () => {
 		stopExpression: () => stopExpression(),
 		destroy,
 		canvas,
+		getMotions,
+		playMotionByIndex,
+		playMotionByName,
 	}
 }
 

@@ -4,7 +4,7 @@ import {invoke} from "@tauri-apps/api/core"
 import {PhysicalPosition, PhysicalSize} from "@tauri-apps/api/dpi"
 import {listen, type UnlistenFn} from "@tauri-apps/api/event"
 import {getCurrentWebviewWindow} from "@tauri-apps/api/webviewWindow"
-import {createLive2D} from "../services/live2d"
+import {createLive2D, type MotionGroup} from "../services/live2d"
 import {
 	L2D_CONFIG_KEYS,
 	parseExpressionList,
@@ -27,6 +27,9 @@ const baseHeight = ref(520)
 const scale = ref(1)
 const opacity = ref(1)
 const expressionList = ref<string[]>([])
+
+// 模型动作组数组 (挂载后读取, 供 AI / 主窗口调用)
+const motionGroups = ref<MotionGroup[]>([])
 
 // 画布铺满窗口: 窗口尺寸 = 模型可视尺寸 × scale, 模型始终完整显示不被裁剪
 const applyCanvas = () => {
@@ -123,11 +126,25 @@ const trackCursor = async () => {
 // ---- 模型加载 ----
 let unlistenPetStart: UnlistenFn | null = null
 let unlistenConfigChanged: UnlistenFn | null = null
+let unlistenPlayMotion: UnlistenFn | null = null
 let mountedOnce = false
 
 const afterMount = async () => {
 	applyCanvas()
 	await applyWindowSize()
+	// 读取模型动作组数组 (供 AI 调用)
+	try {
+		motionGroups.value = (await L2D.getMotions()) ?? []
+	} catch {
+		motionGroups.value = []
+	}
+	// 写入配置, 聊天时 Rust 据此把可用动作列表注入系统提示词
+	if (motionGroups.value.length > 0) {
+		invoke("set_config", {
+			key: `l2d_motions_${modelName.value}`,
+			value: JSON.stringify(motionGroups.value),
+		}).catch(() => {})
+	}
 	await applyExpressions(expressionList.value)
 }
 
@@ -142,6 +159,13 @@ const mountModel = async () => {
 		})
 	} catch (error) {
 		console.error("加载 Live2D 模型失败:", error)
+		void invoke("write_log", {
+			level: "error",
+			message: `桌宠模型加载失败: ${String(error)}`,
+		}).catch(() => {})
+		// 失败时允许下次 pet-start / 可见性轮询重试, 否则窗口会永远空着
+		mountedOnce = false
+		return
 	}
 	await afterMount()
 }
@@ -241,13 +265,24 @@ onMounted(async () => {
 	trackRafId = requestAnimationFrame(() => void trackCursor())
 
 	// 桌宠窗口通常隐藏启动: 等被显示 (nori:pet-start) 时再加载模型,
-	// 避免资源未就绪时加载失败
+	// 避免资源未就绪时加载失败; 挂载失败时监听器仍在, 下次唤出会重试
 	if (await isWindowVisible()) {
 		await mountModel()
-		return
 	}
 	unlistenPetStart = await listen("nori:pet-start", () => {
 		void mountModel()
+	})
+
+	// AI / 主窗口触发动作: payload {group, no} 或 {name}
+	unlistenPlayMotion = await listen("nori:play-motion", (event) => {
+		const PAYLOAD = event.payload as {group?: string; no?: number; name?: string}
+		if (typeof PAYLOAD.group === "string" && typeof PAYLOAD.no === "number") {
+			void L2D.playMotionByIndex(PAYLOAD.group, PAYLOAD.no)
+			return
+		}
+		if (typeof PAYLOAD.name === "string") {
+			void L2D.playMotionByName(PAYLOAD.name)
+		}
 	})
 
 	// 兜底: pet-start 事件可能在监听注册前就发出 (用户点唤出时桌宠 webview 尚未就绪),
@@ -276,6 +311,7 @@ onBeforeUnmount(() => {
 	void L2D.destroy()
 	if (unlistenPetStart) unlistenPetStart()
 	if (unlistenConfigChanged) unlistenConfigChanged()
+	if (unlistenPlayMotion) unlistenPlayMotion()
 })
 </script>
 

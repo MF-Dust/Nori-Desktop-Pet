@@ -11,6 +11,10 @@
  *    避免取消表情后参数残留 (嘴形/眼睛等被表情覆盖的参数冻结)
  * 3. WebGL 上下文开启 preserveDrawingBuffer → 支持读取画布像素
  *    测量模型实际可视范围 (桌宠窗口智能适配模型大小)
+ * 4. loadAssets 加载失败时标记 _loadFailed, 且 waiting() 轮询在失败时
+ *    reject → 模型资源加载失败时 load() 会真正抛错, 而不是永久挂起
+ *    (库原实现: fetch 失败被 catch 吞掉, waiting() 无限轮询 getLoadState,
+ *     load() 的 Promise 永不 settle, 桌宠窗口会永远空白且无法重试)
  */
 import {readFileSync, writeFileSync, existsSync} from "node:fs"
 import {dirname, resolve} from "node:path"
@@ -86,6 +90,58 @@ if (GL_COUNT > 0) {
 	console.log(`[patch-live2d] 补丁 3 (preserveDrawingBuffer) 已应用 (${GL_COUNT} 处)`)
 } else {
 	console.log("[patch-live2d] 补丁 3 已存在或已失效, 跳过")
+}
+
+// ---- 补丁 4: 模型资源加载失败时让 load() reject, 避免永久挂起 ----
+// 库的 loadAssets() 把 fetch 失败吞进 catch, 仅打印日志;
+// 而 waiting() 会 10ms 轮询 getLoadState() 直到状态为 22, 永不失败。
+// 结果: model3.json 加载失败时 load() 的 Promise 永远不 settle,
+// 上层 await load() 永久卡住, 桌宠窗口空白且无法重试。
+const LOAD_ASSETS_OLD = `}).catch((e) => {
+      F(` + "`Failed to load file ${this._modelHomeDir}.model3.json`" + `);
+    });`
+
+const LOAD_ASSETS_NEW = `}).catch((e) => {
+      F(` + "`Failed to load file ${this._modelHomeDir}.model3.json`" + `);
+      this._loadFailed = !0;
+    });`
+
+const WAITING_OLD = `  waiting() {
+    return new Promise((t) => {
+      const e = () => {
+        this._model.getLoadState() ? t() : setTimeout(e, 10);
+      };
+      e();
+    });
+  }`
+
+const WAITING_NEW = `  waiting() {
+    return new Promise((t, r) => {
+      let n = 0;
+      const e = () => {
+        if (this._model.getLoadState()) t();
+        else if (this._model._loadFailed) r(new Error("模型资源加载失败"));
+        else if (++n > 6000) r(new Error("模型加载超时 (60s)"));
+        else setTimeout(e, 10);
+      };
+      e();
+    });
+  }`
+
+if (source.includes(LOAD_ASSETS_OLD)) {
+	source = source.replace(LOAD_ASSETS_OLD, LOAD_ASSETS_NEW)
+	changed = true
+	console.log("[patch-live2d] 补丁 4a (loadAssets 失败标记) 已应用")
+} else {
+	console.log("[patch-live2d] 补丁 4a 已存在或已失效, 跳过")
+}
+
+if (source.includes(WAITING_OLD)) {
+	source = source.replace(WAITING_OLD, WAITING_NEW)
+	changed = true
+	console.log("[patch-live2d] 补丁 4b (waiting 失败即 reject) 已应用")
+} else {
+	console.log("[patch-live2d] 补丁 4b 已存在或已失效, 跳过")
 }
 
 if (changed) writeFileSync(TARGET, source)

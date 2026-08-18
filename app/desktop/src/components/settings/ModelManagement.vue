@@ -13,6 +13,7 @@ import {
 	resolveModelFileBase,
 } from "../../services/live2d/config"
 import {applyCanvasLayout} from "../../services/live2d/stage"
+import {readMotionGroups} from "../../services/live2d/motions"
 import Icon from "../Icon.vue"
 import AdjustControls from "./AdjustControls.vue"
 
@@ -63,6 +64,20 @@ const refreshStatus = async () => {
 		installedMap.value = Object.fromEntries(results)
 	} catch (error) {
 		console.error("检测模型状态失败:", error)
+	}
+	await publishMotions()
+}
+
+// 各已安装模型: 读取动作组并写入配置 (聊天时 Rust 注入系统提示词, 供 AI 调用)
+const publishMotions = async () => {
+	for (const model of MODEL_LIST) {
+		if (!installedMap.value[model.id]) continue
+		const GROUPS = await readMotionGroups(model.id)
+		if (!GROUPS || GROUPS.length === 0) continue
+		invoke("set_config", {
+			key: `l2d_motions_${model.id}`,
+			value: JSON.stringify(GROUPS),
+		}).catch(() => {})
 	}
 }
 
