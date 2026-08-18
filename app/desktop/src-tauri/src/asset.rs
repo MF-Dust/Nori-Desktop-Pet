@@ -32,12 +32,12 @@ pub fn handle(
     if !is_safe_relative_path(relative) {
         return forbidden("非法资源路径");
     }
-    // 获取 data 目录
-    let data_root = match crate::db::data_dir(ctx.app_handle()) {
+    // 获取资源根目录 (data/resources, 所有下载资源存放于此)
+    let data_root = match crate::resource::resources_dir(ctx.app_handle()) {
         Ok(path) => path,
         Err(error) => {
             let _ = error;
-            return internal_error("data 目录不可用");
+            return internal_error("资源目录不可用");
         }
     };
     // data 目录本身不存在时直接返回 404

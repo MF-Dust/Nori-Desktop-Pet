@@ -3,6 +3,7 @@ import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "@tauri-apps/api/core"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import {createResourceDownload, formatBytes} from "../services/resourceDownload"
+import {closeWindow, showWindow} from "../services/window"
 import TitleBar from "../components/TitleBar.vue"
 import ProgressBar from "../components/ProgressBar.vue"
 import Icon from "../components/Icon.vue"
@@ -74,6 +75,11 @@ onMounted(async () => {
 	// 检查是否已安装, 未安装则触发下载+解压
 	const INSTALLED = await DOWNLOAD.check(RESOURCE_TYPE, modelName.value)
 	if (!INSTALLED) await DOWNLOAD.ensure(RESOURCE_TYPE, modelName.value)
+	// 初始化完成: 先打开桌宠窗口, 延迟后再关闭 init 窗口 (避免窗口销毁打断后续逻辑)
+	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+	await showWindow("pet")
+	await sleep(600)
+	await closeWindow("init")
 })
 </script>
 

@@ -109,9 +109,9 @@ pub fn complete_first_run(
         crate::config::mark_initialized(&conn).map_err(|e| e.to_string())?;
     }
     let _ = log::write(&app, &log::LogSource::Backend, "info", "首次初始化完成");
-    // 切换窗口
+    // 切换窗口: 关闭首次运行窗口, 显示 init 中转窗口 (下载模型) 与桌宠窗口
     if let Some(window) = app.get_webview_window("first-run") {
-        window.hide().map_err(|e| e.to_string())?;
+        window.close().map_err(|e| e.to_string())?;
     }
     if let Some(window) = app.get_webview_window("init") {
         window.show().map_err(|e| e.to_string())?;
