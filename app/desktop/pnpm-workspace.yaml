@@ -1,5 +1,8 @@
 packages:
-    - "."
+  - "."
 
 allowBuilds:
-    esbuild: true
+  esbuild: true
+
+patchedDependencies:
+  live2d-easy-control: patches/live2d-easy-control.patch

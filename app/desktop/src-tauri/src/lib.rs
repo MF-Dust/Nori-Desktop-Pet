@@ -1,3 +1,4 @@
+mod asset;
 mod commands;
 mod config;
 mod db;
@@ -9,6 +10,11 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 资源文件通道: 通过 `asset://` / `http://asset.localhost` 把 `data` 目录
+        // serve 给前端, 供 live2d-easy-control 等 fetch 本地模型 / SDK 文件.
+        .register_uri_scheme_protocol(asset::SCHEME, |ctx, request| {
+            asset::handle(&ctx, request)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {

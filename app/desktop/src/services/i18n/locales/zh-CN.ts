@@ -1,4 +1,13 @@
 export default {
+	download: {
+		downloading: "正在下载...",
+		downloadDone: "下载完成",
+		extracting: "正在解压...",
+		ready: "初始化完成",
+		installed: "安装完成",
+		downloadFailed: "下载失败",
+		check: "正在检查..."
+	},
 	components: {
 		firstRun: {
 			welcome: {
@@ -60,14 +69,10 @@ export default {
 		},
 		init: {
 			title: "正在初始化...",
-			live2d: "正在初始化 Live2D 模型...",
-			downloading: "正在下载...",
-			downloadDone: "下载完成",
-			extracting: "正在解压...",
-			ready: "初始化完成",
-			installed: "安装完成",
-			downloadFailed: "下载失败",
-			check: "正在检查..."
+			live2d: "正在初始化 Live2D 模型..."
+		},
+		pet: {
+			hint: "点击小宠物聊聊天吧",
 		}
 	}
 }

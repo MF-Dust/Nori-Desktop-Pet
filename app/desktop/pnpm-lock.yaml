@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  live2d-easy-control: be4b5b18cc05ab5ce8858a8005aaa57087bc5d2a44752bb5471d150aa281d418
+
 importers:
 
   .:
@@ -17,6 +20,9 @@ importers:
       '@tauri-apps/plugin-opener':
         specifier: ^2
         version: 2.5.4
+      live2d-easy-control:
+        specifier: ^1.0.3
+        version: 1.0.3(patch_hash=be4b5b18cc05ab5ce8858a8005aaa57087bc5d2a44752bb5471d150aa281d418)
       vue:
         specifier: ^3.5.13
         version: 3.5.41(typescript@5.6.3)
@@ -623,6 +629,9 @@ packages:
     resolution: {integrity: sha512-umRhrCH7fCi8Uj2RcwKjJdvUORTjeWqkdKx0LbcZvjIwsAVsnIAGcxHaqowPeBFBjQuWOeC/bve0AlpFzF/+SQ==}
     engines: {node: '>=18'}
     hasBin: true
+
+  live2d-easy-control@1.0.3:
+    resolution: {integrity: sha512-+uiq22DwCPG4jpAE1sTGKsJYB8+lJ6UF61GyZ1hH0+Fxvz/ZyuZtkIbXOZQafGl6olmCog0kgYo43RceTf/lCA==}
 
   lodash.merge@4.6.2:
     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
@@ -1241,6 +1250,8 @@ snapshots:
       source-map: 0.6.1
     transitivePeerDependencies:
       - supports-color
+
+  live2d-easy-control@1.0.3(patch_hash=be4b5b18cc05ab5ce8858a8005aaa57087bc5d2a44752bb5471d150aa281d418): {}
 
   lodash.merge@4.6.2:
     optional: true

@@ -9,7 +9,9 @@ const ROUTER = useRouter()
 // 窗口 label → 页面路由: 各窗口挂载后跳到自己的页面
 const NAVIGATION: Record<string, string> = {
 	"first-run": "/first-run",
-	"init": "/init",
+	// "init": "/init",
+	// TODO: 临时挂载!
+	"init": "/pet",
 }
 
 onMounted(async () => {

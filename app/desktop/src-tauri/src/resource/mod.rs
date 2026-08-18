@@ -16,5 +16,7 @@ pub fn is_installed(data_dir: &Path, resource_type: &ResourceType, name: &str) -
     match resource_type {
         // Live2D 需要目录内含 `.model3.json` 模型清单才算真正安装
         ResourceType::Live2D => live2d::exists(data_dir, name),
+        // SDK 目前以目录存在作为"已就位"判据 (无固定清单文件)
+        ResourceType::Live2DSdk => data_dir.join("live2d-sdk").join(name).is_dir(),
     }
 }

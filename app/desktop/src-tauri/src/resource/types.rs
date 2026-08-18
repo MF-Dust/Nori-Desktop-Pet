@@ -6,14 +6,14 @@ use std::path::PathBuf;
 #[serde(rename_all = "lowercase")]
 pub enum ResourceType {
     Live2D,
-    // 未来扩展: Voice, Image 等
+    Live2DSdk,
 }
 
 impl ResourceType {
-    /// 获取资源目录名
     pub fn dir_name(&self) -> &str {
         match self {
-            ResourceType::Live2D => "live2D",
+            ResourceType::Live2D => "live2d",
+            ResourceType::Live2DSdk => "live2d-sdk",
         }
     }
 
@@ -21,6 +21,7 @@ impl ResourceType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "live2d" => Some(ResourceType::Live2D),
+            "live2dsdk" | "live2d-sdk" | "live2d_sdk" => Some(ResourceType::Live2DSdk),
             _ => None,
         }
     }

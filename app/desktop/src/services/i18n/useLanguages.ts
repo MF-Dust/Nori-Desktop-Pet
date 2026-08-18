@@ -65,13 +65,16 @@ export default () => {
 			init: {
 				title: t("views.init.title"),
 				live2d: t("views.init.live2d"),
-				downloading: t("views.init.downloading"),
-				downloadDone: t("views.init.downloadDone"),
-				extracting: t("views.init.extracting"),
-				ready: t("views.init.ready"),
-				installed: t("views.init.installed"),
-				downloadFailed: t("views.init.downloadFailed"),
-				check: t("views.init.check"),
+				downloading: t("download.downloading"),
+				downloadDone: t("download.downloadDone"),
+				extracting: t("download.extracting"),
+				ready: t("download.ready"),
+				installed: t("download.installed"),
+				downloadFailed: t("download.downloadFailed"),
+				check: t("download.check"),
+			},
+			pet: {
+				hint: t("views.pet.hint"),
 			}
 		}
 	}

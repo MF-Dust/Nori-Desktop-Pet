@@ -99,7 +99,14 @@ export const icon = {
 			"M18 6 6 18",
 			"m6 6 12 12"
 		]
-	}
+	},
+	// 发送
+	send: {
+		stroke: [
+			"M22 2 11 13",
+			"M22 2 15 22 11 13 2 9 22 2"
+		]
+	},
 } satisfies Record<string, IconData>
 
 /**
