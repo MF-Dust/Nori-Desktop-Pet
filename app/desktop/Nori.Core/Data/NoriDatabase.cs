@@ -22,6 +22,16 @@ public sealed class NoriDatabase : IDisposable
 		    content    TEXT NOT NULL,
 		    created_at TEXT NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS memories (
+		    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		    type        TEXT NOT NULL,
+		    content     TEXT NOT NULL,
+		    importance  REAL NOT NULL DEFAULT 0.5,
+		    source      TEXT NOT NULL DEFAULT 'chat',
+		    tags        TEXT,
+		    created_at  TEXT NOT NULL,
+		    updated_at  TEXT NOT NULL
+		);
 		""";
 
 	private readonly SqliteConnection _connection;

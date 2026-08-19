@@ -31,6 +31,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>聊天</summary>
 	public required ChatService Chat { get; init; }
 
+	/// <summary>记忆存储</summary>
+	public required Nori.Core.Memory.MemoryStore Memory { get; init; }
+
 	/// <summary>LLM 接口</summary>
 	public required LlmClient Llm { get; init; }
 

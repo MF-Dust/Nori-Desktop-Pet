@@ -1,5 +1,7 @@
 import {invoke} from "../../host/invoke"
 import {createLive2D} from "../../live2d"
+import {emotionManager} from "../../emotion"
+import type {EmotionType} from "../protocol"
 
 /**
  * 工具权限级别
@@ -223,6 +225,96 @@ export class ToolManager {
 				const L2D = createLive2D()
 				await L2D.playExpression(NAME)
 				return {success: true, expression: NAME}
+			},
+		})
+
+		// 6. 存储长期记忆 (记住主人偏好或事件)
+		this.register({
+			name: "remember",
+			description: "记录并持久化一条关于主人偏好、重要事实或约定到长期记忆库中",
+			parameters: {
+				type: "object",
+				properties: {
+					content: {
+						type: "string",
+						description: "记忆内容事实描述",
+					},
+					importance: {
+						type: "number",
+						description: "重要程度 (0.1 ~ 1.0)",
+					},
+					tags: {
+						type: "string",
+						description: "标签分类 (可选)",
+					},
+				},
+				required: ["content"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const CONTENT = String(args.content || "")
+				if (!CONTENT) throw new Error("记忆内容不能为空")
+				const IMP = typeof args.importance === "number" ? args.importance : 0.8
+				const TAGS = typeof args.tags === "string" ? args.tags : undefined
+				const ITEM = await invoke("add_memory", {
+					type: "fact",
+					content: CONTENT,
+					importance: IMP,
+					tags: TAGS,
+					source: "agent",
+				})
+				return {success: true, memory: ITEM}
+			},
+		})
+
+		// 7. 搜索长期记忆
+		this.register({
+			name: "searchMemory",
+			description: "在长期记忆库中搜索与特定关键词相关的历史记忆条目",
+			parameters: {
+				type: "object",
+				properties: {
+					keyword: {
+						type: "string",
+						description: "搜索关键词",
+					},
+				},
+				required: ["keyword"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const KW = String(args.keyword || "")
+				if (!KW) throw new Error("搜索关键词不能为空")
+				const LIST = await invoke("search_memories", {keyword: KW, limit: 10})
+				return {results: LIST}
+			},
+		})
+
+		// 8. 改变自身情绪
+		this.register({
+			name: "setEmotion",
+			description: "主动调整 Nori 当前的心情与情绪状态",
+			parameters: {
+				type: "object",
+				properties: {
+					emotion: {
+						type: "string",
+						enum: ["neutral", "happy", "sad", "angry", "surprised", "shy", "sleepy", "fond"],
+						description: "情绪类型",
+					},
+					intensity: {
+						type: "number",
+						description: "情绪强烈程度 (0.0 ~ 1.0)",
+					},
+				},
+				required: ["emotion"],
+			},
+			permissionLevel: "safe",
+			execute: (args) => {
+				const EMOTION = String(args.emotion || "neutral")
+				const INTENSITY = typeof args.intensity === "number" ? args.intensity : 0.8
+				emotionManager.setEmotion(EMOTION as EmotionType, INTENSITY)
+				return {success: true, emotion: EMOTION, intensity: INTENSITY}
 			},
 		})
 	}

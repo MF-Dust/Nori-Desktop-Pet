@@ -97,6 +97,29 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("fetch_llm_models", {provider?, baseUrl, apiKey})
 		"fetch_llm_models" => await _services.Llm.FetchModelsAsync(OptionalStr(args, "provider"), Str(args, "baseUrl"), Str(args, "apiKey")),
 
+		// ---- 记忆库 ----
+		// invoke("add_memory", {type?, content, importance?, source?, tags?})
+		"add_memory" => _services.Memory.Add(
+			OptionalStr(args, "type") ?? "general",
+			Str(args, "content"),
+			OptionalDouble(args, "importance") ?? 0.5,
+			OptionalStr(args, "source") ?? "chat",
+			OptionalStr(args, "tags")),
+		// invoke("get_all_memories", {limit?})
+		"get_all_memories" => _services.Memory.GetAll(OptionalInt(args, "limit") ?? 100),
+		// invoke("search_memories", {keyword, limit?})
+		"search_memories" => _services.Memory.Search(Str(args, "keyword"), OptionalInt(args, "limit") ?? 20),
+		// invoke("update_memory", {id, content, importance?, tags?})
+		"update_memory" => _services.Memory.Update(
+			(long)Num(args, "id"),
+			Str(args, "content"),
+			OptionalDouble(args, "importance"),
+			OptionalStr(args, "tags")),
+		// invoke("delete_memory", {id})
+		"delete_memory" => _services.Memory.Delete((long)Num(args, "id")),
+		// invoke("clear_memories")
+		"clear_memories" => Run(() => _services.Memory.Clear()),
+
 		// ---- 窗口 ----
 		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
 		"window_hide" => await OnUi(() => Run(() => _services.Windows.Hide(Str(args, "label")))),
@@ -373,6 +396,16 @@ public sealed class BridgeCommands(AppServices services)
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
 			? value.GetDouble()
 			: throw new InvalidOperationException($"缺少参数: {name}");
+
+	private static double? OptionalDouble(JsonElement args, string name) =>
+		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
+			? value.GetDouble()
+			: null;
+
+	private static int? OptionalInt(JsonElement args, string name) =>
+		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
+			? value.GetInt32()
+			: null;
 
 	/// <summary>
 	/// 执行一个无返回值的动作, 统一成 object? 返回

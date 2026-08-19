@@ -101,6 +101,7 @@ public sealed class App : Application
 			Logger = logger,
 			Resources = new ResourceManager(http),
 			Chat = new ChatService(http, database, config),
+			Memory = new Nori.Core.Memory.MemoryStore(database),
 			Llm = new LlmClient(http),
 			Assets = assets,
 			Http = http,

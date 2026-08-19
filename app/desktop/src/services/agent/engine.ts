@@ -1,10 +1,12 @@
 import {invoke} from "../host/invoke"
 import {listen, type UnlistenFn} from "../host/event"
 import {createLive2D} from "../live2d"
-import type {AgentProtocolItem, AgentState, AgentTextMessage, AgentToolCall} from "./protocol"
+import type {AgentProtocolItem, AgentState, AgentTextMessage, AgentToolCall, EmotionType} from "./protocol"
 import {StreamingJsonParser} from "./jsonParser"
 import {buildAgentSystemPrompt, type PromptBuildOptions} from "./promptBuilder"
 import {toolManager} from "./tools"
+import {memoryService} from "../memory"
+import {emotionManager} from "../emotion"
 
 /**
  * 历史消息格式
@@ -83,8 +85,16 @@ export class AgentEngine {
 					throw new Error("尚未配置完整的 LLM 参数 (API Base, API Key 或 Model 缺失)")
 				}
 
-				// 2. 组装 System Prompt 与可用工具
-				const SYSTEM_PROMPT = buildAgentSystemPrompt(options)
+				// 2. 组装 System Prompt 与可用工具 (自动检索相关记忆与关联情绪)
+				const RELEVANT_MEMORIES = options.memories ?? (await memoryService.getRelevantMemories(userText))
+				const CURRENT_EMOTION = options.emotion ?? emotionManager.getState().type
+
+				const PROMPT_OPTIONS: PromptBuildOptions = {
+					...options,
+					emotion: CURRENT_EMOTION,
+					memories: RELEVANT_MEMORIES,
+				}
+				const SYSTEM_PROMPT = buildAgentSystemPrompt(PROMPT_OPTIONS)
 
 				// 3. 准备流式接收
 				const STREAM_ID = `agent-${Date.now()}-${iterations}`
@@ -201,6 +211,15 @@ export class AgentEngine {
 	 */
 	private async dispatchEffects(msg: AgentTextMessage): Promise<void> {
 		const L2D = createLive2D()
+
+		// 触发情绪联动
+		if (msg.emotion) {
+			try {
+				emotionManager.setEmotion(msg.emotion as EmotionType)
+			} catch {
+				/* 忽略未知情绪 */
+			}
+		}
 
 		// 触发表情
 		if (msg.expression) {
