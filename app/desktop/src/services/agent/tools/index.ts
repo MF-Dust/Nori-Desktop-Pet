@@ -317,6 +317,141 @@ export class ToolManager {
 				return {success: true, emotion: EMOTION, intensity: INTENSITY}
 			},
 		})
+
+		// 9. 设置定时提醒 (喝水、休息、番茄钟等)
+		this.register({
+			name: "setReminder",
+			description: "设置一个定时提醒倒计时任务，到时间后 Nori 会主动提醒主人",
+			parameters: {
+				type: "object",
+				properties: {
+					content: {
+						type: "string",
+						description: "提醒内容事项 (如: 喝水、站起来活动一下)",
+					},
+					delayMinutes: {
+						type: "number",
+						description: "多少分钟后触发提醒",
+					},
+				},
+				required: ["content", "delayMinutes"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const CONTENT = String(args.content || "")
+				const MINUTES = Number(args.delayMinutes || 1)
+				const {proactiveService} = await import("../../proactive")
+				const ID = proactiveService.addReminder(CONTENT, MINUTES)
+				return {success: true, reminderId: ID, triggerInMinutes: MINUTES}
+			},
+		})
+
+		// 10. 列出所有正在生效的提醒
+		this.register({
+			name: "listReminders",
+			description: "查看当前所有排队中的定时提醒事项列表",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: [],
+			},
+			permissionLevel: "safe",
+			execute: async () => {
+				const {proactiveService} = await import("../../proactive")
+				return {reminders: proactiveService.listReminders()}
+			},
+		})
+
+		// 11. 读取剪贴板文本
+		this.register({
+			name: "getClipboardText",
+			description: "读取操作系统当前剪贴板中的纯文本内容",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: [],
+			},
+			permissionLevel: "safe",
+			execute: async () => {
+				if (!navigator.clipboard || !navigator.clipboard.readText) {
+					throw new Error("当前环境不支持读取剪贴板")
+				}
+				const TEXT = await navigator.clipboard.readText()
+				return {text: TEXT}
+			},
+		})
+
+		// 12. 写入剪贴板文本
+		this.register({
+			name: "setClipboardText",
+			description: "将指定文本写入操作系统剪贴板",
+			parameters: {
+				type: "object",
+				properties: {
+					text: {
+						type: "string",
+						description: "要写入剪贴板的文本内容",
+					},
+				},
+				required: ["text"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const TEXT = String(args.text || "")
+				if (!navigator.clipboard || !navigator.clipboard.writeText) {
+					throw new Error("当前环境不支持写入剪贴板")
+				}
+				await navigator.clipboard.writeText(TEXT)
+				return {success: true, length: TEXT.length}
+			},
+		})
+
+		// 13. 打开外部网页链接
+		this.register({
+			name: "openUrl",
+			description: "使用默认浏览器打开指定的网络链接",
+			parameters: {
+				type: "object",
+				properties: {
+					url: {
+						type: "string",
+						description: "需要打开的完整网址 (如 https://...)",
+					},
+				},
+				required: ["url"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const URL = String(args.url || "")
+				if (!URL) throw new Error("网址不能为空")
+				await invoke("open_url", {url: URL})
+				return {success: true, opened: URL}
+			},
+		})
+
+		// 14. 获取电池电量状态
+		this.register({
+			name: "getBatteryStatus",
+			description: "获取计算机当前电池电量百分比与充电状态",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: [],
+			},
+			permissionLevel: "safe",
+			execute: async () => {
+				if (typeof navigator !== "undefined" && "getBattery" in navigator) {
+					const BATTERY = await (navigator as any).getBattery()
+					return {
+						level: Math.round(BATTERY.level * 100),
+						charging: BATTERY.charging,
+						chargingTime: BATTERY.chargingTime,
+						dischargingTime: BATTERY.dischargingTime,
+					}
+				}
+				return {supported: false, message: "设备不支持或为台式机电源"}
+			},
+		})
 	}
 }
 
