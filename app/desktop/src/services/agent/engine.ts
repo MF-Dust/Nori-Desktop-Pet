@@ -7,6 +7,7 @@ import {buildAgentSystemPrompt, type PromptBuildOptions} from "./promptBuilder"
 import {toolManager} from "./tools"
 import {memoryService} from "../memory"
 import {emotionManager} from "../emotion"
+import {ttsService} from "../tts"
 
 /**
  * 历史消息格式
@@ -195,6 +196,19 @@ export class AgentEngine {
 			if (callbacks?.onComplete) {
 				callbacks.onComplete(finalMessage)
 			}
+
+			// 自动朗读回复
+			if (finalMessage.text) {
+				try {
+					const AUTO_TTS = await invoke<string | null>("get_config", {key: "tts_auto_play"})
+					if (AUTO_TTS === "true" || AUTO_TTS === "1") {
+						void ttsService.speak(finalMessage.text)
+					}
+				} catch {
+					/* 忽略自动朗读异常 */
+				}
+			}
+
 			return finalMessage
 		} catch (error) {
 			this.setState("error", callbacks)

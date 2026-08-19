@@ -188,6 +188,38 @@ const send = async () => {
 		executingTool.value = ""
 	}
 }
+
+// 语音输入控制
+const isRecording = ref(false)
+const toggleVoiceInput = async () => {
+	const {sttService} = await import("../services/stt")
+	if (isRecording.value) {
+		isRecording.value = false
+		const text = await sttService.stopListening()
+		if (text.trim()) {
+			input.value = (input.value ? input.value + " " : "") + text.trim()
+		}
+	} else {
+		isRecording.value = true
+		try {
+			await sttService.startListening({
+				onInterim: (interim) => {
+					input.value = interim
+				},
+				onFinal: (finalText) => {
+					input.value = finalText
+				},
+				onError: (err) => {
+					console.error("STT Error:", err)
+					isRecording.value = false
+				},
+			})
+		} catch (err) {
+			console.error("启动语音识别失败:", err)
+			isRecording.value = false
+		}
+	}
+}
 </script>
 
 <template>
@@ -223,6 +255,15 @@ const send = async () => {
 			<p v-if="errorMsg" class="chat-error">{{ errorMsg }}</p>
 
 			<div class="chat-input-row">
+				<button
+					class="voice-btn"
+					:class="{active: isRecording}"
+					type="button"
+					:title="isRecording ? '点击结束语音输入' : '点击开始语音输入'"
+					@click="toggleVoiceInput"
+				>
+					<Icon name="mic" class="btn-icon"/>
+				</button>
 				<input
 					v-model="input"
 					class="input"
@@ -360,6 +401,42 @@ const send = async () => {
 .input::placeholder {
 	color: var(--text-muted);
 	opacity: 0.6;
+}
+
+.voice-btn {
+	width: 4rem;
+	height: 4rem;
+	flex-shrink: 0;
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-muted);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.2s ease;
+
+	&:hover {
+		color: var(--nori-teal-bright);
+		border-color: var(--nori-teal-soft);
+	}
+
+	&.active {
+		background: rgba(255, 75, 75, 0.15);
+		border-color: #ff4b4b;
+		color: #ff4b4b;
+		animation: pulse-recording 1.2s infinite;
+	}
+}
+
+@keyframes pulse-recording {
+	0%, 100% {
+		box-shadow: 0 0 0.4rem rgba(255, 75, 75, 0.3);
+	}
+	50% {
+		box-shadow: 0 0 1.2rem rgba(255, 75, 75, 0.8);
+	}
 }
 
 .send-btn {

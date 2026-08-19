@@ -189,6 +189,23 @@ export const icon = {
 			"M1 14h3"
 		]
 	},
+	// 麦克风
+	mic: {
+		stroke: [
+			"M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z",
+			"M19 10v2a7 7 0 0 1-14 0v-2",
+			"M12 19v3",
+			"M8 22h8"
+		]
+	},
+	// 音量/声音
+	volume: {
+		stroke: [
+			"M11 5 6 9H2v6h4l5 4V5Z",
+			"M15.54 8.46a5 5 0 0 1 0 7.07",
+			"M19.07 4.93a10 10 0 0 1 0 14.14"
+		]
+	},
 } satisfies Record<string, IconData>
 
 /**
