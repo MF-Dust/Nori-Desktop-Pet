@@ -4,6 +4,8 @@ import {invoke} from "../services/host/invoke"
 import {listen, type UnlistenFn} from "../services/host/event"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
+import {agentEngine} from "../services/agent/engine"
+import type {AgentState} from "../services/agent/protocol"
 
 const I18N = computed(() => useLanguages().views.main.chat)
 
@@ -11,7 +13,6 @@ const I18N = computed(() => useLanguages().views.main.chat)
 const emit = defineEmits<{goSettings: []}>()
 
 // 配置键名
-const KEY_PROVIDER = "llm_provider"
 const KEY_BASE = "llm_api_base"
 const KEY_APIKEY = "llm_api_key"
 const KEY_MODEL = "llm_model"
@@ -30,6 +31,10 @@ const input = ref("")
 const sending = ref(false)
 const errorMsg = ref("")
 const listRef = ref<HTMLElement>()
+
+// Agent 状态与执行中的工具
+const agentState = ref<AgentState>("idle")
+const executingTool = ref<string>("")
 
 // 助手回复按句切分成多个气泡 (像日常聊天, 不受模型换行影响)
 const splitSentences = (text: string): string[] => {
@@ -131,9 +136,6 @@ const send = async () => {
 	errorMsg.value = ""
 	sending.value = true
 
-	const streamId = `stream-${Date.now()}`
-	currentStreamId = streamId
-
 	// 乐观显示用户消息与助手空占位消息
 	messages.value.push({id: -Date.now(), role: "user", content: TEXT})
 	messages.value.push({id: -Date.now() - 1, role: "assistant", content: ""})
@@ -141,20 +143,36 @@ const send = async () => {
 
 	try {
 		const HISTORY = messages.value
-			.slice(0, -1)
-			.map(m => ({role: m.role, content: m.content}))
-		const REPLY = await invoke<string>("chat_completion_stream", {
-			provider: (await readConfig(KEY_PROVIDER)) || "openai",
-			baseUrl: await readConfig(KEY_BASE),
-			apiKey: await readConfig(KEY_APIKEY),
-			model: await readConfig(KEY_MODEL),
-			messages: HISTORY,
-			streamId,
-		})
-		// 最终对齐完整内容 (剥离动作标记后的最终文案)
+			.slice(0, -2)
+			.map(m => ({role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: m.content}))
+
+		const FINAL = await agentEngine.run(
+			TEXT,
+			HISTORY,
+			{},
+			{
+				onStateChange: (st) => {
+					agentState.value = st
+				},
+				onToolExecuting: (toolName) => {
+					executingTool.value = toolName
+				},
+				onToolExecuted: () => {
+					executingTool.value = ""
+				},
+				onTextChunk: (chunk) => {
+					const lastMsg = messages.value[messages.value.length - 1]
+					if (lastMsg && lastMsg.role === "assistant") {
+						lastMsg.content += chunk
+						void scrollToBottom()
+					}
+				},
+			}
+		)
+
 		const lastMsg = messages.value[messages.value.length - 1]
 		if (lastMsg && lastMsg.role === "assistant") {
-			lastMsg.content = REPLY
+			lastMsg.content = FINAL.text || lastMsg.content
 		}
 		await scrollToBottom()
 	} catch (error) {
@@ -166,7 +184,8 @@ const send = async () => {
 		}
 	} finally {
 		sending.value = false
-		currentStreamId = ""
+		agentState.value = "idle"
+		executingTool.value = ""
 	}
 }
 </script>
@@ -192,6 +211,12 @@ const send = async () => {
 					:class="bubble.role"
 				>
 					<div class="chat-bubble">{{ bubble.content }}</div>
+				</div>
+
+				<!-- 工具调用中提示 -->
+				<div v-if="executingTool" class="tool-executing-hint">
+					<Icon name="loading" class="tool-icon spin"/>
+					<span>正在执行工具: {{ executingTool }}...</span>
 				</div>
 			</div>
 
@@ -364,5 +389,24 @@ const send = async () => {
 .btn-icon {
 	width: 1.6rem;
 	height: 1.6rem;
+}
+
+.tool-executing-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 1rem;
+	background: rgba(125, 227, 255, 0.08);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	color: var(--nori-teal-bright);
+	font-size: 1.15rem;
+	margin-top: 0.4rem;
+	align-self: flex-start;
+}
+
+.tool-icon {
+	width: 1.2rem;
+	height: 1.2rem;
 }
 </style>
