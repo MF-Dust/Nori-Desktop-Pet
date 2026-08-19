@@ -225,3 +225,70 @@ public class ResourceImportTests
 		}
 	}
 }
+
+public class ChatServiceTests : IDisposable
+{
+	private sealed class MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+	{
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			return Task.FromResult(handler(request));
+		}
+	}
+
+	private readonly string _path = Path.Combine(Path.GetTempPath(), $"nori-chat-test-{Guid.NewGuid():N}.db");
+	private readonly Nori.Core.Data.NoriDatabase _database;
+	private readonly Nori.Core.Configuration.ConfigStore _config;
+
+	public ChatServiceTests()
+	{
+		_database = Nori.Core.Data.NoriDatabase.Open(_path);
+		_config = new Nori.Core.Configuration.ConfigStore(_database);
+		_config.InitDefaults("0.1.0");
+	}
+
+	public void Dispose()
+	{
+		_database.Dispose();
+		try
+		{
+			File.Delete(_path);
+		}
+		catch (IOException)
+		{
+		}
+		GC.SuppressFinalize(this);
+	}
+
+	[Fact]
+	public async Task ChatService_StreamAsync流式回调与动作提取()
+	{
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			string sse = "data: {\"choices\":[{\"delta\":{\"content\":\"主人好呀！\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"[nori_motion:smile]\"}}]}\n\ndata: [DONE]\n\n";
+			return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+			{
+				Content = new StringContent(sse, System.Text.Encoding.UTF8, "text/event-stream")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		ChatService chat = new(client, _database, _config);
+
+		List<string> chunks = [];
+		List<string> motions = [];
+
+		string final = await chat.StreamAsync(
+			"openai",
+			"https://api.openai.com/v1",
+			"key",
+			"gpt-4o",
+			[new ChatMessageInput {Role = "user", Content = "hello"}],
+			chunk => chunks.Add(chunk),
+			motion => motions.Add(motion));
+
+		Assert.Equal("主人好呀！", final);
+		Assert.Equal(["smile"], motions);
+		Assert.Equal(2, chat.GetHistory().Count);
+	}
+}

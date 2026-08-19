@@ -9,6 +9,7 @@
 		"dev": "vite",
 		"build": "vue-tsc --noEmit && vite build",
 		"preview": "vite preview",
+		"test": "node --test tests/*.test.mjs",
 		"postinstall": "node scripts/patch-live2d.mjs"
 	},
 	"dependencies": {

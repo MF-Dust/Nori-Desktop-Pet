@@ -7,10 +7,6 @@ import type {AgentProtocolItem, AgentTextMessage} from "./protocol"
  */
 export class StreamingJsonParser {
 	private buffer = ""
-	private braceDepth = 0
-	private inString = false
-	private isEscaped = false
-	private jsonStartIndex = -1
 
 	/**
 	 * 追加流式文本分片并尝试解析出完整的 Agent 协议对象
@@ -59,10 +55,6 @@ export class StreamingJsonParser {
 	 */
 	public reset(): void {
 		this.buffer = ""
-		this.braceDepth = 0
-		this.inString = false
-		this.isEscaped = false
-		this.jsonStartIndex = -1
 	}
 
 	/**
@@ -71,49 +63,54 @@ export class StreamingJsonParser {
 	private extractAvailableObjects(): AgentProtocolItem[] {
 		const RESULTS: AgentProtocolItem[] = []
 		let i = 0
+		let braceDepth = 0
+		let inString = false
+		let isEscaped = false
+		let jsonStartIndex = -1
 
 		while (i < this.buffer.length) {
 			const CHAR = this.buffer[i]
 
-			if (this.inString) {
-				if (this.isEscaped) {
-					this.isEscaped = false
+			if (inString) {
+				if (isEscaped) {
+					isEscaped = false
 				} else if (CHAR === "\\") {
-					this.isEscaped = true
+					isEscaped = true
 				} else if (CHAR === "\"") {
-					this.inString = false
+					inString = false
 				}
 				i++
 				continue
 			}
 
 			if (CHAR === "\"") {
-				this.inString = true
+				inString = true
 				i++
 				continue
 			}
 
 			if (CHAR === "{") {
-				if (this.braceDepth === 0) {
-					this.jsonStartIndex = i
+				if (braceDepth === 0) {
+					jsonStartIndex = i
 				}
-				this.braceDepth++
+				braceDepth++
 			} else if (CHAR === "}") {
-				this.braceDepth--
-				if (this.braceDepth === 0 && this.jsonStartIndex !== -1) {
-					const JSON_STR = this.buffer.substring(this.jsonStartIndex, i + 1)
+				braceDepth--
+				if (braceDepth === 0 && jsonStartIndex !== -1) {
+					const JSON_STR = this.buffer.substring(jsonStartIndex, i + 1)
 					const PARSED = this.tryParseObject(JSON_STR)
 					if (PARSED) {
 						RESULTS.push(PARSED)
 						// 消费掉已解析部分
 						this.buffer = this.buffer.substring(i + 1)
 						i = -1 // 下一轮循环从 0 开始
-						this.jsonStartIndex = -1
+						braceDepth = 0
+						jsonStartIndex = -1
 					}
-				} else if (this.braceDepth < 0) {
+				} else if (braceDepth < 0) {
 					// 括号失配纠正
-					this.braceDepth = 0
-					this.jsonStartIndex = -1
+					braceDepth = 0
+					jsonStartIndex = -1
 				}
 			}
 

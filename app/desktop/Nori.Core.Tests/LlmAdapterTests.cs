@@ -258,4 +258,100 @@ public class LlmAdapterTests
 		Assert.Equal("你好，我是 Nori", full);
 		Assert.Equal(["你好", "，我是 Nori"], chunks);
 	}
+
+	[Fact]
+	public async Task AnthropicAdapter流式分片读取()
+	{
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			Assert.Equal(HttpMethod.Post, req.Method);
+			Assert.Equal("https://api.anthropic.com/v1/messages", req.RequestUri?.ToString());
+
+			string sse = "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好呀\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"！\"}}\n\n";
+
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(sse, System.Text.Encoding.UTF8, "text/event-stream")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		AnthropicAdapter adapter = new(client);
+
+		List<string> chunks = [];
+		string full = await adapter.StreamAsync(
+			"https://api.anthropic.com/v1",
+			"key",
+			"claude-3-5-sonnet-20241022",
+			"系统提示",
+			[new ChatMessageInput {Role = "user", Content = "hi"}],
+			chunk => chunks.Add(chunk));
+
+		Assert.Equal("你好呀！", full);
+		Assert.Equal(["你好呀", "！"], chunks);
+	}
+
+	[Fact]
+	public async Task GoogleGenAiAdapter流式分片读取()
+	{
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			Assert.Equal(HttpMethod.Post, req.Method);
+			Assert.Contains("streamGenerateContent?alt=sse", req.RequestUri?.ToString());
+
+			string sse = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"喵呜\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"~\"}]}}]}\n\n";
+
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(sse, System.Text.Encoding.UTF8, "text/event-stream")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		GoogleGenAiAdapter adapter = new(client);
+
+		List<string> chunks = [];
+		string full = await adapter.StreamAsync(
+			"https://generativelanguage.googleapis.com/v1beta",
+			"key",
+			"gemini-2.5-flash",
+			"系统提示",
+			[new ChatMessageInput {Role = "user", Content = "hi"}],
+			chunk => chunks.Add(chunk));
+
+		Assert.Equal("喵呜~", full);
+		Assert.Equal(["喵呜", "~"], chunks);
+	}
+
+	[Fact]
+	public async Task OpenAiResponsesAdapter流式分片读取()
+	{
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			Assert.Equal(HttpMethod.Post, req.Method);
+			Assert.Equal("https://api.openai.com/v1/responses", req.RequestUri?.ToString());
+
+			string sse = "data: {\"delta\":\"收到啦\"}\n\ndata: {\"delta\":\"主人\"}\n\ndata: [DONE]\n\n";
+
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(sse, System.Text.Encoding.UTF8, "text/event-stream")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		OpenAiResponsesAdapter adapter = new(client);
+
+		List<string> chunks = [];
+		string full = await adapter.StreamAsync(
+			"https://api.openai.com/v1",
+			"key",
+			"gpt-4o",
+			"系统提示",
+			[new ChatMessageInput {Role = "user", Content = "hi"}],
+			chunk => chunks.Add(chunk));
+
+		Assert.Equal("收到啦主人", full);
+		Assert.Equal(["收到啦", "主人"], chunks);
+	}
 }
