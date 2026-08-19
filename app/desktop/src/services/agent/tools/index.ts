@@ -1,6 +1,7 @@
 import {invoke} from "../../host/invoke"
 import {createLive2D} from "../../live2d"
 import {emotionManager} from "../../emotion"
+import {proactiveService} from "../../proactive"
 import type {EmotionType} from "../protocol"
 
 /**
@@ -337,10 +338,9 @@ export class ToolManager {
 				required: ["content", "delayMinutes"],
 			},
 			permissionLevel: "safe",
-			execute: async (args) => {
+			execute: (args) => {
 				const CONTENT = String(args.content || "")
 				const MINUTES = Number(args.delayMinutes || 1)
-				const {proactiveService} = await import("../../proactive")
 				const ID = proactiveService.addReminder(CONTENT, MINUTES)
 				return {success: true, reminderId: ID, triggerInMinutes: MINUTES}
 			},
@@ -356,8 +356,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
-			execute: async () => {
-				const {proactiveService} = await import("../../proactive")
+			execute: () => {
 				return {reminders: proactiveService.listReminders()}
 			},
 		})

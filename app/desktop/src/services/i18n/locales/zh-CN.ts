@@ -234,6 +234,13 @@ export default {
 					apiKey: "请填写 API Key",
 				},
 			},
+			settingsTabs: {
+				ai: "AI 大脑",
+				voice: "语音音效",
+				proactive: "主动日程",
+				memory: "长期记忆",
+				general: "系统常规",
+			},
 		}
 	}
 }

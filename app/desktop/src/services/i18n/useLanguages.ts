@@ -236,6 +236,13 @@ export default () => {
 						apiKey: t("views.main.ai.error.apiKey"),
 					},
 				},
+				settingsTabs: {
+					ai: t("views.main.settingsTabs.ai"),
+					voice: t("views.main.settingsTabs.voice"),
+					proactive: t("views.main.settingsTabs.proactive"),
+					memory: t("views.main.settingsTabs.memory"),
+					general: t("views.main.settingsTabs.general"),
+				},
 			}
 		}
 	}

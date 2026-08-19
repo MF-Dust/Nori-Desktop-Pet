@@ -7,7 +7,7 @@ import Icon from "../components/Icon.vue"
 import type {IconName} from "../services/icon"
 import {showWindow, hideWindow} from "../services/window"
 import HomePanel from "../components/home/HomePanel.vue"
-import AiSettings from "../components/settings/AiSettings.vue"
+import SettingsPanel from "../components/settings/SettingsPanel.vue"
 import ModelManagement from "../components/settings/ModelManagement.vue"
 import ChatView from "../components/ChatView.vue"
 
@@ -108,8 +108,8 @@ onMounted(async () => {
 				<!-- 模型管理 -->
 				<ModelManagement v-else-if="activeNav === 'model'"/>
 
-				<!-- 设置: AI 接入 -->
-				<AiSettings v-else-if="activeNav === 'settings'"/>
+				<!-- 全功能设置面板 -->
+				<SettingsPanel v-else-if="activeNav === 'settings'"/>
 
 				<!-- 声明 -->
 				<section v-else-if="activeNav === 'about'" class="about-panel">

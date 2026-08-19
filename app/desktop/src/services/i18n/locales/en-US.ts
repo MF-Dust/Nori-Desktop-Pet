@@ -62,6 +62,13 @@ export default {
 					statusNormal: "Normal",
 				},
 			},
+			settingsTabs: {
+				ai: "AI Brain",
+				voice: "Voice & Audio",
+				proactive: "Proactive & Routine",
+				memory: "Memory",
+				general: "General",
+			},
 		},
 	},
 }
