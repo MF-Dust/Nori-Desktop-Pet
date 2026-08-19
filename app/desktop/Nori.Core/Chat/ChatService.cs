@@ -193,13 +193,23 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 	/// <summary>
 	/// 保存一条聊天消息
 	/// </summary>
-	private void SaveMessage(string role, string content) => _database.Locked(connection =>
+	public void SaveMessage(string role, string content) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
 		command.CommandText = "INSERT INTO chat_messages (role, content, created_at) VALUES ($role, $content, $createdAt)";
 		command.Parameters.AddWithValue("$role", role);
 		command.Parameters.AddWithValue("$content", content);
 		command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+		command.ExecuteNonQuery();
+	});
+
+	/// <summary>
+	/// 清空全部聊天历史
+	/// </summary>
+	public void ClearHistory() => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "DELETE FROM chat_messages;";
 		command.ExecuteNonQuery();
 	});
 

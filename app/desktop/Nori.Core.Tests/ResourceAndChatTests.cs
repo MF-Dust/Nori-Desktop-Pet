@@ -291,4 +291,24 @@ public class ChatServiceTests : IDisposable
 		Assert.Equal(["smile"], motions);
 		Assert.Equal(2, chat.GetHistory().Count);
 	}
+
+	[Fact]
+	public void ChatService_SaveAndClearHistory()
+	{
+		using HttpClient client = new();
+		ChatService chat = new(client, _database, _config);
+
+		chat.SaveMessage("user", "你好呀");
+		chat.SaveMessage("assistant", "主人好！");
+
+		IReadOnlyList<ChatMessage> history = chat.GetHistory();
+		Assert.Equal(2, history.Count);
+		Assert.Equal("user", history[0].Role);
+		Assert.Equal("你好呀", history[0].Content);
+		Assert.Equal("assistant", history[1].Role);
+		Assert.Equal("主人好！", history[1].Content);
+
+		chat.ClearHistory();
+		Assert.Empty(chat.GetHistory());
+	}
 }

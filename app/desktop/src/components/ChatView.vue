@@ -174,6 +174,17 @@ const send = async () => {
 		if (lastMsg && lastMsg.role === "assistant") {
 			lastMsg.content = FINAL.text || lastMsg.content
 		}
+
+		// 持久化保存此轮对话
+		try {
+			await invoke("save_chat_message", {role: "user", content: TEXT})
+			if (lastMsg?.content) {
+				await invoke("save_chat_message", {role: "assistant", content: lastMsg.content})
+			}
+		} catch (e) {
+			console.warn("持久化聊天记录失败:", e)
+		}
+
 		await scrollToBottom()
 	} catch (error) {
 		errorMsg.value = String(error)
@@ -186,6 +197,16 @@ const send = async () => {
 		sending.value = false
 		agentState.value = "idle"
 		executingTool.value = ""
+	}
+}
+
+// 清空当前对话历史
+const clearChatHistory = async () => {
+	try {
+		await invoke("clear_chat_history")
+		messages.value = []
+	} catch (error) {
+		console.error("清空历史记录失败:", error)
 	}
 }
 
@@ -235,6 +256,14 @@ const toggleVoiceInput = async () => {
 
 		<!-- 已配置: 对话 -->
 		<template v-else>
+			<div class="chat-header-bar">
+				<span class="chat-header-title">与 Nori 对话中</span>
+				<button class="btn-clear-chat" title="清空当前历史，开启新对话" @click="clearChatHistory">
+					<Icon name="sparkles" :size="13"/>
+					<span>新对话</span>
+				</button>
+			</div>
+
 			<div ref="listRef" class="chat-list">
 				<div
 					v-for="bubble in bubbles"
@@ -316,6 +345,41 @@ const toggleVoiceInput = async () => {
 	font-size: 1.2rem;
 	color: var(--text-faint);
 	line-height: 1.6;
+}
+
+// 顶部操作栏
+.chat-header-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.8rem 1.6rem 0.4rem;
+	border-bottom: 0.1rem solid var(--line-subtle);
+}
+
+.chat-header-title {
+	font-size: 1.15rem;
+	color: var(--text-muted);
+	font-weight: 500;
+}
+
+.btn-clear-chat {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	background: transparent;
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	padding: 0.3rem 0.8rem;
+	color: var(--text-faint);
+	font-size: 1.1rem;
+	cursor: pointer;
+	transition: all 0.2s ease;
+
+	&:hover {
+		color: var(--nori-teal-bright);
+		border-color: var(--nori-teal-soft);
+		background: rgba(125, 227, 255, 0.08);
+	}
 }
 
 // 消息列表

@@ -135,6 +135,12 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("clear_memories")
 		"clear_memories" => Run(() => _services.Memory.Clear()),
 
+		// ---- 对话历史持久化 (参考 AstrBot conversation_mgr) ----
+		// invoke("save_chat_message", {role, content})
+		"save_chat_message" => Run(() => _services.Chat.SaveMessage(Str(args, "role"), Str(args, "content"))),
+		// invoke("clear_chat_history")
+		"clear_chat_history" => Run(() => _services.Chat.ClearHistory()),
+
 		// ---- 窗口 ----
 		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
 		"window_hide" => await OnUi(() => Run(() => _services.Windows.Hide(Str(args, "label")))),
