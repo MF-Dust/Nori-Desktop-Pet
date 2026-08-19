@@ -316,6 +316,7 @@ const testVoice = async () => {
 	margin: 0;
 	font-size: 1.8rem;
 	font-weight: 700;
+	color: var(--text-primary);
 }
 
 .subtitle {
