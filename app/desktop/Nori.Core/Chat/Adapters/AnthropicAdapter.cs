@@ -102,6 +102,95 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 		}
 	}
 
+	public async Task<string> StreamAsync(
+		string baseUrl,
+		string apiKey,
+		string model,
+		string systemPrompt,
+		IReadOnlyList<ChatMessageInput> messages,
+		Action<string> onChunk,
+		CancellationToken cancellationToken = default)
+	{
+		string endpoint = FormatEndpoint(baseUrl, "messages");
+
+		JsonArray anthropicMessages = NormalizeMessages(messages);
+		if (anthropicMessages.Count == 0)
+		{
+			throw new ChatException("有效消息列表为空");
+		}
+
+		JsonObject payload = new()
+		{
+			["model"] = model,
+			["max_tokens"] = 4096,
+			["system"] = systemPrompt,
+			["messages"] = anthropicMessages,
+			["stream"] = true,
+		};
+
+		using HttpRequestMessage request = new(HttpMethod.Post, new Uri(endpoint))
+		{
+			Content = JsonContent.Create(payload),
+		};
+		request.Headers.Add("x-api-key", apiKey);
+		request.Headers.Add("anthropic-version", AnthropicVersion);
+		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+		HttpResponseMessage response;
+		try
+		{
+			response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		}
+		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+		{
+			throw new ChatException($"请求失败: {exception.Message}", exception);
+		}
+
+		using (response)
+		{
+			if (!response.IsSuccessStatusCode)
+			{
+				string errorText = await SafeReadErrorAsync(response, cancellationToken);
+				throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}{(errorText.Length > 0 ? $", {errorText}" : "")}");
+			}
+
+			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+			using StreamReader reader = new(stream);
+			StringBuilder fullText = new();
+
+			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
+			{
+				string line = rawLine.Trim();
+				if (line.Length == 0 || line.StartsWith(':')) continue;
+
+				if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+				{
+					string data = line["data:".Length..].Trim();
+					try
+					{
+						JsonNode? node = JsonNode.Parse(data);
+						string? type = node?["type"]?.GetValue<string>();
+						if (type == "content_block_delta")
+						{
+							string? text = node?["delta"]?["text"]?.GetValue<string>();
+							if (!string.IsNullOrEmpty(text))
+							{
+								fullText.Append(text);
+								onChunk(text);
+							}
+						}
+					}
+					catch (JsonException)
+					{
+						/* 忽略不完整分片 */
+					}
+				}
+			}
+
+			return fullText.ToString();
+		}
+	}
+
 	public async Task<IReadOnlyList<string>> FetchModelsAsync(
 		string baseUrl,
 		string apiKey,

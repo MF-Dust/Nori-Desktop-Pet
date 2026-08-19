@@ -32,6 +32,15 @@ public sealed class ConfigStore(NoriDatabase database)
 	/// <summary>配置键: 首次初始化是否已完成</summary>
 	public const string KeyFirstRunCompleted = "first_run_completed";
 
+	/// <summary>配置键: 桌宠窗口 X 坐标</summary>
+	public const string KeyPetWindowX = "pet_window_x";
+
+	/// <summary>配置键: 桌宠窗口 Y 坐标</summary>
+	public const string KeyPetWindowY = "pet_window_y";
+
+	/// <summary>配置键: 全局音频音量 (0.0 ~ 1.0)</summary>
+	public const string KeyAudioVolume = "audio_volume";
+
 	/// <summary>当前配置结构版本</summary>
 	public const long ConfigSchemaVersion = 1;
 

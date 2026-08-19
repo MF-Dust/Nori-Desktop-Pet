@@ -17,6 +17,18 @@ public interface ILlmAdapter
 		CancellationToken cancellationToken = default);
 
 	/// <summary>
+	/// 发起流式对话请求, 逐分片回调产出文本
+	/// </summary>
+	Task<string> StreamAsync(
+		string baseUrl,
+		string apiKey,
+		string model,
+		string systemPrompt,
+		IReadOnlyList<ChatMessageInput> messages,
+		Action<string> onChunk,
+		CancellationToken cancellationToken = default);
+
+	/// <summary>
 	/// 获取支持的模型列表
 	/// </summary>
 	Task<IReadOnlyList<string>> FetchModelsAsync(

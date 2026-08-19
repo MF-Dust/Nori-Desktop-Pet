@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import {computed, nextTick, onMounted, ref} from "vue"
+import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "../services/host/invoke"
+import {listen, type UnlistenFn} from "../services/host/event"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
 
@@ -87,6 +88,9 @@ const readConfig = async (key: string): Promise<string> => {
 	}
 }
 
+let unlistenChatChunk: UnlistenFn | null = null
+let currentStreamId = ""
+
 onMounted(async () => {
 	try {
 		const [BASE, KEY, MODEL] = await Promise.all([
@@ -102,6 +106,21 @@ onMounted(async () => {
 	} catch (error) {
 		console.error("加载聊天历史失败:", error)
 	}
+
+	unlistenChatChunk = await listen("nori:chat-chunk", (event) => {
+		const payload = event.payload as {streamId: string; chunk: string; done?: boolean}
+		if (payload.streamId === currentStreamId && payload.chunk) {
+			const lastMsg = messages.value[messages.value.length - 1]
+			if (lastMsg && lastMsg.role === "assistant") {
+				lastMsg.content += payload.chunk
+				void scrollToBottom()
+			}
+		}
+	})
+})
+
+onBeforeUnmount(() => {
+	if (unlistenChatChunk) unlistenChatChunk()
 })
 
 // 发送消息
@@ -111,25 +130,43 @@ const send = async () => {
 	input.value = ""
 	errorMsg.value = ""
 	sending.value = true
-	// 乐观显示用户消息
+
+	const streamId = `stream-${Date.now()}`
+	currentStreamId = streamId
+
+	// 乐观显示用户消息与助手空占位消息
 	messages.value.push({id: -Date.now(), role: "user", content: TEXT})
+	messages.value.push({id: -Date.now() - 1, role: "assistant", content: ""})
 	await scrollToBottom()
+
 	try {
-		const HISTORY = messages.value.map(m => ({role: m.role, content: m.content}))
-		const REPLY = await invoke<string>("chat_completion", {
+		const HISTORY = messages.value
+			.slice(0, -1)
+			.map(m => ({role: m.role, content: m.content}))
+		const REPLY = await invoke<string>("chat_completion_stream", {
 			provider: (await readConfig(KEY_PROVIDER)) || "openai",
 			baseUrl: await readConfig(KEY_BASE),
 			apiKey: await readConfig(KEY_APIKEY),
 			model: await readConfig(KEY_MODEL),
 			messages: HISTORY,
+			streamId,
 		})
-		messages.value.push({id: -Date.now(), role: "assistant", content: REPLY})
+		// 最终对齐完整内容 (剥离动作标记后的最终文案)
+		const lastMsg = messages.value[messages.value.length - 1]
+		if (lastMsg && lastMsg.role === "assistant") {
+			lastMsg.content = REPLY
+		}
 		await scrollToBottom()
 	} catch (error) {
 		errorMsg.value = String(error)
 		console.error("聊天请求失败:", error)
+		const lastMsg = messages.value[messages.value.length - 1]
+		if (lastMsg && lastMsg.role === "assistant" && !lastMsg.content) {
+			messages.value.pop()
+		}
 	} finally {
 		sending.value = false
+		currentStreamId = ""
 	}
 }
 </script>

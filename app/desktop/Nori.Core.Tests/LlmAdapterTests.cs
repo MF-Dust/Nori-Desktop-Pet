@@ -226,4 +226,36 @@ public class LlmAdapterTests
 		Assert.Contains("gemini-2.5-pro", models);
 		Assert.DoesNotContain("embedding-001", models);
 	}
+
+	[Fact]
+	public async Task OpenAiChatAdapter流式分片读取()
+	{
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			Assert.Equal(HttpMethod.Post, req.Method);
+			Assert.Equal("https://api.openai.com/v1/chat/completions", req.RequestUri?.ToString());
+
+			string sse = "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"，我是 Nori\"}}]}\n\ndata: [DONE]\n\n";
+
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(sse, System.Text.Encoding.UTF8, "text/event-stream")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		OpenAiChatAdapter adapter = new(client);
+
+		List<string> chunks = [];
+		string full = await adapter.StreamAsync(
+			"https://api.openai.com/v1",
+			"key",
+			"gpt-4o",
+			"系统提示",
+			[new ChatMessageInput {Role = "user", Content = "hi"}],
+			chunk => chunks.Add(chunk));
+
+		Assert.Equal("你好，我是 Nori", full);
+		Assert.Equal(["你好", "，我是 Nori"], chunks);
+	}
 }

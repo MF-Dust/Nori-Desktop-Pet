@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import {onBeforeUnmount, onMounted, ref} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "../services/host/invoke"
 import {PhysicalPosition, PhysicalSize} from "../services/host/window"
 import {listen, type UnlistenFn} from "../services/host/event"
 import {getCurrentWindow} from "../services/host/window"
+import {showWindow, hideWindow} from "../services/window"
+import useLanguages from "../services/i18n/useLanguages.ts"
+import Icon from "../components/Icon.vue"
 import {createLive2D, type MotionGroup} from "../services/live2d"
 import {
 	L2D_CONFIG_KEYS,
@@ -87,6 +90,43 @@ const loadModelConfigs = async (): Promise<void> => {
 	opacity.value = await readNumberConfig("l2d_opacity", 1)
 }
 
+const I18N = computed(() => useLanguages().views.pet)
+
+// ---- 右键菜单状态 ----
+const contextMenuVisible = ref(false)
+const menuPos = ref({x: 0, y: 0})
+
+// ---- 窗口位置持久化 ----
+const saveWindowPosition = async () => {
+	try {
+		const WEBVIEW = getCurrentWindow()
+		const POS = await WEBVIEW.outerPosition()
+		await invoke("set_config", {key: "pet_window_x", value: String(POS.x)})
+		await invoke("set_config", {key: "pet_window_y", value: String(POS.y)})
+	} catch (error) {
+		console.error("保存桌宠窗口位置失败:", error)
+	}
+}
+
+const restoreWindowPosition = async () => {
+	try {
+		const [posXStr, posYStr] = await Promise.all([
+			invoke<string | null>("get_config", {key: "pet_window_x"}),
+			invoke<string | null>("get_config", {key: "pet_window_y"}),
+		])
+		if (posXStr != null && posYStr != null) {
+			const x = parseInt(posXStr, 10)
+			const y = parseInt(posYStr, 10)
+			if (!Number.isNaN(x) && !Number.isNaN(y)) {
+				const WEBVIEW = getCurrentWindow()
+				await WEBVIEW.setPosition(new PhysicalPosition(x, y))
+			}
+		}
+	} catch (error) {
+		console.error("恢复桌宠窗口位置失败:", error)
+	}
+}
+
 // ---- 表情应用 ----
 const applyExpressions = async (list: string[]): Promise<void> => {
 	try {
@@ -113,7 +153,12 @@ let hasDragged = false
 let suppressNextClick = false
 
 const finishDrag = () => {
-	if (isDragging) suppressNextClick = hasDragged
+	if (isDragging) {
+		suppressNextClick = hasDragged
+		if (hasDragged) {
+			void saveWindowPosition()
+		}
+	}
 	dragPending = false
 	isDragging = false
 	const CANVAS = L2D.canvas()
@@ -351,10 +396,71 @@ onMounted(async () => {
 	window.addEventListener("mousedown", onMouseDown)
 	window.addEventListener("mouseup", onMouseUp)
 
+	// 恢复上次保存的窗口位置
+	await restoreWindowPosition()
+
 	// 兜底: pet-start 事件可能在监听注册前就发出 (用户点唤出时桌宠 webview 尚未就绪),
 	// 轮询窗口可见性补挂载, 最多 30 次 × 500ms
 	void ensurePetMounted()
 })
+
+// ---- 右键菜单操作 ----
+const closeContextMenu = () => {
+	contextMenuVisible.value = false
+}
+
+const onContextMenu = (event: MouseEvent) => {
+	event.preventDefault()
+	menuPos.value = {
+		x: Math.max(8, Math.min(event.clientX, window.innerWidth - 150)),
+		y: Math.max(8, Math.min(event.clientY, window.innerHeight - 210)),
+	}
+	contextMenuVisible.value = true
+}
+
+const openMainWindow = async () => {
+	closeContextMenu()
+	await showWindow("main")
+}
+
+const triggerRandomMotion = async () => {
+	closeContextMenu()
+	if (motionGroups.value.length > 0) {
+		const randomGroup = motionGroups.value[Math.floor(Math.random() * motionGroups.value.length)]
+		if (randomGroup && randomGroup.names.length > 0) {
+			const randomMotionName = randomGroup.names[Math.floor(Math.random() * randomGroup.names.length)]
+			if (randomMotionName) {
+				void L2D.playMotionByName(randomMotionName)
+				return
+			}
+		}
+	}
+	if (expressionList.value.length > 0) {
+		const randomExp = expressionList.value[Math.floor(Math.random() * expressionList.value.length)]
+		void L2D.playExpression(randomExp)
+	}
+}
+
+const resetWindowPosition = async () => {
+	closeContextMenu()
+	try {
+		const WEBVIEW = getCurrentWindow()
+		await WEBVIEW.setPosition(new PhysicalPosition(120, 120))
+		await saveWindowPosition()
+	} catch (error) {
+		console.error("重置桌宠位置失败:", error)
+	}
+}
+
+const hidePet = async () => {
+	closeContextMenu()
+	await hideWindow("pet")
+}
+
+const exitApp = () => {
+	closeContextMenu()
+	invoke("exit_app")
+}
 
 // 鼠标拖动与点击交互
 const updateCanvasCursor = (clientX: number, clientY: number) => {
@@ -371,6 +477,10 @@ const onCanvasPointerLeave = () => {
 }
 
 const onCanvasClick = (event: MouseEvent) => {
+	if (contextMenuVisible.value) {
+		closeContextMenu()
+		return
+	}
 	const SHOULD_SUPPRESS = suppressNextClick
 	suppressNextClick = false
 	if (SHOULD_SUPPRESS || !L2D.isPointOnModel(event.clientX, event.clientY)) {
@@ -380,6 +490,9 @@ const onCanvasClick = (event: MouseEvent) => {
 }
 
 const onMouseDown = async (event: MouseEvent) => {
+	if (contextMenuVisible.value) {
+		closeContextMenu()
+	}
 	if (event.button !== 0 || dragPending || isDragging || !L2D.isPointOnModel(event.clientX, event.clientY)) return
 	dragPending = true
 	hasDragged = false
@@ -449,7 +562,39 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="pet-stage"/>
+	<div class="pet-stage" @contextmenu="onContextMenu" @click="closeContextMenu">
+		<!-- 右键桌面菜单 -->
+		<Transition name="menu-fade">
+			<div
+				v-if="contextMenuVisible"
+				class="pet-context-menu"
+				:style="{left: `${menuPos.x}px`, top: `${menuPos.y}px`}"
+				@click.stop
+			>
+				<button class="menu-item" @click="openMainWindow">
+					<Icon name="noriOS" class="menu-icon"/>
+					<span>{{ I18N.contextMenu?.openMain }}</span>
+				</button>
+				<button class="menu-item" @click="triggerRandomMotion">
+					<Icon name="sparkles" class="menu-icon"/>
+					<span>{{ I18N.contextMenu?.playMotion }}</span>
+				</button>
+				<button class="menu-item" @click="resetWindowPosition">
+					<Icon name="settings" class="menu-icon"/>
+					<span>{{ I18N.contextMenu?.resetPos }}</span>
+				</button>
+				<div class="menu-divider"/>
+				<button class="menu-item" @click="hidePet">
+					<Icon name="minus" class="menu-icon"/>
+					<span>{{ I18N.contextMenu?.hidePet }}</span>
+				</button>
+				<button class="menu-item danger" @click="exitApp">
+					<Icon name="close" class="menu-icon"/>
+					<span>{{ I18N.contextMenu?.exitApp }}</span>
+				</button>
+			</div>
+		</Transition>
+	</div>
 </template>
 
 <style scoped lang="less">
@@ -462,5 +607,69 @@ onBeforeUnmount(() => {
 	background: transparent;
 	user-select: none;
 	cursor: default;
+}
+
+.pet-context-menu {
+	position: fixed;
+	z-index: 9999;
+	min-width: 13.6rem;
+	padding: 0.6rem;
+	background: linear-gradient(160deg, rgba(16, 48, 75, 0.95) 0%, rgba(2, 10, 18, 0.98) 100%);
+	backdrop-filter: blur(12px);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.5), 0 0 1rem var(--glow-teal-soft);
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.menu-item {
+	display: flex;
+	align-items: center;
+	gap: 0.8rem;
+	padding: 0.6rem 0.9rem;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-body);
+	font-size: 1.2rem;
+	font-family: inherit;
+	cursor: pointer;
+	text-align: left;
+	transition: all 0.15s ease;
+
+	&:hover {
+		background: rgba(125, 227, 255, 0.15);
+		color: var(--nori-teal-bright);
+	}
+
+	&.danger:hover {
+		background: rgba(255, 80, 80, 0.18);
+		color: #ff6b6b;
+	}
+}
+
+.menu-icon {
+	width: 1.4rem;
+	height: 1.4rem;
+	flex-shrink: 0;
+}
+
+.menu-divider {
+	height: 0.1rem;
+	background: var(--line-subtle);
+	margin: 0.2rem 0.4rem;
+}
+
+.menu-fade-enter-active,
+.menu-fade-leave-active {
+	transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.menu-fade-enter-from,
+.menu-fade-leave-to {
+	opacity: 0;
+	transform: scale(0.95);
 }
 </style>

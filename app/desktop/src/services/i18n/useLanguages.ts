@@ -82,6 +82,13 @@ export default () => {
 			},
 			pet: {
 				hint: t("views.pet.hint"),
+				contextMenu: {
+					openMain: t("views.pet.contextMenu.openMain"),
+					playMotion: t("views.pet.contextMenu.playMotion"),
+					resetPos: t("views.pet.contextMenu.resetPos"),
+					hidePet: t("views.pet.contextMenu.hidePet"),
+					exitApp: t("views.pet.contextMenu.exitApp"),
+				},
 			},
 			main: {
 				nav: {

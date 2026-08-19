@@ -132,6 +132,51 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 	}
 
 	/// <summary>
+	/// 发起一次流式对话
+	///
+	/// 逐 chunk 触发 onChunk 回调, 并在结束时返回剥离动作标记后的完整回复文本
+	/// </summary>
+	public async Task<string> StreamAsync(
+		string? providerStr,
+		string baseUrl,
+		string apiKey,
+		string model,
+		IReadOnlyList<ChatMessageInput> messages,
+		Action<string> onChunk,
+		Action<string> onMotion,
+		CancellationToken cancellationToken = default)
+	{
+		baseUrl = baseUrl.TrimEnd('/');
+		if (baseUrl.Length == 0) throw new ChatException("Base URL 不能为空");
+		if (apiKey.Length == 0) throw new ChatException("API Key 不能为空");
+		if (model.Length == 0) throw new ChatException("模型不能为空");
+		if (messages.Count == 0) throw new ChatException("消息不能为空");
+
+		if (string.IsNullOrWhiteSpace(providerStr))
+		{
+			providerStr = _config.GetStringOr(KeyLlmProvider, "openai");
+		}
+
+		LlmProvider provider = LlmProviderExtensions.ParseProvider(providerStr);
+		ILlmAdapter adapter = LlmClient.CreateAdapter(provider, _httpClient);
+
+		string modelId = _config.GetStringOr(ConfigStore.KeySelectedModel, "");
+		string systemContent = SystemPrompt.Value + MotionMarkers.BuildHint(_config, modelId);
+
+		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		timeout.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
+
+		string raw = await adapter.StreamAsync(baseUrl, apiKey, model, systemContent, messages, onChunk, timeout.Token);
+
+		(string content, IReadOnlyList<string> motions) = MotionMarkers.Extract(raw);
+		foreach (string motion in motions) onMotion(motion);
+
+		SaveMessage(messages[^1].Role, messages[^1].Content);
+		SaveMessage("assistant", content);
+		return content;
+	}
+
+	/// <summary>
 	/// 兼容老接口 (从配置或默认协议发起对话)
 	/// </summary>
 	public Task<string> CompleteAsync(

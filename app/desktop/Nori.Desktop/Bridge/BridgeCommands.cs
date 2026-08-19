@@ -91,6 +91,9 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("chat_completion", {provider?, baseUrl, apiKey, model, messages})
 		"chat_completion" => await ChatCompletionAsync(args),
 
+		// invoke("chat_completion_stream", {provider?, baseUrl, apiKey, model, messages, streamId?})
+		"chat_completion_stream" => await ChatCompletionStreamAsync(source, args),
+
 		// invoke("fetch_llm_models", {provider?, baseUrl, apiKey})
 		"fetch_llm_models" => await _services.Llm.FetchModelsAsync(OptionalStr(args, "provider"), Str(args, "baseUrl"), Str(args, "apiKey")),
 
@@ -218,6 +221,23 @@ public sealed class BridgeCommands(AppServices services)
 			Str(args, "apiKey"),
 			Str(args, "model"),
 			messages,
+			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})));
+	}
+
+	/// <summary>
+	/// 一次流式对话, 逐 chunk 通过 nori:chat-chunk 事件向来源窗口推送
+	/// </summary>
+	private async Task<object?> ChatCompletionStreamAsync(NoriWindow source, JsonElement args)
+	{
+		ChatMessageInput[] messages = args.GetProperty("messages").Deserialize<ChatMessageInput[]>(BridgeJson.Options) ?? [];
+		string streamId = OptionalStr(args, "streamId") ?? Guid.NewGuid().ToString("N");
+		return await _services.Chat.StreamAsync(
+			OptionalStr(args, "provider"),
+			Str(args, "baseUrl"),
+			Str(args, "apiKey"),
+			Str(args, "model"),
+			messages,
+			chunk => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-chunk", new {streamId, chunk, done = false})),
 			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})));
 	}
 

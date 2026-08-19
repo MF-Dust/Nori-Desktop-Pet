@@ -112,6 +112,110 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 		}
 	}
 
+	public async Task<string> StreamAsync(
+		string baseUrl,
+		string apiKey,
+		string model,
+		string systemPrompt,
+		IReadOnlyList<ChatMessageInput> messages,
+		Action<string> onChunk,
+		CancellationToken cancellationToken = default)
+	{
+		string cleanModel = NormalizeModelName(model);
+		string endpoint = FormatEndpoint(baseUrl, $"models/{cleanModel}:streamGenerateContent?alt=sse");
+
+		JsonArray contents = [];
+		foreach (ChatMessageInput message in messages)
+		{
+			string role = message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) ? "model" : "user";
+			contents.Add(new JsonObject
+			{
+				["role"] = role,
+				["parts"] = new JsonArray
+				{
+					new JsonObject {["text"] = message.Content},
+				},
+			});
+		}
+
+		JsonObject payload = new()
+		{
+			["system_instruction"] = new JsonObject
+			{
+				["parts"] = new JsonArray
+				{
+					new JsonObject {["text"] = systemPrompt},
+				},
+			},
+			["contents"] = contents,
+		};
+
+		using HttpRequestMessage request = new(HttpMethod.Post, new Uri(endpoint))
+		{
+			Content = JsonContent.Create(payload),
+		};
+		request.Headers.Add("x-goog-api-key", apiKey);
+		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+		HttpResponseMessage response;
+		try
+		{
+			response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		}
+		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+		{
+			throw new ChatException($"请求失败: {exception.Message}", exception);
+		}
+
+		using (response)
+		{
+			if (!response.IsSuccessStatusCode)
+			{
+				string errorText = await SafeReadErrorAsync(response, cancellationToken);
+				throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}{(errorText.Length > 0 ? $", {errorText}" : "")}");
+			}
+
+			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+			using StreamReader reader = new(stream);
+			StringBuilder fullText = new();
+
+			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
+			{
+				string line = rawLine.Trim();
+				if (line.Length == 0 || line.StartsWith(':')) continue;
+
+				if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+				{
+					string data = line["data:".Length..].Trim();
+					try
+					{
+						JsonNode? node = JsonNode.Parse(data);
+						if (node?["candidates"] is JsonArray candidates && candidates.Count > 0)
+						{
+							if (candidates[0]?["content"]?["parts"] is JsonArray parts)
+							{
+								foreach (JsonNode? part in parts)
+								{
+									if (part?["text"] is JsonValue textVal && textVal.TryGetValue(out string? text) && !string.IsNullOrEmpty(text))
+									{
+										fullText.Append(text);
+										onChunk(text);
+									}
+								}
+							}
+						}
+					}
+					catch (JsonException)
+					{
+						/* 忽略不完整分片 */
+					}
+				}
+			}
+
+			return fullText.ToString();
+		}
+	}
+
 	public async Task<IReadOnlyList<string>> FetchModelsAsync(
 		string baseUrl,
 		string apiKey,

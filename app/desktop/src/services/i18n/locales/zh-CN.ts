@@ -80,6 +80,13 @@ export default {
 		},
 		pet: {
 			hint: "点击小宠物聊聊天吧",
+			contextMenu: {
+				openMain: "打开主界面",
+				playMotion: "做个动作",
+				resetPos: "重置位置",
+				hidePet: "收起桌宠",
+				exitApp: "退出应用",
+			},
 		},
 		main: {
 			nav: {

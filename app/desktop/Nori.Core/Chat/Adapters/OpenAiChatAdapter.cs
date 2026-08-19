@@ -75,6 +75,89 @@ public sealed class OpenAiChatAdapter(HttpClient httpClient) : ILlmAdapter
 		}
 	}
 
+	public async Task<string> StreamAsync(
+		string baseUrl,
+		string apiKey,
+		string model,
+		string systemPrompt,
+		IReadOnlyList<ChatMessageInput> messages,
+		Action<string> onChunk,
+		CancellationToken cancellationToken = default)
+	{
+		string endpoint = FormatEndpoint(baseUrl, "chat/completions");
+
+		JsonArray payloadMessages = [new JsonObject {["role"] = "system", ["content"] = systemPrompt}];
+		foreach (ChatMessageInput message in messages)
+		{
+			payloadMessages.Add(new JsonObject {["role"] = message.Role, ["content"] = message.Content});
+		}
+
+		JsonObject payload = new()
+		{
+			["model"] = model,
+			["messages"] = payloadMessages,
+			["stream"] = true,
+		};
+
+		using HttpRequestMessage request = new(HttpMethod.Post, new Uri(endpoint))
+		{
+			Content = JsonContent.Create(payload),
+		};
+		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+		HttpResponseMessage response;
+		try
+		{
+			response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		}
+		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+		{
+			throw new ChatException($"请求失败: {exception.Message}", exception);
+		}
+
+		using (response)
+		{
+			if (!response.IsSuccessStatusCode)
+			{
+				string errorText = await SafeReadErrorAsync(response, cancellationToken);
+				throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}{(errorText.Length > 0 ? $", {errorText}" : "")}");
+			}
+
+			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+			using StreamReader reader = new(stream);
+			System.Text.StringBuilder fullText = new();
+
+			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
+			{
+				string line = rawLine.Trim();
+				if (line.Length == 0 || line.StartsWith(':')) continue;
+
+				if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+				{
+					string data = line["data:".Length..].Trim();
+					if (data == "[DONE]") break;
+
+					try
+					{
+						JsonNode? node = JsonNode.Parse(data);
+						string? chunk = node?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>();
+						if (!string.IsNullOrEmpty(chunk))
+						{
+							fullText.Append(chunk);
+							onChunk(chunk);
+						}
+					}
+					catch (JsonException)
+					{
+						/* 忽略不完整分片 */
+					}
+				}
+			}
+
+			return fullText.ToString();
+		}
+	}
+
 	public async Task<IReadOnlyList<string>> FetchModelsAsync(
 		string baseUrl,
 		string apiKey,

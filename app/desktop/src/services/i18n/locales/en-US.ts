@@ -1,5 +1,15 @@
 export default {
 	views: {
+		pet: {
+			hint: "Click the pet to chat",
+			contextMenu: {
+				openMain: "Open Main Window",
+				playMotion: "Play Motion",
+				resetPos: "Reset Position",
+				hidePet: "Hide Pet",
+				exitApp: "Exit Nori",
+			},
+		},
 		main: {
 			nav: {
 				home: "Home",
