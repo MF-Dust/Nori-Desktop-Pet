@@ -62,14 +62,18 @@ const baseUrlPlaceholder = computed(() => {
 	return DEFAULT_BASE_URLS[provider.value] || "https://api.openai.com/v1"
 })
 
+// 用户自定义人设系统提示词
+const userPersona = ref("")
+
 // 读取已保存的配置
 onMounted(async () => {
 	try {
-		const [SAVED_PROVIDER, BASE, KEY, MODEL] = await Promise.all([
+		const [SAVED_PROVIDER, BASE, KEY, MODEL, SAVED_PERSONA] = await Promise.all([
 			invoke<string | null>("get_config", {key: KEY_PROVIDER}),
 			invoke<string | null>("get_config", {key: KEY_BASE}),
 			invoke<string | null>("get_config", {key: KEY_APIKEY}),
 			invoke<string | null>("get_config", {key: KEY_MODEL}),
+			invoke<string | null>("get_config", {key: "nori_user_persona"}),
 		])
 		if (SAVED_PROVIDER && PROVIDER_OPTIONS.includes(SAVED_PROVIDER as ProviderKey)) {
 			provider.value = SAVED_PROVIDER as ProviderKey
@@ -77,6 +81,7 @@ onMounted(async () => {
 		if (BASE) baseUrl.value = BASE
 		if (KEY) apiKey.value = KEY
 		if (MODEL) selectedModel.value = MODEL
+		if (SAVED_PERSONA) userPersona.value = SAVED_PERSONA
 		if (BASE && KEY) await fetchModels()
 	} catch (error) {
 		console.error("读取 LLM 配置失败:", error)
@@ -217,6 +222,17 @@ const fetchModels = async () => {
 						{{ loading ? I18N.getting : I18N.getModel }}
 					</button>
 				</div>
+			</div>
+
+			<div class="field">
+				<span class="field-label">人设与系统提示词 (System Prompt)</span>
+				<textarea
+					v-model="userPersona"
+					class="input textarea"
+					rows="4"
+					placeholder="设定 Nori 的人设、性格、口吻或对话规则（留空将使用默认陪伴人设）..."
+					@blur="saveOnChange('nori_user_persona', () => userPersona)"
+				/>
 			</div>
 
 			<p v-if="errorMsg" class="error">{{ errorMsg }}</p>

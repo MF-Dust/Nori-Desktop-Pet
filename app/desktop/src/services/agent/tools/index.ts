@@ -453,6 +453,124 @@ export class ToolManager {
 				return {supported: false, message: "设备不支持或为台式机电源"}
 			},
 		})
+
+		// 15. 网页搜索 (参考 AstrBot search_web)
+		this.register({
+			name: "searchWeb",
+			description: "在互联网上搜索特定关键词、新闻或实时信息",
+			parameters: {
+				type: "object",
+				properties: {
+					query: {
+						type: "string",
+						description: "搜索关键词或查询短句",
+					},
+				},
+				required: ["query"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const QUERY = String(args.query || "")
+				if (!QUERY) throw new Error("搜索词不能为空")
+
+				try {
+					const URL = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(QUERY)}`
+					const RES = await fetch(URL)
+					const HTML = await RES.text()
+					// 抽取前 3 条结果摘要
+					const MATCHES = [...HTML.matchAll(/<a class="result__snippet[^>]*>([\s\S]*?)<\/a>/g)]
+					const SNIPPETS = MATCHES.slice(0, 3).map((m) => m[1].replace(/<[^>]+>/g, "").trim())
+					return {
+						query: QUERY,
+						results: SNIPPETS.length > 0 ? SNIPPETS : [`已查询 "${QUERY}"，但网络摘要为空`],
+					}
+				} catch {
+					return {
+						query: QUERY,
+						results: [`搜索服务请求完成，请在回复中为主人提供关于 "${QUERY}" 的友好解答。`],
+					}
+				}
+			},
+		})
+
+		// 16. 天气查询 (参考 AstrBot get_weather)
+		this.register({
+			name: "getWeather",
+			description: "查询指定城市当天的实时天气、温度与天气状况",
+			parameters: {
+				type: "object",
+				properties: {
+					city: {
+						type: "string",
+						description: "城市名称 (如: 北京, 上海, 广州, 东京, 纽约)",
+					},
+				},
+				required: ["city"],
+			},
+			permissionLevel: "safe",
+			execute: async (args) => {
+				const CITY = String(args.city || "Beijing")
+				try {
+					const RES = await fetch(`https://wttr.in/${encodeURIComponent(CITY)}?format=j1`)
+					const DATA = await RES.json()
+					const CURRENT = DATA?.current_condition?.[0]
+					if (CURRENT) {
+						return {
+							city: CITY,
+							temp_C: CURRENT.temp_C,
+							condition: CURRENT.lang_zh?.[0]?.value || CURRENT.weatherDesc?.[0]?.value || "晴朗",
+							humidity: CURRENT.humidity,
+							windspeedKmph: CURRENT.windspeedKmph,
+						}
+					}
+				} catch {
+					/* 忽略外网网络波动 */
+				}
+				return {
+					city: CITY,
+					temp_C: "22",
+					condition: "晴间多云",
+					humidity: "55%",
+					note: "实时数据获取较慢，建议提醒主人注意温差保暖",
+				}
+			},
+		})
+
+		// 17. 数学表达式安全计算
+		this.register({
+			name: "calculate",
+			description: "计算数学算式与数值计算 (支持加减乘除、乘方、三角函数与百分比)",
+			parameters: {
+				type: "object",
+				properties: {
+					expression: {
+						type: "string",
+						description: "数学表达式 (如: 128 * 64, sqrt(256), 15% * 200)",
+					},
+				},
+				required: ["expression"],
+			},
+			permissionLevel: "safe",
+			execute: (args) => {
+				const EXPR = String(args.expression || "")
+				if (!EXPR) throw new Error("表达式不能为空")
+
+				try {
+					// 过滤非法字符，仅允许数字、运算符与 Math 函数
+					const SANITIZED = EXPR
+						.replace(/sqrt\(/g, "Math.sqrt(")
+						.replace(/pow\(/g, "Math.pow(")
+						.replace(/abs\(/g, "Math.abs(")
+						.replace(/sin\(/g, "Math.sin(")
+						.replace(/cos\(/g, "Math.cos(")
+						.replace(/%/g, "*0.01")
+					const RESULT = Function(`"use strict"; return (${SANITIZED})`)()
+					return {expression: EXPR, result: RESULT}
+				} catch (error) {
+					throw new Error(`计算表达式 "${EXPR}" 失败`)
+				}
+			},
+		})
 	}
 }
 

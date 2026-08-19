@@ -74,12 +74,13 @@ export class AgentEngine {
 			while (iterations < this.maxToolIterations) {
 				iterations++
 
-				// 1. 读取 AI 配置
-				const [PROVIDER, BASE_URL, API_KEY, MODEL] = await Promise.all([
+				// 1. 读取 AI 与用户自定义人设配置
+				const [PROVIDER, BASE_URL, API_KEY, MODEL, USER_PERSONA] = await Promise.all([
 					invoke<string | null>("get_config", {key: "llm_provider"}),
 					invoke<string | null>("get_config", {key: "llm_api_base"}),
 					invoke<string | null>("get_config", {key: "llm_api_key"}),
 					invoke<string | null>("get_config", {key: "llm_model"}),
+					invoke<string | null>("get_config", {key: "nori_user_persona"}),
 				])
 
 				if (!BASE_URL || !API_KEY || !MODEL) {
@@ -89,13 +90,21 @@ export class AgentEngine {
 				// 2. 组装 System Prompt 与可用工具 (自动检索相关记忆与关联情绪)
 				const RELEVANT_MEMORIES = options.memories ?? (await memoryService.getRelevantMemories(userText))
 				const CURRENT_EMOTION = options.emotion ?? emotionManager.getState().type
+				const RESOLVED_PERSONA = options.persona || USER_PERSONA || undefined
 
 				const PROMPT_OPTIONS: PromptBuildOptions = {
 					...options,
+					persona: RESOLVED_PERSONA,
 					emotion: CURRENT_EMOTION,
 					memories: RELEVANT_MEMORIES,
 				}
 				const SYSTEM_PROMPT = buildAgentSystemPrompt(PROMPT_OPTIONS)
+
+				// 滑动窗口截断长上下文 (保留最近 12 轮，参考 AstrBot context/truncator 机制)
+				const MAX_CONTEXT_ROUNDS = 12
+				const TRUNCATED_HISTORY = WORKING_HISTORY.length > MAX_CONTEXT_ROUNDS
+					? WORKING_HISTORY.slice(-MAX_CONTEXT_ROUNDS)
+					: WORKING_HISTORY
 
 				// 3. 准备流式接收
 				const STREAM_ID = `agent-${Date.now()}-${iterations}`
@@ -129,7 +138,7 @@ export class AgentEngine {
 						model: MODEL,
 						messages: [
 							{role: "system", content: SYSTEM_PROMPT},
-							...WORKING_HISTORY,
+							...TRUNCATED_HISTORY,
 						],
 						streamId: STREAM_ID,
 					})

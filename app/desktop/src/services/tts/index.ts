@@ -102,7 +102,50 @@ export class OpenAiTtsProvider implements ITtsProvider {
 }
 
 /**
- * 3. 自定义 HTTP TTS 适配器
+ * 3. 微软 Edge TTS 免费高保真神经网络语音适配器 (参考 AstrBot ProviderEdgeTTS)
+ */
+export class EdgeTtsProvider implements ITtsProvider {
+	public readonly name = "edge_tts"
+
+	public async synthesize(text: string, options: TtsSynthesizeOptions = {}): Promise<ArrayBuffer | string> {
+		const VOICE = options.voice || "zh-CN-XiaoxiaoNeural"
+		const BASE_URL = await invoke<string | null>("get_config", {key: "tts_base_url"})
+
+		// 如果配置了本地 edge-tts 服务或自建 HTTP 端点
+		if (BASE_URL && BASE_URL.startsWith("http")) {
+			const ENDPOINT = `${BASE_URL.replace(/\/+$/, "")}/tts`
+			const RES = await fetch(ENDPOINT, {
+				method: "POST",
+				headers: {"Content-Type": "application/json"},
+				body: JSON.stringify({text, voice: VOICE, rate: options.speed || 1.0}),
+			})
+			if (RES.ok) return await RES.arrayBuffer()
+		}
+
+		// 默认直接利用浏览器匹配 Microsoft 自然语音或 WebSpeech
+		if (typeof window !== "undefined" && "speechSynthesis" in window) {
+			return new Promise((resolve, reject) => {
+				const UTTERANCE = new SpeechSynthesisUtterance(text)
+				UTTERANCE.lang = VOICE.startsWith("en") ? "en-US" : VOICE.startsWith("ja") ? "ja-JP" : "zh-CN"
+				if (options.speed) UTTERANCE.rate = options.speed
+				if (options.pitch) UTTERANCE.pitch = options.pitch
+
+				const VOICES = window.speechSynthesis.getVoices()
+				const MATCH = VOICES.find((v) => v.name.includes("Microsoft") || v.name.includes(VOICE) || v.lang.startsWith("zh"))
+				if (MATCH) UTTERANCE.voice = MATCH
+
+				UTTERANCE.onend = () => resolve("")
+				UTTERANCE.onerror = (err) => reject(new Error(`Edge TTS 失败: ${err.error}`))
+				window.speechSynthesis.speak(UTTERANCE)
+			})
+		}
+
+		throw new Error("当前环境不支持 Edge TTS 语音合成")
+	}
+}
+
+/**
+ * 4. 自定义 HTTP TTS 适配器
  */
 export class CustomHttpTtsProvider implements ITtsProvider {
 	public readonly name = "custom"
@@ -140,6 +183,7 @@ export class TtsService {
 
 	constructor() {
 		this.register(new WebSpeechTtsProvider())
+		this.register(new EdgeTtsProvider())
 		this.register(new OpenAiTtsProvider())
 		this.register(new CustomHttpTtsProvider())
 	}
