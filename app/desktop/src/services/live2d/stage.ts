@@ -45,7 +45,7 @@ export const applyCanvasLayout = (
 ): void => {
 	if (!canvas) return
 	canvas.style.position = "fixed"
-	canvas.style.pointerEvents = "none"
+	canvas.style.pointerEvents = "auto"
 	canvas.style.transformOrigin = "bottom center"
 
 	if (box) {

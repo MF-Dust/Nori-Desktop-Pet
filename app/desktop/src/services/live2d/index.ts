@@ -3,7 +3,11 @@ import {
 	load,
 	playExpression,
 	playMotion,
+	removePointClickEvent,
+	removePointMovedEvent,
 	setAngle,
+	setPointClickEvent,
+	setPointMovedEvent,
 	stop,
 	stopExpression,
 } from "live2d-easy-control"
@@ -69,25 +73,69 @@ const buildLoadConfig = (model: Live2DModelSpec, options: Live2DMountOptions = {
  */
 export const createLive2D = () => {
 	let canvasEl: HTMLCanvasElement | null = null
+	let interactionEnabled = false
+	let loaded = false
 
 	const canvas = (): HTMLCanvasElement | null => canvasEl
 
+	// 读取当前 WebGL 帧的 alpha, 只把模型实际绘制的像素视为可交互区域
+	const isPointOnModel = (clientX: number, clientY: number): boolean => {
+		if (!canvasEl || !canvasEl.isConnected) return false
+		const RECT = canvasEl.getBoundingClientRect()
+		if (RECT.width <= 0 || RECT.height <= 0 || clientX < RECT.left || clientX >= RECT.right || clientY < RECT.top || clientY >= RECT.bottom) {
+			return false
+		}
+		const GL = canvasEl.getContext("webgl2")
+		if (!GL) return true
+		const X = Math.min(canvasEl.width - 1, Math.max(0, Math.floor((clientX - RECT.left) * canvasEl.width / RECT.width)))
+		const Y = Math.min(canvasEl.height - 1, Math.max(0, Math.floor((RECT.bottom - clientY) * canvasEl.height / RECT.height)))
+		const PIXEL = new Uint8Array(4)
+		try {
+			GL.readPixels(X, Y, 1, 1, GL.RGBA, GL.UNSIGNED_BYTE, PIXEL)
+			return PIXEL[3] > 8
+		} catch {
+			// 不支持像素读取时退回画布范围, 保证低端环境仍可操作
+			return true
+		}
+	}
+
 	const mount = async (model: Live2DModelSpec, options?: Live2DMountOptions): Promise<void> => {
-		if (canvasEl && canvasEl.isConnected) canvasEl.remove()
+		if (loaded) await destroy()
+		else if (canvasEl && canvasEl.isConnected) canvasEl.remove()
 		canvasEl = null
+		interactionEnabled = false
 		await load(buildLoadConfig(model, options))
+		loaded = true
 		canvasEl = document.body.querySelector("canvas")
 		if (canvasEl) {
-			canvasEl.style.pointerEvents = "none"
+			canvasEl.style.pointerEvents = "auto"
+			await setPointMovedEvent()
+			await setPointClickEvent()
+			interactionEnabled = true
 		}
 	}
 
 	const destroy = async (): Promise<void> => {
+		if (!loaded) {
+			if (canvasEl && canvasEl.isConnected) canvasEl.remove()
+			canvasEl = null
+			return
+		}
+		if (interactionEnabled) {
+			try {
+				await removePointClickEvent()
+				await removePointMovedEvent()
+			} catch {
+				/* 未加载时忽略 */
+			}
+			interactionEnabled = false
+		}
 		try {
 			await stop()
 		} catch {
 			/* 未加载时忽略 */
 		}
+		loaded = false
 		if (canvasEl && canvasEl.isConnected) canvasEl.remove()
 		canvasEl = null
 	}
@@ -129,6 +177,7 @@ export const createLive2D = () => {
 		stopExpression: () => stopExpression(),
 		destroy,
 		canvas,
+		isPointOnModel,
 		getMotions,
 		playMotionByIndex,
 		playMotionByName,

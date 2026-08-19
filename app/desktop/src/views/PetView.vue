@@ -100,14 +100,25 @@ const applyExpressions = async (list: string[]): Promise<void> => {
 // ---- 全局头部跟踪与平滑拖动 ----
 let tracking = false
 let trackRafId: number | null = null
+const DRAG_THRESHOLD = 4
 
 // 拖拽状态
+let dragPending = false
 let isDragging = false
 let dragStartCursorX = 0
 let dragStartCursorY = 0
 let dragStartWindowX = 0
 let dragStartWindowY = 0
 let hasDragged = false
+let suppressNextClick = false
+
+const finishDrag = () => {
+	if (isDragging) suppressNextClick = hasDragged
+	dragPending = false
+	isDragging = false
+	const CANVAS = L2D.canvas()
+	if (CANVAS) CANVAS.style.cursor = "default"
+}
 
 const trackCursor = async () => {
 	if (!tracking) return
@@ -120,15 +131,13 @@ const trackCursor = async () => {
 		const WEBVIEW = getCurrentWindow()
 
 		// 全局检测按键释放: 如果鼠标按键已松开, 立即停止拖动
-		if (isDragging && !IS_LEFT_DOWN) {
-			isDragging = false
-		}
+		if ((dragPending || isDragging) && !IS_LEFT_DOWN) finishDrag()
 
 		// 正在拖动时同步窗口位置
 		if (isDragging && IS_LEFT_DOWN) {
 			const dx = CURSOR_X - dragStartCursorX
 			const dy = CURSOR_Y - dragStartCursorY
-			if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+			if (hasDragged || Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
 				hasDragged = true
 				await WEBVIEW.setPosition(new PhysicalPosition(
 					Math.round(dragStartWindowX + dx),
@@ -174,6 +183,13 @@ const afterMount = async () => {
 			key: `l2d_motions_${modelName.value}`,
 			value: JSON.stringify(motionGroups.value),
 		}).catch(() => {})
+	}
+	const CANVAS = L2D.canvas()
+	if (CANVAS) {
+		CANVAS.style.cursor = "default"
+		CANVAS.addEventListener("click", onCanvasClick, true)
+		CANVAS.addEventListener("pointermove", onCanvasPointerMove)
+		CANVAS.addEventListener("pointerleave", onCanvasPointerLeave)
 	}
 	await applyExpressions(expressionList.value)
 }
@@ -331,7 +347,7 @@ onMounted(async () => {
 		}
 	})
 
-	// 鼠标交互: 左键按住拖动窗口, 点击触发 TapBody 动作
+	// 鼠标交互由 window 接收, 这样 canvas 开启指针事件后仍能在拖动时跟踪到释放
 	window.addEventListener("mousedown", onMouseDown)
 	window.addEventListener("mouseup", onMouseUp)
 
@@ -341,33 +357,61 @@ onMounted(async () => {
 })
 
 // 鼠标拖动与点击交互
+const updateCanvasCursor = (clientX: number, clientY: number) => {
+	const CANVAS = L2D.canvas()
+	if (!CANVAS || isDragging) return
+	CANVAS.style.cursor = L2D.isPointOnModel(clientX, clientY) ? "grab" : "default"
+}
+
+const onCanvasPointerMove = (event: PointerEvent) => updateCanvasCursor(event.clientX, event.clientY)
+
+const onCanvasPointerLeave = () => {
+	const CANVAS = L2D.canvas()
+	if (CANVAS && !isDragging) CANVAS.style.cursor = "default"
+}
+
+const onCanvasClick = (event: MouseEvent) => {
+	const SHOULD_SUPPRESS = suppressNextClick
+	suppressNextClick = false
+	if (SHOULD_SUPPRESS || !L2D.isPointOnModel(event.clientX, event.clientY)) {
+		event.preventDefault()
+		event.stopImmediatePropagation()
+	}
+}
+
 const onMouseDown = async (event: MouseEvent) => {
-	if (event.button !== 0) return
-	isDragging = true
+	if (event.button !== 0 || dragPending || isDragging || !L2D.isPointOnModel(event.clientX, event.clientY)) return
+	dragPending = true
 	hasDragged = false
+	suppressNextClick = false
 	try {
 		const CURSOR_INFO = await invoke<[number, number, boolean]>("get_cursor_pos")
+		const POS = await getCurrentWindow().outerPosition()
+		if (!dragPending || !CURSOR_INFO[2]) {
+			dragPending = false
+			return
+		}
 		dragStartCursorX = CURSOR_INFO[0]
 		dragStartCursorY = CURSOR_INFO[1]
-		const POS = await getCurrentWindow().outerPosition()
 		dragStartWindowX = POS.x
 		dragStartWindowY = POS.y
+		isDragging = true
+		const CANVAS = L2D.canvas()
+		if (CANVAS) CANVAS.style.cursor = "grabbing"
 	} catch (error) {
+		dragPending = false
 		console.error("初始化拖拽位置失败:", error)
 	}
 }
 
-const onMouseUp = async (event: MouseEvent) => {
+const onMouseUp = (event: MouseEvent) => {
 	if (event.button !== 0) return
-	const wasDragging = isDragging
-	isDragging = false
-	if (wasDragging && !hasDragged) {
-		try {
-			await L2D.playMotionByIndex("TapBody", 0)
-		} catch {
-			/* 无动作时忽略 */
-		}
-	}
+	const WAS_DRAGGING = isDragging || dragPending
+	const DID_DRAG = hasDragged
+	finishDrag()
+	if (!WAS_DRAGGING) return
+	suppressNextClick = DID_DRAG
+	updateCanvasCursor(event.clientX, event.clientY)
 }
 
 // 兜底补挂载: 窗口已显示但模型未加载时, 触发 mountModel (成功后自停)
@@ -389,6 +433,13 @@ onBeforeUnmount(() => {
 	tracking = false
 	window.removeEventListener("mousedown", onMouseDown)
 	window.removeEventListener("mouseup", onMouseUp)
+	const CANVAS = L2D.canvas()
+	if (CANVAS) {
+		CANVAS.removeEventListener("click", onCanvasClick, true)
+		CANVAS.removeEventListener("pointermove", onCanvasPointerMove)
+		CANVAS.removeEventListener("pointerleave", onCanvasPointerLeave)
+	}
+	finishDrag()
 	if (trackRafId != null) cancelAnimationFrame(trackRafId)
 	void L2D.destroy()
 	if (unlistenPetStart) unlistenPetStart()
@@ -398,11 +449,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div
-		class="pet-stage"
-		@mousedown="onMouseDown"
-		@mouseup="onMouseUp"
-	/>
+	<div class="pet-stage"/>
 </template>
 
 <style scoped lang="less">
@@ -414,10 +461,6 @@ onBeforeUnmount(() => {
 	overflow: visible;
 	background: transparent;
 	user-select: none;
-	cursor: grab;
-
-	&:active {
-		cursor: grabbing;
-	}
+	cursor: default;
 }
 </style>
