@@ -17,7 +17,7 @@ export interface MemoryItem {
 }
 
 /**
- * 记忆服务 (集成 BGE-M3 语义向量检索与混合搜索)
+ * 记忆服务 (集成通用向量嵌入、语义相似度与关键词混合搜索)
  */
 export class MemoryService {
 	/**
@@ -60,7 +60,7 @@ export class MemoryService {
 	}
 
 	/**
-	 * 混合语义检索 (BGE-M3 向量相似度 + 关键词融合)
+	 * 混合语义检索 (向量相似度 + 关键词融合)
 	 */
 	public async searchHybrid(keyword: string, limit = 10): Promise<MemoryItem[]> {
 		try {

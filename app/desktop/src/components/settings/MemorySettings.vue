@@ -64,7 +64,7 @@ const reembedAll = async () => {
 	reembedMessage.value = "正在计算向量..."
 	try {
 		const COUNT = await memoryService.reembedAll()
-		reembedMessage.value = `成功为 ${COUNT} 条记忆补充了 BGE-M3 向量索引！`
+		reembedMessage.value = `成功为 ${COUNT} 条记忆生成了向量索引！`
 		await loadMemories()
 	} catch (error) {
 		reembedMessage.value = "向量生成失败，请检查 Embedding 接口配置"
@@ -131,7 +131,7 @@ const clearAll = async () => {
 				<div class="card-header space-between">
 					<div class="header-left">
 						<Icon name="sparkles" :size="18" class="card-icon"/>
-						<span class="card-title">BGE-M3 语义向量检索配置</span>
+						<span class="card-title">向量嵌入与语义检索配置 (Embedding)</span>
 					</div>
 					<button class="btn-secondary" :disabled="isReembedding" @click="reembedAll">
 						<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
@@ -141,11 +141,11 @@ const clearAll = async () => {
 				<div class="card-body">
 					<div class="form-row">
 						<div class="form-item flex-1">
-							<label class="label">Embedding 模型</label>
+							<label class="label">Embedding 向量模型</label>
 							<input
 								v-model="embeddingModel"
 								class="input"
-								placeholder="BAAI/bge-m3, text-embedding-3-small..."
+								placeholder="BAAI/bge-m3, text-embedding-3-small, bge-large-zh-v1.5..."
 								@blur="saveConfig('embedding_model', embeddingModel)"
 							/>
 						</div>
