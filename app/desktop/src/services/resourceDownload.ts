@@ -1,6 +1,6 @@
 import {reactive, readonly} from "vue"
-import {invoke} from "@tauri-apps/api/core"
-import {listen, type UnlistenFn} from "@tauri-apps/api/event"
+import {invoke} from "../services/host/invoke"
+import {listen, type UnlistenFn} from "../services/host/event"
 
 /**
  * 资源下载 / 检查的通用 Service.

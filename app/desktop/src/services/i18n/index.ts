@@ -1,5 +1,5 @@
 import {createI18n} from "vue-i18n"
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "../../services/host/invoke"
 import useLanguages from "./useLanguages.ts"
 
 /**

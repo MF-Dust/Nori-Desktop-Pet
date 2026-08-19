@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref} from "vue"
-import {invoke} from "@tauri-apps/api/core"
-import {listen, type UnlistenFn} from "@tauri-apps/api/event"
-import {getCurrentWebviewWindow} from "@tauri-apps/api/webviewWindow"
+import {invoke} from "../services/host/invoke"
+import {listen, type UnlistenFn} from "../services/host/event"
+import {getCurrentWindow} from "../services/host/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import {createResourceDownload, formatBytes} from "../services/resourceDownload"
 import {closeWindow, showWindow} from "../services/window"
@@ -83,7 +83,7 @@ const startInitFlow = async () => {
 // 当前窗口是否可见 (非 Tauri 环境视为可见, 保持原行为)
 const isWindowVisible = async (): Promise<boolean> => {
 	try {
-		return await getCurrentWebviewWindow().isVisible()
+		return await getCurrentWindow().isVisible()
 	} catch {
 		return true
 	}

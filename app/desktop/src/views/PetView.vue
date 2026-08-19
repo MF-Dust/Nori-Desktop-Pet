@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {onBeforeUnmount, onMounted, ref} from "vue"
-import {invoke} from "@tauri-apps/api/core"
-import {PhysicalPosition, PhysicalSize} from "@tauri-apps/api/dpi"
-import {listen, type UnlistenFn} from "@tauri-apps/api/event"
-import {getCurrentWebviewWindow} from "@tauri-apps/api/webviewWindow"
+import {invoke} from "../services/host/invoke"
+import {PhysicalPosition, PhysicalSize} from "../services/host/window"
+import {listen, type UnlistenFn} from "../services/host/event"
+import {getCurrentWindow} from "../services/host/window"
 import {createLive2D, type MotionGroup} from "../services/live2d"
 import {
 	L2D_CONFIG_KEYS,
@@ -47,7 +47,7 @@ const applyCanvas = () => {
 
 // ---- 窗口尺寸动态适配: 固定基础尺寸 × 缩放系数, 始终保持窗口中心不动 ----
 const applyWindowSize = async (): Promise<void> => {
-	const WEBVIEW = getCurrentWebviewWindow()
+	const WEBVIEW = getCurrentWindow()
 	try {
 		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
 		const OLD_POS = await WEBVIEW.outerPosition()
@@ -105,7 +105,7 @@ const trackCursor = async () => {
 	if (!tracking) return
 	try {
 		const CURSOR = await invoke<[number, number]>("get_cursor_pos")
-		const WEBVIEW = getCurrentWebviewWindow()
+		const WEBVIEW = getCurrentWindow()
 		const POS = await WEBVIEW.outerPosition()
 		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
 		const CANVAS = L2D.canvas()
@@ -193,7 +193,7 @@ const reloadModel = async () => {
 // 当前窗口是否可见 (非 Tauri 环境视为可见, 保持原行为)
 const isWindowVisible = async (): Promise<boolean> => {
 	try {
-		return await getCurrentWebviewWindow().isVisible()
+		return await getCurrentWindow().isVisible()
 	} catch {
 		return true
 	}

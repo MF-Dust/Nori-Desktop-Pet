@@ -4,6 +4,87 @@
 	<meta charset="UTF-8"/>
 	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 	<title>Nori Desktop Pet</title>
+	<script>
+		// ---- 宿主桥引导 ----
+		// 必须在应用代码之前同步执行: NativeWebView 只给了 invokeCSharpAction(string)
+		// 与 InvokeScript, 这里在其上补出请求/响应关联与事件分发.
+		;(function () {
+			const PENDING = new Map()
+			const LISTENERS = new Map()
+			let seq = 0
+
+			// 资源基址: 生产下页面在 /<secret>/app/ 里, 资源在同级的 /<secret>/nori-assets/;
+			// 开发下页面由 vite 提供, /nori-assets 交给 vite 代理.
+			const INDEX = location.pathname.indexOf("/app/")
+			const ASSET_BASE = INDEX >= 0 ? location.pathname.slice(0, INDEX) + "/nori-assets/" : "/nori-assets/"
+
+			window.__nori = {
+				assetBase: ASSET_BASE,
+				// 当前窗口 label, 由宿主通过 URL 查询参数注入
+				label: new URLSearchParams(location.search).get("window"),
+
+				invoke(cmd, args) {
+					return new Promise((resolve, reject) => {
+						const ID = ++seq
+						PENDING.set(ID, {resolve, reject})
+						try {
+							invokeCSharpAction(JSON.stringify({kind: "invoke", id: ID, cmd, args: args || {}}))
+						} catch (error) {
+							PENDING.delete(ID)
+							reject(error)
+						}
+					})
+				},
+
+				emit(event, payload) {
+					try {
+						invokeCSharpAction(JSON.stringify({kind: "emit", event, payload: payload === undefined ? null : payload}))
+					} catch (error) {
+						console.error("[nori] emit 失败:", error)
+					}
+				},
+
+				listen(event, handler) {
+					if (!LISTENERS.has(event)) LISTENERS.set(event, new Set())
+					LISTENERS.get(event).add(handler)
+					return () => {
+						const SET = LISTENERS.get(event)
+						if (SET) SET.delete(handler)
+					}
+				},
+
+				// 宿主统一入口: 传进来的是 JSON 字符串, 这里 parse, 避免拼接转义出问题
+				dispatch(raw) {
+					let message
+					try {
+						message = JSON.parse(raw)
+					} catch (error) {
+						console.error("[nori] 桥接消息解析失败:", error)
+						return
+					}
+					if (message.kind === "resolve" || message.kind === "reject") {
+						const ENTRY = PENDING.get(message.id)
+						if (!ENTRY) return
+						PENDING.delete(message.id)
+						if (message.kind === "resolve") ENTRY.resolve(message.value)
+						else ENTRY.reject(new Error(message.error || "命令执行失败"))
+						return
+					}
+					if (message.kind === "event") {
+						const SET = LISTENERS.get(message.event)
+						if (!SET) return
+						for (const handler of [...SET]) {
+							try {
+								handler({payload: message.payload})
+							} catch (error) {
+								console.error("[nori] 事件处理失败:", error)
+							}
+						}
+					}
+				},
+			}
+		})()
+	</script>
 </head>
 
 <body>

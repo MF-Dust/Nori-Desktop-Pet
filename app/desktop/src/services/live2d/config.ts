@@ -1,15 +1,22 @@
 /**
  * 资产协议
  */
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "../host/invoke"
+import {host} from "../host"
 
-export const ASSET_ORIGIN = /Windows|Win/i.test(navigator.userAgent) ? "http://nori-asset.localhost" : "nori-asset://localhost"
+/**
+ * 资产基址
+ *
+ * 宿主把前端与资源挂在同一个回环服务的同一前缀下, 因此这里是同源相对路径:
+ * 生产 /<secret>/nori-assets/, 开发 /nori-assets/ (由 vite 代理到宿主)
+ */
+export const ASSET_BASE = host()?.assetBase ?? "/nori-assets/"
 
 /**
  * 资产 URL
  * @param relativePath
  */
-export const assetUrl = (relativePath: string): string => `${ASSET_ORIGIN}/${relativePath.replace(/^\/+/, "")}`
+export const assetUrl = (relativePath: string): string => `${ASSET_BASE}${relativePath.replace(/^\/+/, "")}`
 
 /**
  * 默认模型映射

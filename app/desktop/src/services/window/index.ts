@@ -1,5 +1,5 @@
-import {emit} from "@tauri-apps/api/event"
-import {getCurrentWebviewWindow, WebviewWindow} from "@tauri-apps/api/webviewWindow"
+import {emit} from "../host/event"
+import {getCurrentWindow, getWindowByLabel} from "../host/window"
 
 /**
  * 窗口调度器
@@ -27,16 +27,11 @@ export const WINDOW_ROUTES: Record<WindowLabel, string> = {
 }
 
 /**
- * 返回当前窗口 label, 非 Tauri 环境 (纯 vite 调试) 返回 null
+ * 返回当前窗口 label, 非宿主环境 (纯 vite 调试) 返回 null
  */
 export async function getCurrentWindowLabel(): Promise<WindowLabel | null> {
-	try {
-		const LABEL = getCurrentWebviewWindow().label as WindowLabel
-		return LABEL in WINDOW_ROUTES ? LABEL : null
-	} catch {
-		// 非 Tauri 环境忽略
-		return null
-	}
+	const LABEL = getCurrentWindow().label as WindowLabel
+	return LABEL in WINDOW_ROUTES ? LABEL : null
 }
 
 /**
@@ -48,29 +43,22 @@ export async function getCurrentWindowRoute(): Promise<string | null> {
 }
 
 /**
- * 供 Windows 插件操作指定 label 的窗口对象封装
+ * 取指定 label 的窗口封装
  */
-async function getTarget(label: WindowLabel) {
-	const WINDOW = await WebviewWindow.getByLabel(label)
-	if (!WINDOW) {
-		console.warn(`[window] 未找到窗口: ${label}`)
-		return null
-	}
-	return WINDOW
+function getTarget(label: WindowLabel) {
+	return getWindowByLabel(label)
 }
 
 /**
  * 显示并聚焦窗口
  */
 export async function showWindow(label: WindowLabel) {
-	const WINDOW = await getTarget(label)
-	if (WINDOW) {
-		await WINDOW.show()
-		await WINDOW.setFocus()
-		// 桌宠窗口显示后通知其前端加载模型
-		if (label === NAMESPACE.pet) {
-			await emit("nori:pet-start")
-		}
+	const WINDOW = getTarget(label)
+	await WINDOW.show()
+	await WINDOW.setFocus()
+	// 桌宠窗口显示后通知其前端加载模型
+	if (label === NAMESPACE.pet) {
+		await emit("nori:pet-start")
 	}
 }
 
@@ -78,8 +66,7 @@ export async function showWindow(label: WindowLabel) {
  * 隐藏窗口
  */
 export async function hideWindow(label: WindowLabel) {
-	const WINDOW = await getTarget(label)
-	if (WINDOW) await WINDOW.hide()
+	await getTarget(label).hide()
 }
 
 /**
@@ -87,13 +74,10 @@ export async function hideWindow(label: WindowLabel) {
  */
 export async function closeWindow(label?: WindowLabel) {
 	if (label) {
-		const WINDOW = await getTarget(label)
-		if (WINDOW) {
-			await WINDOW.close()
-			return
-		}
+		await getTarget(label).close()
+		return
 	}
-	await getCurrentWebviewWindow().close()
+	await getCurrentWindow().close()
 }
 
 /**

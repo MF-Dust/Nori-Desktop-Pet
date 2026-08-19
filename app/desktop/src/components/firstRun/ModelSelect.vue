@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref, watch, onMounted, computed} from "vue"
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "../../services/host/invoke"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
 import {MODEL_LIST} from "../../services/live2d/models"

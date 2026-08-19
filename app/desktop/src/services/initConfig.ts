@@ -1,4 +1,4 @@
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "../services/host/invoke"
 
 /**
  * 首次初始化配置快照 (对应后端 config::InitConfig)

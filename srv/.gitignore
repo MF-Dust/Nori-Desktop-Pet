@@ -1,0 +1,11 @@
+# 构建产物
+bin/
+obj/
+
+# 运行时产物
+logs/
+data/
+temp/
+
+# 含 OSS 凭据, 不入库; 参考 Nori.Gateway/configs/config.example.yaml 手工创建
+Nori.Gateway/configs/config.yaml

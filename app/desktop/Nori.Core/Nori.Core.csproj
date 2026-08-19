@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<LangVersion>latest</LangVersion>
+		<RootNamespace>Nori.Core</RootNamespace>
+		<AssemblyName>Nori.Core</AssemblyName>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 本机回环资源服务 (AssetServer) 用 Kestrel: HttpListener 在非管理员下绑端口需要 urlacl -->
+		<FrameworkReference Include="Microsoft.AspNetCore.App"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 人格提示词编译进程序集, 与 Rust 版 include_str! 等价: 改了必须重新构建才生效 -->
+		<EmbeddedResource Include="Chat/nori-system-prompt.md" LogicalName="Nori.Core.Chat.nori-system-prompt.md"/>
+	</ItemGroup>
+
+</Project>

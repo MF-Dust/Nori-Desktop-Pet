@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {onMounted} from "vue"
 import {useRouter} from "vue-router"
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "./services/host/invoke"
 import {getCurrentWindowLabel, navigateToOwnWindow} from "./services/window"
 
 const ROUTER = useRouter()

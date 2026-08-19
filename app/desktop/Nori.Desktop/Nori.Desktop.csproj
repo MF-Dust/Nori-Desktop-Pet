@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<LangVersion>latest</LangVersion>
+		<RootNamespace>Nori.Desktop</RootNamespace>
+		<AssemblyName>Nori.Desktop</AssemblyName>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+		<ApplicationIcon>Assets/icon.ico</ApplicationIcon>
+		<Version>0.1.0</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Avalonia" Version="12.1.1"/>
+		<PackageReference Include="Avalonia.Desktop" Version="12.1.1"/>
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1"/>
+		<PackageReference Include="Avalonia.Controls.WebView" Version="12.1.0"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="../Nori.Core/Nori.Core.csproj"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<AvaloniaResource Include="Assets/**"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 前端构建产物: 生产模式由 AssetServer 从这里提供 -->
+		<Content Include="../dist/**" LinkBase="wwwroot" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../dist')"/>
+	</ItemGroup>
+
+</Project>

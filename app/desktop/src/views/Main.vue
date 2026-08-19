@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "../services/host/invoke"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"

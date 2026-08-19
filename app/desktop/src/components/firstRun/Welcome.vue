@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {computed} from "vue"
-import {invoke} from "@tauri-apps/api/core"
-import {openUrl} from "@tauri-apps/plugin-opener"
-import {writeText} from "@tauri-apps/plugin-clipboard-manager"
+import {invoke} from "../../services/host/invoke"
+import {openUrl} from "../../services/host/shell"
+import {writeText} from "../../services/host/shell"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
 import type {IconMode, IconName} from "../../services/icon"

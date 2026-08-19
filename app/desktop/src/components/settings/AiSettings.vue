@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {invoke} from "@tauri-apps/api/core"
+import {invoke} from "../../services/host/invoke"
 import Icon from "../Icon.vue"
 
 const I18N = computed(() => useLanguages().views.main.ai)
