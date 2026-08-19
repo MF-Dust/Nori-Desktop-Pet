@@ -24,6 +24,9 @@ public sealed class WindowsPlatformServices : IPlatformServices
 	private static extern bool GetCursorPos(out Point point);
 
 	[DllImport("user32.dll")]
+	private static extern short GetAsyncKeyState(int vKey);
+
+	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static extern bool ReleaseCapture();
 
@@ -36,6 +39,18 @@ public sealed class WindowsPlatformServices : IPlatformServices
 	{
 		if (!GetCursorPos(out Point point)) throw new InvalidOperationException("GetCursorPos 调用失败");
 		return (point.X, point.Y);
+	}
+
+	public bool IsMouseButtonDown(int button = 0)
+	{
+		int vKey = button switch
+		{
+			0 => 0x01, // VK_LBUTTON
+			1 => 0x02, // VK_RBUTTON
+			2 => 0x04, // VK_MBUTTON
+			_ => 0x01,
+		};
+		return (GetAsyncKeyState(vKey) & 0x8000) != 0;
 	}
 
 	public void StartWindowDrag(nint windowHandle)

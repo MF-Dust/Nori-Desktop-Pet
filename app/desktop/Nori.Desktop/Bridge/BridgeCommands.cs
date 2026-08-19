@@ -3,6 +3,7 @@ using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
@@ -76,6 +77,9 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("ensure_resource", {resourceType: "live2d", name: "arg-nori"})
 		"ensure_resource" => await EnsureResourceAsync(Str(args, "resourceType"), Str(args, "name")),
 
+		// invoke("import_local_resource", {filePath?: "C:/...", resourceType?: "live2d"})
+		"import_local_resource" => await ImportLocalResourceAsync(source, args),
+
 		// ---- 系统 ----
 		// invoke("get_cursor_pos") → [x, y] (物理像素)
 		"get_cursor_pos" => CursorPosition(),
@@ -84,11 +88,11 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("get_chat_history")
 		"get_chat_history" => _services.Chat.GetHistory(),
 
-		// invoke("chat_completion", {baseUrl, apiKey, model, messages})
+		// invoke("chat_completion", {provider?, baseUrl, apiKey, model, messages})
 		"chat_completion" => await ChatCompletionAsync(args),
 
-		// invoke("fetch_llm_models", {baseUrl, apiKey})
-		"fetch_llm_models" => await _services.Llm.FetchModelsAsync(Str(args, "baseUrl"), Str(args, "apiKey")),
+		// invoke("fetch_llm_models", {provider?, baseUrl, apiKey})
+		"fetch_llm_models" => await _services.Llm.FetchModelsAsync(OptionalStr(args, "provider"), Str(args, "baseUrl"), Str(args, "apiKey")),
 
 		// ---- 窗口 ----
 		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
@@ -209,6 +213,7 @@ public sealed class BridgeCommands(AppServices services)
 	{
 		ChatMessageInput[] messages = args.GetProperty("messages").Deserialize<ChatMessageInput[]>(BridgeJson.Options) ?? [];
 		return await _services.Chat.CompleteAsync(
+			OptionalStr(args, "provider"),
 			Str(args, "baseUrl"),
 			Str(args, "apiKey"),
 			Str(args, "model"),
@@ -217,12 +222,13 @@ public sealed class BridgeCommands(AppServices services)
 	}
 
 	/// <summary>
-	/// 全局光标位置, 返回 [x, y] 与前端 invoke&lt;[number, number]&gt; 对齐
+	/// 全局光标位置与鼠标按键状态, 返回 [x, y, isDown] (物理像素)
 	/// </summary>
 	private object CursorPosition()
 	{
 		(double x, double y) = PlatformServices.Current.GetCursorPosition();
-		return new[] {x, y};
+		bool isDown = PlatformServices.Current.IsMouseButtonDown(0);
+		return new object[] {x, y, isDown};
 	}
 
 	/// <summary>
@@ -246,6 +252,45 @@ public sealed class BridgeCommands(AppServices services)
 			?? throw new InvalidOperationException("剪贴板不可用");
 		await clipboard.SetTextAsync(text);
 		return null;
+	}
+
+	/// <summary>
+	/// 从本地 ZIP 文件或目录导入资源
+	/// </summary>
+	private async Task<object?> ImportLocalResourceAsync(NoriWindow source, JsonElement args)
+	{
+		string? filePath = OptionalStr(args, "filePath");
+		if (string.IsNullOrWhiteSpace(filePath))
+		{
+			filePath = await Dispatcher.UIThread.InvokeAsync(async () =>
+			{
+				var files = await source.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+				{
+					Title = "选择 Live2D 资源文件 (.zip)",
+					AllowMultiple = false,
+					FileTypeFilter =
+					[
+						new FilePickerFileType("Live2D 压缩包 (*.zip)") { Patterns = ["*.zip"] },
+						new FilePickerFileType("所有文件 (*.*)") { Patterns = ["*.*"] },
+					],
+				});
+				return files.Count > 0 ? files[0].Path.LocalPath : null;
+			});
+		}
+
+		if (string.IsNullOrWhiteSpace(filePath))
+		{
+			return null;
+		}
+
+		ResourceType type = ParseResourceType(OptionalStr(args, "resourceType") ?? "live2d");
+		IReadOnlyList<string> imported = _services.Resources.Import(type, filePath);
+		_services.Logger.Write(LogSource.Backend, "info", $"成功导入本地资源: {filePath} -> {string.Join(", ", imported)}");
+
+		// 广播资源更新
+		_services.Windows.Broadcast("nori:config-changed", new { key = "resource_imported", value = string.Join(",", imported) });
+
+		return imported;
 	}
 
 	/// <summary>
@@ -298,6 +343,11 @@ public sealed class BridgeCommands(AppServices services)
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
 			? value.GetString() ?? ""
 			: throw new InvalidOperationException($"缺少参数: {name}");
+
+	private static string? OptionalStr(JsonElement args, string name) =>
+		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
+			? value.GetString()
+			: null;
 
 	private static double Num(JsonElement args, string name) =>
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number

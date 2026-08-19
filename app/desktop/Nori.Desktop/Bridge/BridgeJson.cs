@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Nori.Core.Configuration;
 
 namespace Nori.Desktop.Bridge;
 
@@ -15,6 +16,7 @@ public static class BridgeJson
 	{
 		Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+		Converters = { new ConfigValueJsonConverter() },
 	};
 }
 

@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.Json;
 using Nori.Core.Data;
 
@@ -74,6 +75,160 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 		string dir = ResourceDir(type, name);
 		if (!Directory.Exists(dir)) throw new ResourceException($"资源不存在: {name}");
 		Directory.Delete(dir, true);
+	}
+
+	/// <summary>
+	/// 从本地 ZIP 压缩包或目录导入资源
+	/// </summary>
+	public IReadOnlyList<string> Import(ResourceType type, string sourcePath)
+	{
+		if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+		{
+			throw new ResourceException($"导入源不存在: {sourcePath}");
+		}
+
+		if (File.Exists(sourcePath) && sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+		{
+			return ImportFromZip(type, sourcePath);
+		}
+
+		if (Directory.Exists(sourcePath))
+		{
+			return ImportFromDirectory(type, sourcePath);
+		}
+
+		throw new ResourceException("目前仅支持导入 .zip 压缩包或模型文件夹");
+	}
+
+	private IReadOnlyList<string> ImportFromZip(ResourceType type, string zipPath)
+	{
+		List<string> importedModels = [];
+		using (ZipArchive archive = ZipFile.OpenRead(zipPath))
+		{
+			var modelEntries = archive.Entries
+				.Where(e => e.FullName.EndsWith(".model3.json", StringComparison.OrdinalIgnoreCase))
+				.ToList();
+
+			if (modelEntries.Count == 0)
+			{
+				throw new ResourceException("压缩包中未找到任何 .model3.json 模型定义文件");
+			}
+
+			foreach (var modelEntry in modelEntries)
+			{
+				string entryPath = modelEntry.FullName.Replace('\\', '/');
+				string modelFileName = Path.GetFileName(entryPath);
+				string prefixDir = "";
+				int lastSlash = entryPath.LastIndexOf('/');
+				if (lastSlash >= 0)
+				{
+					prefixDir = entryPath[..(lastSlash + 1)];
+				}
+
+				string modelId;
+				if (modelFileName.Equals("ARGNori.model3.json", StringComparison.OrdinalIgnoreCase))
+				{
+					modelId = "arg-nori";
+				}
+				else if (modelFileName.Equals("Nori.model3.json", StringComparison.OrdinalIgnoreCase))
+				{
+					modelId = "nori";
+				}
+				else if (!string.IsNullOrEmpty(prefixDir))
+				{
+					string folderName = prefixDir.TrimEnd('/');
+					int prevSlash = folderName.LastIndexOf('/');
+					if (prevSlash >= 0) folderName = folderName[(prevSlash + 1)..];
+					folderName = folderName.Replace("_web", "", StringComparison.OrdinalIgnoreCase)
+						.Replace(" ", "-").ToLowerInvariant();
+					modelId = folderName;
+				}
+				else
+				{
+					modelId = Path.GetFileNameWithoutExtension(modelFileName)
+						.Replace(".model3", "", StringComparison.OrdinalIgnoreCase)
+						.ToLowerInvariant();
+				}
+
+				string targetDir = ResourceDir(type, modelId);
+				if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
+				Directory.CreateDirectory(targetDir);
+
+				foreach (var entry in archive.Entries)
+				{
+					string ePath = entry.FullName.Replace('\\', '/');
+					if (!string.IsNullOrEmpty(prefixDir) && !ePath.StartsWith(prefixDir, StringComparison.Ordinal))
+					{
+						continue;
+					}
+
+					string relPath = string.IsNullOrEmpty(prefixDir) ? ePath : ePath[prefixDir.Length..];
+					relPath = relPath.TrimStart('/');
+					if (string.IsNullOrEmpty(relPath) || relPath.EndsWith('/'))
+					{
+						continue;
+					}
+
+					string destFile = Path.Combine(targetDir, relPath.Replace('/', Path.DirectorySeparatorChar));
+					string? destFolder = Path.GetDirectoryName(destFile);
+					if (!string.IsNullOrEmpty(destFolder)) Directory.CreateDirectory(destFolder);
+
+					entry.ExtractToFile(destFile, true);
+				}
+
+				if (IsInstalled(type, modelId))
+				{
+					importedModels.Add(modelId);
+				}
+			}
+		}
+
+		if (importedModels.Count == 0)
+		{
+			throw new ResourceException("未能成功解析和导入任何模型");
+		}
+
+		return importedModels;
+	}
+
+	private IReadOnlyList<string> ImportFromDirectory(ResourceType type, string sourceDir)
+	{
+		var modelFiles = Directory.GetFiles(sourceDir, "*.model3.json", SearchOption.AllDirectories);
+		if (modelFiles.Length == 0)
+		{
+			throw new ResourceException("所选目录中未找到 *.model3.json 文件");
+		}
+
+		List<string> importedModels = [];
+		foreach (string modelFile in modelFiles)
+		{
+			string dir = Path.GetDirectoryName(modelFile)!;
+			string fileName = Path.GetFileName(modelFile);
+			string modelId;
+			if (fileName.Equals("ARGNori.model3.json", StringComparison.OrdinalIgnoreCase)) modelId = "arg-nori";
+			else if (fileName.Equals("Nori.model3.json", StringComparison.OrdinalIgnoreCase)) modelId = "nori";
+			else modelId = Path.GetFileName(dir).Replace("_web", "").ToLowerInvariant();
+
+			string targetDir = ResourceDir(type, modelId);
+			if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
+			Directory.CreateDirectory(targetDir);
+
+			CopyDirectory(dir, targetDir);
+			if (IsInstalled(type, modelId)) importedModels.Add(modelId);
+		}
+		return importedModels;
+	}
+
+	private static void CopyDirectory(string sourceDir, string targetDir)
+	{
+		foreach (string dir in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+		{
+			Directory.CreateDirectory(dir.Replace(sourceDir, targetDir));
+		}
+		foreach (string file in Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories))
+		{
+			File.Copy(file, file.Replace(sourceDir, targetDir), true);
+		}
 	}
 
 	/// <summary>

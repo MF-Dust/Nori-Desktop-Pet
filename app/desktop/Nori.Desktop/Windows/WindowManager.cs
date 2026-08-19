@@ -53,7 +53,11 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		if (Get(label) is not { } window) return;
 		window.Show();
 		window.Activate();
-		if (label == WindowLabels.Pet) window.Topmost = true;
+		if (label == WindowLabels.Pet)
+		{
+			window.Topmost = true;
+			Broadcast("nori:pet-start", null);
+		}
 	}
 
 	/// <summary>

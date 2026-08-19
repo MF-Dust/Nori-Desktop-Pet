@@ -2,7 +2,7 @@
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "../../services/host/invoke"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {createResourceDownload} from "../../services/resourceDownload"
+import {createResourceDownload, formatBytes} from "../../services/resourceDownload"
 import {MODEL_LIST, type ModelInfo} from "../../services/live2d/models"
 import {createLive2D} from "../../services/live2d"
 import {
@@ -15,6 +15,7 @@ import {
 import {applyCanvasLayout} from "../../services/live2d/stage"
 import {readMotionGroups} from "../../services/live2d/motions"
 import Icon from "../Icon.vue"
+import ProgressBar from "../ProgressBar.vue"
 import AdjustControls from "./AdjustControls.vue"
 
 const I18N = computed(() => useLanguages().views.main.model)
@@ -39,6 +40,69 @@ const activeModelId = ref<string | null>(null)
 
 // 是否有下载进行中
 const downloading = computed(() => activeModelId.value !== null)
+
+// 本地导入状态
+const importing = ref(false)
+const importStatusText = ref("")
+
+// 下载状态文本
+const downloadStatusText = computed(() => {
+	switch (DOWNLOAD.state.step) {
+		case "downloading":
+			return `${I18N.value.downloading} (${DOWNLOAD.state.percent}%)`
+		case "download-done":
+			return I18N.value.downloadDone
+		case "extracting":
+			return I18N.value.extracting
+		case "done":
+			return I18N.value.ready
+		case "installed":
+			return I18N.value.installed
+		case "error":
+			return DOWNLOAD.state.message || I18N.value.downloadFailed
+		default:
+			return ""
+	}
+})
+
+// 进度明细
+const progressDetailText = computed(() => {
+	if (DOWNLOAD.state.step !== "downloading") return ""
+	if (DOWNLOAD.state.downloaded != null && DOWNLOAD.state.total != null && DOWNLOAD.state.total > 0) {
+		return `${formatBytes(DOWNLOAD.state.downloaded)} / ${formatBytes(DOWNLOAD.state.total)}`
+	}
+	if (DOWNLOAD.state.downloaded != null) {
+		return formatBytes(DOWNLOAD.state.downloaded)
+	}
+	return ""
+})
+
+// 本地导入 Live2D 模型
+const importLocalModel = async () => {
+	if (importing.value) return
+	importing.value = true
+	importStatusText.value = "正在选择并导入 Live2D 文件..."
+	try {
+		const imported = await invoke<string[] | null>("import_local_resource", {resourceType: "live2d"})
+		if (imported && imported.length > 0) {
+			importStatusText.value = `导入成功: ${imported.join(", ")}`
+			await refreshStatus()
+			setTimeout(() => {
+				importStatusText.value = ""
+			}, 3000)
+		} else {
+			importStatusText.value = ""
+		}
+	} catch (error) {
+		console.error("导入模型失败:", error)
+		importStatusText.value = `导入失败: ${String(error)}`
+		setTimeout(() => {
+			importStatusText.value = ""
+		}, 4000)
+	} finally {
+		importing.value = false
+	}
+}
 
 // 展开蒙版菜单的模型 id
 const cardMenuFor = ref<string | null>(null)
@@ -229,8 +293,27 @@ const closeAdjust = () => {
 <template>
 	<section class="model-management">
 		<div class="mm-head">
-			<h2 class="mm-title glow-teal">{{ I18N.title }}</h2>
-			<p class="mm-sub">{{ I18N.sub }}</p>
+			<div class="mm-head-info">
+				<h2 class="mm-title glow-teal">{{ I18N.title }}</h2>
+				<p class="mm-sub">{{ I18N.sub }}</p>
+			</div>
+			<div class="mm-head-actions">
+				<button class="btn-import" :disabled="importing" @click="importLocalModel">
+					<Icon name="package" :size="16"/>
+					<span>{{ importing ? "正在导入..." : "导入本地 Live2D" }}</span>
+				</button>
+			</div>
+		</div>
+
+		<div v-if="importStatusText" class="mm-import-status">{{ importStatusText }}</div>
+
+		<!-- 下载进度条面板 -->
+		<div v-if="downloading" class="mm-progress-panel">
+			<div class="progress-info">
+				<span class="progress-model">正在下载: {{ modelNameOf(activeModelId ?? "") }}</span>
+				<span class="progress-state">{{ downloadStatusText }}</span>
+			</div>
+			<ProgressBar :percent="DOWNLOAD.state.percent" :text="progressDetailText"/>
 		</div>
 
 		<div class="mm-grid">
@@ -328,11 +411,17 @@ const closeAdjust = () => {
 }
 
 .mm-head {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1.6rem;
+}
+
+.mm-head-info {
 	display: flex;
 	flex-direction: column;
-	align-items: center;
-	gap: 0.6rem;
-	text-align: center;
+	gap: 0.4rem;
 }
 
 .mm-title {
@@ -346,12 +435,77 @@ const closeAdjust = () => {
 	color: var(--text-faint);
 }
 
+.btn-import {
+	display: flex;
+	align-items: center;
+	gap: 0.7rem;
+	padding: 0.8rem 1.4rem;
+	background: rgba(125, 227, 255, 0.1);
+	border: 0.1rem solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	color: var(--nori-teal-bright);
+	font-size: 1.2rem;
+	font-family: inherit;
+	cursor: pointer;
+	transition: all 0.2s ease;
+
+	&:hover:not(:disabled) {
+		background: rgba(125, 227, 255, 0.18);
+		transform: translateY(-0.1rem);
+	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+}
+
+.mm-import-status {
+	width: 100%;
+	padding: 0.8rem 1.2rem;
+	background: rgba(125, 227, 255, 0.08);
+	border: 0.1rem solid var(--nori-teal-soft);
+	border-radius: var(--radius-sm);
+	font-size: 1.2rem;
+	color: var(--nori-teal-bright);
+	text-align: center;
+}
+
+.mm-progress-panel {
+	width: 100%;
+	padding: 1.4rem 2rem;
+	background: var(--bg-card);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-md);
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+	box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.2);
+
+	.progress-info {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 1.25rem;
+
+		.progress-model {
+			color: var(--text-primary);
+			font-weight: 600;
+		}
+
+		.progress-state {
+			color: var(--nori-teal-bright);
+		}
+	}
+}
+
 .mm-grid {
 	display: flex;
 	flex-wrap: wrap;
 	justify-content: center;
 	gap: 2.4rem;
 }
+
 
 .mm-card {
 	position: relative;

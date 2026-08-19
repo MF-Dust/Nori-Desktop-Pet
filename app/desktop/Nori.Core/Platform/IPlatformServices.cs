@@ -18,6 +18,11 @@ public interface IPlatformServices
 	(double X, double Y) GetCursorPosition();
 
 	/// <summary>
+	/// 检测指定鼠标按键是否处于按下状态 (0 = 左键, 1 = 右键)
+	/// </summary>
+	bool IsMouseButtonDown(int button = 0);
+
+	/// <summary>
 	/// 从当前鼠标按下状态发起窗口拖动
 	///
 	/// WebView 会吞掉指针事件, 因此 HTML 标题栏的拖动要回调到宿主由系统接管

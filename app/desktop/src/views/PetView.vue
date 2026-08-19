@@ -97,26 +97,56 @@ const applyExpressions = async (list: string[]): Promise<void> => {
 	}
 }
 
-// ---- 全局头部跟踪: 光标在窗口外也持续跟踪 ----
+// ---- 全局头部跟踪与平滑拖动 ----
 let tracking = false
 let trackRafId: number | null = null
+
+// 拖拽状态
+let isDragging = false
+let dragStartCursorX = 0
+let dragStartCursorY = 0
+let dragStartWindowX = 0
+let dragStartWindowY = 0
+let hasDragged = false
 
 const trackCursor = async () => {
 	if (!tracking) return
 	try {
-		const CURSOR = await invoke<[number, number]>("get_cursor_pos")
+		const CURSOR_INFO = await invoke<[number, number, boolean]>("get_cursor_pos")
+		const CURSOR_X = CURSOR_INFO[0]
+		const CURSOR_Y = CURSOR_INFO[1]
+		const IS_LEFT_DOWN = CURSOR_INFO[2]
+
 		const WEBVIEW = getCurrentWindow()
+
+		// 全局检测按键释放: 如果鼠标按键已松开, 立即停止拖动
+		if (isDragging && !IS_LEFT_DOWN) {
+			isDragging = false
+		}
+
+		// 正在拖动时同步窗口位置
+		if (isDragging && IS_LEFT_DOWN) {
+			const dx = CURSOR_X - dragStartCursorX
+			const dy = CURSOR_Y - dragStartCursorY
+			if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+				hasDragged = true
+				await WEBVIEW.setPosition(new PhysicalPosition(
+					Math.round(dragStartWindowX + dx),
+					Math.round(dragStartWindowY + dy)
+				))
+			}
+		}
+
 		const POS = await WEBVIEW.outerPosition()
 		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
 		const CANVAS = L2D.canvas()
-		if (!CANVAS) return
-		// setAngle 需要 target (offsetLeft/offsetTop) 与 pageX/pageY,
-		// 画布固定于窗口左上角, offset 为 0
-		await L2D.lookAt({
-			target: CANVAS,
-			pageX: (CURSOR[0] - POS.x) / SCALE_FACTOR,
-			pageY: (CURSOR[1] - POS.y) / SCALE_FACTOR,
-		} as unknown as MouseEvent)
+		if (CANVAS) {
+			await L2D.lookAt({
+				target: CANVAS,
+				pageX: (CURSOR_X - POS.x) / SCALE_FACTOR,
+				pageY: (CURSOR_Y - POS.y) / SCALE_FACTOR,
+			} as unknown as MouseEvent)
+		}
 	} catch {
 		/* 模型未加载时忽略 */
 	}
@@ -148,11 +178,26 @@ const afterMount = async () => {
 	await applyExpressions(expressionList.value)
 }
 
+const ensureResourceInstalled = async (name: string): Promise<boolean> => {
+	try {
+		const installed = await invoke<boolean>("check_resource", {resourceType: "live2d", name})
+		if (!installed) {
+			await invoke("write_log", {level: "info", message: `桌宠检测到模型 ${name} 未下载，开始自动下载`})
+			await invoke("ensure_resource", {resourceType: "live2d", name})
+		}
+		return true
+	} catch (error) {
+		console.error(`确保桌宠资源失败: ${name}`, error)
+		return false
+	}
+}
+
 const mountModel = async () => {
 	if (mountedOnce) return
 	mountedOnce = true
 	await loadModelConfigs()
 	try {
+		await ensureResourceInstalled(modelName.value)
 		await L2D.mount({
 			directory: modelName.value,
 			fileBase: resolveModelFileBase(modelName.value),
@@ -180,6 +225,7 @@ const reloadModel = async () => {
 	}
 	await loadModelConfigs()
 	try {
+		await ensureResourceInstalled(modelName.value)
 		await L2D.mount({
 			directory: modelName.value,
 			fileBase: resolveModelFileBase(modelName.value),
@@ -229,7 +275,7 @@ const applyConfigKey = (base: L2DConfigKey, value: string) => {
 onMounted(async () => {
 	try {
 		const SAVED = await invoke<string | null>("get_config", {key: "selected_model"})
-		if (SAVED) modelName.value = SAVED
+		if (typeof SAVED === "string" && SAVED.trim().length > 0) modelName.value = SAVED.trim()
 	} catch {
 		/* 读取失败保持默认 */
 	}
@@ -285,10 +331,44 @@ onMounted(async () => {
 		}
 	})
 
+	// 鼠标交互: 左键按住拖动窗口, 点击触发 TapBody 动作
+	window.addEventListener("mousedown", onMouseDown)
+	window.addEventListener("mouseup", onMouseUp)
+
 	// 兜底: pet-start 事件可能在监听注册前就发出 (用户点唤出时桌宠 webview 尚未就绪),
 	// 轮询窗口可见性补挂载, 最多 30 次 × 500ms
 	void ensurePetMounted()
 })
+
+// 鼠标拖动与点击交互
+const onMouseDown = async (event: MouseEvent) => {
+	if (event.button !== 0) return
+	isDragging = true
+	hasDragged = false
+	try {
+		const CURSOR_INFO = await invoke<[number, number, boolean]>("get_cursor_pos")
+		dragStartCursorX = CURSOR_INFO[0]
+		dragStartCursorY = CURSOR_INFO[1]
+		const POS = await getCurrentWindow().outerPosition()
+		dragStartWindowX = POS.x
+		dragStartWindowY = POS.y
+	} catch (error) {
+		console.error("初始化拖拽位置失败:", error)
+	}
+}
+
+const onMouseUp = async (event: MouseEvent) => {
+	if (event.button !== 0) return
+	const wasDragging = isDragging
+	isDragging = false
+	if (wasDragging && !hasDragged) {
+		try {
+			await L2D.playMotionByIndex("TapBody", 0)
+		} catch {
+			/* 无动作时忽略 */
+		}
+	}
+}
 
 // 兜底补挂载: 窗口已显示但模型未加载时, 触发 mountModel (成功后自停)
 const ensurePetMounted = async (attempt = 0): Promise<void> => {
@@ -307,6 +387,8 @@ let disposed = false
 onBeforeUnmount(() => {
 	disposed = true
 	tracking = false
+	window.removeEventListener("mousedown", onMouseDown)
+	window.removeEventListener("mouseup", onMouseUp)
 	if (trackRafId != null) cancelAnimationFrame(trackRafId)
 	void L2D.destroy()
 	if (unlistenPetStart) unlistenPetStart()
@@ -316,16 +398,26 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="pet-stage"/>
+	<div
+		class="pet-stage"
+		@mousedown="onMouseDown"
+		@mouseup="onMouseUp"
+	/>
 </template>
 
 <style scoped lang="less">
 .pet-stage {
-	position: relative;
-	width: 100%;
-	height: 100%;
+	position: fixed;
+	inset: 0;
+	width: 100vw;
+	height: 100vh;
 	overflow: visible;
 	background: transparent;
 	user-select: none;
+	cursor: grab;
+
+	&:active {
+		cursor: grabbing;
+	}
 }
 </style>

@@ -23,6 +23,7 @@ export const assetUrl = (relativePath: string): string => `${ASSET_BASE}${relati
  */
 export const defaultModels: Record<string, string> = {
 	"arg-nori": "ARGNori",
+	"nori": "Nori",
 }
 
 /**

@@ -1,10 +1,5 @@
 using System.Globalization;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Reflection;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
@@ -18,11 +13,9 @@ namespace Nori.Core.Chat;
 public sealed record ChatMessageInput
 {
 	/// <summary>角色: user / assistant</summary>
-	[JsonPropertyName("role")]
 	public required string Role { get; init; }
 
 	/// <summary>消息内容</summary>
-	[JsonPropertyName("content")]
 	public required string Content { get; init; }
 }
 
@@ -33,19 +26,15 @@ public sealed record ChatMessageInput
 public sealed record ChatMessage
 {
 	/// <summary>自增 id (即时间顺序)</summary>
-	[JsonPropertyName("id")]
 	public required long Id { get; init; }
 
 	/// <summary>角色</summary>
-	[JsonPropertyName("role")]
 	public required string Role { get; init; }
 
 	/// <summary>内容</summary>
-	[JsonPropertyName("content")]
 	public required string Content { get; init; }
 
 	/// <summary>创建时间 (RFC3339)</summary>
-	[JsonPropertyName("createdAt")]
 	public required string CreatedAt { get; init; }
 }
 
@@ -57,6 +46,9 @@ public sealed record ChatMessage
 /// </summary>
 public sealed class ChatService(HttpClient httpClient, NoriDatabase database, ConfigStore config)
 {
+	/// <summary>配置键: LLM 协议类型</summary>
+	public const string KeyLlmProvider = "llm_provider";
+
 	/// <summary>聊天请求超时 (秒): 防止接口挂起导致后台任务永久阻塞</summary>
 	private const int TimeoutSeconds = 120;
 
@@ -97,6 +89,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 	/// 返回剥离动作标记后的回复文本; 动作名通过 onMotion 回调交给调用方广播
 	/// </summary>
 	public async Task<string> CompleteAsync(
+		string? providerStr,
 		string baseUrl,
 		string apiKey,
 		string model,
@@ -110,64 +103,46 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		if (model.Length == 0) throw new ChatException("模型不能为空");
 		if (messages.Count == 0) throw new ChatException("消息不能为空");
 
+		// 若未指定 providerStr，优先读配置
+		if (string.IsNullOrWhiteSpace(providerStr))
+		{
+			providerStr = _config.GetStringOr(KeyLlmProvider, "openai");
+		}
+
+		LlmProvider provider = LlmProviderExtensions.ParseProvider(providerStr);
+		ILlmAdapter adapter = LlmClient.CreateAdapter(provider, _httpClient);
+
 		// 系统提示词 = 人格 + 当前模型动作列表附录
 		string modelId = _config.GetStringOr(ConfigStore.KeySelectedModel, "");
 		string systemContent = SystemPrompt.Value + MotionMarkers.BuildHint(_config, modelId);
 
-		JsonArray payloadMessages = [new JsonObject {["role"] = "system", ["content"] = systemContent}];
-		foreach (ChatMessageInput message in messages)
-		{
-			payloadMessages.Add(new JsonObject {["role"] = message.Role, ["content"] = message.Content});
-		}
-		JsonObject payload = new()
-		{
-			["model"] = model,
-			["messages"] = payloadMessages,
-		};
-
 		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		timeout.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
 
-		using HttpRequestMessage request = new(HttpMethod.Post, new Uri($"{baseUrl}/chat/completions"))
-		{
-			Content = JsonContent.Create(payload),
-		};
-		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+		string raw = await adapter.CompleteAsync(baseUrl, apiKey, model, systemContent, messages, timeout.Token);
 
-		HttpResponseMessage response;
-		try
-		{
-			response = await _httpClient.SendAsync(request, timeout.Token);
-		}
-		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-		{
-			throw new ChatException($"请求失败: {exception.Message}", exception);
-		}
+		// 解析动作标记: 剥离标记并广播给桌宠窗口播放
+		(string content, IReadOnlyList<string> motions) = MotionMarkers.Extract(raw);
+		foreach (string motion in motions) onMotion(motion);
 
-		using (response)
-		{
-			if (!response.IsSuccessStatusCode) throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}");
-			JsonNode? body;
-			try
-			{
-				body = JsonNode.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
-			}
-			catch (JsonException exception)
-			{
-				throw new ChatException($"解析响应失败: {exception.Message}", exception);
-			}
-			string? raw = body?["choices"]?[0]?["message"]?["content"]?.GetValue<string>();
-			if (raw is null) throw new ChatException("接口响应格式异常");
+		// 写入历史: 仅保存最后一条输入与回复, 避免重复落库
+		SaveMessage(messages[^1].Role, messages[^1].Content);
+		SaveMessage("assistant", content);
+		return content;
+	}
 
-			// 解析动作标记: 剥离标记并广播给桌宠窗口播放
-			(string content, IReadOnlyList<string> motions) = MotionMarkers.Extract(raw);
-			foreach (string motion in motions) onMotion(motion);
-
-			// 写入历史: 仅保存最后一条输入与回复, 避免重复落库
-			SaveMessage(messages[^1].Role, messages[^1].Content);
-			SaveMessage("assistant", content);
-			return content;
-		}
+	/// <summary>
+	/// 兼容老接口 (从配置或默认协议发起对话)
+	/// </summary>
+	public Task<string> CompleteAsync(
+		string baseUrl,
+		string apiKey,
+		string model,
+		IReadOnlyList<ChatMessageInput> messages,
+		Action<string> onMotion,
+		CancellationToken cancellationToken = default)
+	{
+		return CompleteAsync(null, baseUrl, apiKey, model, messages, onMotion, cancellationToken);
 	}
 
 	/// <summary>

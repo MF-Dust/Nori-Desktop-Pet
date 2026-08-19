@@ -78,6 +78,17 @@ public class ConfigValueTests
 		Assert.Equal(expectedJson, JsonSerializer.Serialize(ConfigValue.FromStorage(stored)));
 
 	[Fact]
+	public void 装箱为object时依然序列化为裸值()
+	{
+		object boxedText = ConfigValue.FromStorage("arg-nori");
+		Assert.Equal("\"arg-nori\"", JsonSerializer.Serialize(boxedText));
+		object boxedInt = ConfigValue.FromStorage("42");
+		Assert.Equal("42", JsonSerializer.Serialize(boxedInt));
+		object boxedBool = ConfigValue.FromStorage("1");
+		Assert.Equal("true", JsonSerializer.Serialize(boxedBool));
+	}
+
+	[Fact]
 	public void 序列化布尔与整数为裸值()
 	{
 		Assert.Equal("true", JsonSerializer.Serialize(ConfigValue.FromStorage("1")));

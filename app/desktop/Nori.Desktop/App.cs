@@ -81,7 +81,11 @@ public sealed class App : Application
 		}
 		logger.Write(LogSource.Backend, "info", $"数据库已打开: {AppPaths.DatabasePath}");
 
-		HttpClient http = new();
+		HttpClientHandler httpHandler = new()
+		{
+			ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+		};
+		HttpClient http = new(httpHandler);
 		AssetServer assets = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),

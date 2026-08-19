@@ -94,7 +94,9 @@ onMounted(async () => {
 	statusText.value = I18N.value.live2d
 	try {
 		const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
-		if (SAVED) modelName.value = SAVED
+		if (typeof SAVED === "string" && SAVED.trim().length > 0) {
+			modelName.value = SAVED.trim()
+		}
 	} catch (error) {
 		console.error("读取模型配置失败:", error)
 	}

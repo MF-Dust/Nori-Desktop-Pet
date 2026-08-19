@@ -144,4 +144,27 @@ if (source.includes(WAITING_OLD)) {
 	console.log("[patch-live2d] 补丁 4b 已存在或已失效, 跳过")
 }
 
+// ---- 补丁 5: 优先使用本地 live2dcubismcore.min.js, 避免外网 403 / 断网 / 卡死 ----
+const SCRIPT_LOADER_OLD = `const _a = () => new Promise((r) => {
+  const t = document.createElement("script");
+  t.src = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js", t.async = !0, t.onload = () => r(), document.head.appendChild(t);
+})`
+
+const SCRIPT_LOADER_NEW = `const _a = () => new Promise((r) => {
+  if (typeof window !== "undefined" && window.Live2DCubismCore) {
+    r();
+    return;
+  }
+  const t = document.createElement("script");
+  t.src = "/live2dcubismcore.min.js", t.async = !0, t.onload = () => r(), t.onerror = () => r(), document.head.appendChild(t);
+})`
+
+if (source.includes(SCRIPT_LOADER_OLD)) {
+	source = source.replace(SCRIPT_LOADER_OLD, SCRIPT_LOADER_NEW)
+	changed = true
+	console.log("[patch-live2d] 补丁 5 (本地 Live2DCubismCore 加载) 已应用")
+} else {
+	console.log("[patch-live2d] 补丁 5 已存在或已失效, 跳过")
+}
+
 if (changed) writeFileSync(TARGET, source)

@@ -7,9 +7,25 @@ import Icon from "../../components/Icon.vue"
 const I18N = computed(() => useLanguages().components.firstRun.llmConnect)
 
 // 配置键名
+const KEY_PROVIDER = "llm_provider"
 const KEY_BASE = "llm_api_base"
 const KEY_APIKEY = "llm_api_key"
 const KEY_MODEL = "llm_model"
+
+// 默认 Base URL 表
+const DEFAULT_BASE_URLS: Record<string, string> = {
+	openai: "https://api.openai.com/v1",
+	openai_responses: "https://api.openai.com/v1",
+	anthropic: "https://api.anthropic.com/v1",
+	google: "https://generativelanguage.googleapis.com/v1beta",
+}
+
+// 协议列表定义
+type ProviderKey = "openai" | "openai_responses" | "anthropic" | "google"
+const PROVIDER_OPTIONS: ProviderKey[] = ["openai", "openai_responses", "anthropic", "google"]
+
+// 协议类型
+const provider = ref<ProviderKey>("openai")
 
 // API 地址
 const baseUrl = ref("")
@@ -29,14 +45,35 @@ const selectedModel = ref("")
 // 拉取失败提示
 const errorMsg = ref("")
 
+// API Key 占位符提示
+const apiKeyPlaceholder = computed(() => {
+	switch (provider.value) {
+		case "anthropic":
+			return "sk-ant-..."
+		case "google":
+			return "AIza..."
+		default:
+			return "sk-..."
+	}
+})
+
+// Base URL 占位符提示
+const baseUrlPlaceholder = computed(() => {
+	return DEFAULT_BASE_URLS[provider.value] || "https://api.openai.com/v1"
+})
+
 // 读取已保存的配置
 onMounted(async () => {
 	try {
-		const [BASE, KEY, MODEL] = await Promise.all([
+		const [SAVED_PROVIDER, BASE, KEY, MODEL] = await Promise.all([
+			invoke<string | null>("get_config", {key: KEY_PROVIDER}),
 			invoke<string | null>("get_config", {key: KEY_BASE}),
 			invoke<string | null>("get_config", {key: KEY_APIKEY}),
 			invoke<string | null>("get_config", {key: KEY_MODEL}),
 		])
+		if (SAVED_PROVIDER && PROVIDER_OPTIONS.includes(SAVED_PROVIDER as ProviderKey)) {
+			provider.value = SAVED_PROVIDER as ProviderKey
+		}
 		if (BASE) baseUrl.value = BASE
 		if (KEY) apiKey.value = KEY
 		if (MODEL) selectedModel.value = MODEL
@@ -66,6 +103,23 @@ const saveOnChange = (key: string, get: () => string) => {
 watch(baseUrl, v => saveOnChange(KEY_BASE, () => v))
 watch(apiKey, v => saveOnChange(KEY_APIKEY, () => v))
 
+// 切换 Provider
+const onProviderChange = () => {
+	const CURRENT_DEF = DEFAULT_BASE_URLS[provider.value]
+	const IS_ANY_DEFAULT = Object.values(DEFAULT_BASE_URLS).includes(baseUrl.value)
+	if (!baseUrl.value || IS_ANY_DEFAULT) {
+		baseUrl.value = CURRENT_DEF
+	}
+	models.value = []
+	selectedModel.value = ""
+	try {
+		invoke("set_config", {key: KEY_PROVIDER, value: provider.value})
+		invoke("write_log", {level: "info", message: `保存配置键 ${KEY_PROVIDER} 为: ${provider.value}`})
+	} catch (error) {
+		console.error("保存协议类型失败:", error)
+	}
+}
+
 // 选中模型直接保存
 watch(selectedModel, value => {
 	if (!value) return
@@ -90,7 +144,11 @@ const fetchModels = async () => {
 	}
 	loading.value = true
 	try {
-		const result = await invoke<unknown>("fetch_llm_models", {baseUrl: baseUrl.value, apiKey: apiKey.value})
+		const result = await invoke<unknown>("fetch_llm_models", {
+			provider: provider.value,
+			baseUrl: baseUrl.value,
+			apiKey: apiKey.value,
+		})
 		models.value = Array.isArray(result) ? (result as string[]) : []
 		if (models.value.length === 0) {
 			errorMsg.value = I18N.value.modelEmpty
@@ -115,12 +173,21 @@ const fetchModels = async () => {
 
 		<div class="llm-form">
 			<label class="field">
+				<span class="field-label">{{ I18N.provider }}</span>
+				<select v-model="provider" class="input select" @change="onProviderChange">
+					<option v-for="p in PROVIDER_OPTIONS" :key="p" :value="p">
+						{{ I18N.providers[p] }}
+					</option>
+				</select>
+			</label>
+
+			<label class="field">
 				<span class="field-label">{{ I18N.apiBaseUrl }}</span>
 				<input
 					v-model="baseUrl"
 					class="input"
 					type="text"
-					placeholder="https://api.openai.com/v1"
+					:placeholder="baseUrlPlaceholder"
 					spellcheck="false"
 				/>
 			</label>
@@ -131,7 +198,7 @@ const fetchModels = async () => {
 					v-model="apiKey"
 					class="input"
 					type="password"
-					placeholder="sk-..."
+					:placeholder="apiKeyPlaceholder"
 					spellcheck="false"
 					autocomplete="off"
 				/>

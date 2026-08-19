@@ -16,15 +16,19 @@ namespace Nori.Core.Configuration;
 public abstract record ConfigValue
 {
 	/// <summary>字符串值</summary>
+	[JsonConverter(typeof(ConfigValueJsonConverter))]
 	public sealed record Text(string Value) : ConfigValue;
 
 	/// <summary>整数值</summary>
+	[JsonConverter(typeof(ConfigValueJsonConverter))]
 	public sealed record Integer(long Value) : ConfigValue;
 
 	/// <summary>布尔值</summary>
+	[JsonConverter(typeof(ConfigValueJsonConverter))]
 	public sealed record Boolean(bool Value) : ConfigValue;
 
 	/// <summary>JSON 对象或数组</summary>
+	[JsonConverter(typeof(ConfigValueJsonConverter))]
 	public sealed record Json(JsonNode Value) : ConfigValue;
 
 	/// <summary>
@@ -98,6 +102,8 @@ public abstract record ConfigValue
 /// </summary>
 public sealed class ConfigValueJsonConverter : JsonConverter<ConfigValue>
 {
+	public override bool CanConvert(Type typeToConvert) => typeof(ConfigValue).IsAssignableFrom(typeToConvert);
+
 	public override ConfigValue? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => reader.TokenType switch
 	{
 		JsonTokenType.String => new ConfigValue.Text(reader.GetString() ?? string.Empty),
@@ -137,4 +143,5 @@ public sealed class ConfigValueJsonConverter : JsonConverter<ConfigValue>
 	{
 		if (reader.TryGetInt64(out long number)) return new ConfigValue.Integer(number);
 		return new ConfigValue.Json(JsonValue.Create(reader.GetDouble()));
-	}}
+	}
+}

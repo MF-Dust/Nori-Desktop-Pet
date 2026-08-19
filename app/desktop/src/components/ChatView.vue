@@ -10,6 +10,7 @@ const I18N = computed(() => useLanguages().views.main.chat)
 const emit = defineEmits<{goSettings: []}>()
 
 // 配置键名
+const KEY_PROVIDER = "llm_provider"
 const KEY_BASE = "llm_api_base"
 const KEY_APIKEY = "llm_api_key"
 const KEY_MODEL = "llm_model"
@@ -116,6 +117,7 @@ const send = async () => {
 	try {
 		const HISTORY = messages.value.map(m => ({role: m.role, content: m.content}))
 		const REPLY = await invoke<string>("chat_completion", {
+			provider: (await readConfig(KEY_PROVIDER)) || "openai",
 			baseUrl: await readConfig(KEY_BASE),
 			apiKey: await readConfig(KEY_APIKEY),
 			model: await readConfig(KEY_MODEL),

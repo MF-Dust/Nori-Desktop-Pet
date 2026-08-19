@@ -1,66 +1,45 @@
-using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using Nori.Core.Chat.Adapters;
 
 namespace Nori.Core.Chat;
 
 /// <summary>
-/// LLM 接口客户端
-///
-/// 对应 Rust 版 commands.rs 的 fetch_llm_models
+/// LLM 接口客户端 (模型获取与管理)
 /// </summary>
 public sealed class LlmClient(HttpClient httpClient)
 {
 	private readonly HttpClient _httpClient = httpClient;
 
 	/// <summary>
-	/// 拉取 OpenAI-compatible /models 列表 (排序去重)
+	/// 拉取指定协议的模型列表 (排序去重)
 	/// </summary>
-	public async Task<IReadOnlyList<string>> FetchModelsAsync(string baseUrl, string apiKey, CancellationToken cancellationToken = default)
+	public Task<IReadOnlyList<string>> FetchModelsAsync(
+		string? providerStr,
+		string baseUrl,
+		string apiKey,
+		CancellationToken cancellationToken = default)
 	{
-		baseUrl = baseUrl.TrimEnd('/');
-		if (baseUrl.Length == 0) throw new ChatException("Base URL 不能为空");
-
-		using HttpRequestMessage request = new(HttpMethod.Get, new Uri($"{baseUrl}/models"));
-		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-		HttpResponseMessage response;
-		try
-		{
-			response = await _httpClient.SendAsync(request, cancellationToken);
-		}
-		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-		{
-			throw new ChatException($"请求失败: {exception.Message}", exception);
-		}
-
-		using (response)
-		{
-			if (!response.IsSuccessStatusCode) throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}");
-			JsonNode? body;
-			try
-			{
-				body = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-			}
-			catch (JsonException exception)
-			{
-				throw new ChatException($"解析响应失败: {exception.Message}", exception);
-			}
-			if (body?["data"] is not JsonArray data) throw new ChatException("接口返回成功，但缺少 data 字段");
-
-			SortedSet<string> models = new(StringComparer.Ordinal);
-			foreach (JsonNode? item in data)
-			{
-				// data 里可能直接是字符串, 也可能是 {id: "..."}
-				if (item is JsonValue value && value.TryGetValue(out string? text) && text.Length > 0)
-				{
-					models.Add(text);
-					continue;
-				}
-				if (item?["id"] is JsonValue idValue && idValue.TryGetValue(out string? id) && id.Length > 0) models.Add(id);
-			}
-			if (models.Count == 0) throw new ChatException("接口返回成功，但没有解析到任何模型");
-			return [.. models];
-		}
+		LlmProvider provider = LlmProviderExtensions.ParseProvider(providerStr);
+		ILlmAdapter adapter = CreateAdapter(provider, _httpClient);
+		return adapter.FetchModelsAsync(baseUrl, apiKey, cancellationToken);
 	}
+
+	/// <summary>
+	/// 兼容老接口 (默认 OpenAI 协议)
+	/// </summary>
+	public Task<IReadOnlyList<string>> FetchModelsAsync(
+		string baseUrl,
+		string apiKey,
+		CancellationToken cancellationToken = default)
+	{
+		return FetchModelsAsync(null, baseUrl, apiKey, cancellationToken);
+	}
+
+	public static ILlmAdapter CreateAdapter(LlmProvider provider, HttpClient httpClient) => provider switch
+	{
+		LlmProvider.OpenAi => new OpenAiChatAdapter(httpClient),
+		LlmProvider.OpenAiResponses => new OpenAiResponsesAdapter(httpClient),
+		LlmProvider.Anthropic => new AnthropicAdapter(httpClient),
+		LlmProvider.Google => new GoogleGenAiAdapter(httpClient),
+		_ => new OpenAiChatAdapter(httpClient),
+	};
 }

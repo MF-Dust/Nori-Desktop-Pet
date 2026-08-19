@@ -186,3 +186,42 @@ public class ResourceNameTests
 	[Fact]
 	public void 控制字符被拒绝() => Assert.False(ResourceName.IsValid("a\u0001b"));
 }
+
+public class ResourceImportTests
+{
+	[Fact]
+	public void Import_从本地ZIP导入模型()
+	{
+		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-import-{Guid.NewGuid():N}");
+		string zipPath = Path.Combine(tempDir, "pack.zip");
+		Directory.CreateDirectory(tempDir);
+		try
+		{
+			using (FileStream stream = File.Create(zipPath))
+			using (ZipArchive archive = new(stream, ZipArchiveMode.Create))
+			{
+				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/ARGNori.model3.json").Open()))
+				{
+					writer.Write("""{"Version":3}""");
+				}
+				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/tex/0.png").Open()))
+				{
+					writer.Write("img");
+				}
+			}
+
+			using HttpClient client = new();
+			ResourceManager manager = new(client, tempDir);
+			IReadOnlyList<string> imported = manager.Import(ResourceType.Live2D, zipPath);
+
+			Assert.Contains("arg-nori", imported);
+			Assert.True(manager.IsInstalled(ResourceType.Live2D, "arg-nori"));
+			Assert.True(File.Exists(Path.Combine(tempDir, "resources", "live2d", "arg-nori", "ARGNori.model3.json")));
+			Assert.True(File.Exists(Path.Combine(tempDir, "resources", "live2d", "arg-nori", "tex", "0.png")));
+		}
+		finally
+		{
+			Directory.Delete(tempDir, true);
+		}
+	}
+}
