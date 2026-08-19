@@ -34,6 +34,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>记忆存储</summary>
 	public required Nori.Core.Memory.MemoryStore Memory { get; init; }
 
+	/// <summary>Embedding 向量接口 (支持 BGE-M3 / OpenAI 规范)</summary>
+	public required Nori.Core.Embedding.OpenAiEmbeddingAdapter Embedding { get; init; }
+
 	/// <summary>LLM 接口</summary>
 	public required LlmClient Llm { get; init; }
 

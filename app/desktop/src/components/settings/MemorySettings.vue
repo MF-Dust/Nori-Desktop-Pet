@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue"
 import {memoryService, type MemoryItem} from "../../services/memory"
+import {invoke} from "../../services/host/invoke"
 import Icon from "../Icon.vue"
 
 const memories = ref<MemoryItem[]>([])
 const searchKeyword = ref("")
 const loading = ref(false)
+
+// Embedding 配置
+const embeddingModel = ref("BAAI/bge-m3")
+const embeddingBaseUrl = ref("")
+const embeddingApiKey = ref("")
+const isReembedding = ref(false)
+const reembedMessage = ref("")
 
 // 新建记忆
 const newContent = ref("")
@@ -18,7 +26,7 @@ const loadMemories = async () => {
 	loading.value = true
 	try {
 		if (searchKeyword.value.trim()) {
-			memories.value = await memoryService.search(searchKeyword.value.trim(), 50)
+			memories.value = await memoryService.searchHybrid(searchKeyword.value.trim(), 50)
 		} else {
 			memories.value = await memoryService.getAll(50)
 		}
@@ -29,9 +37,42 @@ const loadMemories = async () => {
 	}
 }
 
-onMounted(() => {
+onMounted(async () => {
+	try {
+		const [SAVED_MODEL, SAVED_BASE, SAVED_KEY] = await Promise.all([
+			invoke<string | null>("get_config", {key: "embedding_model"}),
+			invoke<string | null>("get_config", {key: "embedding_api_base"}),
+			invoke<string | null>("get_config", {key: "embedding_api_key"}),
+		])
+		if (SAVED_MODEL) embeddingModel.value = SAVED_MODEL
+		if (SAVED_BASE) embeddingBaseUrl.value = SAVED_BASE
+		if (SAVED_KEY) embeddingApiKey.value = SAVED_KEY
+	} catch (error) {
+		console.error("加载 Embedding 配置失败:", error)
+	}
 	void loadMemories()
 })
+
+const saveConfig = (key: string, value: string) => {
+	void invoke("set_config", {key, value})
+}
+
+// 重新计算向量嵌入
+const reembedAll = async () => {
+	if (isReembedding.value) return
+	isReembedding.value = true
+	reembedMessage.value = "正在计算向量..."
+	try {
+		const COUNT = await memoryService.reembedAll()
+		reembedMessage.value = `成功为 ${COUNT} 条记忆补充了 BGE-M3 向量索引！`
+		await loadMemories()
+	} catch (error) {
+		reembedMessage.value = "向量生成失败，请检查 Embedding 接口配置"
+		console.error("重新生成向量失败:", error)
+	} finally {
+		isReembedding.value = false
+	}
+}
 
 // 添加记忆
 const addMemory = async () => {
@@ -85,7 +126,56 @@ const clearAll = async () => {
 		</header>
 
 		<div class="settings-content">
-			<!-- 1. 新增记忆 -->
+			<!-- 1. Embedding 向量嵌入配置 -->
+			<div class="setting-card">
+				<div class="card-header space-between">
+					<div class="header-left">
+						<Icon name="sparkles" :size="18" class="card-icon"/>
+						<span class="card-title">BGE-M3 语义向量检索配置</span>
+					</div>
+					<button class="btn-secondary" :disabled="isReembedding" @click="reembedAll">
+						<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
+						<span>{{ isReembedding ? "正在索引..." : "重新计算记忆向量" }}</span>
+					</button>
+				</div>
+				<div class="card-body">
+					<div class="form-row">
+						<div class="form-item flex-1">
+							<label class="label">Embedding 模型</label>
+							<input
+								v-model="embeddingModel"
+								class="input"
+								placeholder="BAAI/bge-m3, text-embedding-3-small..."
+								@blur="saveConfig('embedding_model', embeddingModel)"
+							/>
+						</div>
+						<div class="form-item flex-1">
+							<label class="label">API 地址 (留空复用 AI 大脑配置)</label>
+							<input
+								v-model="embeddingBaseUrl"
+								class="input"
+								placeholder="https://api.openai.com/v1"
+								@blur="saveConfig('embedding_api_base', embeddingBaseUrl)"
+							/>
+						</div>
+					</div>
+
+					<div class="form-item">
+						<label class="label">API Key (留空复用 AI 大脑配置)</label>
+						<input
+							v-model="embeddingApiKey"
+							type="password"
+							class="input"
+							placeholder="sk-..."
+							@blur="saveConfig('embedding_api_key', embeddingApiKey)"
+						/>
+					</div>
+
+					<p v-if="reembedMessage" class="status-tip">{{ reembedMessage }}</p>
+				</div>
+			</div>
+
+			<!-- 2. 新增记忆 -->
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="sparkles" :size="18" class="card-icon"/>
@@ -323,6 +413,42 @@ const clearAll = async () => {
 .range-slider {
 	accent-color: var(--nori-teal-bright);
 	cursor: pointer;
+}
+
+.form-row {
+	display: flex;
+	gap: 1.2rem;
+}
+
+.status-tip {
+	margin: 0;
+	font-size: 1.15rem;
+	color: var(--nori-teal-bright);
+}
+
+.btn-secondary {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.6rem 1.2rem;
+	background: rgba(125, 227, 255, 0.08);
+	border: 0.1rem solid var(--nori-teal-soft);
+	border-radius: var(--radius-sm);
+	color: var(--nori-teal-bright);
+	font-size: 1.15rem;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: all 0.2s ease;
+
+	&:hover:not(:disabled) {
+		background: rgba(125, 227, 255, 0.18);
+		box-shadow: 0 0 1rem var(--glow-teal-soft);
+	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
 }
 
 .btn-primary {

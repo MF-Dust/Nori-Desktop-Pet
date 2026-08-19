@@ -97,18 +97,33 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("fetch_llm_models", {provider?, baseUrl, apiKey})
 		"fetch_llm_models" => await _services.Llm.FetchModelsAsync(OptionalStr(args, "provider"), Str(args, "baseUrl"), Str(args, "apiKey")),
 
-		// ---- 记忆库 ----
-		// invoke("add_memory", {type?, content, importance?, source?, tags?})
+		// ---- 记忆库与向量 Embedding ----
+		// invoke("create_embedding", {text, baseUrl?, apiKey?, model?})
+		"create_embedding" => await CreateEmbeddingAsync(args),
+		// invoke("add_memory", {type?, content, importance?, source?, tags?, embedding?})
 		"add_memory" => _services.Memory.Add(
 			OptionalStr(args, "type") ?? "general",
 			Str(args, "content"),
 			OptionalDouble(args, "importance") ?? 0.5,
 			OptionalStr(args, "source") ?? "chat",
-			OptionalStr(args, "tags")),
+			OptionalStr(args, "tags"),
+			OptionalStr(args, "embedding")),
 		// invoke("get_all_memories", {limit?})
 		"get_all_memories" => _services.Memory.GetAll(OptionalInt(args, "limit") ?? 100),
 		// invoke("search_memories", {keyword, limit?})
 		"search_memories" => _services.Memory.Search(Str(args, "keyword"), OptionalInt(args, "limit") ?? 20),
+		// invoke("search_memories_semantic", {vector, limit?, minSimilarity?})
+		"search_memories_semantic" => _services.Memory.SearchSemantic(
+			ParseFloatArray(args, "vector") ?? throw new InvalidOperationException("缺少 vector 向量参数"),
+			OptionalInt(args, "limit") ?? 10,
+			OptionalDouble(args, "minSimilarity") ?? 0.25),
+		// invoke("search_memories_hybrid", {keyword, vector?, limit?})
+		"search_memories_hybrid" => _services.Memory.SearchHybrid(
+			Str(args, "keyword"),
+			ParseFloatArray(args, "vector"),
+			OptionalInt(args, "limit") ?? 10),
+		// invoke("update_memory_embedding", {id, embedding})
+		"update_memory_embedding" => _services.Memory.UpdateEmbedding((long)Num(args, "id"), Str(args, "embedding")),
 		// invoke("update_memory", {id, content, importance?, tags?})
 		"update_memory" => _services.Memory.Update(
 			(long)Num(args, "id"),
@@ -406,6 +421,32 @@ public sealed class BridgeCommands(AppServices services)
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
 			? value.GetInt32()
 			: null;
+
+	private static float[]? ParseFloatArray(JsonElement args, string name)
+	{
+		if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement elem) && elem.ValueKind == JsonValueKind.Array)
+		{
+			int count = elem.GetArrayLength();
+			float[] arr = new float[count];
+			int i = 0;
+			foreach (JsonElement item in elem.EnumerateArray())
+			{
+				arr[i++] = (float)item.GetDouble();
+			}
+			return arr;
+		}
+		return null;
+	}
+
+	private async Task<object?> CreateEmbeddingAsync(JsonElement args)
+	{
+		string text = Str(args, "text");
+		string? baseUrl = OptionalStr(args, "baseUrl") ?? _services.Config.Get("embedding_api_base")?.ToStorage() ?? _services.Config.Get("llm_api_base")?.ToStorage() ?? "https://api.openai.com/v1";
+		string? apiKey = OptionalStr(args, "apiKey") ?? _services.Config.Get("embedding_api_key")?.ToStorage() ?? _services.Config.Get("llm_api_key")?.ToStorage() ?? "";
+		string? model = OptionalStr(args, "model") ?? _services.Config.Get("embedding_model")?.ToStorage() ?? "BAAI/bge-m3";
+
+		return await _services.Embedding.GetEmbeddingAsync(baseUrl, apiKey, model, text);
+	}
 
 	/// <summary>
 	/// 执行一个无返回值的动作, 统一成 object? 返回

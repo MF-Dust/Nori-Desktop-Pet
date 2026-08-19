@@ -2,6 +2,7 @@ import {invoke} from "../../host/invoke"
 import {createLive2D} from "../../live2d"
 import {emotionManager} from "../../emotion"
 import {proactiveService} from "../../proactive"
+import {memoryService} from "../../memory"
 import type {EmotionType} from "../protocol"
 
 /**
@@ -229,55 +230,56 @@ export class ToolManager {
 			},
 		})
 
-		// 6. 存储长期记忆 (记住主人偏好或事件)
-		this.register({
+		// 6. 记住重要事实 / 偏好
+		const rememberTool = {
 			name: "remember",
-			description: "记录并持久化一条关于主人偏好、重要事实或约定到长期记忆库中",
+			description: "在对话中获知主人的个人信息、喜好、称呼、习惯或重要约定后，主动记录到长期记忆库中",
 			parameters: {
 				type: "object",
 				properties: {
 					content: {
 						type: "string",
-						description: "记忆内容事实描述",
+						description: "记忆内容事实描述 (如: 主人最喜欢的咖啡是冰美式 / 主人的生日是 8月20日)",
 					},
 					importance: {
 						type: "number",
-						description: "重要程度 (0.1 ~ 1.0)",
+						description: "重要程度 (0.1 ~ 1.0, 默认为 0.8)",
 					},
 					tags: {
 						type: "string",
-						description: "标签分类 (可选)",
+						description: "标签分类 (可选, 如: 偏好, 姓名, 习惯, 约定)",
 					},
 				},
 				required: ["content"],
 			},
-			permissionLevel: "safe",
-			execute: async (args) => {
+			permissionLevel: "safe" as const,
+			execute: async (args: Record<string, any>) => {
 				const CONTENT = String(args.content || "")
 				if (!CONTENT) throw new Error("记忆内容不能为空")
 				const IMP = typeof args.importance === "number" ? args.importance : 0.8
 				const TAGS = typeof args.tags === "string" ? args.tags : undefined
-				const ITEM = await invoke("add_memory", {
-					type: "fact",
-					content: CONTENT,
-					importance: IMP,
-					tags: TAGS,
-					source: "agent",
-				})
+				const ITEM = await memoryService.add(CONTENT, "fact", IMP, TAGS)
 				return {success: true, memory: ITEM}
 			},
+		}
+
+		this.register(rememberTool)
+		this.register({
+			...rememberTool,
+			name: "addMemory",
+			description: "添加一条长期记忆到记忆库 (remember 的别名)",
 		})
 
 		// 7. 搜索长期记忆
 		this.register({
 			name: "searchMemory",
-			description: "在长期记忆库中搜索与特定关键词相关的历史记忆条目",
+			description: "在长期记忆库中通过语义向量和关键词搜索与特定内容相关的历史记忆条目",
 			parameters: {
 				type: "object",
 				properties: {
 					keyword: {
 						type: "string",
-						description: "搜索关键词",
+						description: "搜索关键词或语义查询句",
 					},
 				},
 				required: ["keyword"],
@@ -286,7 +288,7 @@ export class ToolManager {
 			execute: async (args) => {
 				const KW = String(args.keyword || "")
 				if (!KW) throw new Error("搜索关键词不能为空")
-				const LIST = await invoke("search_memories", {keyword: KW, limit: 10})
+				const LIST = await memoryService.searchHybrid(KW, 10)
 				return {results: LIST}
 			},
 		})

@@ -1,4 +1,5 @@
 import {invoke} from "../host/invoke"
+import {embeddingService} from "../embedding"
 
 /**
  * 记忆条目定义
@@ -10,24 +11,37 @@ export interface MemoryItem {
 	importance: number
 	source: string
 	tags?: string
+	embedding?: string
 	createdAt: string
 	updatedAt: string
 }
 
 /**
- * 记忆服务
+ * 记忆服务 (集成 BGE-M3 语义向量检索与混合搜索)
  */
 export class MemoryService {
 	/**
-	 * 添加一条新记忆
+	 * 添加一条新记忆 (自动计算向量嵌入)
 	 */
 	public async add(content: string, type = "general", importance = 0.5, tags?: string): Promise<MemoryItem> {
+		let embeddingStr: string | undefined
+
+		try {
+			const VEC = await embeddingService.embed(content)
+			if (VEC) {
+				embeddingStr = JSON.stringify(VEC)
+			}
+		} catch (error) {
+			console.warn("生成记忆向量失败:", error)
+		}
+
 		return invoke<MemoryItem>("add_memory", {
 			type,
 			content,
 			importance,
 			tags,
 			source: "chat",
+			embedding: embeddingStr,
 		})
 	}
 
@@ -39,10 +53,54 @@ export class MemoryService {
 	}
 
 	/**
-	 * 搜索记忆
+	 * 按关键词搜索记忆
 	 */
 	public async search(keyword: string, limit = 20): Promise<MemoryItem[]> {
 		return invoke<MemoryItem[]>("search_memories", {keyword, limit})
+	}
+
+	/**
+	 * 混合语义检索 (BGE-M3 向量相似度 + 关键词融合)
+	 */
+	public async searchHybrid(keyword: string, limit = 10): Promise<MemoryItem[]> {
+		try {
+			const VEC = await embeddingService.embed(keyword)
+			return await invoke<MemoryItem[]>("search_memories_hybrid", {
+				keyword,
+				vector: VEC || undefined,
+				limit,
+			})
+		} catch (error) {
+			console.warn("混合检索失败，回退到普通文本搜索:", error)
+			return this.search(keyword, limit)
+		}
+	}
+
+	/**
+	 * 重新为所有未嵌入向量的记忆生成 Embedding
+	 */
+	public async reembedAll(): Promise<number> {
+		const ALL = await this.getAll(500)
+		let count = 0
+
+		for (const item of ALL) {
+			if (!item.embedding) {
+				try {
+					const VEC = await embeddingService.embed(item.content)
+					if (VEC) {
+						await invoke("update_memory_embedding", {
+							id: item.id,
+							embedding: JSON.stringify(VEC),
+						})
+						count++
+					}
+				} catch (error) {
+					console.warn(`为记忆 #${item.id} 生成向量失败:`, error)
+				}
+			}
+		}
+
+		return count
 	}
 
 	/**
@@ -67,32 +125,12 @@ export class MemoryService {
 	}
 
 	/**
-	 * 提取并返回与当前输入最相关的记忆片段列表 (用于 Prompt 注入)
+	 * 提取并返回与当前用户输入最相关的记忆片段列表 (用于 Prompt 注入)
 	 */
 	public async getRelevantMemories(prompt: string, limit = 5): Promise<string[]> {
 		try {
-			// 先拿高重要度的近期记忆
-			const ALL = await this.getAll(15)
-			if (ALL.length === 0) return []
-
-			// 简易关键词与重要度匹配
-			const WORDS = prompt
-				.toLowerCase()
-				.split(/[\s,，.。!！?？]+/)
-				.filter((w) => w.length >= 2)
-
-			const SCORED = ALL.map((item) => {
-				let score = item.importance * 1.5
-				for (const word of WORDS) {
-					if (item.content.toLowerCase().includes(word)) {
-						score += 2.0
-					}
-				}
-				return {item, score}
-			})
-
-			SCORED.sort((a, b) => b.score - a.score)
-			return SCORED.slice(0, limit).map((s) => s.item.content)
+			const RESULTS = await this.searchHybrid(prompt, limit)
+			return RESULTS.map((item) => item.content)
 		} catch (error) {
 			console.error("获取相关记忆失败:", error)
 			return []

@@ -29,6 +29,7 @@ public sealed class NoriDatabase : IDisposable
 		    importance  REAL NOT NULL DEFAULT 0.5,
 		    source      TEXT NOT NULL DEFAULT 'chat',
 		    tags        TEXT,
+		    embedding   TEXT,
 		    created_at  TEXT NOT NULL,
 		    updated_at  TEXT NOT NULL
 		);
@@ -54,6 +55,17 @@ public sealed class NoriDatabase : IDisposable
 		connection.Open();
 		NoriDatabase database = new(connection);
 		database.Execute(Schema);
+
+		// 检查并自动升级旧版数据库缺失的 embedding 列
+		try
+		{
+			database.Execute("ALTER TABLE memories ADD COLUMN embedding TEXT;");
+		}
+		catch
+		{
+			/* 若已存在该列则忽略异常 */
+		}
+
 		return database;
 	}
 
