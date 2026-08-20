@@ -172,7 +172,8 @@ export class StreamingJsonParser {
 	 */
 	public static parseComplete(raw: string): AgentProtocolItem[] {
 		const PARSER = new StreamingJsonParser()
-		PARSER.push(raw)
-		return PARSER.flush()
+		const FROM_PUSH = PARSER.push(raw)
+		const FROM_FLUSH = PARSER.flush()
+		return [...FROM_PUSH, ...FROM_FLUSH]
 	}
 }
