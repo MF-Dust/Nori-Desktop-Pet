@@ -1,5 +1,5 @@
 import type {EmotionType} from "../agent/protocol"
-import {createLive2D} from "../live2d"
+import {petLive2DController} from "../live2d"
 import {invoke} from "../host/invoke"
 
 /**
@@ -154,10 +154,9 @@ export class EmotionManager {
 		}
 
 		const EXP_NAME = EXP_MAP[emotion]
-		if (EXP_NAME) {
+		if (EXP_NAME && petLive2DController) {
 			try {
-				const L2D = createLive2D()
-				void L2D.playExpression(EXP_NAME)
+				void petLive2DController.playExpression(EXP_NAME)
 			} catch {
 				/* 忽略未配置表情 */
 			}

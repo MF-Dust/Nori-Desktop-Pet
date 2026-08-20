@@ -1,5 +1,5 @@
 import {invoke} from "../host/invoke"
-import {createLive2D} from "../live2d"
+import {petLive2DController} from "../live2d"
 import {ttsService} from "../tts"
 
 /**
@@ -67,9 +67,8 @@ export class ProactiveService {
 		if (!PICKED) return
 
 		try {
-			const L2D = createLive2D()
-			if (PICKED.motion) await L2D.playMotionByName(PICKED.motion)
-			if (PICKED.expression) await L2D.playExpression(PICKED.expression)
+			if (PICKED.motion && petLive2DController) await petLive2DController.playMotionByName(PICKED.motion)
+			if (PICKED.expression && petLive2DController) await petLive2DController.playExpression(PICKED.expression)
 			await invoke("write_log", {level: "info", message: `触发挂机主动关怀: ${PICKED.text}`})
 		} catch {
 			/* 忽略错误 */
@@ -110,17 +109,16 @@ export class ProactiveService {
 	 * 主动发声与动作表演
 	 */
 	public async sayProactive(text: string, motionName?: string, expressionName?: string): Promise<void> {
-		const L2D = createLive2D()
-		if (motionName) {
+		if (motionName && petLive2DController) {
 			try {
-				await L2D.playMotionByName(motionName)
+				await petLive2DController.playMotionByName(motionName)
 			} catch {
 				/* 动作未匹配时忽略 */
 			}
 		}
-		if (expressionName) {
+		if (expressionName && petLive2DController) {
 			try {
-				await L2D.playExpression(expressionName)
+				await petLive2DController.playExpression(expressionName)
 			} catch {
 				/* 表情未匹配时忽略 */
 			}

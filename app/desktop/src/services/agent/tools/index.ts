@@ -1,5 +1,5 @@
 import {invoke} from "../../host/invoke"
-import {createLive2D} from "../../live2d"
+import {petLive2DController} from "../../live2d"
 import {emotionManager} from "../../emotion"
 import {proactiveService} from "../../proactive"
 import {memoryService} from "../../memory"
@@ -243,8 +243,8 @@ export class ToolManager {
 			execute: async (args) => {
 				const NAME = String(args.name || "")
 				if (!NAME) throw new Error("缺少动作名称")
-				const L2D = createLive2D()
-				await L2D.playMotionByName(NAME)
+				if (!petLive2DController) throw new Error("桌宠尚未加载")
+				await petLive2DController.playMotionByName(NAME)
 				await invoke("write_log", {level: "info", message: `Agent 触发动作: ${NAME}`})
 				return {success: true, played: NAME}
 			},
@@ -269,8 +269,8 @@ export class ToolManager {
 			execute: async (args) => {
 				const NAME = String(args.name || "")
 				if (!NAME) throw new Error("缺少表情名称")
-				const L2D = createLive2D()
-				await L2D.playExpression(NAME)
+				if (!petLive2DController) throw new Error("桌宠尚未加载")
+				await petLive2DController.playExpression(NAME)
 				return {success: true, expression: NAME}
 			},
 		})

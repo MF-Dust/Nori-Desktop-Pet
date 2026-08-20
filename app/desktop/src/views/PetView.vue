@@ -7,24 +7,23 @@ import {getCurrentWindow} from "../services/host/window"
 import {showWindow, hideWindow} from "../services/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "../components/Icon.vue"
-import {createLive2D, type MotionGroup} from "../services/live2d"
+import {createLive2D, setPetLive2DController, type MotionGroup} from "../services/live2d"
 import {
 	L2D_CONFIG_KEYS,
 	parseExpressionList,
 	parseNumber,
 	readModelConfig,
+	readBehaviorConfig,
 	resolveModelFileBase,
 	type L2DConfigKey,
 } from "../services/live2d/config"
-import {applyCanvasLayout} from "../services/live2d/stage"
+import {lipSyncAnalyzer} from "../services/live2d/lipSync"
+import {audioService} from "../services/audio"
 
 const L2D = createLive2D()
+setPetLive2DController(L2D)
 
 const modelName = ref("arg-nori")
-
-// 模型基础尺寸 (CSS px): 挂载后按实际可视范围测量, 窗口始终紧贴模型
-const baseWidth = ref(400)
-const baseHeight = ref(520)
 
 // ---- L2D 显示配置 (由模型管理页修改, 这里只应用) ----
 const scale = ref(1)
@@ -34,33 +33,24 @@ const expressionList = ref<string[]>([])
 // 模型动作组数组 (挂载后读取, 供 AI / 主窗口调用)
 const motionGroups = ref<MotionGroup[]>([])
 
-// 画布铺满窗口: 窗口尺寸 = 模型可视尺寸 × scale, 模型始终完整显示不被裁剪
-const applyCanvas = () => {
-	const CANVAS = L2D.canvas()
-	if (!CANVAS) return
-	applyCanvasLayout(CANVAS, null, {
-		zIndex: "auto",
-		scale: 1,
-		offsetX: 0,
-		offsetY: 0,
-		animate: false,
-	})
-	CANVAS.style.opacity = String(opacity.value)
-}
+// 行为配置 (缓存, 热更新)
+const behaviorConfig = ref<Record<string, string | number | boolean>>({})
 
 // ---- 窗口尺寸动态适配: 固定基础尺寸 × 缩放系数, 始终保持窗口中心不动 ----
 const applyWindowSize = async (): Promise<void> => {
 	const WEBVIEW = getCurrentWindow()
 	try {
+		const BASE = L2D.getBaseSize()
 		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
 		const OLD_POS = await WEBVIEW.outerPosition()
 		const OLD_SIZE = await WEBVIEW.outerSize()
-		const NEW_W = Math.max(80, Math.round(baseWidth.value * scale.value * SCALE_FACTOR))
-		const NEW_H = Math.max(80, Math.round(baseHeight.value * scale.value * SCALE_FACTOR))
+		const NEW_W = Math.max(80, Math.round(BASE.width * scale.value * SCALE_FACTOR))
+		const NEW_H = Math.max(80, Math.round(BASE.height * scale.value * SCALE_FACTOR))
 		await WEBVIEW.setSize(new PhysicalSize(NEW_W, NEW_H))
 		const CENTER_X = OLD_POS.x + OLD_SIZE.width / 2
 		const CENTER_Y = OLD_POS.y + OLD_SIZE.height / 2
 		await WEBVIEW.setPosition(new PhysicalPosition(Math.round(CENTER_X - NEW_W / 2), Math.round(CENTER_Y - NEW_H / 2)))
+		await L2D.resize()
 	} catch (error) {
 		console.error("窗口尺寸适配失败:", error)
 	}
@@ -88,6 +78,41 @@ const loadModelConfigs = async (): Promise<void> => {
 		return LIST.length > 0 ? LIST : null
 	}, [])
 	opacity.value = await readNumberConfig("l2d_opacity", 1)
+}
+
+// 读取全部行为配置并应用到控制器
+const loadBehaviorConfigs = async (): Promise<void> => {
+	behaviorConfig.value = {}
+	const keys = [
+		"l2d_click_interaction",
+		"l2d_auto_blink",
+		"l2d_eye_tracking",
+		"l2d_idle_eye_animation",
+		"l2d_idle_animation",
+		"l2d_expression_enabled",
+		"l2d_lip_sync",
+		"l2d_shadow",
+		"l2d_render_scale",
+		"l2d_max_fps",
+		"l2d_beat_sync",
+	]
+	for (const key of keys) {
+		behaviorConfig.value[key] = await readBehaviorConfig(key as any)
+	}
+	L2D.applyConfig({
+		autoBlink: behaviorConfig.value.l2d_auto_blink === true,
+		eyeTracking: behaviorConfig.value.l2d_eye_tracking !== false,
+		idleEyeAnimation: behaviorConfig.value.l2d_idle_eye_animation !== false,
+		idleAnimation: behaviorConfig.value.l2d_idle_animation !== false,
+		expressionEnabled: behaviorConfig.value.l2d_expression_enabled !== false,
+		shadowEnabled: behaviorConfig.value.l2d_shadow !== false,
+		lipSyncEnabled: behaviorConfig.value.l2d_lip_sync !== false,
+		beatSyncEnabled: behaviorConfig.value.l2d_beat_sync === true,
+		clickInteraction: behaviorConfig.value.l2d_click_interaction !== false,
+		renderScale: typeof behaviorConfig.value.l2d_render_scale === "number" ? behaviorConfig.value.l2d_render_scale : 2,
+		maxFps: typeof behaviorConfig.value.l2d_max_fps === "number" ? behaviorConfig.value.l2d_max_fps : 0,
+		userScale: scale.value,
+	})
 }
 
 const I18N = computed(() => useLanguages().views.pet)
@@ -135,6 +160,38 @@ const applyExpressions = async (list: string[]): Promise<void> => {
 	} catch {
 		/* 模型未加载时忽略 */
 	}
+}
+
+// ---- 口型同步桥接 ----
+let lipSyncInterval: number | null = null
+let lastLipSyncNode: AudioBufferSourceNode | null = null
+
+const wireLipSync = () => {
+	if (lipSyncInterval != null) return
+	lipSyncInterval = window.setInterval(() => {
+		if (behaviorConfig.value.l2d_lip_sync === false) {
+			if (lastLipSyncNode != null) {
+				lipSyncAnalyzer.detach()
+				lastLipSyncNode = null
+				L2D.setNowSpeaking(false)
+			}
+			return
+		}
+		const node = audioService.getActiveSourceNode()
+		const ctx = audioService.getAudioContextRef()
+		if (node && ctx && node !== lastLipSyncNode) {
+			lipSyncAnalyzer.detach()
+			lipSyncAnalyzer.attach(ctx, node, (value) => {
+				L2D.setMouthOpen(value)
+				L2D.setNowSpeaking(value > 0.02)
+			})
+			lastLipSyncNode = node
+		} else if (!node && lastLipSyncNode != null) {
+			lipSyncAnalyzer.detach()
+			lastLipSyncNode = null
+			L2D.setNowSpeaking(false)
+		}
+	}, 250)
 }
 
 // ---- 全局头部跟踪与平滑拖动 ----
@@ -220,14 +277,8 @@ const trackCursor = async () => {
 
 		const POS = await WEBVIEW.outerPosition()
 		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
-		const CANVAS = L2D.canvas()
-		if (CANVAS) {
-			await L2D.lookAt({
-				target: CANVAS,
-				pageX: (CURSOR_X - POS.x) / SCALE_FACTOR,
-				pageY: (CURSOR_Y - POS.y) / SCALE_FACTOR,
-			} as unknown as MouseEvent)
-		}
+		// 光标追踪: 传给控制器的坐标必须是 webview 内的 client 坐标
+		L2D.lookAt((CURSOR_X - POS.x) / SCALE_FACTOR, (CURSOR_Y - POS.y) / SCALE_FACTOR)
 	} catch {
 		/* 模型未加载时忽略 */
 	}
@@ -239,10 +290,11 @@ let unlistenPetStart: UnlistenFn | null = null
 let unlistenConfigChanged: UnlistenFn | null = null
 let unlistenPlayMotion: UnlistenFn | null = null
 let mountedOnce = false
+let disposed = false
 
 const afterMount = async () => {
-	applyCanvas()
 	await applyWindowSize()
+	L2D.resize()
 	// 读取模型动作组数组 (供 AI 调用)
 	try {
 		motionGroups.value = (await L2D.getMotions()) ?? []
@@ -261,6 +313,7 @@ const afterMount = async () => {
 		CANVAS.style.cursor = "default"
 		CANVAS.style.touchAction = "none"
 		CANVAS.style.userSelect = "none"
+		CANVAS.style.opacity = String(opacity.value)
 		CANVAS.addEventListener("click", onCanvasClick, true)
 		CANVAS.addEventListener("pointermove", onCanvasPointerMove)
 		CANVAS.addEventListener("pointerleave", onCanvasPointerLeave)
@@ -287,12 +340,14 @@ const mountModel = async () => {
 	if (mountedOnce) return
 	mountedOnce = true
 	await loadModelConfigs()
+	await loadBehaviorConfigs()
 	try {
 		await ensureResourceInstalled(modelName.value)
 		await L2D.mount({
 			directory: modelName.value,
 			fileBase: resolveModelFileBase(modelName.value),
 		})
+		L2D.setUserScale(scale.value)
 	} catch (error) {
 		console.error("加载 Live2D 模型失败:", error)
 		void invoke("write_log", {
@@ -315,12 +370,14 @@ const reloadModel = async () => {
 		/* 未加载时忽略 */
 	}
 	await loadModelConfigs()
+	await loadBehaviorConfigs()
 	try {
 		await ensureResourceInstalled(modelName.value)
 		await L2D.mount({
 			directory: modelName.value,
 			fileBase: resolveModelFileBase(modelName.value),
 		})
+		L2D.setUserScale(scale.value)
 	} catch (error) {
 		console.error("加载 Live2D 模型失败:", error)
 	}
@@ -345,6 +402,26 @@ const parseModelConfigKey = (key: string): {base: L2DConfigKey; modelId: string}
 	return null
 }
 
+// 行为配置键热更新
+const applyBehaviorConfigKey = async (key: string) => {
+	if (!key.startsWith("l2d_")) return
+	const VALUE = await readBehaviorConfig(key as any)
+	behaviorConfig.value[key] = VALUE
+	L2D.applyConfig({
+		autoBlink: key === "l2d_auto_blink" ? VALUE === true : undefined,
+		eyeTracking: key === "l2d_eye_tracking" ? VALUE !== false : undefined,
+		idleEyeAnimation: key === "l2d_idle_eye_animation" ? VALUE !== false : undefined,
+		idleAnimation: key === "l2d_idle_animation" ? VALUE !== false : undefined,
+		expressionEnabled: key === "l2d_expression_enabled" ? VALUE !== false : undefined,
+		shadowEnabled: key === "l2d_shadow" ? VALUE !== false : undefined,
+		lipSyncEnabled: key === "l2d_lip_sync" ? VALUE !== false : undefined,
+		beatSyncEnabled: key === "l2d_beat_sync" ? VALUE === true : undefined,
+		clickInteraction: key === "l2d_click_interaction" ? VALUE !== false : undefined,
+		renderScale: key === "l2d_render_scale" && typeof VALUE === "number" ? VALUE : undefined,
+		maxFps: key === "l2d_max_fps" && typeof VALUE === "number" ? VALUE : undefined,
+	})
+}
+
 // 应用配置键 (按模型过滤 + 旧版全局键兜底)
 const applyConfigKey = (base: L2DConfigKey, value: string) => {
 	if (base === "l2d_expression") {
@@ -357,7 +434,7 @@ const applyConfigKey = (base: L2DConfigKey, value: string) => {
 		const NUM = parseFloat(value)
 		if (!Number.isNaN(NUM)) {
 			scale.value = NUM
-			applyCanvas()
+			L2D.setUserScale(NUM)
 			void applyWindowSize()
 		}
 	}
@@ -394,6 +471,10 @@ onMounted(async () => {
 			}
 			return
 		}
+		if (key.startsWith("l2d_")) {
+			void applyBehaviorConfigKey(key)
+			return
+		}
 		if (L2D_CONFIG_KEYS.includes(key as L2DConfigKey)) applyConfigKey(key as L2DConfigKey, value)
 	})
 
@@ -422,6 +503,9 @@ onMounted(async () => {
 		}
 	})
 
+	// 窗口 resize 后重新测量容器
+	window.addEventListener("resize", onWindowResize)
+
 	// 释放事件放在 window, 兼容指针拖出 WebView 后的释放
 	window.addEventListener("pointerup", onPointerUp)
 	window.addEventListener("pointercancel", onPointerCancel)
@@ -430,10 +514,17 @@ onMounted(async () => {
 	// 恢复上次保存的窗口位置
 	await restoreWindowPosition()
 
+	// 口型同步桥接
+	wireLipSync()
+
 	// 兜底: pet-start 事件可能在监听注册前就发出 (用户点唤出时桌宠 webview 尚未就绪),
 	// 轮询窗口可见性补挂载, 最多 30 次 × 500ms
 	void ensurePetMounted()
 })
+
+const onWindowResize = () => {
+	L2D.resize()
+}
 
 // ---- 右键菜单操作 ----
 const closeContextMenu = () => {
@@ -533,10 +624,18 @@ const onCanvasClick = (event: MouseEvent) => {
 	}
 	const SHOULD_SUPPRESS = suppressNextClick
 	suppressNextClick = false
-	if (SHOULD_SUPPRESS || !L2D.isPointOnModel(event.clientX, event.clientY)) {
+	if (SHOULD_SUPPRESS) {
 		event.preventDefault()
 		event.stopImmediatePropagation()
+		return
 	}
+	if (!L2D.isPointOnModel(event.clientX, event.clientY)) {
+		event.preventDefault()
+		event.stopImmediatePropagation()
+		return
+	}
+	// 点击交互: 由控制器内部的 hit-area 处理
+	L2D.tapAt(event.clientX, event.clientY)
 }
 
 const beginDrag = async (event: PointerEvent) => {
@@ -604,11 +703,10 @@ const ensurePetMounted = async (attempt = 0): Promise<void> => {
 	void ensurePetMounted(attempt + 1)
 }
 
-let disposed = false
-
 onBeforeUnmount(() => {
 	disposed = true
 	tracking = false
+	window.removeEventListener("resize", onWindowResize)
 	window.removeEventListener("pointerup", onPointerUp)
 	window.removeEventListener("pointercancel", onPointerCancel)
 	window.removeEventListener("blur", onWindowBlur)
@@ -621,7 +719,13 @@ onBeforeUnmount(() => {
 	}
 	finishDrag()
 	if (trackRafId != null) cancelAnimationFrame(trackRafId)
+	if (lipSyncInterval != null) {
+		clearInterval(lipSyncInterval)
+		lipSyncInterval = null
+	}
+	lipSyncAnalyzer.detach()
 	void L2D.destroy()
+	setPetLive2DController(null)
 	if (unlistenPetStart) unlistenPetStart()
 	if (unlistenConfigChanged) unlistenConfigChanged()
 	if (unlistenPlayMotion) unlistenPlayMotion()

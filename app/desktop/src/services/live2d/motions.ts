@@ -1,7 +1,7 @@
 /**
  * 模型动作组读取 (不依赖挂载, 直接解析 model3.json)
- * 与 live2d-easy-control 的 getAllMotionsInfo 输出格式一致:
- * [{group: "Idle", names: ["01_Idle_Loop", ...]}]
+ * 输出格式与控制器 getMotions 一致:
+ * [{group: "Idle", names: ["01_Idle_Loop", ...]}]  (与 pixi-live2d-display definitions 对齐)
  */
 import {assetUrl, resolveModelFileBase} from "./config"
 import type {MotionGroup} from "./index"

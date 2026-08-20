@@ -9,11 +9,14 @@
 		"dev": "vite",
 		"build": "vue-tsc --noEmit && vite build",
 		"preview": "vite preview",
-		"test": "node --test tests/*.test.mjs",
-		"postinstall": "node scripts/patch-live2d.mjs"
+		"test": "node --test tests/*.test.mjs && vitest run"
 	},
 	"dependencies": {
-		"live2d-easy-control": "^1.0.3",
+		"@pixi/app": "^6.5.10",
+		"@pixi/extensions": "^6.5.10",
+		"@pixi/ticker": "^6.5.10",
+		"pixi-filters": "^4.2.0",
+		"pixi-live2d-display": "^0.4.0",
 		"vue": "^3.5.13",
 		"vue-i18n": "^11.4.8",
 		"vue-router": "^4.6.4"
@@ -23,6 +26,7 @@
 		"less": "^4.9.0",
 		"typescript": "~5.6.2",
 		"vite": "^6.0.3",
+		"vitest": "^4.1.11",
 		"vue-tsc": "^2.1.10"
 	}
 }

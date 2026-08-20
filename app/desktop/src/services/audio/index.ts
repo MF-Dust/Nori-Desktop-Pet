@@ -96,7 +96,21 @@ export class AudioService {
 	}
 
 	/**
-	 * 获取当前状态
+	 * 获取当前活跃的 AudioBufferSourceNode (用于口型同步分析)
+	 */
+	public getActiveSourceNode(): AudioBufferSourceNode | null {
+		return this.currentSourceNode
+	}
+
+	/**
+	 * 获取当前 AudioContext (可能为 null, 用于口型同步分析)
+	 */
+	public getAudioContextRef(): AudioContext | null {
+		return this.audioContext
+	}
+
+	/**
+	 * 获取当前播放状态
 	 */
 	public getState(): AudioPlaybackState {
 		return this.state

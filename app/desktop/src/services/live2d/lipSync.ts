@@ -100,3 +100,20 @@ export class LipSyncAnalyzer {
  * 全局口型分析器单例
  */
 export const lipSyncAnalyzer = new LipSyncAnalyzer()
+
+/**
+ * 将 LipSyncAnalyzer 连接到 Live2D 控制器
+ * @param setMouthOpen 控制器 setMouthOpen 方法
+ * @param setNowSpeaking 控制器 setNowSpeaking 方法
+ */
+export const connectLipSyncToController = (
+	setMouthOpen: (value: number) => void,
+	setNowSpeaking: (speaking: boolean) => void,
+): LipSyncAnalyzer["attach"] => {
+	return (audioContext: AudioContext, sourceNode: AudioNode) => {
+		lipSyncAnalyzer.attach(audioContext, sourceNode, (value) => {
+			setMouthOpen(value)
+			setNowSpeaking(value > 0.02)
+		})
+	}
+}

@@ -32,6 +32,99 @@ export const defaultModels: Record<string, string> = {
 export const resolveModelFileBase = (directory: string): string => defaultModels[directory] ?? directory
 
 /**
+ * 全局 Live2D 行为配置键
+ */
+export const L2D_BEHAVIOR_KEYS = [
+	"l2d_click_interaction",
+	"l2d_auto_blink",
+	"l2d_eye_tracking",
+	"l2d_idle_eye_animation",
+	"l2d_idle_animation",
+	"l2d_expression_enabled",
+	"l2d_lip_sync",
+	"l2d_shadow",
+	"l2d_render_scale",
+	"l2d_max_fps",
+	"l2d_beat_sync",
+] as const
+
+/**
+ * 全局 Live2D 行为配置键类型
+ */
+export type L2DBehaviorKey = (typeof L2D_BEHAVIOR_KEYS)[number]
+
+/**
+ * 全局 Live2D 行为配置默认值
+ */
+export const L2D_BEHAVIOR_DEFAULTS: Record<L2DBehaviorKey, string | number | boolean> = {
+	l2d_click_interaction: true,
+	l2d_auto_blink: true,
+	l2d_eye_tracking: true,
+	l2d_idle_eye_animation: true,
+	l2d_idle_animation: true,
+	l2d_expression_enabled: true,
+	l2d_lip_sync: true,
+	l2d_shadow: true,
+	l2d_render_scale: 2,
+	l2d_max_fps: 0,
+	l2d_beat_sync: false,
+}
+
+/**
+ * 解析布尔配置值
+ */
+export const parseBoolean = (value: unknown): boolean | null => {
+	if (typeof value === "boolean") return value
+	if (typeof value === "string") {
+		if (value === "true" || value === "1") return true
+		if (value === "false" || value === "0") return false
+	}
+	if (typeof value === "number") return value !== 0
+	return null
+}
+
+/**
+ * 读取全局 Live2D 行为配置
+ */
+export const readBehaviorConfig = async (key: L2DBehaviorKey): Promise<typeof L2D_BEHAVIOR_DEFAULTS[L2DBehaviorKey]> => {
+	const DEFAULT = L2D_BEHAVIOR_DEFAULTS[key]
+	try {
+		const VALUE = await invoke<unknown>("get_config", {key})
+		if (VALUE == null) return DEFAULT
+		if (typeof DEFAULT === "boolean") {
+			const PARSED = parseBoolean(VALUE)
+			if (PARSED != null) return PARSED
+		} else if (typeof DEFAULT === "number") {
+			const PARSED = parseNumber(VALUE)
+			if (PARSED != null) return PARSED
+		} else {
+			return String(VALUE)
+		}
+	} catch {
+		/* 读取失败使用默认值 */
+	}
+	return DEFAULT
+}
+
+/**
+ * 写入全局 Live2D 行为配置
+ */
+export const writeBehaviorConfig = async (key: L2DBehaviorKey, value: string | number | boolean): Promise<void> => {
+	await invoke("set_config", {key, value: String(value)})
+}
+
+/**
+ * 读取所有全局 Live2D 行为配置
+ */
+export const readAllBehaviorConfigs = async (): Promise<Record<string, string | number | boolean>> => {
+	const result: Record<string, string | number | boolean> = {}
+	for (const key of L2D_BEHAVIOR_KEYS) {
+		result[key] = await readBehaviorConfig(key)
+	}
+	return result
+}
+
+/**
  * 桌宠显示调整配置键 (按模型存储)
  */
 export const L2D_CONFIG_KEYS = ["l2d_scale", "l2d_offset_x", "l2d_offset_y", "l2d_expression"] as const

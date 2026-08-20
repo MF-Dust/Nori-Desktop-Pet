@@ -12,11 +12,11 @@ import {
 	readModelConfig,
 	resolveModelFileBase,
 } from "../../services/live2d/config"
-import {applyCanvasLayout} from "../../services/live2d/stage"
 import {readMotionGroups} from "../../services/live2d/motions"
 import Icon from "../Icon.vue"
 import ProgressBar from "../ProgressBar.vue"
 import AdjustControls from "./AdjustControls.vue"
+import Live2dBehaviorControls from "./Live2dBehaviorControls.vue"
 
 const I18N = computed(() => useLanguages().views.main.model)
 
@@ -206,20 +206,16 @@ const previewReady = ref(false)
 const pvScale = ref(1)
 const previewExpressionList = ref<string[]>([])
 
-// 预览画布布局到预览区域
-const applyPreviewLayout = () => {
-	applyCanvasLayout(PREVIEW.canvas(), showcaseRef.value, {
-		zIndex: "200",
-		scale: pvScale.value,
-		offsetX: 0,
-		offsetY: 0,
-		animate: false,
-	})
+// 预览画布布局到预览区域 (由控制器容器自动定位)
+const refreshPreviewLayout = () => {
+	if (!previewReady.value) return
+	PREVIEW.resize()
+	PREVIEW.setUserScale(pvScale.value)
 }
 
 // 窗口尺寸变化时重新对齐预览画布
 const onWindowResize = () => {
-	if (adjustFor.value) applyPreviewLayout()
+	if (adjustFor.value) refreshPreviewLayout()
 }
 
 // ---- 预览配置保存 (按模型存储, 桌宠窗口会热更新) ----
@@ -248,7 +244,7 @@ const applyPreviewExpressions = async (list: string[]): Promise<void> => {
 
 const onPreviewScale = (value: number) => {
 	pvScale.value = value
-	applyPreviewLayout()
+	refreshPreviewLayout()
 	savePreviewScale()
 }
 
@@ -279,13 +275,14 @@ const openAdjust = async (model: ModelInfo) => {
 		await PREVIEW.destroy()
 		await PREVIEW.mount(
 			{directory: model.id, fileBase: resolveModelFileBase(model.id)},
-			{canvasWidth: `${Math.max(0, Math.round(RECT.width))}px`, canvasHeight: `${Math.max(0, Math.round(RECT.height))}px`}
+			{container: showcaseRef.value, canvasWidth: Math.max(0, Math.round(RECT.width)), canvasHeight: Math.max(0, Math.round(RECT.height))}
 		)
+		PREVIEW.setUserScale(pvScale.value)
 	} catch (error) {
 		console.error("加载预览模型失败:", error)
 	}
 	previewReady.value = true
-	applyPreviewLayout()
+	refreshPreviewLayout()
 	await applyPreviewExpressions(previewExpressionList.value)
 }
 
@@ -389,6 +386,11 @@ const closeAdjust = () => {
 			</div>
 		</div>
 
+		<!-- 行为与交互设置 (始终可见) -->
+		<div class="mm-behavior-section">
+			<Live2dBehaviorControls :model-id="selectedModel"/>
+		</div>
+
 		<!-- 整页调整面板: 铺满整个页面, 左侧橱窗实时预览, 右侧控制 -->
 		<Transition name="view">
 			<div v-if="adjustFor" class="mm-fullpage">
@@ -408,6 +410,8 @@ const closeAdjust = () => {
 						@scale="onPreviewScale"
 						@expressions="onPreviewExpressions"
 					/>
+					<div class="mm-behavior-divider"/>
+					<Live2dBehaviorControls :model-id="adjustFor"/>
 				</div>
 			</div>
 		</Transition>
@@ -719,6 +723,22 @@ const closeAdjust = () => {
 	bottom: 2rem;
 	overflow-y: auto;
 	padding: 0.4rem 0.8rem 1rem 0.2rem;
+}
+
+.mm-behavior-section {
+	width: 100%;
+	max-width: 60rem;
+	margin: 0 auto;
+	padding: 1.6rem 2.4rem;
+	background: var(--bg-card, rgba(255,255,255,0.04));
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-md);
+}
+
+.mm-behavior-divider {
+	height: 0.1rem;
+	background: var(--line-subtle);
+	margin: 1.6rem 0;
 }
 
 // ---- 动画 ----

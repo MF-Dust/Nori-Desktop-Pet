@@ -1,6 +1,6 @@
 import {invoke} from "../host/invoke"
 import {listen, type UnlistenFn} from "../host/event"
-import {createLive2D} from "../live2d"
+import {petLive2DController} from "../live2d"
 import type {AgentProtocolItem, AgentState, AgentTextMessage, AgentToolCall, EmotionType} from "./protocol"
 import {StreamingJsonParser} from "./jsonParser"
 import {buildAgentSystemPrompt, type PromptBuildOptions} from "./promptBuilder"
@@ -316,7 +316,6 @@ export class AgentEngine {
 	 * 分发消息附加的 Live2D 表情、动作与情绪等副作用
 	 */
 	private async dispatchEffects(msg: AgentTextMessage): Promise<void> {
-		const L2D = createLive2D()
 
 		// 触发情绪联动
 		if (msg.emotion) {
@@ -330,7 +329,7 @@ export class AgentEngine {
 		// 触发表情
 		if (msg.expression) {
 			try {
-				await L2D.playExpression(msg.expression)
+				if (petLive2DController) await petLive2DController.playExpression(msg.expression)
 			} catch {
 				/* 表情未匹配时忽略 */
 			}
@@ -339,7 +338,7 @@ export class AgentEngine {
 		// 触发动作
 		if (msg.action) {
 			try {
-				await L2D.playMotionByName(msg.action)
+				if (petLive2DController) await petLive2DController.playMotionByName(msg.action)
 				// 广播动作给桌宠主窗口
 				await invoke("write_log", {level: "info", message: `Agent 消息驱动动作: ${msg.action}`})
 			} catch {
