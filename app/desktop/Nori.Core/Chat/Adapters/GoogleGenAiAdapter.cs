@@ -105,8 +105,12 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 			}
 
 			// 兼容可能的回退
-			string? fallback = body?["choices"]?[0]?["message"]?["content"]?.GetValue<string>();
-			if (fallback is not null) return fallback;
+			if (body?["choices"] is JsonArray choices && choices.Count > 0)
+			{
+				string? fallback = choices[0]?["message"]?["content"]?.GetValue<string>()
+					?? choices[0]?["text"]?.GetValue<string>();
+				if (fallback is not null) return fallback;
+			}
 
 			throw new ChatException("接口响应格式异常: 未能解析出回复文本 (缺少 candidates[0].content.parts)");
 		}
@@ -205,9 +209,9 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 							}
 						}
 					}
-					catch (JsonException)
+					catch (Exception)
 					{
-						/* 忽略不完整分片 */
+						/* 忽略不完整或格式异常分片 */
 					}
 				}
 			}

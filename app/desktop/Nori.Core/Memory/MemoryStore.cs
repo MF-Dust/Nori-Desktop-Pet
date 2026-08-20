@@ -184,6 +184,7 @@ public sealed class MemoryStore(NoriDatabase database)
 		}
 
 		results.Sort((a, b) => b.Score.CompareTo(a.Score));
+		limit = Math.Max(0, limit);
 		if (results.Count > limit)
 		{
 			results.RemoveRange(limit, results.Count - limit);

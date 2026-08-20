@@ -107,8 +107,12 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 			}
 
 			// 3. 兼容 choices 回退
-			string? fallback = body?["choices"]?[0]?["message"]?["content"]?.GetValue<string>();
-			if (fallback is not null) return fallback;
+			if (body?["choices"] is JsonArray choices && choices.Count > 0)
+			{
+				string? fallback = choices[0]?["message"]?["content"]?.GetValue<string>()
+					?? choices[0]?["text"]?.GetValue<string>();
+				if (fallback is not null) return fallback;
+			}
 
 			throw new ChatException("接口响应格式异常: 未能解析出回复文本 (缺少 output / output_text)");
 		}
@@ -185,8 +189,12 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 					{
 						JsonNode? node = JsonNode.Parse(data);
 						// responses 格式可能为 response.output_text.delta 或 choices[0].delta.content
-						string? delta = node?["delta"]?.GetValue<string>()
-							?? node?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>();
+						string? delta = node?["delta"]?.GetValue<string>();
+						if (string.IsNullOrEmpty(delta) && node?["choices"] is JsonArray chunkChoices && chunkChoices.Count > 0)
+						{
+							delta = chunkChoices[0]?["delta"]?["content"]?.GetValue<string>()
+								?? chunkChoices[0]?["text"]?.GetValue<string>();
+						}
 
 						if (!string.IsNullOrEmpty(delta))
 						{
@@ -194,9 +202,9 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 							onChunk(delta);
 						}
 					}
-					catch (JsonException)
+					catch (Exception)
 					{
-						/* 忽略不完整分片 */
+						/* 忽略不完整或格式异常分片 */
 					}
 				}
 			}

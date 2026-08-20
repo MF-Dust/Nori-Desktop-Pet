@@ -126,7 +126,10 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		foreach (string motion in motions) onMotion(motion);
 
 		// 写入历史: 仅保存最后一条输入与回复, 避免重复落库
-		SaveMessage(messages[^1].Role, messages[^1].Content);
+		if (messages.Count > 0)
+		{
+			SaveMessage(messages[^1].Role, messages[^1].Content);
+		}
 		SaveMessage("assistant", content);
 		return content;
 	}
@@ -171,7 +174,10 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		(string content, IReadOnlyList<string> motions) = MotionMarkers.Extract(raw);
 		foreach (string motion in motions) onMotion(motion);
 
-		SaveMessage(messages[^1].Role, messages[^1].Content);
+		if (messages.Count > 0)
+		{
+			SaveMessage(messages[^1].Role, messages[^1].Content);
+		}
 		SaveMessage("assistant", content);
 		return content;
 	}

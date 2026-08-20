@@ -68,7 +68,12 @@ public sealed class OpenAiChatAdapter(HttpClient httpClient) : ILlmAdapter
 				throw new ChatException($"解析响应失败: {exception.Message}", exception);
 			}
 
-			string? content = body?["choices"]?[0]?["message"]?["content"]?.GetValue<string>();
+			string? content = null;
+			if (body?["choices"] is JsonArray choices && choices.Count > 0)
+			{
+				content = choices[0]?["message"]?["content"]?.GetValue<string>()
+					?? choices[0]?["text"]?.GetValue<string>();
+			}
 			if (content is null) throw new ChatException("接口响应格式异常: 缺少 choices[0].message.content");
 
 			return content;
@@ -140,16 +145,20 @@ public sealed class OpenAiChatAdapter(HttpClient httpClient) : ILlmAdapter
 					try
 					{
 						JsonNode? node = JsonNode.Parse(data);
-						string? chunk = node?["choices"]?[0]?["delta"]?["content"]?.GetValue<string>();
-						if (!string.IsNullOrEmpty(chunk))
+						if (node?["choices"] is JsonArray choices && choices.Count > 0)
 						{
-							fullText.Append(chunk);
-							onChunk(chunk);
+							string? chunk = choices[0]?["delta"]?["content"]?.GetValue<string>()
+								?? choices[0]?["text"]?.GetValue<string>();
+							if (!string.IsNullOrEmpty(chunk))
+							{
+								fullText.Append(chunk);
+								onChunk(chunk);
+							}
 						}
 					}
-					catch (JsonException)
+					catch (Exception)
 					{
-						/* 忽略不完整分片 */
+						/* 忽略不完整或格式异常分片 */
 					}
 				}
 			}
