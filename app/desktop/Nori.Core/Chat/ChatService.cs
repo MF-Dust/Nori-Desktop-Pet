@@ -95,6 +95,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		string model,
 		IReadOnlyList<ChatMessageInput> messages,
 		Action<string> onMotion,
+		bool persist = true,
 		CancellationToken cancellationToken = default)
 	{
 		baseUrl = baseUrl.TrimEnd('/');
@@ -126,11 +127,14 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		foreach (string motion in motions) onMotion(motion);
 
 		// 写入历史: 仅保存最后一条输入与回复, 避免重复落库
-		if (messages.Count > 0)
+		if (persist)
 		{
-			SaveMessage(messages[^1].Role, messages[^1].Content);
+			if (messages.Count > 0)
+			{
+				SaveMessage(messages[^1].Role, messages[^1].Content);
+			}
+			SaveMessage("assistant", content);
 		}
-		SaveMessage("assistant", content);
 		return content;
 	}
 
@@ -148,6 +152,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		Action<string> onChunk,
 		Action<string> onMotion,
 		Action<LlmUsageInfo>? onUsage = null,
+		bool persist = true,
 		CancellationToken cancellationToken = default)
 	{
 		baseUrl = baseUrl.TrimEnd('/');
@@ -175,11 +180,14 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		(string content, IReadOnlyList<string> motions) = MotionMarkers.Extract(raw);
 		foreach (string motion in motions) onMotion(motion);
 
-		if (messages.Count > 0)
+		if (persist)
 		{
-			SaveMessage(messages[^1].Role, messages[^1].Content);
+			if (messages.Count > 0)
+			{
+				SaveMessage(messages[^1].Role, messages[^1].Content);
+			}
+			SaveMessage("assistant", content);
 		}
-		SaveMessage("assistant", content);
 		return content;
 	}
 
@@ -194,20 +202,22 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		Action<string> onMotion,
 		CancellationToken cancellationToken = default)
 	{
-		return CompleteAsync(null, baseUrl, apiKey, model, messages, onMotion, cancellationToken);
+		return CompleteAsync(null, baseUrl, apiKey, model, messages, onMotion, cancellationToken: cancellationToken);
 	}
 
 	/// <summary>
-	/// 保存一条聊天消息
+	/// 保存一条聊天消息并返回持久化结果
 	/// </summary>
-	public void SaveMessage(string role, string content) => _database.Locked(connection =>
+	public ChatMessage SaveMessage(string role, string content) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "INSERT INTO chat_messages (role, content, created_at) VALUES ($role, $content, $createdAt)";
+		string createdAt = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+		command.CommandText = "INSERT INTO chat_messages (role, content, created_at) VALUES ($role, $content, $createdAt); SELECT last_insert_rowid();";
 		command.Parameters.AddWithValue("$role", role);
 		command.Parameters.AddWithValue("$content", content);
-		command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
-		command.ExecuteNonQuery();
+		command.Parameters.AddWithValue("$createdAt", createdAt);
+		long id = (long)(command.ExecuteScalar() ?? throw new InvalidOperationException("保存聊天消息失败"));
+		return new ChatMessage {Id = id, Role = role, Content = content, CreatedAt = createdAt};
 	});
 
 	/// <summary>

@@ -210,6 +210,7 @@ export class AgentEngine {
 							...TRUNCATED_HISTORY,
 						],
 						streamId: STREAM_ID,
+						persist: false,
 					})
 				} finally {
 					if (this.unlistenChunk) {
@@ -229,13 +230,13 @@ export class AgentEngine {
 				let hasToolCall = false
 
 				for (const item of ITEMS) {
-					// A. 处理普通消息
-					if (item.type === "message") {
+					// A. 处理普通消息 (工具调用之后的消息需要等结果反馈，跳过提前定稿)
+					if (item.type === "message" && !hasToolCall) {
 						finalMessage = item
 						await this.dispatchEffects(item)
 					}
 
-					// B. 处理工具调用
+					// B. 处理工具调用 (同一轮可执行多个工具，全部并入下一轮推理)
 					if (item.type === "tool_call") {
 						hasToolCall = true
 						const TOOL_CALL = item as AgentToolCall
@@ -266,7 +267,6 @@ export class AgentEngine {
 						})
 
 						this.setState("thinking", callbacks)
-						break // 进入下一轮推理
 					}
 				}
 

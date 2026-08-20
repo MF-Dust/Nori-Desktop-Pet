@@ -7,6 +7,7 @@ import Icon from "./Icon.vue"
 import {agentEngine, type LlmUsageMetrics} from "../services/agent/engine"
 import type {AgentState, AgentTextMessage} from "../services/agent/protocol"
 import {StreamingJsonParser} from "../services/agent/jsonParser"
+import type {PersistedChatMessage} from "../services/history"
 import {skillService} from "../services/skills"
 import {toolManager} from "../services/agent/tools"
 
@@ -130,16 +131,23 @@ onMounted(async () => {
 
 		if (configured.value) {
 			const historyList = await invoke<Message[]>("get_chat_history")
-			messages.value = historyList.map(m => {
+			const filtered: Message[] = []
+			for (const m of historyList) {
+				// 旧版本会把工具调用 JSON 与系统反馈一并落库，加载时过滤掉，避免聊天区出现原始 JSON
 				if (m.role === "assistant") {
-					const parsed = StreamingJsonParser.parseComplete(m.content)
-					const msgObj = parsed.find(p => p.type === "message") as AgentTextMessage | undefined
-					if (msgObj?.text) {
-						return {...m, content: msgObj.text}
+					const PARSED = StreamingJsonParser.parseComplete(m.content)
+					const MSG_OBJ = PARSED.find(p => p.type === "message") as AgentTextMessage | undefined
+					if (MSG_OBJ?.text) {
+						filtered.push({...m, content: MSG_OBJ.text})
 					}
+					continue
 				}
-				return m
-			})
+				if (m.content.startsWith("【系统工具执行反馈 -")) {
+					continue
+				}
+				filtered.push(m)
+			}
+			messages.value = filtered
 			await scrollToBottom()
 		}
 
@@ -215,6 +223,23 @@ const send = async () => {
 		const lastMsg = messages.value[messages.value.length - 1]
 		if (lastMsg && lastMsg.role === "assistant") {
 			lastMsg.content = FINAL.text || lastMsg.content
+		}
+
+		// 引擎内部可能经过多轮工具调用; 只把用户可见的最终一轮对话落库
+		const ASSISTANT_CONTENT = FINAL.text || lastMsg?.content || ""
+		if (ASSISTANT_CONTENT) {
+			try {
+				const SAVED_USER = await invoke<PersistedChatMessage>("save_chat_message", {role: "user", content: TEXT})
+				const SAVED_ASSISTANT = await invoke<PersistedChatMessage>("save_chat_message", {role: "assistant", content: ASSISTANT_CONTENT})
+				const USER_MSG = messages.value.find(m => m.role === "user" && m.content === TEXT && m.id < 0)
+				if (USER_MSG) USER_MSG.id = SAVED_USER.id
+				if (lastMsg && lastMsg.role === "assistant") {
+					lastMsg.id = SAVED_ASSISTANT.id
+				}
+			} catch (error) {
+				// 落库失败不阻断已完成的对话展示
+				console.error("保存聊天记录失败:", error)
+			}
 		}
 
 		await scrollToBottom()

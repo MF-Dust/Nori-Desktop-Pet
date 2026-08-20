@@ -144,11 +144,26 @@ export class StreamingJsonParser {
 
 			// 2. tool_call 类型
 			if (PARSED.type === "tool_call" && typeof PARSED.name === "string") {
+				let args: Record<string, unknown> = {}
+				if (typeof PARSED.arguments === "object" && PARSED.arguments !== null) {
+					args = PARSED.arguments as Record<string, unknown>
+				} else if (typeof PARSED.arguments === "string" && PARSED.arguments.trim()) {
+					// 部分模型会把 arguments 输出为 JSON 字符串, 尝试二次解析
+					try {
+						const PARSED_ARGS = JSON.parse(PARSED.arguments)
+						if (typeof PARSED_ARGS === "object" && PARSED_ARGS !== null) {
+							args = PARSED_ARGS as Record<string, unknown>
+						}
+					} catch {
+						/* 忽略无效参数 JSON, 保持空对象 */
+					}
+				}
+
 				return {
 					type: "tool_call",
 					id: typeof PARSED.id === "string" ? PARSED.id : `call_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
 					name: PARSED.name,
-					arguments: (typeof PARSED.arguments === "object" && PARSED.arguments !== null ? PARSED.arguments : {}) as Record<string, unknown>,
+					arguments: args,
 				}
 			}
 

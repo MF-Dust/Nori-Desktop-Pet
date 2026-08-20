@@ -29,6 +29,14 @@ describe("StreamingJsonParser 流式协议解析", () => {
 		expect((results[0] as {arguments?: unknown}).arguments).toEqual({})
 	})
 
+	it("tool_call 的 arguments 为 JSON 字符串时二次解析", () => {
+		const parser = new StreamingJsonParser()
+		const results = parser.push("{\"type\": \"tool_call\", \"name\": \"getWeather\", \"arguments\": \"{\\\"city\\\": \\\"北京\\\"}\"}")
+		expect(results).toHaveLength(1)
+		expect(results[0]).toMatchObject({type: "tool_call", name: "getWeather"})
+		expect((results[0] as {arguments?: Record<string, unknown>}).arguments).toEqual({city: "北京"})
+	})
+
 	it("解析事件类型 event", () => {
 		const parser = new StreamingJsonParser()
 		const results = parser.push("{\"type\": \"event\", \"name\": \"pet-motion\", \"payload\": {\"name\": \"wave\"}}")

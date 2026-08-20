@@ -133,7 +133,7 @@ public sealed class BridgeCommands(AppServices services)
 
 		// ---- 对话历史持久化 (参考 AstrBot conversation_mgr) ----
 		// invoke("save_chat_message", {role, content})
-		"save_chat_message" => Run(() => _services.Chat.SaveMessage(Str(args, "role"), Str(args, "content"))),
+		"save_chat_message" => _services.Chat.SaveMessage(Str(args, "role"), Str(args, "content")),
 		// invoke("clear_chat_history")
 		"clear_chat_history" => Run(() => _services.Chat.ClearHistory()),
 
@@ -240,7 +240,8 @@ public sealed class BridgeCommands(AppServices services)
 			Str(args, "apiKey"),
 			Str(args, "model"),
 			messages,
-			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})));
+			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})),
+			OptionalBool(args, "persist") ?? true);
 	}
 
 	/// <summary>
@@ -268,7 +269,8 @@ public sealed class BridgeCommands(AppServices services)
 				cacheHitRate = usage.CacheHitRate,
 				durationMs = usage.DurationMs,
 				model = usage.Model,
-			})));
+			})),
+			OptionalBool(args, "persist") ?? true);
 	}
 
 	/// <summary>
@@ -393,6 +395,20 @@ public sealed class BridgeCommands(AppServices services)
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
 			? value.GetString() ?? ""
 			: throw new InvalidOperationException($"缺少参数: {name}");
+
+	private static bool? OptionalBool(JsonElement args, string name)
+	{
+		if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value))
+		{
+			return value.ValueKind switch
+			{
+				JsonValueKind.True => true,
+				JsonValueKind.False => false,
+				_ => null,
+			};
+		}
+		return null;
+	}
 
 	private static string? OptionalStr(JsonElement args, string name) =>
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
