@@ -1,5 +1,6 @@
 import type {EmotionType} from "../agent/protocol"
 import {createLive2D} from "../live2d"
+import {invoke} from "../host/invoke"
 
 /**
  * 情绪状态描述
@@ -10,8 +11,10 @@ export interface EmotionState {
 	lastUpdated: number
 }
 
+const VALID_EMOTIONS: EmotionType[] = ["neutral", "happy", "sad", "angry", "surprised", "shy", "sleepy", "fond"]
+
 /**
- * 情绪状态管理器
+ * 情绪状态管理器 (支持 SQLite 持久化与自然衰减)
  */
 export class EmotionManager {
 	private current: EmotionType = "neutral"
@@ -19,9 +22,40 @@ export class EmotionManager {
 	private lastUpdated = Date.now()
 	private listeners: Set<(state: EmotionState) => void> = new Set()
 	private decayInterval: number | null = null
+	private persistTimer: number | null = null
+	private initialized = false
 
 	constructor() {
+		void this.init()
 		this.startDecayLoop()
+	}
+
+	/**
+	 * 从数据库恢复持久化的情绪状态
+	 */
+	public async init(): Promise<void> {
+		if (this.initialized) return
+		this.initialized = true
+
+		try {
+			const [SAVED_TYPE, SAVED_INTENSITY] = await Promise.all([
+				invoke<string | null>("get_config", {key: "nori_emotion"}),
+				invoke<string | null>("get_config", {key: "nori_emotion_intensity"}),
+			])
+
+			if (SAVED_TYPE && VALID_EMOTIONS.includes(SAVED_TYPE as EmotionType)) {
+				this.current = SAVED_TYPE as EmotionType
+			}
+			if (SAVED_INTENSITY) {
+				const NUM = parseFloat(SAVED_INTENSITY)
+				if (!Number.isNaN(NUM) && NUM >= 0 && NUM <= 1) {
+					this.intensity = NUM
+				}
+			}
+			this.notify()
+		} catch {
+			/* 读取失败保持默认 */
+		}
 	}
 
 	/**
@@ -36,7 +70,7 @@ export class EmotionManager {
 	}
 
 	/**
-	 * 更新情绪状态
+	 * 更新情绪状态并持久化
 	 */
 	public setEmotion(type: EmotionType, intensity = 0.8): void {
 		this.current = type
@@ -44,6 +78,22 @@ export class EmotionManager {
 		this.lastUpdated = Date.now()
 		this.notify()
 		this.applyLive2DEffect(type)
+		this.schedulePersist()
+	}
+
+	/**
+	 * 防抖保存情绪状态到数据库 (400ms)
+	 */
+	private schedulePersist(): void {
+		if (typeof window === "undefined") return
+		if (this.persistTimer !== null) {
+			clearTimeout(this.persistTimer)
+		}
+		this.persistTimer = window.setTimeout(() => {
+			this.persistTimer = null
+			void invoke("set_config", {key: "nori_emotion", value: this.current})
+			void invoke("set_config", {key: "nori_emotion_intensity", value: String(this.intensity)})
+		}, 400)
 	}
 
 	/**
@@ -81,8 +131,9 @@ export class EmotionManager {
 				if (this.intensity <= 0.1) {
 					this.current = "neutral"
 					this.intensity = 0.5
-					this.notify()
 				}
+				this.notify()
+				this.schedulePersist()
 			}
 		}, 20000)
 	}

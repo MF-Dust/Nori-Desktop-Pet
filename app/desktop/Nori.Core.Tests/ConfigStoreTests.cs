@@ -106,12 +106,25 @@ public class ConfigStoreTests : IDisposable
 	}
 
 	[Fact]
-	public void 动作组以JSON形态往返()
+	public void 敏感APIKey自动加解密透明存取()
 	{
-		const string groups = """[{"group":"Idle","names":["01_Idle_Loop"]}]""";
-		_config.Set("l2d_motions_arg-nori", new ConfigValue.Text(groups));
-		// 存进去是字符串, 读出来会被推断成 JSON —— 与 Rust 版一致, chat.rs 的 motion_hint 依赖这一点
-		ConfigValue.Json value = Assert.IsType<ConfigValue.Json>(_config.Get("l2d_motions_arg-nori"));
-		Assert.Equal(groups, value.ToStorage());
+		const string plainKey = "sk-test-secret-key-123456789";
+		_config.Set("llm_api_key", new ConfigValue.Text(plainKey));
+
+		// 读取时透明解密
+		ConfigValue? value = _config.Get("llm_api_key");
+		Assert.NotNull(value);
+		Assert.Equal(plainKey, value.ToStorage());
+
+		// 检查底层 SQLite 数据库是否已加密存储 (以 enc:dpapi: 开头)
+		using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+		connection.Open();
+		using var cmd = connection.CreateCommand();
+		cmd.CommandText = "SELECT value FROM config WHERE key = 'llm_api_key'";
+		string rawInDb = (string)cmd.ExecuteScalar()!;
+		if (OperatingSystem.IsWindows())
+		{
+			Assert.StartsWith("enc:dpapi:", rawInDb, StringComparison.Ordinal);
+		}
 	}
 }

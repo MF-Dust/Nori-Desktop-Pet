@@ -1,10 +1,11 @@
 import {invoke} from "../host/invoke"
 
 /**
- * 向量嵌入服务 (支持 BGE-M3 / OpenAI / Ollama 等兼容接口)
+ * 向量嵌入服务 (支持 BGE-M3 / OpenAI / Ollama 等兼容接口，带 LRU 内存缓存)
  */
 export class EmbeddingService {
 	private cache = new Map<string, number[]>()
+	private readonly maxCacheSize = 250
 
 	/**
 	 * 获取文本的向量嵌入
@@ -14,12 +15,23 @@ export class EmbeddingService {
 		if (!TRIMMED) return null
 
 		if (this.cache.has(TRIMMED)) {
-			return this.cache.get(TRIMMED)!
+			// 刷新 LRU 访问热度
+			const VECTOR = this.cache.get(TRIMMED)!
+			this.cache.delete(TRIMMED)
+			this.cache.set(TRIMMED, VECTOR)
+			return VECTOR
 		}
 
 		try {
 			const VECTOR = await invoke<number[]>("create_embedding", {text: TRIMMED})
 			if (Array.isArray(VECTOR) && VECTOR.length > 0) {
+				if (this.cache.size >= this.maxCacheSize) {
+					// 淘汰最早未使用的缓存项
+					const OLDEST = this.cache.keys().next().value
+					if (OLDEST !== undefined) {
+						this.cache.delete(OLDEST)
+					}
+				}
 				this.cache.set(TRIMMED, VECTOR)
 				return VECTOR
 			}

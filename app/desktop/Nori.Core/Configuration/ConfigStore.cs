@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Nori.Core.Data;
 
@@ -8,9 +10,12 @@ namespace Nori.Core.Configuration;
 /// 配置读写
 ///
 /// 对应 Rust 版 config.rs 的自由函数集合. 配置键一律 snake_case, 与前端常量保持一致.
+/// 敏感配置 (API Key 等) 在 Windows 环境下采用 DPAPI 自动保护加密存储.
 /// </summary>
 public sealed class ConfigStore(NoriDatabase database)
 {
+	private const string DpapiPrefix = "enc:dpapi:";
+
 	/// <summary>配置键: 配置结构版本 (不兼容变更时 +1, 用于迁移)</summary>
 	public const string KeyConfigSchemaVersion = "config_schema_version";
 
@@ -50,18 +55,20 @@ public sealed class ConfigStore(NoriDatabase database)
 	private readonly NoriDatabase _database = database;
 
 	/// <summary>
-	/// 读取配置, 不存在返回 null
+	/// 读取配置, 不存在返回 null (自动解密 DPAPI 保护的敏感字段)
 	/// </summary>
 	public ConfigValue? Get(string key) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
 		command.CommandText = "SELECT value FROM config WHERE key = $key";
 		command.Parameters.AddWithValue("$key", key);
-		return command.ExecuteScalar() is string stored ? ConfigValue.FromStorage(stored) : null;
+		if (command.ExecuteScalar() is not string stored) return null;
+		string decrypted = UnprotectValue(stored);
+		return ConfigValue.FromStorage(decrypted);
 	});
 
 	/// <summary>
-	/// 写入配置 (存在则覆盖)
+	/// 写入配置 (存在则覆盖, 敏感字段自动进行 DPAPI 加密)
 	/// </summary>
 	public void Set(string key, ConfigValue value) => _database.Locked(connection =>
 	{
@@ -73,7 +80,8 @@ public sealed class ConfigStore(NoriDatabase database)
 			DO UPDATE SET value = excluded.value
 			""";
 		command.Parameters.AddWithValue("$key", key);
-		command.Parameters.AddWithValue("$value", value.ToStorage());
+		string toStore = ProtectValue(key, value.ToStorage());
+		command.Parameters.AddWithValue("$value", toStore);
 		command.ExecuteNonQuery();
 	});
 
@@ -108,9 +116,66 @@ public sealed class ConfigStore(NoriDatabase database)
 		command.CommandText = "SELECT key, value FROM config ORDER BY key";
 		using SqliteDataReader reader = command.ExecuteReader();
 		List<KeyValuePair<string, ConfigValue>> result = [];
-		while (reader.Read()) result.Add(new KeyValuePair<string, ConfigValue>(reader.GetString(0), ConfigValue.FromStorage(reader.GetString(1))));
+		while (reader.Read())
+		{
+			string key = reader.GetString(0);
+			string decrypted = UnprotectValue(reader.GetString(1));
+			result.Add(new KeyValuePair<string, ConfigValue>(key, ConfigValue.FromStorage(decrypted)));
+		}
 		return (IReadOnlyList<KeyValuePair<string, ConfigValue>>)result;
 	});
+
+	/// <summary>
+	/// 判断是否为敏感配置项 (需要加密存储)
+	/// </summary>
+	private static bool IsSensitiveKey(string key) =>
+		key.EndsWith("_api_key", StringComparison.OrdinalIgnoreCase) ||
+		key.EndsWith("_secret", StringComparison.OrdinalIgnoreCase) ||
+		key.EndsWith("_token", StringComparison.OrdinalIgnoreCase) ||
+		key.EndsWith("_password", StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// 使用 DPAPI 加密敏感数据
+	/// </summary>
+	private static string ProtectValue(string key, string plainText)
+	{
+		if (!OperatingSystem.IsWindows() || !IsSensitiveKey(key) || string.IsNullOrEmpty(plainText))
+		{
+			return plainText;
+		}
+		try
+		{
+			byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
+			byte[] encrypted = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
+			return DpapiPrefix + Convert.ToBase64String(encrypted);
+		}
+		catch
+		{
+			return plainText;
+		}
+	}
+
+	/// <summary>
+	/// 使用 DPAPI 解密敏感数据
+	/// </summary>
+	private static string UnprotectValue(string stored)
+	{
+		if (!OperatingSystem.IsWindows() || !stored.StartsWith(DpapiPrefix, StringComparison.Ordinal))
+		{
+			return stored;
+		}
+		try
+		{
+			string base64 = stored[DpapiPrefix.Length..];
+			byte[] encrypted = Convert.FromBase64String(base64);
+			byte[] decrypted = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
+			return Encoding.UTF8.GetString(decrypted);
+		}
+		catch
+		{
+			return stored;
+		}
+	}
 
 	/// <summary>
 	/// 读取字符串配置, 缺失/类型不符时返回 fallback

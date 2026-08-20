@@ -176,6 +176,59 @@ export class CustomHttpTtsProvider implements ITtsProvider {
 }
 
 /**
+ * 5. GPT-SoVITS API 适配器 (支持官方 FastAPI / gpt-sovits HTTP API 端点)
+ */
+export class GptSoVitsTtsProvider implements ITtsProvider {
+	public readonly name = "gpt_sovits"
+
+	public async synthesize(text: string, options: TtsSynthesizeOptions = {}): Promise<ArrayBuffer> {
+		const [BASE_URL, REF_AUDIO, PROMPT_TEXT, PROMPT_LANG] = await Promise.all([
+			invoke<string | null>("get_config", {key: "gptsovits_base_url"}),
+			invoke<string | null>("get_config", {key: "gptsovits_ref_audio"}),
+			invoke<string | null>("get_config", {key: "gptsovits_prompt_text"}),
+			invoke<string | null>("get_config", {key: "gptsovits_prompt_lang"}),
+		])
+
+		const ENDPOINT = (BASE_URL || "http://127.0.0.1:9880").trim().replace(/\/+$/, "")
+		const URL = ENDPOINT.endsWith("/tts") ? ENDPOINT : `${ENDPOINT}/tts`
+
+		const PAYLOAD = {
+			text,
+			text_lang: "zh",
+			ref_audio_path: REF_AUDIO || options.voice || "",
+			prompt_text: PROMPT_TEXT || "",
+			prompt_lang: PROMPT_LANG || "zh",
+			speed: options.speed || 1.0,
+		}
+
+		// 优先尝试 POST JSON，降级 GET Query
+		let res: Response | null = await fetch(URL, {
+			method: "POST",
+			headers: {"Content-Type": "application/json"},
+			body: JSON.stringify(PAYLOAD),
+		}).catch(() => null)
+
+		if (!res || !res.ok) {
+			const PARAMS = new URLSearchParams({
+				text,
+				text_lang: "zh",
+				ref_audio_path: REF_AUDIO || options.voice || "",
+				prompt_text: PROMPT_TEXT || "",
+				prompt_lang: PROMPT_LANG || "zh",
+				speed: String(options.speed || 1.0),
+			})
+			res = await fetch(`${ENDPOINT}/?${PARAMS.toString()}`)
+		}
+
+		if (!res.ok) {
+			throw new Error(`GPT-SoVITS API 合成失败: HTTP ${res.status}`)
+		}
+
+		return res.arrayBuffer()
+	}
+}
+
+/**
  * 全局 TTS 服务
  */
 export class TtsService {
@@ -186,6 +239,7 @@ export class TtsService {
 		this.register(new EdgeTtsProvider())
 		this.register(new OpenAiTtsProvider())
 		this.register(new CustomHttpTtsProvider())
+		this.register(new GptSoVitsTtsProvider())
 	}
 
 	/**

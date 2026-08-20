@@ -9,13 +9,19 @@ import Icon from "../Icon.vue"
 const volume = ref(Math.round(audioService.getVolume() * 100))
 
 // TTS 配置
-const ttsProvider = ref<"web_speech" | "openai" | "custom">("web_speech")
+const ttsProvider = ref<"web_speech" | "openai" | "custom" | "gpt_sovits" | "edge_tts">("web_speech")
 const ttsBaseUrl = ref("")
 const ttsApiKey = ref("")
 const ttsVoice = ref("nova")
 const ttsSpeed = ref(1.0)
 const ttsAutoPlay = ref(true)
 const isSpeakingTest = ref(false)
+
+// GPT-SoVITS 配置
+const gptsovitsBaseUrl = ref("http://127.0.0.1:9880")
+const gptsovitsRefAudio = ref("")
+const gptsovitsPromptText = ref("")
+const gptsovitsPromptLang = ref("zh")
 
 // STT 配置
 const sttProvider = ref<"web_speech" | "whisper">("web_speech")
@@ -33,6 +39,10 @@ onMounted(async () => {
 			SAVED_TTS_VOICE,
 			SAVED_TTS_SPEED,
 			SAVED_TTS_AUTO,
+			SAVED_SOVITS_URL,
+			SAVED_SOVITS_REF,
+			SAVED_SOVITS_TXT,
+			SAVED_SOVITS_LANG,
 			SAVED_STT_P,
 			SAVED_STT_URL,
 			SAVED_STT_KEY,
@@ -44,6 +54,10 @@ onMounted(async () => {
 			invoke<string | null>("get_config", {key: "tts_voice"}),
 			invoke<string | null>("get_config", {key: "tts_speed"}),
 			invoke<string | null>("get_config", {key: "tts_auto_play"}),
+			invoke<string | null>("get_config", {key: "gptsovits_base_url"}),
+			invoke<string | null>("get_config", {key: "gptsovits_ref_audio"}),
+			invoke<string | null>("get_config", {key: "gptsovits_prompt_text"}),
+			invoke<string | null>("get_config", {key: "gptsovits_prompt_lang"}),
 			invoke<string | null>("get_config", {key: "stt_provider"}),
 			invoke<string | null>("get_config", {key: "stt_base_url"}),
 			invoke<string | null>("get_config", {key: "stt_api_key"}),
@@ -59,6 +73,10 @@ onMounted(async () => {
 		if (SAVED_TTS_VOICE) ttsVoice.value = SAVED_TTS_VOICE
 		if (SAVED_TTS_SPEED) ttsSpeed.value = parseFloat(SAVED_TTS_SPEED) || 1.0
 		if (SAVED_TTS_AUTO !== null) ttsAutoPlay.value = SAVED_TTS_AUTO === "true" || SAVED_TTS_AUTO === "1"
+		if (SAVED_SOVITS_URL) gptsovitsBaseUrl.value = SAVED_SOVITS_URL
+		if (SAVED_SOVITS_REF) gptsovitsRefAudio.value = SAVED_SOVITS_REF
+		if (SAVED_SOVITS_TXT) gptsovitsPromptText.value = SAVED_SOVITS_TXT
+		if (SAVED_SOVITS_LANG) gptsovitsPromptLang.value = SAVED_SOVITS_LANG
 		if (SAVED_STT_P) sttProvider.value = SAVED_STT_P as any
 		if (SAVED_STT_URL) sttBaseUrl.value = SAVED_STT_URL
 		if (SAVED_STT_KEY) sttApiKey.value = SAVED_STT_KEY
@@ -161,10 +179,19 @@ const testVoice = async () => {
 								/>
 								自定义 HTTP 端点
 							</label>
+							<label class="radio-chip" :class="{active: ttsProvider === 'gpt_sovits'}">
+								<input
+									v-model="ttsProvider"
+									type="radio"
+									value="gpt_sovits"
+									@change="saveConfig('tts_provider', 'gpt_sovits')"
+								/>
+								GPT-SoVITS API
+							</label>
 						</div>
 					</div>
 
-					<template v-if="ttsProvider !== 'web_speech'">
+					<template v-if="ttsProvider === 'openai' || ttsProvider === 'custom'">
 						<div class="form-item">
 							<label class="label">TTS API 地址</label>
 							<input
@@ -184,6 +211,49 @@ const testVoice = async () => {
 								placeholder="sk-..."
 								@blur="saveConfig('tts_api_key', ttsApiKey)"
 							/>
+						</div>
+					</template>
+
+					<template v-else-if="ttsProvider === 'gpt_sovits'">
+						<div class="form-item">
+							<label class="label">GPT-SoVITS API 地址</label>
+							<input
+								v-model="gptsovitsBaseUrl"
+								class="input"
+								placeholder="http://127.0.0.1:9880"
+								@blur="saveConfig('gptsovits_base_url', gptsovitsBaseUrl)"
+							/>
+						</div>
+
+						<div class="form-item">
+							<label class="label">参考音频路径 (Ref Audio)</label>
+							<input
+								v-model="gptsovitsRefAudio"
+								class="input"
+								placeholder="E:/GPT-SoVITS/reference.wav"
+								@blur="saveConfig('gptsovits_ref_audio', gptsovitsRefAudio)"
+							/>
+						</div>
+
+						<div class="form-row">
+							<div class="form-item flex-1">
+								<label class="label">参考音频文本 (Prompt Text)</label>
+								<input
+									v-model="gptsovitsPromptText"
+									class="input"
+									placeholder="参考音频中所说的文字内容"
+									@blur="saveConfig('gptsovits_prompt_text', gptsovitsPromptText)"
+								/>
+							</div>
+							<div class="form-item w-80">
+								<label class="label">语言</label>
+								<input
+									v-model="gptsovitsPromptLang"
+									class="input"
+									placeholder="zh / ja / en"
+									@blur="saveConfig('gptsovits_prompt_lang', gptsovitsPromptLang)"
+								/>
+							</div>
 						</div>
 					</template>
 

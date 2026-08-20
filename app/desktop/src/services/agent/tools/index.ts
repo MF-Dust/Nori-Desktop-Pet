@@ -448,7 +448,7 @@ export class ToolManager {
 				},
 				required: ["text"],
 			},
-			permissionLevel: "safe",
+			permissionLevel: "confirm",
 			category: "builtin",
 			execute: async (args) => {
 				const TEXT = String(args.text || "")
@@ -474,7 +474,7 @@ export class ToolManager {
 				},
 				required: ["url"],
 			},
-			permissionLevel: "safe",
+			permissionLevel: "confirm",
 			category: "builtin",
 			execute: async (args) => {
 				const URL = String(args.url || "")
@@ -633,13 +633,13 @@ export class ToolManager {
 		// 17. 数学表达式安全计算
 		this.register({
 			name: "calculate",
-			description: "计算数学算式与数值计算 (支持加减乘除、乘方、三角函数与百分比)",
+			description: "计算数学算式与数值计算 (支持加减乘除、乘方、三角函数、对数、常量与百分比)",
 			parameters: {
 				type: "object",
 				properties: {
 					expression: {
 						type: "string",
-						description: "数学表达式 (如: 128 * 64, sqrt(256), 15% * 200)",
+						description: "数学表达式 (如: 128 * 64, sqrt(256), sin(pi/2), 15% * 200)",
 					},
 				},
 				required: ["expression"],
@@ -651,17 +651,10 @@ export class ToolManager {
 				if (!EXPR) throw new Error("表达式不能为空")
 
 				try {
-					const SANITIZED = EXPR
-						.replace(/sqrt\(/g, "Math.sqrt(")
-						.replace(/pow\(/g, "Math.pow(")
-						.replace(/abs\(/g, "Math.abs(")
-						.replace(/sin\(/g, "Math.sin(")
-						.replace(/cos\(/g, "Math.cos(")
-						.replace(/%/g, "*0.01")
-					const RESULT = Function(`"use strict"; return (${SANITIZED})`)()
+					const RESULT = evaluateMathExpression(EXPR)
 					return {expression: EXPR, result: RESULT}
 				} catch (error) {
-					throw new Error(`计算表达式 "${EXPR}" 失败`)
+					throw new Error(`计算表达式 "${EXPR}" 失败: ${error instanceof Error ? error.message : String(error)}`)
 				}
 			},
 		})
@@ -680,7 +673,7 @@ export class ToolManager {
 				},
 				required: ["url"],
 			},
-			permissionLevel: "safe",
+			permissionLevel: "confirm",
 			category: "builtin",
 			execute: async (args) => {
 				const URL = String(args.url || "")
@@ -705,6 +698,260 @@ export class ToolManager {
 			},
 		})
 	}
+}
+
+/**
+ * 安全的数学表达式解析器 (递归下降解析，杜绝 eval / Function 注入风险)
+ */
+export function evaluateMathExpression(expression: string): number {
+	const EXPR = expression.trim()
+	if (!EXPR) throw new Error("表达式不能为空")
+
+	let pos = 0
+
+	function skipWhitespace(): void {
+		while (pos < EXPR.length && /\s/.test(EXPR[pos])) {
+			pos++
+		}
+	}
+
+	function handlePostfix(val: number): number {
+		skipWhitespace()
+		if (pos < EXPR.length && EXPR[pos] === "%") {
+			pos++
+			return val * 0.01
+		}
+		return val
+	}
+
+	function parsePrimary(): number {
+		skipWhitespace()
+		if (pos >= EXPR.length) {
+			throw new Error("意外的表达式结尾")
+		}
+
+		// 处理一元加减
+		if (EXPR[pos] === "+") {
+			pos++
+			return parsePrimary()
+		}
+		if (EXPR[pos] === "-") {
+			pos++
+			return -parsePrimary()
+		}
+
+		// 括号表达式
+		if (EXPR[pos] === "(") {
+			pos++
+			const VAL = parseExpression()
+			skipWhitespace()
+			if (pos >= EXPR.length || EXPR[pos] !== ")") {
+				throw new Error("缺少匹配的闭括号 ')'")
+			}
+			pos++
+			return handlePostfix(VAL)
+		}
+
+		// 数字字面量
+		if (/[0-9.]/.test(EXPR[pos])) {
+			const START = pos
+			let hasDot = false
+			while (pos < EXPR.length && (/[0-9]/.test(EXPR[pos]) || (!hasDot && EXPR[pos] === "."))) {
+				if (EXPR[pos] === ".") hasDot = true
+				pos++
+			}
+			const NUM_STR = EXPR.slice(START, pos)
+			const NUM = parseFloat(NUM_STR)
+			if (Number.isNaN(NUM)) throw new Error(`无效的数字: ${NUM_STR}`)
+			return handlePostfix(NUM)
+		}
+
+		// 标识符 (函数或常量)
+		if (/[a-zA-Z_]/.test(EXPR[pos])) {
+			const START = pos
+			while (pos < EXPR.length && /[a-zA-Z0-9_]/.test(EXPR[pos])) {
+				pos++
+			}
+			const NAME = EXPR.slice(START, pos).toLowerCase()
+
+			// 常量
+			if (NAME === "pi") return handlePostfix(Math.PI)
+			if (NAME === "e") return handlePostfix(Math.E)
+
+			// 函数调用
+			skipWhitespace()
+			if (pos < EXPR.length && EXPR[pos] === "(") {
+				pos++
+				const ARGS: number[] = []
+				skipWhitespace()
+				if (pos < EXPR.length && EXPR[pos] !== ")") {
+					ARGS.push(parseExpression())
+					skipWhitespace()
+					while (pos < EXPR.length && EXPR[pos] === ",") {
+						pos++
+						ARGS.push(parseExpression())
+						skipWhitespace()
+					}
+				}
+				if (pos >= EXPR.length || EXPR[pos] !== ")") {
+					throw new Error(`函数 ${NAME} 缺少闭括号 ')'`)
+				}
+				pos++
+
+				let result: number
+				switch (NAME) {
+					case "sqrt":
+						if (ARGS.length !== 1) throw new Error("sqrt 需要 1 个参数")
+						result = Math.sqrt(ARGS[0])
+						break
+					case "cbrt":
+						if (ARGS.length !== 1) throw new Error("cbrt 需要 1 个参数")
+						result = Math.cbrt(ARGS[0])
+						break
+					case "abs":
+						if (ARGS.length !== 1) throw new Error("abs 需要 1 个参数")
+						result = Math.abs(ARGS[0])
+						break
+					case "sin":
+						if (ARGS.length !== 1) throw new Error("sin 需要 1 个参数")
+						result = Math.sin(ARGS[0])
+						break
+					case "cos":
+						if (ARGS.length !== 1) throw new Error("cos 需要 1 个参数")
+						result = Math.cos(ARGS[0])
+						break
+					case "tan":
+						if (ARGS.length !== 1) throw new Error("tan 需要 1 个参数")
+						result = Math.tan(ARGS[0])
+						break
+					case "asin":
+						if (ARGS.length !== 1) throw new Error("asin 需要 1 个参数")
+						result = Math.asin(ARGS[0])
+						break
+					case "acos":
+						if (ARGS.length !== 1) throw new Error("acos 需要 1 个参数")
+						result = Math.acos(ARGS[0])
+						break
+					case "atan":
+						if (ARGS.length !== 1) throw new Error("atan 需要 1 个参数")
+						result = Math.atan(ARGS[0])
+						break
+					case "round":
+						if (ARGS.length !== 1) throw new Error("round 需要 1 个参数")
+						result = Math.round(ARGS[0])
+						break
+					case "floor":
+						if (ARGS.length !== 1) throw new Error("floor 需要 1 个参数")
+						result = Math.floor(ARGS[0])
+						break
+					case "ceil":
+						if (ARGS.length !== 1) throw new Error("ceil 需要 1 个参数")
+						result = Math.ceil(ARGS[0])
+						break
+					case "log":
+					case "ln":
+						if (ARGS.length !== 1) throw new Error("log 需要 1 个参数")
+						result = Math.log(ARGS[0])
+						break
+					case "log10":
+						if (ARGS.length !== 1) throw new Error("log10 需要 1 个参数")
+						result = Math.log10(ARGS[0])
+						break
+					case "log2":
+						if (ARGS.length !== 1) throw new Error("log2 需要 1 个参数")
+						result = Math.log2(ARGS[0])
+						break
+					case "exp":
+						if (ARGS.length !== 1) throw new Error("exp 需要 1 个参数")
+						result = Math.exp(ARGS[0])
+						break
+					case "pow":
+						if (ARGS.length !== 2) throw new Error("pow 需要 2 个参数")
+						result = Math.pow(ARGS[0], ARGS[1])
+						break
+					case "max":
+						if (ARGS.length === 0) throw new Error("max 至少需要 1 个参数")
+						result = Math.max(...ARGS)
+						break
+					case "min":
+						if (ARGS.length === 0) throw new Error("min 至少需要 1 个参数")
+						result = Math.min(...ARGS)
+						break
+					default:
+						throw new Error(`不支持的数学函数: ${NAME}`)
+				}
+				return handlePostfix(result)
+			}
+
+			throw new Error(`未知的标识符: ${NAME}`)
+		}
+
+		throw new Error(`无法识别的字符: ${EXPR[pos]}`)
+	}
+
+	function parseExponent(): number {
+		let left = parsePrimary()
+		skipWhitespace()
+		if (pos < EXPR.length && (EXPR[pos] === "^" || (EXPR[pos] === "*" && EXPR[pos + 1] === "*"))) {
+			if (EXPR[pos] === "*") pos += 2
+			else pos++
+			const RIGHT = parseExponent()
+			left = Math.pow(left, RIGHT)
+		}
+		return left
+	}
+
+	function parseMultiplicative(): number {
+		let left = parseExponent()
+		while (true) {
+			skipWhitespace()
+			if (pos < EXPR.length && (EXPR[pos] === "*" || EXPR[pos] === "/" || EXPR[pos] === "%")) {
+				const OP = EXPR[pos]
+				pos++
+				const RIGHT = parseExponent()
+				if (OP === "*") {
+					left *= RIGHT
+				} else if (OP === "/") {
+					if (RIGHT === 0) throw new Error("除数不能为零")
+					left /= RIGHT
+				} else if (OP === "%") {
+					if (RIGHT === 0) throw new Error("取模除数不能为零")
+					left %= RIGHT
+				}
+			} else {
+				break
+			}
+		}
+		return left
+	}
+
+	function parseAdditive(): number {
+		let left = parseMultiplicative()
+		while (true) {
+			skipWhitespace()
+			if (pos < EXPR.length && (EXPR[pos] === "+" || EXPR[pos] === "-")) {
+				const OP = EXPR[pos]
+				pos++
+				const RIGHT = parseMultiplicative()
+				if (OP === "+") left += RIGHT
+				else left -= RIGHT
+			} else {
+				break
+			}
+		}
+		return left
+	}
+
+	function parseExpression(): number {
+		return parseAdditive()
+	}
+
+	const RESULT = parseExpression()
+	skipWhitespace()
+	if (pos < EXPR.length) {
+		throw new Error(`未解析完的尾随字符: ${EXPR.slice(pos)}`)
+	}
+	return RESULT
 }
 
 /**

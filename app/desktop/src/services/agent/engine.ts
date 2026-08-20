@@ -53,6 +53,7 @@ export class AgentEngine {
 	private unlistenChunk: UnlistenFn | null = null
 	private unlistenUsage: UnlistenFn | null = null
 	private mcpSynced = false
+	private isAborted = false
 	public lastUsage: LlmUsageMetrics | null = null
 
 	/**
@@ -60,6 +61,23 @@ export class AgentEngine {
 	 */
 	public getState(): AgentState {
 		return this.state
+	}
+
+	/**
+	 * 中止当前 Agent 生成回路
+	 */
+	public abort(): void {
+		this.isAborted = true
+		if (this.unlistenChunk) {
+			this.unlistenChunk()
+			this.unlistenChunk = null
+		}
+		if (this.unlistenUsage) {
+			this.unlistenUsage()
+			this.unlistenUsage = null
+		}
+		ttsService.stop()
+		this.state = "idle"
 	}
 
 	/**
@@ -81,6 +99,7 @@ export class AgentEngine {
 		options: PromptBuildOptions = {},
 		callbacks?: AgentRunCallbacks
 	): Promise<AgentTextMessage> {
+		this.isAborted = false
 		this.setState("thinking", callbacks)
 
 		// 首次运行异步同步一次已连接的 MCP 工具
@@ -96,6 +115,7 @@ export class AgentEngine {
 
 		try {
 			while (iterations < this.maxToolIterations) {
+				if (this.isAborted) break
 				iterations++
 
 				// 1. 读取 AI 与用户自定义人设配置
@@ -145,6 +165,7 @@ export class AgentEngine {
 				}
 
 				this.unlistenChunk = await listen("nori:chat-chunk", (event) => {
+					if (this.isAborted) return
 					const PAYLOAD = event.payload as {streamId: string; chunk: string}
 					if (PAYLOAD.streamId === STREAM_ID && PAYLOAD.chunk) {
 						this.setState("streaming", callbacks)
@@ -158,6 +179,7 @@ export class AgentEngine {
 				})
 
 				this.unlistenUsage = await listen("nori:chat-usage", (event) => {
+					if (this.isAborted) return
 					const PAYLOAD = event.payload as {streamId: string} & LlmUsageMetrics
 					if (PAYLOAD.streamId === STREAM_ID) {
 						const USAGE: LlmUsageMetrics = {
@@ -199,6 +221,8 @@ export class AgentEngine {
 						this.unlistenUsage = null
 					}
 				}
+
+				if (this.isAborted) break
 
 				// 5. 解析全部返回对象
 				const ITEMS: AgentProtocolItem[] = StreamingJsonParser.parseComplete(rawResponseText)
@@ -252,19 +276,27 @@ export class AgentEngine {
 				}
 			}
 
+			if (this.isAborted) {
+				this.setState("idle", callbacks)
+				return finalMessage
+			}
+
 			this.setState("idle", callbacks)
 			if (callbacks?.onComplete) {
 				callbacks.onComplete(finalMessage)
 			}
 
-			// 自动朗读回复
+			// 自动朗读回复 (朗读期间进入 speaking 状态)
 			if (finalMessage.text) {
 				try {
 					const AUTO_TTS = await invoke<string | null>("get_config", {key: "tts_auto_play"})
 					if (AUTO_TTS === "true" || AUTO_TTS === "1") {
-						void ttsService.speak(finalMessage.text)
+						this.setState("speaking", callbacks)
+						await ttsService.speak(finalMessage.text)
+						this.setState("idle", callbacks)
 					}
 				} catch {
+					this.setState("idle", callbacks)
 					/* 忽略自动朗读异常 */
 				}
 			}
