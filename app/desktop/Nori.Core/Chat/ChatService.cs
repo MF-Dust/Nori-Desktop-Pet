@@ -147,6 +147,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		IReadOnlyList<ChatMessageInput> messages,
 		Action<string> onChunk,
 		Action<string> onMotion,
+		Action<LlmUsageInfo>? onUsage = null,
 		CancellationToken cancellationToken = default)
 	{
 		baseUrl = baseUrl.TrimEnd('/');
@@ -169,7 +170,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		timeout.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
 
-		string raw = await adapter.StreamAsync(baseUrl, apiKey, model, systemContent, messages, onChunk, timeout.Token);
+		string raw = await adapter.StreamAsync(baseUrl, apiKey, model, systemContent, messages, onChunk, onUsage, timeout.Token);
 
 		(string content, IReadOnlyList<string> motions) = MotionMarkers.Extract(raw);
 		foreach (string motion in motions) onMotion(motion);

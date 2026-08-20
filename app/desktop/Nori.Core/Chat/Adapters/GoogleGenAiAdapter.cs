@@ -123,6 +123,7 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 		string systemPrompt,
 		IReadOnlyList<ChatMessageInput> messages,
 		Action<string> onChunk,
+		Action<LlmUsageInfo>? onUsage = null,
 		CancellationToken cancellationToken = default)
 	{
 		string cleanModel = NormalizeModelName(model);
@@ -161,6 +162,8 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 		request.Headers.Add("x-goog-api-key", apiKey);
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
+		System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
 		HttpResponseMessage response;
 		try
 		{
@@ -182,6 +185,7 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 			using StreamReader reader = new(stream);
 			StringBuilder fullText = new();
+			LlmUsageInfo? reportedUsage = null;
 
 			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
 			{
@@ -208,6 +212,24 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 								}
 							}
 						}
+
+						if (node?["usageMetadata"] is JsonNode usageMeta)
+						{
+							int promptTokens = usageMeta["promptTokenCount"]?.GetValue<int>() ?? 0;
+							int completionTokens = usageMeta["candidatesTokenCount"]?.GetValue<int>() ?? 0;
+							int totalTokens = usageMeta["totalTokenCount"]?.GetValue<int>() ?? (promptTokens + completionTokens);
+							int cachedTokens = usageMeta["cachedContentTokenCount"]?.GetValue<int>() ?? 0;
+
+							reportedUsage = new LlmUsageInfo
+							{
+								PromptTokens = promptTokens,
+								CompletionTokens = completionTokens,
+								TotalTokens = totalTokens,
+								CachedTokens = cachedTokens,
+								DurationMs = stopwatch.ElapsedMilliseconds,
+								Model = model,
+							};
+						}
 					}
 					catch (Exception)
 					{
@@ -216,6 +238,24 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : ILlmAdapter
 				}
 			}
 
+			stopwatch.Stop();
+
+			if (reportedUsage == null)
+			{
+				int promptChars = systemPrompt.Length + messages.Sum(m => m.Content.Length);
+				int outputChars = fullText.Length;
+				reportedUsage = new LlmUsageInfo
+				{
+					PromptTokens = Math.Max(1, (int)(promptChars / 3.2)),
+					CompletionTokens = Math.Max(1, (int)(outputChars / 3.2)),
+					TotalTokens = Math.Max(2, (int)((promptChars + outputChars) / 3.2)),
+					CachedTokens = 0,
+					DurationMs = stopwatch.ElapsedMilliseconds,
+					Model = model,
+				};
+			}
+
+			onUsage?.Invoke(reportedUsage);
 			return fullText.ToString();
 		}
 	}

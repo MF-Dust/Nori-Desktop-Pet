@@ -380,4 +380,47 @@ public class LlmAdapterTests
 		Assert.Equal("收到啦主人", full);
 		Assert.Equal(["收到啦", "主人"], chunks);
 	}
+
+	[Fact]
+	public async Task OpenAiChatAdapter流式分片正确捕获Usage与缓存命中()
+	{
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			string sse = """
+			data: {"choices":[{"delta":{"content":"你好"}}]}
+
+			data: {"choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":800}}}
+
+			data: [DONE]
+
+			""";
+
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(sse, System.Text.Encoding.UTF8, "text/event-stream")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		OpenAiChatAdapter adapter = new(client);
+
+		List<string> chunks = [];
+		LlmUsageInfo? capturedUsage = null;
+		string full = await adapter.StreamAsync(
+			"https://api.openai.com/v1",
+			"key",
+			"gpt-4o",
+			"系统提示",
+			[new ChatMessageInput {Role = "user", Content = "hi"}],
+			chunk => chunks.Add(chunk),
+			usage => capturedUsage = usage);
+
+		Assert.Equal("你好", full);
+		Assert.NotNull(capturedUsage);
+		Assert.Equal(1000, capturedUsage.PromptTokens);
+		Assert.Equal(20, capturedUsage.CompletionTokens);
+		Assert.Equal(1020, capturedUsage.TotalTokens);
+		Assert.Equal(800, capturedUsage.CachedTokens);
+		Assert.Equal(80.0, capturedUsage.CacheHitRate);
+	}
 }

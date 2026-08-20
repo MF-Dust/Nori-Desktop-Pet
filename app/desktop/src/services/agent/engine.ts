@@ -19,6 +19,19 @@ export interface HistoryMessage {
 }
 
 /**
+ * LLM 用量与缓存命中指标
+ */
+export interface LlmUsageMetrics {
+	promptTokens: number
+	completionTokens: number
+	totalTokens: number
+	cachedTokens: number
+	cacheHitRate: number
+	durationMs: number
+	model?: string
+}
+
+/**
  * Agent 回调监听
  */
 export interface AgentRunCallbacks {
@@ -26,6 +39,7 @@ export interface AgentRunCallbacks {
 	onTextChunk?: (chunk: string) => void
 	onToolExecuting?: (toolName: string, args: Record<string, unknown>) => void
 	onToolExecuted?: (toolName: string, result: unknown, error?: string) => void
+	onUsage?: (usage: LlmUsageMetrics) => void
 	onComplete?: (finalMessage: AgentTextMessage) => void
 	onError?: (error: Error) => void
 }
@@ -37,7 +51,9 @@ export class AgentEngine {
 	private state: AgentState = "idle"
 	private maxToolIterations = 5
 	private unlistenChunk: UnlistenFn | null = null
+	private unlistenUsage: UnlistenFn | null = null
 	private mcpSynced = false
+	public lastUsage: LlmUsageMetrics | null = null
 
 	/**
 	 * 获取当前状态
@@ -123,6 +139,10 @@ export class AgentEngine {
 					this.unlistenChunk()
 					this.unlistenChunk = null
 				}
+				if (this.unlistenUsage) {
+					this.unlistenUsage()
+					this.unlistenUsage = null
+				}
 
 				this.unlistenChunk = await listen("nori:chat-chunk", (event) => {
 					const PAYLOAD = event.payload as {streamId: string; chunk: string}
@@ -133,6 +153,25 @@ export class AgentEngine {
 							if (item.type === "message" && item.text) {
 								if (callbacks?.onTextChunk) callbacks.onTextChunk(item.text)
 							}
+						}
+					}
+				})
+
+				this.unlistenUsage = await listen("nori:chat-usage", (event) => {
+					const PAYLOAD = event.payload as {streamId: string} & LlmUsageMetrics
+					if (PAYLOAD.streamId === STREAM_ID) {
+						const USAGE: LlmUsageMetrics = {
+							promptTokens: PAYLOAD.promptTokens,
+							completionTokens: PAYLOAD.completionTokens,
+							totalTokens: PAYLOAD.totalTokens,
+							cachedTokens: PAYLOAD.cachedTokens,
+							cacheHitRate: PAYLOAD.cacheHitRate,
+							durationMs: PAYLOAD.durationMs,
+							model: PAYLOAD.model || MODEL,
+						}
+						this.lastUsage = USAGE
+						if (callbacks?.onUsage) {
+							callbacks.onUsage(USAGE)
 						}
 					}
 				})
@@ -154,6 +193,10 @@ export class AgentEngine {
 					if (this.unlistenChunk) {
 						this.unlistenChunk()
 						this.unlistenChunk = null
+					}
+					if (this.unlistenUsage) {
+						this.unlistenUsage()
+						this.unlistenUsage = null
 					}
 				}
 

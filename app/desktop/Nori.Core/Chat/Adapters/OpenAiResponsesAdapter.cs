@@ -125,6 +125,7 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 		string systemPrompt,
 		IReadOnlyList<ChatMessageInput> messages,
 		Action<string> onChunk,
+		Action<LlmUsageInfo>? onUsage = null,
 		CancellationToken cancellationToken = default)
 	{
 		string endpoint = FormatEndpoint(baseUrl, "responses");
@@ -153,6 +154,8 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 		};
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
+		System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
 		HttpResponseMessage response;
 		try
 		{
@@ -174,6 +177,7 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 			using StreamReader reader = new(stream);
 			StringBuilder fullText = new();
+			LlmUsageInfo? reportedUsage = null;
 
 			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
 			{
@@ -201,6 +205,24 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 							fullText.Append(delta);
 							onChunk(delta);
 						}
+
+						if (node?["usage"] is JsonNode usageNode)
+						{
+							int promptTokens = usageNode["input_tokens"]?.GetValue<int>() ?? usageNode["prompt_tokens"]?.GetValue<int>() ?? 0;
+							int completionTokens = usageNode["output_tokens"]?.GetValue<int>() ?? usageNode["completion_tokens"]?.GetValue<int>() ?? 0;
+							int totalTokens = usageNode["total_tokens"]?.GetValue<int>() ?? (promptTokens + completionTokens);
+							int cachedTokens = usageNode["input_token_details"]?["cached_tokens"]?.GetValue<int>() ?? usageNode["prompt_tokens_details"]?["cached_tokens"]?.GetValue<int>() ?? 0;
+
+							reportedUsage = new LlmUsageInfo
+							{
+								PromptTokens = promptTokens,
+								CompletionTokens = completionTokens,
+								TotalTokens = totalTokens,
+								CachedTokens = cachedTokens,
+								DurationMs = stopwatch.ElapsedMilliseconds,
+								Model = model,
+							};
+						}
 					}
 					catch (Exception)
 					{
@@ -209,6 +231,24 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : ILlmAdapter
 				}
 			}
 
+			stopwatch.Stop();
+
+			if (reportedUsage == null)
+			{
+				int promptChars = systemPrompt.Length + messages.Sum(m => m.Content.Length);
+				int outputChars = fullText.Length;
+				reportedUsage = new LlmUsageInfo
+				{
+					PromptTokens = Math.Max(1, (int)(promptChars / 3.2)),
+					CompletionTokens = Math.Max(1, (int)(outputChars / 3.2)),
+					TotalTokens = Math.Max(2, (int)((promptChars + outputChars) / 3.2)),
+					CachedTokens = 0,
+					DurationMs = stopwatch.ElapsedMilliseconds,
+					Model = model,
+				};
+			}
+
+			onUsage?.Invoke(reportedUsage);
 			return fullText.ToString();
 		}
 	}

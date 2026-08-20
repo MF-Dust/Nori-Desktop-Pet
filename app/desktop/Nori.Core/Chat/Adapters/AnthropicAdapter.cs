@@ -113,6 +113,7 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 		string systemPrompt,
 		IReadOnlyList<ChatMessageInput> messages,
 		Action<string> onChunk,
+		Action<LlmUsageInfo>? onUsage = null,
 		CancellationToken cancellationToken = default)
 	{
 		string endpoint = FormatEndpoint(baseUrl, "messages");
@@ -140,6 +141,8 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 		request.Headers.Add("anthropic-version", AnthropicVersion);
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
+		System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
 		HttpResponseMessage response;
 		try
 		{
@@ -161,6 +164,9 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 			using StreamReader reader = new(stream);
 			StringBuilder fullText = new();
+			int promptTokens = 0;
+			int completionTokens = 0;
+			int cachedTokens = 0;
 
 			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
 			{
@@ -174,13 +180,30 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 					{
 						JsonNode? node = JsonNode.Parse(data);
 						string? type = node?["type"]?.GetValue<string>();
-						if (type == "content_block_delta")
+						if (type == "message_start")
+						{
+							JsonNode? usage = node?["message"]?["usage"];
+							if (usage != null)
+							{
+								promptTokens = usage["input_tokens"]?.GetValue<int>() ?? 0;
+								cachedTokens = usage["cache_read_input_tokens"]?.GetValue<int>() ?? 0;
+							}
+						}
+						else if (type == "content_block_delta")
 						{
 							string? text = node?["delta"]?["text"]?.GetValue<string>();
 							if (!string.IsNullOrEmpty(text))
 							{
 								fullText.Append(text);
 								onChunk(text);
+							}
+						}
+						else if (type == "message_delta")
+						{
+							JsonNode? usage = node?["usage"];
+							if (usage != null)
+							{
+								completionTokens = usage["output_tokens"]?.GetValue<int>() ?? 0;
 							}
 						}
 					}
@@ -190,6 +213,26 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 					}
 				}
 			}
+
+			stopwatch.Stop();
+
+			if (promptTokens == 0)
+			{
+				int promptChars = systemPrompt.Length + messages.Sum(m => m.Content.Length);
+				int outputChars = fullText.Length;
+				promptTokens = Math.Max(1, (int)(promptChars / 3.2));
+				completionTokens = Math.Max(1, (int)(outputChars / 3.2));
+			}
+
+			onUsage?.Invoke(new LlmUsageInfo
+			{
+				PromptTokens = promptTokens,
+				CompletionTokens = completionTokens,
+				TotalTokens = promptTokens + completionTokens,
+				CachedTokens = cachedTokens,
+				DurationMs = stopwatch.ElapsedMilliseconds,
+				Model = model,
+			});
 
 			return fullText.ToString();
 		}

@@ -308,7 +308,18 @@ public sealed class BridgeCommands(AppServices services)
 			Str(args, "model"),
 			messages,
 			chunk => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-chunk", new {streamId, chunk, done = false})),
-			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})));
+			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})),
+			usage => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-usage", new
+			{
+				streamId,
+				promptTokens = usage.PromptTokens,
+				completionTokens = usage.CompletionTokens,
+				totalTokens = usage.TotalTokens,
+				cachedTokens = usage.CachedTokens,
+				cacheHitRate = usage.CacheHitRate,
+				durationMs = usage.DurationMs,
+				model = usage.Model,
+			})));
 	}
 
 	/// <summary>

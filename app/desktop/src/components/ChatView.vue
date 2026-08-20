@@ -4,8 +4,11 @@ import {invoke} from "../services/host/invoke"
 import {listen, type UnlistenFn} from "../services/host/event"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
-import {agentEngine} from "../services/agent/engine"
-import type {AgentState} from "../services/agent/protocol"
+import {agentEngine, type LlmUsageMetrics} from "../services/agent/engine"
+import type {AgentState, AgentTextMessage} from "../services/agent/protocol"
+import {StreamingJsonParser} from "../services/agent/jsonParser"
+import {skillService} from "../services/skills"
+import {toolManager} from "../services/agent/tools"
 
 const I18N = computed(() => useLanguages().views.main.chat)
 
@@ -19,6 +22,7 @@ const KEY_MODEL = "llm_model"
 
 // AI 是否已配置 (地址 + Key + 模型齐全才算)
 const configured = ref(false)
+const currentModel = ref("")
 
 // 历史消息
 interface Message {
@@ -35,6 +39,12 @@ const listRef = ref<HTMLElement>()
 // Agent 状态与执行中的工具
 const agentState = ref<AgentState>("idle")
 const executingTool = ref<string>("")
+
+// 上下文用量与缓存命中指标
+const metrics = ref<LlmUsageMetrics | null>(null)
+const showMetricsDetail = ref(false)
+const activeSkillsCount = ref(0)
+const activeToolsCount = ref(0)
 
 // 助手回复按句切分成多个气泡 (像日常聊天, 不受模型换行影响)
 const splitSentences = (text: string): string[] => {
@@ -93,6 +103,18 @@ const readConfig = async (key: string): Promise<string> => {
 	}
 }
 
+// 格式化数字
+const formatNum = (n?: number) => {
+	if (typeof n !== "number") return "0"
+	return n.toLocaleString()
+}
+
+// 计算生成速度 (Tokens/秒)
+const tokensPerSecond = computed(() => {
+	if (!metrics.value || metrics.value.durationMs <= 0 || metrics.value.completionTokens <= 0) return 0
+	return Math.round((metrics.value.completionTokens / (metrics.value.durationMs / 1000)) * 10) / 10
+})
+
 let unlistenChatChunk: UnlistenFn | null = null
 let currentStreamId = ""
 
@@ -104,10 +126,27 @@ onMounted(async () => {
 			readConfig(KEY_MODEL),
 		])
 		configured.value = !!(BASE && KEY && MODEL)
+		currentModel.value = MODEL || "未知模型"
+
 		if (configured.value) {
-			messages.value = await invoke<Message[]>("get_chat_history")
+			const historyList = await invoke<Message[]>("get_chat_history")
+			messages.value = historyList.map(m => {
+				if (m.role === "assistant") {
+					const parsed = StreamingJsonParser.parseComplete(m.content)
+					const msgObj = parsed.find(p => p.type === "message") as AgentTextMessage | undefined
+					if (msgObj?.text) {
+						return {...m, content: msgObj.text}
+					}
+				}
+				return m
+			})
 			await scrollToBottom()
 		}
+
+		// 加载活跃技能数与工具数
+		const enabledSkills = await skillService.getEnabledSkills()
+		activeSkillsCount.value = enabledSkills.length
+		activeToolsCount.value = toolManager.list().filter(t => t.enabled !== false).length
 	} catch (error) {
 		console.error("加载聊天历史失败:", error)
 	}
@@ -160,6 +199,9 @@ const send = async () => {
 				onToolExecuted: () => {
 					executingTool.value = ""
 				},
+				onUsage: (usage) => {
+					metrics.value = usage
+				},
 				onTextChunk: (chunk) => {
 					const lastMsg = messages.value[messages.value.length - 1]
 					if (lastMsg && lastMsg.role === "assistant") {
@@ -173,16 +215,6 @@ const send = async () => {
 		const lastMsg = messages.value[messages.value.length - 1]
 		if (lastMsg && lastMsg.role === "assistant") {
 			lastMsg.content = FINAL.text || lastMsg.content
-		}
-
-		// 持久化保存此轮对话
-		try {
-			await invoke("save_chat_message", {role: "user", content: TEXT})
-			if (lastMsg?.content) {
-				await invoke("save_chat_message", {role: "assistant", content: lastMsg.content})
-			}
-		} catch (e) {
-			console.warn("持久化聊天记录失败:", e)
 		}
 
 		await scrollToBottom()
@@ -205,6 +237,7 @@ const clearChatHistory = async () => {
 	try {
 		await invoke("clear_chat_history")
 		messages.value = []
+		metrics.value = null
 	} catch (error) {
 		console.error("清空历史记录失败:", error)
 	}
@@ -217,24 +250,14 @@ const toggleVoiceInput = async () => {
 	if (isRecording.value) {
 		isRecording.value = false
 		const text = await sttService.stopListening()
-		if (text.trim()) {
-			input.value = (input.value ? input.value + " " : "") + text.trim()
+		if (text) {
+			input.value = text
+			await send()
 		}
 	} else {
-		isRecording.value = true
 		try {
-			await sttService.startListening({
-				onInterim: (interim) => {
-					input.value = interim
-				},
-				onFinal: (finalText) => {
-					input.value = finalText
-				},
-				onError: (err) => {
-					console.error("STT Error:", err)
-					isRecording.value = false
-				},
-			})
+			await sttService.startListening()
+			isRecording.value = true
 		} catch (err) {
 			console.error("启动语音识别失败:", err)
 			isRecording.value = false
@@ -257,11 +280,102 @@ const toggleVoiceInput = async () => {
 		<!-- 已配置: 对话 -->
 		<template v-else>
 			<div class="chat-header-bar">
-				<span class="chat-header-title">与 Nori 对话中</span>
-				<button class="btn-clear-chat" title="清空当前历史，开启新对话" @click="clearChatHistory">
-					<Icon name="sparkles" :size="13"/>
-					<span>新对话</span>
-				</button>
+				<div class="chat-title-wrap">
+					<span class="chat-header-title">与 Nori 对话中</span>
+					<span v-if="currentModel" class="model-badge">
+						<Icon name="sparkles" :size="11"/>
+						<span>{{ currentModel }}</span>
+					</span>
+				</div>
+
+				<div class="header-right-ops">
+					<button class="btn-clear-chat" title="清空当前历史，开启新对话" @click="clearChatHistory">
+						<Icon name="sparkles" :size="13"/>
+						<span>新对话</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- 实用信息与上下文指标条 (Context & Cache Usage Bar) -->
+			<div class="chat-metrics-bar" @click="showMetricsDetail = !showMetricsDetail">
+				<div class="metrics-left">
+					<!-- 上下文用量 -->
+					<div class="metric-item" title="当前对话上下文消耗的 Token 总量">
+						<Icon name="package" :size="12"/>
+						<span class="metric-label">上下文:</span>
+						<span class="metric-val">{{ metrics ? formatNum(metrics.totalTokens) : '就绪' }} Tokens</span>
+					</div>
+
+					<!-- 缓存命中率 -->
+					<div
+						class="metric-item cache-item"
+						:class="{hit: metrics && metrics.cachedTokens > 0}"
+						title="大模型提示词 Prompt 缓存命中状态与节省比例"
+					>
+						<Icon name="zap" :size="12"/>
+						<span class="metric-label">缓存命中:</span>
+						<span v-if="metrics && metrics.cachedTokens > 0" class="metric-val highlight">
+							{{ metrics.cacheHitRate }}% ({{ formatNum(metrics.cachedTokens) }})
+						</span>
+						<span v-else-if="metrics" class="metric-val text-faint">0%</span>
+						<span v-else class="metric-val text-faint">自动加速中</span>
+					</div>
+
+					<!-- 响应耗时与生成速率 -->
+					<div v-if="metrics && metrics.durationMs > 0" class="metric-item" title="最近一轮对话生成耗时">
+						<Icon name="refresh" :size="11"/>
+						<span class="metric-val">{{ (metrics.durationMs / 1000).toFixed(2) }}s</span>
+						<span v-if="tokensPerSecond > 0" class="metric-speed">({{ tokensPerSecond }} t/s)</span>
+					</div>
+				</div>
+
+				<div class="metrics-right">
+					<span class="metric-addons" title="当前激活的技能与可用工具数">
+						{{ activeSkillsCount }} 技能 · {{ activeToolsCount }} 工具
+					</span>
+					<Icon name="info" :size="12" class="info-icon" :class="{active: showMetricsDetail}"/>
+				</div>
+			</div>
+
+			<!-- 点击展开详细指标弹窗 (Metrics Popover) -->
+			<div v-if="showMetricsDetail" class="metrics-detail-box">
+				<div class="detail-header">
+					<h4>📊 上下文用量与缓存统计明细</h4>
+					<button class="btn-close-detail" @click.stop="showMetricsDetail = false">
+						<Icon name="close" :size="12"/>
+					</button>
+				</div>
+
+				<div class="detail-grid">
+					<div class="detail-cell">
+						<span class="cell-label">提示词输入 (Prompt)</span>
+						<span class="cell-val">{{ metrics ? formatNum(metrics.promptTokens) : '0' }} Tokens</span>
+					</div>
+					<div class="detail-cell">
+						<span class="cell-label">回复输出 (Completion)</span>
+						<span class="cell-val">{{ metrics ? formatNum(metrics.completionTokens) : '0' }} Tokens</span>
+					</div>
+					<div class="detail-cell">
+						<span class="cell-label">Prompt 缓存读取 (Cached)</span>
+						<span class="cell-val text-teal">{{ metrics ? formatNum(metrics.cachedTokens) : '0' }} Tokens</span>
+					</div>
+					<div class="detail-cell">
+						<span class="cell-label">当前缓存命中率</span>
+						<span class="cell-val text-teal">{{ metrics ? metrics.cacheHitRate + '%' : '0.0%' }}</span>
+					</div>
+					<div class="detail-cell">
+						<span class="cell-label">生成耗时与速率</span>
+						<span class="cell-val">{{ metrics && metrics.durationMs > 0 ? (metrics.durationMs / 1000).toFixed(2) + 's (' + tokensPerSecond + ' t/s)' : '-' }}</span>
+					</div>
+					<div class="detail-cell">
+						<span class="cell-label">当前运行模型</span>
+						<span class="cell-val text-primary">{{ currentModel || '-' }}</span>
+					</div>
+				</div>
+
+				<p class="detail-tip">
+					💡 提示：当使用支持 Prompt Caching 的模型（如 DeepSeek, Claude 3.5, OpenAI 等）时，系统人设、长期记忆与工具清单会被自动缓存，大幅降低响应延迟与 API 计费。
+				</p>
 			</div>
 
 			<div ref="listRef" class="chat-list">
@@ -321,6 +435,7 @@ const toggleVoiceInput = async () => {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+	position: relative;
 }
 
 // 未配置提示
@@ -338,48 +453,250 @@ const toggleVoiceInput = async () => {
 .chat-empty-title {
 	font-size: 2.2rem;
 	font-weight: 700;
-	color: var(--text-primary);
+	color: var(--nori-teal-bright);
 }
 
 .chat-empty-desc {
-	font-size: 1.2rem;
-	color: var(--text-faint);
+	font-size: 1.3rem;
+	color: var(--text-muted);
+	max-width: 40rem;
 	line-height: 1.6;
 }
 
-// 顶部操作栏
+// 头部
 .chat-header-bar {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0.8rem 1.6rem 0.4rem;
+	padding: 1rem 1.6rem;
 	border-bottom: 0.1rem solid var(--line-subtle);
+	background: rgba(10, 26, 36, 0.4);
+	flex-shrink: 0;
+}
+
+.chat-title-wrap {
+	display: flex;
+	align-items: center;
+	gap: 0.8rem;
 }
 
 .chat-header-title {
-	font-size: 1.15rem;
-	color: var(--text-muted);
-	font-weight: 500;
+	font-size: 1.35rem;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.model-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.2rem 0.6rem;
+	border-radius: 1rem;
+	background: rgba(125, 227, 255, 0.08);
+	border: 0.1rem solid var(--line-subtle);
+	color: var(--nori-teal-bright);
+	font-size: 1.1rem;
+	font-family: monospace;
+}
+
+.header-right-ops {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
 }
 
 .btn-clear-chat {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.4rem;
-	background: transparent;
+	padding: 0.4rem 0.9rem;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
-	padding: 0.3rem 0.8rem;
-	color: var(--text-faint);
-	font-size: 1.1rem;
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-muted);
+	font-size: 1.15rem;
 	cursor: pointer;
 	transition: all 0.2s ease;
 
 	&:hover {
 		color: var(--nori-teal-bright);
 		border-color: var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.08);
 	}
+}
+
+// 实用信息与上下文指标条
+.chat-metrics-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.4rem 1.6rem;
+	background: rgba(0, 0, 0, 0.25);
+	border-bottom: 0.1rem solid var(--line-subtle);
+	font-size: 1.1rem;
+	color: var(--text-muted);
+	cursor: pointer;
+	user-select: none;
+	flex-shrink: 0;
+	transition: all 0.2s ease;
+
+	&:hover {
+		background: rgba(125, 227, 255, 0.04);
+		color: var(--text-primary);
+	}
+}
+
+.metrics-left {
+	display: flex;
+	align-items: center;
+	gap: 1.2rem;
+}
+
+.metric-item {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.metric-label {
+	color: var(--text-faint);
+}
+
+.metric-val {
+	color: var(--text-body);
+	font-family: monospace;
+
+	&.highlight {
+		color: var(--nori-teal-bright);
+		font-weight: 600;
+	}
+
+	&.text-faint {
+		color: var(--text-faint);
+	}
+}
+
+.metric-speed {
+	color: var(--text-faint);
+	font-size: 1rem;
+	font-family: monospace;
+}
+
+.cache-item.hit {
+	.metric-label {
+		color: var(--nori-teal-soft);
+	}
+}
+
+.metrics-right {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+}
+
+.metric-addons {
+	font-size: 1.05rem;
+	color: var(--text-faint);
+}
+
+.info-icon {
+	color: var(--text-faint);
+	transition: transform 0.2s ease;
+
+	&.active {
+		color: var(--nori-teal-bright);
+		transform: rotate(180deg);
+	}
+}
+
+// 指标详情弹窗
+.metrics-detail-box {
+	position: absolute;
+	top: 7.2rem;
+	left: 1.6rem;
+	right: 1.6rem;
+	background: #091c29;
+	border: 0.1rem solid var(--nori-teal-soft);
+	border-radius: var(--radius-sm);
+	padding: 1.2rem 1.4rem;
+	z-index: 20;
+	box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.6);
+	animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+	from {
+		opacity: 0;
+		transform: translateY(-0.6rem);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.detail-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 1rem;
+
+	h4 {
+		font-size: 1.25rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+}
+
+.btn-close-detail {
+	background: transparent;
+	border: none;
+	color: var(--text-faint);
+	cursor: pointer;
+
+	&:hover {
+		color: var(--text-primary);
+	}
+}
+
+.detail-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.8rem;
+	margin-bottom: 0.8rem;
+}
+
+.detail-cell {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	padding: 0.6rem 0.8rem;
+	background: rgba(255, 255, 255, 0.03);
+	border-radius: var(--radius-sm);
+}
+
+.cell-label {
+	font-size: 1.05rem;
+	color: var(--text-faint);
+}
+
+.cell-val {
+	font-size: 1.2rem;
+	font-family: monospace;
+	font-weight: 500;
+	color: var(--text-primary);
+
+	&.text-teal {
+		color: var(--nori-teal-bright);
+	}
+}
+
+.detail-tip {
+	font-size: 1.1rem;
+	color: var(--text-muted);
+	line-height: 1.5;
+	border-top: 0.1rem solid var(--line-subtle);
+	padding-top: 0.8rem;
+	margin: 0;
 }
 
 // 消息列表
@@ -387,149 +704,45 @@ const toggleVoiceInput = async () => {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
+	padding: 1.6rem;
 	display: flex;
 	flex-direction: column;
 	gap: 1rem;
-	padding: 1.6rem 1.2rem;
-	scrollbar-width: none;
-
-	&::-webkit-scrollbar {
-		display: none;
-	}
 }
 
 .chat-msg {
 	display: flex;
+	flex-direction: column;
+	max-width: 80%;
 
 	&.user {
-		justify-content: flex-end;
+		align-self: flex-end;
+		.chat-bubble {
+			background: linear-gradient(135deg, rgba(125, 227, 255, 0.2), rgba(125, 227, 255, 0.08));
+			border: 0.1rem solid var(--nori-teal-soft);
+			color: var(--text-primary);
+			border-bottom-right-radius: 0.2rem;
+		}
 	}
 
 	&.assistant {
-		justify-content: flex-start;
+		align-self: flex-start;
+		.chat-bubble {
+			background: rgba(255, 255, 255, 0.06);
+			border: 0.1rem solid var(--line-subtle);
+			color: var(--text-primary);
+			border-bottom-left-radius: 0.2rem;
+		}
 	}
 }
 
 .chat-bubble {
-	max-width: 72%;
-	padding: 0.9rem 1.2rem;
+	padding: 0.8rem 1.2rem;
 	border-radius: var(--radius-sm);
-	font-size: 1.3rem;
-	line-height: 1.6;
+	font-size: 1.25rem;
+	line-height: 1.5;
 	word-break: break-word;
 	white-space: pre-wrap;
-
-	.user & {
-		background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-		color: #05121a;
-	}
-
-	.assistant & {
-		background: rgba(255, 255, 255, 0.06);
-		color: var(--text-body);
-		border: 0.1rem solid var(--line-subtle);
-	}
-}
-
-.chat-error {
-	padding: 0 1.2rem;
-	font-size: 1.1rem;
-	color: var(--danger);
-}
-
-// 输入区
-.chat-input-row {
-	padding: 1rem 1.2rem 1.4rem;
-	display: flex;
-	gap: 0.8rem;
-}
-
-.input {
-	flex: 1;
-	padding: 0.9rem 1.2rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-family: inherit;
-	outline: none;
-	transition: all 0.2s ease;
-
-	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
-	}
-}
-
-.input::placeholder {
-	color: var(--text-muted);
-	opacity: 0.6;
-}
-
-.voice-btn {
-	width: 4rem;
-	height: 4rem;
-	flex-shrink: 0;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.2s ease;
-
-	&:hover {
-		color: var(--nori-teal-bright);
-		border-color: var(--nori-teal-soft);
-	}
-
-	&.active {
-		background: rgba(255, 75, 75, 0.15);
-		border-color: #ff4b4b;
-		color: #ff4b4b;
-		animation: pulse-recording 1.2s infinite;
-	}
-}
-
-@keyframes pulse-recording {
-	0%, 100% {
-		box-shadow: 0 0 0.4rem rgba(255, 75, 75, 0.3);
-	}
-	50% {
-		box-shadow: 0 0 1.2rem rgba(255, 75, 75, 0.8);
-	}
-}
-
-.send-btn {
-	width: 4rem;
-	height: 4rem;
-	flex-shrink: 0;
-	border: none;
-	border-radius: var(--radius-sm);
-	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-	color: #05121a;
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.2s ease;
-
-	&:hover:not(:disabled) {
-		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-}
-
-.btn-icon {
-	width: 1.6rem;
-	height: 1.6rem;
 }
 
 .tool-executing-hint {
@@ -542,12 +755,116 @@ const toggleVoiceInput = async () => {
 	border-radius: var(--radius-sm);
 	color: var(--nori-teal-bright);
 	font-size: 1.15rem;
-	margin-top: 0.4rem;
 	align-self: flex-start;
 }
 
 .tool-icon {
-	width: 1.2rem;
-	height: 1.2rem;
+	color: var(--nori-teal-bright);
+}
+
+.chat-error {
+	padding: 0.6rem 1.6rem;
+	color: var(--danger);
+	font-size: 1.15rem;
+	background: rgba(255, 75, 75, 0.08);
+	margin: 0;
+	flex-shrink: 0;
+}
+
+// 输入框行
+.chat-input-row {
+	display: flex;
+	align-items: center;
+	gap: 0.8rem;
+	padding: 1.2rem 1.6rem;
+	border-top: 0.1rem solid var(--line-subtle);
+	background: rgba(10, 26, 36, 0.4);
+	flex-shrink: 0;
+}
+
+.voice-btn {
+	width: 3.6rem;
+	height: 3.6rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.2s ease;
+
+	&:hover {
+		color: var(--nori-teal-bright);
+		border-color: var(--nori-teal-soft);
+	}
+
+	&.active {
+		color: #ff4b4b;
+		border-color: #ff4b4b;
+		background: rgba(255, 75, 75, 0.15);
+		animation: pulse 1.2s infinite;
+	}
+}
+
+.input {
+	flex: 1;
+	height: 3.6rem;
+	padding: 0 1.2rem;
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.03);
+	color: var(--text-primary);
+	font-size: 1.25rem;
+	outline: none;
+	transition: all 0.2s ease;
+
+	&:focus {
+		border-color: var(--nori-teal-soft);
+	}
+}
+
+.send-btn {
+	width: 3.6rem;
+	height: 3.6rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	border-radius: var(--radius-sm);
+	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
+	color: #05121a;
+	cursor: pointer;
+	transition: all 0.2s ease;
+
+	&:hover:not(:disabled) {
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
+	}
+
+	&:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+}
+
+.btn-icon {
+	width: 1.6rem;
+	height: 1.6rem;
+}
+
+.spin {
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+	0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.4); }
+	70% { box-shadow: 0 0 0 0.8rem rgba(255, 75, 75, 0); }
+	100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
 }
 </style>
