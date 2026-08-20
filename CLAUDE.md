@@ -21,6 +21,7 @@ pnpm install          # also runs postinstall → scripts/patch-live2d.mjs
 pnpm build            # vue-tsc --noEmit && vite build  ← the frontend gate
 dotnet build          # builds Nori.Core + Nori.Desktop + tests  ← the backend gate
 dotnet test           # xUnit; pure-function coverage
+./publish.bat         # framework-dependent publish (no bundled runtime) for win-x64
 ```
 
 Running the app:
@@ -38,7 +39,7 @@ Gateway — run from `srv/Nori.Gateway/`:
 ```bash
 dotnet build
 dotnet run                 # reads configs/config.yaml relative to the working directory
-../build.bat               # self-contained single-file publish for win-x64 + linux-x64
+../build.bat               # framework-dependent publish (no bundled runtime) for win-x64 + linux-x64
 ```
 
 `configs/config.yaml` is gitignored (it holds OSS credentials) and must be created by hand from `configs/config.example.yaml`. A missing file now fails at startup with a readable message (the Go version used to panic on first use).
