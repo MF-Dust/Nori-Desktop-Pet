@@ -47,6 +47,7 @@ try
 	builder.WebHost.UseUrls($"http://0.0.0.0:{config.Gateway.Port}");
 	builder.Services.AddSingleton(config);
 	builder.Services.AddSingleton<OssService>();
+	builder.Services.AddSingleton<AssetManifestStore>();
 
 	WebApplication app = builder.Build();
 	// 顺序与 Go 版 setupRouter 一致: CORS → RequestID → 请求日志
@@ -86,6 +87,26 @@ try
 		return url is null
 			? ApiResponse.NotFound($"资源不存在: {type}/{name}.zip")
 			: ApiResponse.Success(new {url});
+	});
+
+	// GET /resource/manifest?type=live2d&name=arg-nori
+	app.MapGet("/resource/manifest", (HttpContext context, AssetManifestStore manifests) =>
+	{
+		string type = context.Request.Query["type"].ToString();
+		string name = context.Request.Query["name"].ToString();
+		if (type.Length == 0) return ApiResponse.BadRequest("type 不能为空");
+		if (name.Length == 0) return ApiResponse.BadRequest("name 不能为空");
+		try
+		{
+			AssetManifestItem? manifest = manifests.Find(type, name);
+			return manifest is null
+				? ApiResponse.NotFound($"资源 Manifest 不存在: {type}/{name}")
+				: ApiResponse.Success(manifest);
+		}
+		catch (InvalidOperationException exception)
+		{
+			return ApiResponse.InternalServerError(exception.Message);
+		}
 	});
 
 	// 未命中的路由: 与 Go 版一样返回统一信封而不是空 404

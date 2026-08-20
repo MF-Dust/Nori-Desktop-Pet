@@ -170,6 +170,7 @@ export default {
 				extracting: "正在解压...",
 				ready: "已就绪",
 				downloadFailed: "下载失败",
+				update: "更新",
 				enable: "启用",
 				enabled: "已启用",
 				adjust: "调整",

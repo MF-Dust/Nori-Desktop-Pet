@@ -172,6 +172,7 @@ export default () => {
 					extracting: t("views.main.model.extracting"),
 					ready: t("views.main.model.ready"),
 					downloadFailed: t("views.main.model.downloadFailed"),
+					update: t("views.main.model.update"),
 					enable: t("views.main.model.enable"),
 					enabled: t("views.main.model.enabled"),
 					adjust: t("views.main.model.adjust"),

@@ -76,8 +76,14 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("check_resource", {resourceType: "live2d", name: "arg-nori"})
 		"check_resource" => _services.Resources.IsInstalled(ParseResourceType(Str(args, "resourceType")), Str(args, "name")),
 
+		// invoke("get_resource_manifest", {resourceType: "live2d", name: "arg-nori"})
+		"get_resource_manifest" => await _services.Resources.GetManifestAsync(ParseResourceType(Str(args, "resourceType")), Str(args, "name")),
+
 		// invoke("ensure_resource", {resourceType: "live2d", name: "arg-nori"})
 		"ensure_resource" => await EnsureResourceAsync(Str(args, "resourceType"), Str(args, "name")),
+
+		// invoke("update_resource", {resourceType: "live2d", name: "arg-nori"})
+		"update_resource" => await UpdateResourceAsync(Str(args, "resourceType"), Str(args, "name")),
 
 		// invoke("import_local_resource", {filePath?: "C:/...", resourceType?: "live2d"})
 		"import_local_resource" => await ImportLocalResourceAsync(source, args),
@@ -238,6 +244,12 @@ public sealed class BridgeCommands(AppServices services)
 	/// 确保资源就位, 各阶段实时推 resource-download 事件
 	/// </summary>
 	private async Task<object?> EnsureResourceAsync(string rawType, string name)
+		=> await RunResourceAsync(rawType, name, false);
+
+	private async Task<object?> UpdateResourceAsync(string rawType, string name)
+		=> await RunResourceAsync(rawType, name, true);
+
+	private async Task<object?> RunResourceAsync(string rawType, string name, bool force)
 	{
 		ResourceType type = ParseResourceType(rawType);
 		string typeName = type.AsString();
@@ -268,7 +280,8 @@ public sealed class BridgeCommands(AppServices services)
 		try
 		{
 			_services.Logger.Write(LogSource.Backend, "info", $"确保资源: type={typeName} name={name}");
-			await _services.Resources.EnsureAsync(type, name, Emit);
+			if (force) await _services.Resources.UpdateAsync(type, name, Emit);
+			else await _services.Resources.EnsureAsync(type, name, Emit);
 			return null;
 		}
 		catch (Exception exception)

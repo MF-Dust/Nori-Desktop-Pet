@@ -162,14 +162,21 @@ onBeforeUnmount(() => {
 	void PREVIEW.destroy()
 })
 
-// 下载模型 (引导页只下载所选模型, 这里可下载其他模型)
-const downloadModel = async (model: ModelInfo) => {
+// 下载或更新模型 (同一时刻只允许一个资源操作)
+const syncModel = async (model: ModelInfo, update: boolean) => {
 	if (downloading.value) return
 	activeModelId.value = model.id
-	await DOWNLOAD.ensure(RESOURCE_TYPE, model.id)
-	activeModelId.value = null
-	await refreshStatus()
+	try {
+		if (update) await DOWNLOAD.update(RESOURCE_TYPE, model.id)
+		else await DOWNLOAD.ensure(RESOURCE_TYPE, model.id)
+		await refreshStatus()
+	} finally {
+		activeModelId.value = null
+	}
 }
+
+const downloadModel = (model: ModelInfo) => syncModel(model, false)
+const updateModel = (model: ModelInfo) => syncModel(model, true)
 
 // 点击模型卡: 展开/收起蒙版菜单 (未下载模型同样可打开, 蒙版仅显示下载按钮)
 const toggleCardMenu = (model: ModelInfo) => {
@@ -357,6 +364,15 @@ const closeAdjust = () => {
 								@click="openAdjust(model)"
 							>
 								{{ I18N.adjust }}
+							</button>
+							<button
+								v-if="installedMap[model.id]"
+								class="mm-menu-btn"
+								:disabled="downloading"
+								@click="updateModel(model)"
+							>
+								<Icon name="refresh" class="mm-menu-btn-icon"/>
+								{{ activeModelId === model.id ? I18N.downloading : I18N.update }}
 							</button>
 							<button
 								v-if="!installedMap[model.id]"

@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from "vue"
+import {computed, defineAsyncComponent, onMounted, ref} from "vue"
 import {invoke} from "../services/host/invoke"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
 import type {IconName} from "../services/icon"
 import {showWindow, hideWindow} from "../services/window"
-import HomePanel from "../components/home/HomePanel.vue"
-import SettingsPanel from "../components/settings/SettingsPanel.vue"
-import ModelManagement from "../components/settings/ModelManagement.vue"
-import ChatView from "../components/ChatView.vue"
+const HomePanel = defineAsyncComponent(() => import("../components/home/HomePanel.vue"))
+const SettingsPanel = defineAsyncComponent(() => import("../components/settings/SettingsPanel.vue"))
+const ModelManagement = defineAsyncComponent(() => import("../components/settings/ModelManagement.vue"))
+const ChatView = defineAsyncComponent(() => import("../components/ChatView.vue"))
 
 const I18N = computed(() => useLanguages().views.main)
 

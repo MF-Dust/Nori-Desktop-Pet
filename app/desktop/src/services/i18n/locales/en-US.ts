@@ -71,6 +71,9 @@ export default {
 				mcp: "Tools & MCP",
 				general: "General",
 			},
+			model: {
+				update: "Update",
+			},
 		},
 	},
 }

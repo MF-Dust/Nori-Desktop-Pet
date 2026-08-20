@@ -1,8 +1,4 @@
 import {createRouter, createWebHashHistory} from "vue-router"
-import InitView from "../../views/InitView.vue"
-import FirstRunView from "../../views/FirstRunView.vue"
-import MainView from "../../views/Main.vue"
-import PetView from "../../views/PetView.vue"
 
 const router = createRouter({
 	history: createWebHashHistory(),
@@ -14,22 +10,22 @@ const router = createRouter({
 		{
 			path: "/first-run",
 			name: "first-run",
-			component: FirstRunView
+			component: () => import("../../views/FirstRunView.vue")
 		},
 		{
 			path: "/init",
 			name: "init",
-			component: InitView
+			component: () => import("../../views/InitView.vue")
 		},
 		{
 			path: "/main",
 			name: "main",
-			component: MainView
+			component: () => import("../../views/Main.vue")
 		},
 		{
 			path: "/pet",
 			name: "pet",
-			component: PetView
+			component: () => import("../../views/PetView.vue")
 		}
 	]
 })

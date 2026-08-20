@@ -1,4 +1,6 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using Nori.Core.Chat;
 using Nori.Core.Resources;
 
@@ -223,6 +225,81 @@ public class ResourceImportTests
 		{
 			Directory.Delete(tempDir, true);
 		}
+	}
+}
+
+public class ResourceDownloadTests
+{
+	[Fact]
+	public async Task Ensure_支持断点续传并校验Manifest哈希()
+	{
+		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-download-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Combine(tempDir, "temp"));
+		byte[] zip = CreateModelZip();
+		string hash = Convert.ToHexString(SHA256.HashData(zip)).ToLowerInvariant();
+		int prefixLength = 5;
+		File.WriteAllBytes(Path.Combine(tempDir, "temp", "arg-nori.zip.part"), zip[..prefixLength]);
+		long? rangeStart = null;
+
+		using MockHttpMessageHandler handler = new(request =>
+		{
+			string path = request.RequestUri?.AbsolutePath ?? "";
+			if (path.EndsWith("/resource/manifest", StringComparison.Ordinal))
+			{
+				return JsonResponse($"{{\"body\":{{\"type\":\"live2d\",\"name\":\"arg-nori\",\"version\":\"1.0.0\",\"size\":{zip.Length},\"sha256\":\"{hash}\",\"object\":\"live2d/arg-nori.zip\"}},\"error\":false,\"message\":\"\",\"timestamp\":0}}");
+			}
+			if (path.EndsWith("/resource/download_url", StringComparison.Ordinal))
+			{
+				return JsonResponse("{\"body\":{\"url\":\"https://cdn.test/arg-nori.zip\"},\"error\":false,\"message\":\"\",\"timestamp\":0}");
+			}
+
+			long start = request.Headers.Range?.Ranges.FirstOrDefault()?.From ?? 0;
+			rangeStart = start;
+			byte[] body = zip[(int)start..];
+			return new HttpResponseMessage(start > 0 ? System.Net.HttpStatusCode.PartialContent : System.Net.HttpStatusCode.OK)
+			{
+				Content = new ByteArrayContent(body),
+			};
+		});
+
+		try
+		{
+			using HttpClient client = new(handler);
+			ResourceManager manager = new(client, tempDir, "https://api.test/nori");
+			List<string> steps = [];
+			await manager.EnsureAsync(ResourceType.Live2D, "arg-nori", step => steps.Add(step.Step));
+
+			Assert.Equal(prefixLength, rangeStart);
+			Assert.Contains("done", steps);
+			Assert.True(manager.IsInstalled(ResourceType.Live2D, "arg-nori"));
+			Assert.True(File.Exists(Path.Combine(tempDir, "resources", "live2d", "arg-nori", "ARGNori.model3.json")));
+		}
+		finally
+		{
+			Directory.Delete(tempDir, true);
+		}
+	}
+
+	private static byte[] CreateModelZip()
+	{
+		using MemoryStream stream = new();
+		using (ZipArchive archive = new(stream, ZipArchiveMode.Create, true))
+		using (StreamWriter writer = new(archive.CreateEntry("ARGNori.model3.json").Open(), Encoding.UTF8))
+		{
+			writer.Write("{\"Version\":3}");
+		}
+		return stream.ToArray();
+	}
+
+	private static HttpResponseMessage JsonResponse(string json) => new()
+	{
+		StatusCode = System.Net.HttpStatusCode.OK,
+		Content = new StringContent(json, Encoding.UTF8, "application/json"),
+	};
+
+	private sealed class MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+	{
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(handler(request));
 	}
 }
 

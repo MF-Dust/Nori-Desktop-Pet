@@ -42,7 +42,15 @@ pnpm dev                                      # 仅 vite；NORI_DEV=1 时需要�
 ```bash
 dotnet build
 dotnet run                 # 从工作目录读 configs/config.yaml
-../build.bat               # win-x64 + linux-x64 单文件发布
+../build.bat               # win-x64 + linux-x64 framework-dependent 发布
+
+网关发布默认不打包 .NET Runtime、单文件和 ReadyToRun 数据，便于控制产物体积；目标机器需要安装对应 .NET 10 Runtime。资源清单放在 `srv/Nori.Gateway/configs/assets.json`，格式参考 `assets.example.json`，客户端会在下载后校验文件大小和 SHA-256。桌面端发布脚本同样会清理旧产物并移除 PDB。
+
+桌面端发布:
+
+```bash
+publish.bat                  # 前端构建 + win-x64 framework-dependent 发布
+```
 ```
 
 ## 约定

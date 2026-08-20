@@ -1,4 +1,7 @@
 using System.IO.Compression;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Nori.Core.Data;
 
@@ -10,16 +13,17 @@ namespace Nori.Core.Resources;
 /// 对应 Rust 版 resource/mod.rs + resource/live2d.rs + resource/downloader.rs 的编排部分:
 /// 检查 → 获取签名 URL → 下载 ZIP → 安全解压 → 校验
 /// </summary>
-public sealed class ResourceManager(HttpClient httpClient, string? dataDir = null)
+public sealed class ResourceManager(HttpClient httpClient, string? dataDir = null, string? apiBaseUrl = null)
 {
-	/// <summary>资源下载 API</summary>
-	private const string DownloadApi = "https://api.elake.top/nori/resource/download_url";
+	/// <summary>默认资源 API 根地址</summary>
+	private const string DefaultApiBaseUrl = "https://api.elake.top/nori";
 
 	/// <summary>下载缓冲区大小</summary>
 	private const int BufferSize = 64 * 1024;
 
 	private readonly HttpClient _httpClient = httpClient;
 	private readonly string _dataDir = dataDir ?? AppPaths.DataDir;
+	private readonly string _apiBaseUrl = (apiBaseUrl ?? DefaultApiBaseUrl).TrimEnd('/');
 
 	private string ResourcesRoot => Path.Combine(_dataDir, AppPaths.ResourcesDirName);
 	private string TempRoot => Path.Combine(_dataDir, AppPaths.TempDirName);
@@ -42,6 +46,28 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 			ResourceType.Live2D => HasModel3Json(dir),
 			_ => true,
 		};
+	}
+
+	/// <summary>
+	/// 获取资源发布清单. 旧网关没有清单接口时返回 null, 不阻断已有下载流程.
+	/// </summary>
+	public async Task<ResourceManifest?> GetManifestAsync(ResourceType type, string name, CancellationToken cancellationToken = default)
+	{
+		name = ResourceName.Validate(name);
+		Uri url = new($"{_apiBaseUrl}/resource/manifest?type={Uri.EscapeDataString(type.AsString())}&name={Uri.EscapeDataString(name)}");
+		using HttpResponseMessage response = await _httpClient.GetAsync(url, cancellationToken);
+		if (response.StatusCode == HttpStatusCode.NotFound) return null;
+		if (!response.IsSuccessStatusCode) throw new ResourceException($"Manifest API HTTP {(int)response.StatusCode}");
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+			if (!document.RootElement.TryGetProperty("body", out JsonElement body) || body.ValueKind == JsonValueKind.Null) return null;
+			return body.Deserialize<ResourceManifest>();
+		}
+		catch (JsonException exception)
+		{
+			throw new ResourceException($"解析资源 Manifest 失败: {exception.Message}", exception);
+		}
 	}
 
 	/// <summary>
@@ -237,11 +263,20 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 	/// 各阶段通过 onStep 回调实时上报, 由调用方转成 resource-download 事件
 	/// </summary>
 	public async Task EnsureAsync(ResourceType type, string name, Action<ResourceStep> onStep, CancellationToken cancellationToken = default)
+		=> await EnsureInternalAsync(type, name, onStep, false, cancellationToken);
+
+	/// <summary>
+	/// 强制重新下载并原子替换已安装资源.
+	/// </summary>
+	public async Task UpdateAsync(ResourceType type, string name, Action<ResourceStep> onStep, CancellationToken cancellationToken = default)
+		=> await EnsureInternalAsync(type, name, onStep, true, cancellationToken);
+
+	private async Task EnsureInternalAsync(ResourceType type, string name, Action<ResourceStep> onStep, bool force, CancellationToken cancellationToken)
 	{
 		name = ResourceName.Validate(name);
 		string typeName = type.AsString();
 
-		if (IsInstalled(type, name))
+		if (!force && IsInstalled(type, name))
 		{
 			onStep(ResourceStep.Installed());
 			return;
@@ -250,22 +285,52 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 		Directory.CreateDirectory(TempRoot);
 		onStep(ResourceStep.Downloading(DownloadProgress.Create(0, null)));
 
+		ResourceManifest? manifest = await GetManifestAsync(type, name, cancellationToken);
 		string zipPath = await DownloadToZipAsync(type, name, progress => onStep(ResourceStep.Downloading(progress)), cancellationToken);
+		if (manifest is not null)
+		{
+			if (manifest.Size > 0 && new FileInfo(zipPath).Length != manifest.Size)
+			{
+				TryDeleteFile(zipPath);
+				throw new ResourceException($"资源大小校验失败: {name}");
+			}
+			if (!string.IsNullOrWhiteSpace(manifest.Sha256))
+			{
+				string actual = await ComputeSha256Async(zipPath, cancellationToken);
+				if (!actual.Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+				{
+					TryDeleteFile(zipPath);
+					throw new ResourceException($"资源 SHA-256 校验失败: {name}");
+				}
+			}
+		}
 		onStep(ResourceStep.DownloadDone());
 
 		onStep(ResourceStep.Extracting());
 		string targetDir = ResourceDir(type, name);
-		// 清理可能残留的旧资源
-		if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
-		Directory.CreateDirectory(targetDir);
+		string stagingDir = targetDir + $".staging-{Guid.NewGuid():N}";
+		string? backupDir = null;
 		try
 		{
-			ZipExtractor.Extract(zipPath, targetDir);
+			Directory.CreateDirectory(stagingDir);
+			ZipExtractor.Extract(zipPath, stagingDir);
+			if (!IsInstalledAt(type, stagingDir)) throw new ResourceException($"资源解压后校验失败: type={type.AsString()} name={name}");
+			if (Directory.Exists(targetDir))
+			{
+				backupDir = targetDir + $".backup-{Guid.NewGuid():N}";
+				Directory.Move(targetDir, backupDir);
+			}
+			Directory.Move(stagingDir, targetDir);
+			if (backupDir is not null) TryDeleteDirectory(backupDir);
 		}
 		catch
 		{
-			// 解压失败清理半成品, 否则下次 IsInstalled 会看到一个坏目录
-			TryDeleteDirectory(targetDir);
+			TryDeleteDirectory(stagingDir);
+			if (backupDir is not null)
+			{
+				if (!Directory.Exists(targetDir) && Directory.Exists(backupDir)) Directory.Move(backupDir, targetDir);
+				else TryDeleteDirectory(backupDir);
+			}
 			throw;
 		}
 		finally
@@ -289,19 +354,25 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 		string signedUrl = await GetSignedUrlAsync(type, name, cancellationToken);
 		string zipPath = Path.Combine(TempRoot, $"{name}.zip");
 		string partPath = Path.Combine(TempRoot, $"{name}.zip.part");
-		TryDeleteFile(partPath);
-
 		try
 		{
-			using HttpResponseMessage response = await _httpClient.GetAsync(new Uri(signedUrl), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+			long existing = File.Exists(partPath) ? new FileInfo(partPath).Length : 0;
+			using HttpRequestMessage request = new(HttpMethod.Get, new Uri(signedUrl));
+			if (existing > 0) request.Headers.Range = new RangeHeaderValue(existing, null);
+			using HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 			if (!response.IsSuccessStatusCode) throw new ResourceException($"下载文件 HTTP {(int)response.StatusCode}");
-			long? total = response.Content.Headers.ContentLength;
+			if (existing > 0 && response.StatusCode != HttpStatusCode.PartialContent)
+			{
+				existing = 0;
+				TryDeleteFile(partPath);
+			}
+			long? total = response.Content.Headers.ContentLength is { } contentLength ? contentLength + existing : null;
 
 			await using (Stream source = await response.Content.ReadAsStreamAsync(cancellationToken))
-			await using (FileStream target = File.Create(partPath))
+			await using (FileStream target = new(partPath, existing > 0 ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.None))
 			{
 				byte[] buffer = new byte[BufferSize];
-				long downloaded = 0;
+				long downloaded = existing;
 				int read;
 				while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
 				{
@@ -318,14 +389,16 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 				onProgress(DownloadProgress.Completed(downloaded));
 			}
 		}
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
 		catch (Exception exception) when (exception is not ResourceException)
 		{
-			TryDeleteFile(partPath);
 			throw new ResourceException($"网络错误: {exception.Message}", exception);
 		}
 		catch (ResourceException)
 		{
-			TryDeleteFile(partPath);
 			throw;
 		}
 
@@ -341,7 +414,7 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 	/// </summary>
 	private async Task<string> GetSignedUrlAsync(ResourceType type, string name, CancellationToken cancellationToken)
 	{
-		Uri url = new($"{DownloadApi}?type={Uri.EscapeDataString(type.AsString())}&name={Uri.EscapeDataString(name)}");
+		Uri url = new($"{_apiBaseUrl}/resource/download_url?type={Uri.EscapeDataString(type.AsString())}&name={Uri.EscapeDataString(name)}");
 		HttpResponseMessage response;
 		try
 		{
@@ -387,8 +460,11 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 	/// <summary>
 	/// 递归判断目录下是否存在 .model3.json
 	/// </summary>
-	private static bool HasModel3Json(string dir)
+	private static bool HasModel3Json(string dir) => IsInstalledAt(ResourceType.Live2D, dir);
+
+	private static bool IsInstalledAt(ResourceType type, string dir)
 	{
+		if (type != ResourceType.Live2D) return Directory.Exists(dir);
 		try
 		{
 			return Directory.EnumerateFiles(dir, "*.model3.json", SearchOption.AllDirectories).Any();
@@ -401,6 +477,13 @@ public sealed class ResourceManager(HttpClient httpClient, string? dataDir = nul
 		{
 			return false;
 		}
+	}
+
+	private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
+	{
+		await using FileStream stream = File.OpenRead(path);
+		byte[] hash = await SHA256.HashDataAsync(stream, cancellationToken);
+		return Convert.ToHexString(hash).ToLowerInvariant();
 	}
 
 	/// <summary>

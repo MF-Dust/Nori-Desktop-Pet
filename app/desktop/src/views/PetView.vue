@@ -151,6 +151,10 @@ let dragStartWindowX = 0
 let dragStartWindowY = 0
 let hasDragged = false
 let suppressNextClick = false
+let pointerDown = false
+let activePointerId: number | null = null
+let lastCursorX = 0
+let lastCursorY = 0
 
 const finishDrag = () => {
 	if (isDragging) {
@@ -161,17 +165,40 @@ const finishDrag = () => {
 	}
 	dragPending = false
 	isDragging = false
+	pointerDown = false
+	const POINTER_ID = activePointerId
+	activePointerId = null
 	const CANVAS = L2D.canvas()
-	if (CANVAS) CANVAS.style.cursor = "default"
+	if (CANVAS) {
+		if (POINTER_ID != null && CANVAS.hasPointerCapture(POINTER_ID)) {
+			try {
+				CANVAS.releasePointerCapture(POINTER_ID)
+			} catch {
+				/* 某些 WebView 在窗口移动后会拒绝释放捕获 */
+			}
+		}
+		CANVAS.style.cursor = "default"
+	}
 }
 
 const trackCursor = async () => {
 	if (!tracking) return
 	try {
-		const CURSOR_INFO = await invoke<[number, number, boolean]>("get_cursor_pos")
+		let CURSOR_INFO: [number, number, boolean]
+		try {
+			const NATIVE_CURSOR = await invoke<[number, number, boolean]>("get_cursor_pos")
+			if (Number.isFinite(NATIVE_CURSOR[0]) && Number.isFinite(NATIVE_CURSOR[1])) {
+				lastCursorX = NATIVE_CURSOR[0]
+				lastCursorY = NATIVE_CURSOR[1]
+			}
+			CURSOR_INFO = [lastCursorX, lastCursorY, Boolean(NATIVE_CURSOR[2])]
+		} catch {
+			// WebView 桥暂时不可用时仍允许已捕获的指针继续拖动
+			CURSOR_INFO = [lastCursorX, lastCursorY, pointerDown]
+		}
 		const CURSOR_X = CURSOR_INFO[0]
 		const CURSOR_Y = CURSOR_INFO[1]
-		const IS_LEFT_DOWN = CURSOR_INFO[2]
+		const IS_LEFT_DOWN = pointerDown || CURSOR_INFO[2]
 
 		const WEBVIEW = getCurrentWindow()
 
@@ -232,9 +259,12 @@ const afterMount = async () => {
 	const CANVAS = L2D.canvas()
 	if (CANVAS) {
 		CANVAS.style.cursor = "default"
+		CANVAS.style.touchAction = "none"
+		CANVAS.style.userSelect = "none"
 		CANVAS.addEventListener("click", onCanvasClick, true)
 		CANVAS.addEventListener("pointermove", onCanvasPointerMove)
 		CANVAS.addEventListener("pointerleave", onCanvasPointerLeave)
+		CANVAS.addEventListener("pointerdown", onCanvasPointerDown)
 	}
 	await applyExpressions(expressionList.value)
 }
@@ -392,9 +422,10 @@ onMounted(async () => {
 		}
 	})
 
-	// 鼠标交互由 window 接收, 这样 canvas 开启指针事件后仍能在拖动时跟踪到释放
-	window.addEventListener("mousedown", onMouseDown)
-	window.addEventListener("mouseup", onMouseUp)
+	// 释放事件放在 window, 兼容指针拖出 WebView 后的释放
+	window.addEventListener("pointerup", onPointerUp)
+	window.addEventListener("pointercancel", onPointerCancel)
+	window.addEventListener("blur", onWindowBlur)
 
 	// 恢复上次保存的窗口位置
 	await restoreWindowPosition()
@@ -476,6 +507,25 @@ const onCanvasPointerLeave = () => {
 	if (CANVAS && !isDragging) CANVAS.style.cursor = "default"
 }
 
+const onCanvasPointerDown = (event: PointerEvent) => {
+	const CANVAS = L2D.canvas()
+	if (!CANVAS || event.button !== 0 || dragPending || isDragging || event.target !== CANVAS) return
+	if (contextMenuVisible.value) closeContextMenu()
+	pointerDown = true
+	activePointerId = event.pointerId
+	lastCursorX = event.clientX
+	lastCursorY = event.clientY
+	dragPending = true
+	hasDragged = false
+	suppressNextClick = false
+	try {
+		CANVAS.setPointerCapture(event.pointerId)
+	} catch {
+		/* 不支持 pointer capture 时由 window 的释放兜底 */
+	}
+	void beginDrag(event)
+}
+
 const onCanvasClick = (event: MouseEvent) => {
 	if (contextMenuVisible.value) {
 		closeContextMenu()
@@ -489,23 +539,30 @@ const onCanvasClick = (event: MouseEvent) => {
 	}
 }
 
-const onMouseDown = async (event: MouseEvent) => {
-	if (contextMenuVisible.value) {
-		closeContextMenu()
-	}
-	if (event.button !== 0 || dragPending || isDragging || !L2D.isPointOnModel(event.clientX, event.clientY)) return
-	dragPending = true
-	hasDragged = false
-	suppressNextClick = false
+const beginDrag = async (event: PointerEvent) => {
 	try {
-		const CURSOR_INFO = await invoke<[number, number, boolean]>("get_cursor_pos")
-		const POS = await getCurrentWindow().outerPosition()
-		if (!dragPending || !CURSOR_INFO[2]) {
+		const WEBVIEW = getCurrentWindow()
+		const POS = await WEBVIEW.outerPosition()
+		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
+		let CURSOR_X = POS.x + event.clientX * SCALE_FACTOR
+		let CURSOR_Y = POS.y + event.clientY * SCALE_FACTOR
+		try {
+			const CURSOR_INFO = await invoke<[number, number, boolean]>("get_cursor_pos")
+			if (Number.isFinite(CURSOR_INFO[0]) && Number.isFinite(CURSOR_INFO[1])) {
+				CURSOR_X = CURSOR_INFO[0]
+				CURSOR_Y = CURSOR_INFO[1]
+			}
+		} catch {
+			/* 用事件坐标作为设备兼容回退 */
+		}
+		if (!dragPending || !pointerDown || activePointerId !== event.pointerId) {
 			dragPending = false
 			return
 		}
-		dragStartCursorX = CURSOR_INFO[0]
-		dragStartCursorY = CURSOR_INFO[1]
+		lastCursorX = CURSOR_X
+		lastCursorY = CURSOR_Y
+		dragStartCursorX = CURSOR_X
+		dragStartCursorY = CURSOR_Y
 		dragStartWindowX = POS.x
 		dragStartWindowY = POS.y
 		isDragging = true
@@ -517,14 +574,22 @@ const onMouseDown = async (event: MouseEvent) => {
 	}
 }
 
-const onMouseUp = (event: MouseEvent) => {
-	if (event.button !== 0) return
+const onPointerUp = (event: PointerEvent) => {
+	if (activePointerId != null && event.pointerId !== activePointerId) return
+	if (event.button !== 0 && event.type === "pointerup") return
 	const WAS_DRAGGING = isDragging || dragPending
 	const DID_DRAG = hasDragged
+	pointerDown = false
 	finishDrag()
 	if (!WAS_DRAGGING) return
 	suppressNextClick = DID_DRAG
 	updateCanvasCursor(event.clientX, event.clientY)
+}
+
+const onPointerCancel = (event: PointerEvent) => onPointerUp(event)
+
+const onWindowBlur = () => {
+	if (isDragging || dragPending) finishDrag()
 }
 
 // 兜底补挂载: 窗口已显示但模型未加载时, 触发 mountModel (成功后自停)
@@ -544,13 +609,15 @@ let disposed = false
 onBeforeUnmount(() => {
 	disposed = true
 	tracking = false
-	window.removeEventListener("mousedown", onMouseDown)
-	window.removeEventListener("mouseup", onMouseUp)
+	window.removeEventListener("pointerup", onPointerUp)
+	window.removeEventListener("pointercancel", onPointerCancel)
+	window.removeEventListener("blur", onWindowBlur)
 	const CANVAS = L2D.canvas()
 	if (CANVAS) {
 		CANVAS.removeEventListener("click", onCanvasClick, true)
 		CANVAS.removeEventListener("pointermove", onCanvasPointerMove)
 		CANVAS.removeEventListener("pointerleave", onCanvasPointerLeave)
+		CANVAS.removeEventListener("pointerdown", onCanvasPointerDown)
 	}
 	finishDrag()
 	if (trackRafId != null) cancelAnimationFrame(trackRafId)

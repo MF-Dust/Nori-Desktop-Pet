@@ -140,18 +140,23 @@ export const createResourceDownload = () => {
 		STATE.message = null
 	}
 
-	// 订阅事件并触发资源就位流程 (检查 → 如需则下载解压)
-	const ensure = async (resourceType: string, name: string): Promise<void> => {
+	// 订阅事件并触发资源流程
+	const run = async (command: "ensure_resource" | "update_resource", resourceType: string, name: string): Promise<void> => {
 		reset()
+		unlisten?.()
+		unlisten = null
 		unlisten = await listen<ResourceDownloadEventPayload>(EVENT_NAME, onEvent)
 		try {
-			await invoke("ensure_resource", {resourceType, name})
+			await invoke(command, {resourceType, name})
 		} catch (error) {
-			console.error(`确保资源失败: ${resourceType}/${name}`, error)
+			console.error(`${command} 失败: ${resourceType}/${name}`, error)
 			STATE.step = "error"
 			STATE.message = String(error)
 		}
 	}
+
+	const ensure = async (resourceType: string, name: string): Promise<void> => run("ensure_resource", resourceType, name)
+	const update = async (resourceType: string, name: string): Promise<void> => run("update_resource", resourceType, name)
 
 	// 仅检查资源是否已安装, 不触发下载. 返回是否已安装.
 	// 检查成功会推进 STATE.step (已安装 → "installed"), 避免已安装场景下界面停在"检查中"不动.
@@ -178,7 +183,7 @@ export const createResourceDownload = () => {
 		unlisten = null
 	}
 
-	return {state: readonly(STATE), ensure, check, stop}
+	return {state: readonly(STATE), ensure, update, check, stop}
 }
 
 // 根据字节计算百分比: 有总大小时用比值, 未知总大小时按 MB 折线爬升 (封顶 99)
