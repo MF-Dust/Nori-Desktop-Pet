@@ -603,7 +603,7 @@ export const createLive2D = () => {
 	const getBaseSize = (): {width: number; height: number} => {
 		const inner = internal
 		if (!inner) return {width: window.innerWidth, height: window.innerHeight}
-		return {width: inner.baseWidth, height: inner.baseHeight}
+		return {width: inner.initialModelWidth, height: inner.initialModelHeight}
 	}
 
 	const resize = (width?: number, height?: number): void => {
