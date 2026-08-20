@@ -72,7 +72,6 @@ export default {
 				general: "General",
 			},
 			model: {
-				update: "Update",
 				behavior: {
 					title: "Behavior & Interaction",
 					clickInteraction: "Click Interaction",

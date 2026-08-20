@@ -25,9 +25,6 @@ namespace Nori.Desktop.Bridge;
 /// </summary>
 public sealed class BridgeCommands(AppServices services)
 {
-	/// <summary>下载进度事件节流间隔: Rust 版每 64KiB 发一次, 经 JSON 桥会成为热点</summary>
-	private static readonly TimeSpan ProgressThrottle = TimeSpan.FromMilliseconds(100);
-
 	private readonly AppServices _services = services;
 
 	/// <summary>
@@ -75,15 +72,6 @@ public sealed class BridgeCommands(AppServices services)
 		// ---- 资源 ----
 		// invoke("check_resource", {resourceType: "live2d", name: "arg-nori"})
 		"check_resource" => _services.Resources.IsInstalled(ParseResourceType(Str(args, "resourceType")), Str(args, "name")),
-
-		// invoke("get_resource_manifest", {resourceType: "live2d", name: "arg-nori"})
-		"get_resource_manifest" => await _services.Resources.GetManifestAsync(ParseResourceType(Str(args, "resourceType")), Str(args, "name")),
-
-		// invoke("ensure_resource", {resourceType: "live2d", name: "arg-nori"})
-		"ensure_resource" => await EnsureResourceAsync(Str(args, "resourceType"), Str(args, "name")),
-
-		// invoke("update_resource", {resourceType: "live2d", name: "arg-nori"})
-		"update_resource" => await UpdateResourceAsync(Str(args, "resourceType"), Str(args, "name")),
 
 		// invoke("import_local_resource", {filePath?: "C:/...", resourceType?: "live2d"})
 		"import_local_resource" => await ImportLocalResourceAsync(source, args),
@@ -238,58 +226,6 @@ public sealed class BridgeCommands(AppServices services)
 		string storage = value.ToStorage();
 		Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:config-changed", new {key, value = storage}));
 		return null;
-	}
-
-	/// <summary>
-	/// 确保资源就位, 各阶段实时推 resource-download 事件
-	/// </summary>
-	private async Task<object?> EnsureResourceAsync(string rawType, string name)
-		=> await RunResourceAsync(rawType, name, false);
-
-	private async Task<object?> UpdateResourceAsync(string rawType, string name)
-		=> await RunResourceAsync(rawType, name, true);
-
-	private async Task<object?> RunResourceAsync(string rawType, string name, bool force)
-	{
-		ResourceType type = ParseResourceType(rawType);
-		string typeName = type.AsString();
-		DateTime lastProgress = DateTime.MinValue;
-
-		void Emit(ResourceStep step)
-		{
-			// 只有下载中需要节流, 其余阶段每个都必须送达 (前端靠它们推进文案)
-			if (step.Step == "downloading")
-			{
-				DateTime now = DateTime.UtcNow;
-				bool finished = step.Progress is >= 100f;
-				if (!finished && now - lastProgress < ProgressThrottle) return;
-				lastProgress = now;
-			}
-			object payload = new
-			{
-				resourceType = typeName,
-				step = step.Step,
-				progress = step.Progress,
-				downloaded = step.Downloaded,
-				total = step.Total,
-				message = step.Message,
-			};
-			Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("resource-download", payload));
-		}
-
-		try
-		{
-			_services.Logger.Write(LogSource.Backend, "info", $"确保资源: type={typeName} name={name}");
-			if (force) await _services.Resources.UpdateAsync(type, name, Emit);
-			else await _services.Resources.EnsureAsync(type, name, Emit);
-			return null;
-		}
-		catch (Exception exception)
-		{
-			_services.Logger.Write(LogSource.Backend, "error", $"资源就位失败: type={typeName} name={name} error={exception.Message}");
-			Emit(ResourceStep.Error(exception.Message));
-			throw;
-		}
 	}
 
 	/// <summary>

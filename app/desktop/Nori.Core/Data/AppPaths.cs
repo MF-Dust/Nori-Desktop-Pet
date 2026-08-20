@@ -3,7 +3,7 @@ namespace Nori.Core.Data;
 /// <summary>
 /// 应用路径
 ///
-/// 必须与 Tauri 版的 app_data_dir() 完全一致, 否则老用户的 nori.db 与已下载模型会"丢失":
+/// 必须与 Tauri 版的 app_data_dir() 完全一致, 否则老用户的 nori.db 与本地模型会"丢失":
 /// Windows: %APPDATA%/&lt;应用标识&gt;/data
 /// macOS:   ~/Library/Application Support/&lt;应用标识&gt;/data
 /// Linux:   ~/.local/share/&lt;应用标识&gt;/data
@@ -26,11 +26,6 @@ public static class AppPaths
 	public const string ResourcesDirName = "resources";
 
 	/// <summary>
-	/// 下载临时文件目录名
-	/// </summary>
-	public const string TempDirName = "temp";
-
-	/// <summary>
 	/// 应用数据目录: &lt;平台数据目录&gt;/&lt;应用标识&gt;/data
 	/// </summary>
 	public static string DataDir => Path.Combine(AppDataRoot(), Identifier, "data");
@@ -46,11 +41,6 @@ public static class AppPaths
 	public static string ResourcesDir => Path.Combine(DataDir, ResourcesDirName);
 
 	/// <summary>
-	/// 下载临时目录: &lt;data&gt;/temp
-	/// </summary>
-	public static string TempDir => Path.Combine(DataDir, TempDirName);
-
-	/// <summary>
 	/// 日志目录: &lt;data&gt;/log
 	/// </summary>
 	public static string LogDir => Path.Combine(DataDir, "log");
@@ -62,7 +52,6 @@ public static class AppPaths
 	{
 		Directory.CreateDirectory(DataDir);
 		Directory.CreateDirectory(ResourcesDir);
-		Directory.CreateDirectory(TempDir);
 		Directory.CreateDirectory(LogDir);
 	}
 

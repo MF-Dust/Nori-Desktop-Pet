@@ -2,7 +2,6 @@
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import {invoke} from "../../services/host/invoke"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {createResourceDownload, formatBytes} from "../../services/resourceDownload"
 import {MODEL_LIST, type ModelInfo} from "../../services/live2d/models"
 import {createLive2D} from "../../services/live2d"
 import {
@@ -14,7 +13,6 @@ import {
 } from "../../services/live2d/config"
 import {readMotionGroups} from "../../services/live2d/motions"
 import Icon from "../Icon.vue"
-import ProgressBar from "../ProgressBar.vue"
 import AdjustControls from "./AdjustControls.vue"
 import Live2dBehaviorControls from "./Live2dBehaviorControls.vue"
 
@@ -26,56 +24,15 @@ const RESOURCE_TYPE = "live2d"
 // 配置键名
 const CONFIG_KEY = "selected_model"
 
-// 下载控制器 (同一时刻只下载一个模型)
-const DOWNLOAD = createResourceDownload()
-
 // 各模型安装状态: id -> 是否已安装
 const installedMap = ref<Record<string, boolean>>({})
 
 // 当前使用 (selected_model 配置)
 const selectedModel = ref("")
 
-// 当前正在下载的模型 id
-const activeModelId = ref<string | null>(null)
-
-// 是否有下载进行中
-const downloading = computed(() => activeModelId.value !== null)
-
 // 本地导入状态
 const importing = ref(false)
 const importStatusText = ref("")
-
-// 下载状态文本
-const downloadStatusText = computed(() => {
-	switch (DOWNLOAD.state.step) {
-		case "downloading":
-			return `${I18N.value.downloading} (${DOWNLOAD.state.percent}%)`
-		case "download-done":
-			return I18N.value.downloadDone
-		case "extracting":
-			return I18N.value.extracting
-		case "done":
-			return I18N.value.ready
-		case "installed":
-			return I18N.value.installed
-		case "error":
-			return DOWNLOAD.state.message || I18N.value.downloadFailed
-		default:
-			return ""
-	}
-})
-
-// 进度明细
-const progressDetailText = computed(() => {
-	if (DOWNLOAD.state.step !== "downloading") return ""
-	if (DOWNLOAD.state.downloaded != null && DOWNLOAD.state.total != null && DOWNLOAD.state.total > 0) {
-		return `${formatBytes(DOWNLOAD.state.downloaded)} / ${formatBytes(DOWNLOAD.state.total)}`
-	}
-	if (DOWNLOAD.state.downloaded != null) {
-		return formatBytes(DOWNLOAD.state.downloaded)
-	}
-	return ""
-})
 
 // 本地导入 Live2D 模型
 const importLocalModel = async () => {
@@ -113,7 +70,7 @@ const adjustFor = ref<string | null>(null)
 // 模型 id → 展示名
 const modelNameOf = (id: string): string => MODEL_LIST.find((model) => model.id === id)?.name ?? id
 
-// 动态检测各模型安装状态 (挂载 / 每次下载完成后调用)
+// 动态检测各模型安装状态 (挂载 / 每次状态刷新后调用)
 const refreshStatus = async () => {
 	try {
 		const results = await Promise.all(
@@ -157,30 +114,13 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-	DOWNLOAD.stop()
 	window.removeEventListener("resize", onWindowResize)
 	void PREVIEW.destroy()
 })
 
-// 下载或更新模型 (同一时刻只允许一个资源操作)
-const syncModel = async (model: ModelInfo, update: boolean) => {
-	if (downloading.value) return
-	activeModelId.value = model.id
-	try {
-		if (update) await DOWNLOAD.update(RESOURCE_TYPE, model.id)
-		else await DOWNLOAD.ensure(RESOURCE_TYPE, model.id)
-		await refreshStatus()
-	} finally {
-		activeModelId.value = null
-	}
-}
-
-const downloadModel = (model: ModelInfo) => syncModel(model, false)
-const updateModel = (model: ModelInfo) => syncModel(model, true)
-
-// 点击模型卡: 展开/收起蒙版菜单 (未下载模型同样可打开, 蒙版仅显示下载按钮)
+// 点击模型卡: 展开/收起蒙版菜单 (仅已安装模型可操作, 未安装请通过导入添加)
 const toggleCardMenu = (model: ModelInfo) => {
-	if (adjustFor.value) return
+	if (adjustFor.value || !installedMap.value[model.id]) return
 	cardMenuFor.value = cardMenuFor.value === model.id ? null : model.id
 }
 
@@ -312,13 +252,6 @@ const closeAdjust = () => {
 		<div v-if="importStatusText" class="mm-import-status">{{ importStatusText }}</div>
 
 		<!-- 下载进度条面板 -->
-		<div v-if="downloading" class="mm-progress-panel">
-			<div class="progress-info">
-				<span class="progress-model">正在下载: {{ modelNameOf(activeModelId ?? "") }}</span>
-				<span class="progress-state">{{ downloadStatusText }}</span>
-			</div>
-			<ProgressBar :percent="DOWNLOAD.state.percent" :text="progressDetailText"/>
-		</div>
 
 		<div class="mm-grid">
 			<div
@@ -361,24 +294,6 @@ const closeAdjust = () => {
 								@click="openAdjust(model)"
 							>
 								{{ I18N.adjust }}
-							</button>
-							<button
-								v-if="installedMap[model.id]"
-								class="mm-menu-btn"
-								:disabled="downloading"
-								@click="updateModel(model)"
-							>
-								<Icon name="refresh" class="mm-menu-btn-icon"/>
-								{{ activeModelId === model.id ? I18N.downloading : I18N.update }}
-							</button>
-							<button
-								v-if="!installedMap[model.id]"
-								class="mm-menu-btn"
-								:disabled="downloading"
-								@click="downloadModel(model)"
-							>
-								<Icon name="arrow-down" class="mm-menu-btn-icon"/>
-								{{ activeModelId === model.id ? I18N.downloading : I18N.download }}
 							</button>
 						</div>
 					</div>

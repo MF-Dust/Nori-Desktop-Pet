@@ -324,14 +324,9 @@ const afterMount = async () => {
 
 const ensureResourceInstalled = async (name: string): Promise<boolean> => {
 	try {
-		const installed = await invoke<boolean>("check_resource", {resourceType: "live2d", name})
-		if (!installed) {
-			await invoke("write_log", {level: "info", message: `桌宠检测到模型 ${name} 未下载，开始自动下载`})
-			await invoke("ensure_resource", {resourceType: "live2d", name})
-		}
-		return true
+		return await invoke<boolean>("check_resource", {resourceType: "live2d", name})
 	} catch (error) {
-		console.error(`确保桌宠资源失败: ${name}`, error)
+		console.error(`检查桌宠资源失败: ${name}`, error)
 		return false
 	}
 }
@@ -342,7 +337,12 @@ const mountModel = async () => {
 	await loadModelConfigs()
 	await loadBehaviorConfigs()
 	try {
-		await ensureResourceInstalled(modelName.value)
+		const INSTALLED = await ensureResourceInstalled(modelName.value)
+		if (!INSTALLED) {
+			await invoke("write_log", {level: "warn", message: `桌宠检测到模型 ${modelName.value} 未安装`})
+			mountedOnce = false
+			return
+		}
 		await L2D.mount({
 			directory: modelName.value,
 			fileBase: resolveModelFileBase(modelName.value),

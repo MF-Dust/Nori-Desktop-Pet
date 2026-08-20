@@ -4,10 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Three independent deliverables, no shared build:
+Two independent deliverables, no shared build:
 
 - `app/desktop/` — the Nori desktop pet. **.NET 10 + Avalonia 12 host** (`Nori.Desktop/`, `Nori.Core/`, C#) + Vue 3 SPA (`src/`, TypeScript/Less) rendered in **WebView2**. This is where nearly all work happens.
-- `srv/Nori.Gateway/` — a small ASP.NET Core minimal-API gateway whose only job today is signing Aliyun OSS download URLs for model resources.
 - `docs/` — Chinese design docs. `规范.md` is a binding style contract, not advice — read it before touching frontend or C# code. `技术.md` is the module/tech map (and records the pet-window transparency verification), `开发任务清单.md` the roadmap, `windows.md` an Avalonia window-property reference.
 
 `README.md` is empty.
@@ -34,16 +33,6 @@ pnpm dev                                      # vite only; must be running for N
 
 `规范.md` requires `pnpm build`, `dotnet build` and `dotnet test` to pass before a change is considered done. `tsconfig.json` sets `noUnusedLocals`/`noUnusedParameters`; the C# projects set `TreatWarningsAsErrors`.
 
-Gateway — run from `srv/Nori.Gateway/`:
-
-```bash
-dotnet build
-dotnet run                 # reads configs/config.yaml relative to the working directory
-../build.bat               # framework-dependent publish (no bundled runtime) for win-x64 + linux-x64
-```
-
-`configs/config.yaml` is gitignored (it holds OSS credentials) and must be created by hand from `configs/config.example.yaml`. A missing file now fails at startup with a readable message (the Go version used to panic on first use).
-
 ## Architecture
 
 ### Four windows, one SPA, one WebView2 each
@@ -57,7 +46,7 @@ dotnet run                 # reads configs/config.yaml relative to the working d
 
 **Adding a window means touching four places**: `WindowDefinition.All`, the `WindowLabel` union, `WINDOW_ROUTES`, and `src/services/router/index.ts`. Miss one and the window renders `/init`.
 
-First-run flow: wizard in `first-run` → `complete_first_run` (C#) marks the DB, closes `first-run`, shows `init`, broadcasts `nori:init-start` → `InitView` downloads the Live2D model → `showWindow("main")`, then closes `init`. Normal launch shows `init` directly. Because `init` starts hidden on the first-run path, `InitView` checks `isVisible()` and otherwise *waits* for `nori:init-start`.
+First-run flow: wizard in `first-run` → `complete_first_run` (C#) marks the DB, closes `first-run`, shows `init`, broadcasts `nori:init-start` → `InitView` checks the local Live2D model → `showWindow("main")`, then closes `init`. Normal launch shows `init` directly. Because `init` starts hidden on the first-run path, `InitView` checks `isVisible()` and otherwise *waits* for `nori:init-start`.
 
 The tray (`Tray/TrayMenu.cs`) is the only always-available entry point: left-click opens `main`, menu toggles `pet`. Closing a window only hides it (`NoriWindow.AllowClose` gates real disposal); `ShutdownMode.OnExplicitShutdown` keeps the process alive.
 
@@ -79,14 +68,13 @@ Host→frontend events:
 
 | Event | Emitted by | Consumed by |
 |---|---|---|
-| `resource-download` | `BridgeCommands.EnsureResourceAsync` | `resourceDownload.ts` |
 | `nori:init-start` | `complete_first_run` | `InitView.vue` |
 | `nori:pet-start` | frontend `emit` → rebroadcast | `PetView.vue` — loads the model |
 | `nori:config-changed` | every `set_config` | `PetView.vue` — hot-applies display config |
 | `nori:play-motion` | `chat_completion` | `PetView.vue` |
 | `nori:window-metrics` | `NoriWindow.PostMetrics` | `services/host/window.ts` cache |
 
-That last one exists for performance: `PetView`'s head tracking runs per animation frame, and three JSON round-trips per frame would be far heavier than Tauri's IPC. The host pushes position/size/scale on change, `host/window.ts` caches it, and only `get_cursor_pos` still does a round-trip. Download progress is throttled to ~10/s for the same reason.
+That last one exists for performance: `PetView`'s head tracking runs per animation frame, and three JSON round-trips per frame would be far heavier than Tauri's IPC. The host pushes position/size/scale on change, `host/window.ts` caches it, and only `get_cursor_pos` still does a round-trip.
 
 Blocking work (HTTP, zip extraction, SQLite) must stay off the UI thread; anything touching windows or `InvokeScript` must go through `Dispatcher.UIThread`.
 
@@ -113,13 +101,9 @@ The trap: `ConfigValue.FromStorage` **re-infers the type on read**. `"1"`/`"true
 
 Live2D display settings are stored **per model** as `<base>_<modelId>` (e.g. `l2d_scale_arg-nori`) with fallback to the legacy global key — see `l2dModelKey()` / `readModelConfig()`. Keep both lookups when adding keys.
 
-### Resource pipeline (spans all three layers)
+### Resource management (local only)
 
-`createResourceDownload()` → `invoke("ensure_resource")` → `ResourceManager.EnsureAsync` → `GET https://api.elake.top/nori/resource/download_url?type=&name=` → gateway → OSS `DoesObjectExist` + `GeneratePresignedUri` on `<type>/<name>.zip` → streams to `data/temp/<name>.zip.part`, renames on success, safe-extracts to `data/resources/live2d/<name>/`, then re-verifies (Live2D must contain a `.model3.json`).
-
-The `/nori` prefix in that URL comes from an upstream API gateway (`srv/g.sql` registers this service under base path `/nori`); the service itself only registers `/resource/download_url` and `/ping`. Its JSON envelope is `{body, error, message, timestamp}` — **that key order is deliberate**: the Go original marshalled a `map[string]any`, which Go sorts alphabetically. `ApiResponse`'s property order preserves byte-compatibility with old clients.
-
-Progress reaches the UI as `resource-download` events with a step machine: `downloading → download-done → extracting → done`, plus `installed` / `error`. `resourceDownload.ts` queues these and deliberately holds the intermediate steps ~500–700 ms so the text is readable; it is resource-type-agnostic by design.
+Models are local resources under `data/resources/live2d/<name>/`; there is no remote download or gateway. The frontend calls `check_resource` to test install state and `import_local_resource` to add models from a local ZIP or folder. `ResourceManager` in `Nori.Core/Resources/` covers check/list/delete/import, and Live2D resources count as installed only when they contain a `.model3.json`.
 
 `ZipExtractor` is hardened — rejects absolute paths, UNC, drive letters, `..`, control chars and symlink entries, and re-canonicalizes each parent against the target. It also strips a single common top-level directory. Don't loosen it.
 
@@ -134,11 +118,9 @@ Both are pinned to exact source snippets. **Upgrading the package will make them
 
 The library appends its `<canvas>` to `document.body` and never removes it, so `createLive2D()` owns the DOM lifecycle and `stage.ts` positions that body-level canvas with `position: fixed`. The pet window sizes *itself* to the model (`applyWindowSize`, center-preserving). Head tracking calls `get_cursor_pos` because a webview can't observe the cursor outside its own window.
 
-### Gateway
+### Local model management
 
-Minimal API in `Program.cs`; OSS logic in `Services/OssService.cs`; middleware (CORS → RequestID → request logging) in `Middleware/GatewayMiddleware.cs`, composed in that order to match the Go original. Config is YAML with kebab-case keys, unchanged from the Go version so existing deployments keep working. Logging is Serilog + rolling file, replacing zap + lumberjack.
-
-The Go original's hand-rolled `:param` router and its `bodyParser`/`getQuery`/`fetchURL`/`createFolder` utilities were **not** ported — they had no consumers and ASP.NET Core routing covers the need.
+Model management lives in `src/components/settings/ModelManagement.vue`: import local Live2D ZIP/folder, enable an installed model, adjust per-model display settings, and preview. First-run `ModelSelect.vue` only records the chosen model id; the app never downloads it.
 
 ## Conventions (from `docs/规范.md` — follow these, they're enforced by review)
 

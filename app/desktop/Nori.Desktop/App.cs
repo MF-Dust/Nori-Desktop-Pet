@@ -101,7 +101,7 @@ public sealed class App : Application
 			Database = database,
 			Config = config,
 			Logger = logger,
-			Resources = new ResourceManager(http),
+			Resources = new ResourceManager(),
 			Chat = new ChatService(http, database, config),
 			Memory = new Nori.Core.Memory.MemoryStore(database),
 			Embedding = new Nori.Core.Embedding.OpenAiEmbeddingAdapter(http),

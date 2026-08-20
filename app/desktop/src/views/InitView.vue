@@ -4,20 +4,12 @@ import {invoke} from "../services/host/invoke"
 import {listen, type UnlistenFn} from "../services/host/event"
 import {getCurrentWindow} from "../services/host/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
-import {createResourceDownload, formatBytes} from "../services/resourceDownload"
 import {closeWindow, showWindow} from "../services/window"
 import TitleBar from "../components/TitleBar.vue"
-import ProgressBar from "../components/ProgressBar.vue"
 import Icon from "../components/Icon.vue"
 import logo from "../assets/images/logo.png"
 
-// 当前初始化的是 Live2D 资源 (模型)
-const RESOURCE_TYPE = "live2d"
-
 const I18N = computed(() => useLanguages().views.init)
-
-// 通用资源下载控制器
-const DOWNLOAD = createResourceDownload()
 
 // 状态文本
 const statusText = ref(I18N.value.title)
@@ -28,34 +20,6 @@ const CONFIG_KEY = "selected_model"
 // 模型名
 const modelName = ref("arg-nori")
 
-// 下载状态文本: 由下载/检查阶段映射
-const downloadStatusText = computed(() => {
-	switch (DOWNLOAD.state.step) {
-		case "downloading":
-			return I18N.value.downloading
-		case "download-done":
-			return I18N.value.downloadDone
-		case "extracting":
-			return I18N.value.extracting
-		case "done":
-			return I18N.value.ready
-		case "installed":
-			return I18N.value.installed
-		case "error":
-			return DOWNLOAD.state.message || I18N.value.downloadFailed
-		default:
-			return I18N.value.check
-	}
-})
-
-// 进度明细文案 (仅下载中显示字节)
-const progressText = computed(() =>
-	DOWNLOAD.state.step === "downloading" ? DOWNLOAD.state.total ? `${formatBytes(DOWNLOAD.state.downloaded ?? 0)} / ${formatBytes(DOWNLOAD.state.total)}` : DOWNLOAD.state.downloaded != null? formatBytes(DOWNLOAD.state.downloaded) : "" : ""
-)
-
-// 进度条显示
-const showProgress = computed(() => DOWNLOAD.state.step === "downloading")
-
 // 关闭窗口
 const closeApp = () => {
 	invoke("exit_app")
@@ -64,16 +28,21 @@ const closeApp = () => {
 let unlistenInitStart: UnlistenFn | null = null
 
 onBeforeUnmount(() => {
-	DOWNLOAD.stop()
 	if (unlistenInitStart) unlistenInitStart()
 })
 
-// 初始化流程: 检查/下载 Live2D 资源, 完成后打开主窗口并关闭 init 窗口
+// 初始化流程: 检查 Live2D 资源, 完成后打开主窗口并关闭 init 窗口
 const startInitFlow = async () => {
-	// 检查是否已安装, 未安装则触发下载+解压
-	const INSTALLED = await DOWNLOAD.check(RESOURCE_TYPE, modelName.value)
-	if (!INSTALLED) await DOWNLOAD.ensure(RESOURCE_TYPE, modelName.value)
-	// 初始化完成: 打开主窗口, 桌宠不自动召唤 (由主窗口 召唤/收起 按钮控制)
+	try {
+		const INSTALLED = await invoke<boolean>("check_resource", {resourceType: "live2d", name: modelName.value})
+		if (!INSTALLED) {
+			await invoke("write_log", {level: "warn", message: `模型 ${modelName.value} 未安装，请导入本地模型`})
+		}
+	} catch (error) {
+		console.error("检查资源失败:", error)
+	}
+
+	// 初始化完成: 打开主窗口
 	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 	await showWindow("main")
 	await sleep(600)
@@ -100,7 +69,7 @@ onMounted(async () => {
 	} catch (error) {
 		console.error("读取模型配置失败:", error)
 	}
-	// 首次运行路径下 init 窗口隐藏启动: 若直接执行会静默下载资源并在引导页旁弹出主窗口,
+	// 首次运行路径下 init 窗口隐藏启动: 若直接执行会在引导页旁弹出主窗口,
 	// 因此等待 Rust 在向导完成后 emit 事件 (nori:init-start) 再执行
 	if (await isWindowVisible()) {
 		await startInitFlow()
@@ -123,8 +92,6 @@ onMounted(async () => {
 		<div class="body">
 			<img class="avatar" :src="logo" alt="Nori"/>
 			<div class="status">{{ statusText }}</div>
-			<ProgressBar v-if="showProgress" :percent="DOWNLOAD.state.percent" :text="progressText"/>
-			<div class="download-status">{{ downloadStatusText }}</div>
 		</div>
 	</div>
 </template>
@@ -161,11 +128,6 @@ onMounted(async () => {
 .status {
 	color: var(--text-body);
 	font-size: 1.3rem;
-}
-
-.download-status {
-	color: var(--text-faint);
-	font-size: 1.1rem;
 }
 
 .close-btn {

@@ -5,7 +5,7 @@ namespace Nori.Core.Resources;
 /// <summary>
 /// 资源类型
 ///
-/// 所有应用资源都通过 ResourceType 管理. 字符串值用于 API 请求 / 前端传参 / 日志.
+/// 所有应用资源都通过 ResourceType 管理. 字符串值用于本地目录 / 前端传参 / 日志.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ResourceType>))]
 public enum ResourceType
@@ -20,7 +20,7 @@ public enum ResourceType
 public static class ResourceTypeExtensions
 {
 	/// <summary>
-	/// 资源在 data/resources 下的目录名, 同时也是 API 请求用的类型串
+	/// 资源在 data/resources 下的目录名
 	/// </summary>
 	public static string AsString(this ResourceType type) => type switch
 	{
@@ -62,44 +62,6 @@ public sealed record ResourceInfo
 	/// <summary>资源总大小 (字节)</summary>
 	[JsonPropertyName("size")]
 	public required long Size { get; init; }
-}
-
-/// <summary>
-/// 下载进度
-/// </summary>
-public sealed record DownloadProgress
-{
-	/// <summary>已下载字节数</summary>
-	[JsonPropertyName("downloaded")]
-	public required long Downloaded { get; init; }
-
-	/// <summary>文件总大小, 服务器没给 Content-Length 时为 null</summary>
-	[JsonPropertyName("total")]
-	public required long? Total { get; init; }
-
-	/// <summary>下载百分比, 无法计算时为 null</summary>
-	[JsonPropertyName("percentage")]
-	public required float? Percentage { get; init; }
-
-	/// <summary>
-	/// 按已下载与总大小构造进度
-	/// </summary>
-	public static DownloadProgress Create(long downloaded, long? total) => new()
-	{
-		Downloaded = downloaded,
-		Total = total,
-		Percentage = total is > 0 ? (float)Math.Min(100.0, downloaded * 100.0 / total.Value) : null,
-	};
-
-	/// <summary>
-	/// 下载完成状态
-	/// </summary>
-	public static DownloadProgress Completed(long total) => new()
-	{
-		Downloaded = total,
-		Total = total,
-		Percentage = 100f,
-	};
 }
 
 /// <summary>

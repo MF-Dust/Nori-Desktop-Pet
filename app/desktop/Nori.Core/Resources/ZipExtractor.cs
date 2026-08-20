@@ -6,7 +6,7 @@ namespace Nori.Core.Resources;
 /// ZIP 安全解压
 ///
 /// 对应 Rust 版 resource/downloader.rs 的 sanitize_zip_path / extract_zip.
-/// 这是把网络下载的压缩包落到磁盘的唯一入口, 每一条拒绝规则都不要放宽.
+/// 这是把压缩包安全落到磁盘的入口, 每一条拒绝规则都不要放宽.
 /// </summary>
 public static class ZipExtractor
 {

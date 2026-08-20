@@ -1,13 +1,4 @@
 export default {
-	download: {
-		downloading: "正在下载...",
-		downloadDone: "下载完成",
-		extracting: "正在解压...",
-		ready: "初始化完成",
-		installed: "安装完成",
-		downloadFailed: "下载失败",
-		check: "正在检查..."
-	},
 	components: {
 		firstRun: {
 			welcome: {
@@ -64,7 +55,7 @@ export default {
 			ready: {
 				title: "准备就绪",
 				desc: "点击「开始」完成初始化，Nori 期待与你见面。",
-				initDesc: "🐾 初始化大约只需1分钟"
+				initDesc: "🐾 初始化只需几秒"
 			}
 		}
 	},
@@ -160,17 +151,10 @@ export default {
 			},
 			model: {
 				title: "模型管理",
-				sub: "初始化时已自动下载所选模型, 其他模型可在这里下载。",
+				sub: "选择已安装的本地模型, 或通过“导入本地 Live2D”添加新模型。",
 				installed: "已安装",
 				notInstalled: "未安装",
 				current: "当前使用",
-				download: "下载",
-				downloading: "下载中...",
-				downloadDone: "下载完成",
-				extracting: "正在解压...",
-				ready: "已就绪",
-				downloadFailed: "下载失败",
-				update: "更新",
 				enable: "启用",
 				enabled: "已启用",
 				adjust: "调整",
