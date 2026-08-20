@@ -94,6 +94,8 @@ public sealed class App : Application
 		});
 		logger.Write(LogSource.Backend, "info", $"资源服务已启动: {assets.Origin} (dev={devMode})");
 
+		Nori.Core.Mcp.McpManager mcp = new(http, config);
+
 		AppServices services = new()
 		{
 			Database = database,
@@ -104,10 +106,14 @@ public sealed class App : Application
 			Memory = new Nori.Core.Memory.MemoryStore(database),
 			Embedding = new Nori.Core.Embedding.OpenAiEmbeddingAdapter(http),
 			Llm = new LlmClient(http),
+			Mcp = mcp,
 			Assets = assets,
 			Http = http,
 		};
 		_services = services;
+
+		// 异步自动连接已启用的 MCP 服务
+		_ = mcp.AutoConnectEnabledAsync();
 
 		await Dispatcher.UIThread.InvokeAsync(() =>
 		{

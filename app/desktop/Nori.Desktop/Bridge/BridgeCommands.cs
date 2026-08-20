@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
@@ -8,6 +9,7 @@ using Avalonia.Threading;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Logging;
+using Nori.Core.Mcp;
 using Nori.Core.Platform;
 using Nori.Core.Resources;
 using Nori.Desktop.Windows;
@@ -141,6 +143,24 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("clear_chat_history")
 		"clear_chat_history" => Run(() => _services.Chat.ClearHistory()),
 
+		// ---- MCP (Model Context Protocol) ----
+		// invoke("mcp_get_servers")
+		"mcp_get_servers" => await _services.Mcp.GetServersAsync(),
+		// invoke("mcp_save_server", {id, name, transport, command?, args?, env?, url?, enabled, autoConnect})
+		"mcp_save_server" => await _services.Mcp.SaveServerAsync(ParseMcpConfig(args)),
+		// invoke("mcp_delete_server", {id: "xxx"})
+		"mcp_delete_server" => await _services.Mcp.DeleteServerAsync(Str(args, "id")),
+		// invoke("mcp_connect_server", {id: "xxx"})
+		"mcp_connect_server" => await _services.Mcp.ConnectServerAsync(Str(args, "id")),
+		// invoke("mcp_disconnect_server", {id: "xxx"})
+		"mcp_disconnect_server" => await _services.Mcp.DisconnectServerAsync(Str(args, "id")),
+		// invoke("mcp_list_tools")
+		"mcp_list_tools" => await _services.Mcp.GetAllToolsAsync(),
+		// invoke("mcp_call_tool", {serverId, toolName, arguments})
+		"mcp_call_tool" => await CallMcpToolAsync(args),
+		// invoke("mcp_test_server", {id, name, transport, command?, args?, env?, url?})
+		"mcp_test_server" => await _services.Mcp.TestServerAsync(ParseMcpConfig(args)),
+
 		// ---- 窗口 ----
 		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
 		"window_hide" => await OnUi(() => Run(() => _services.Windows.Hide(Str(args, "label")))),
@@ -157,6 +177,12 @@ public sealed class BridgeCommands(AppServices services)
 		// ---- 插件替代 ----
 		// invoke("open_url", {url: "https://..."})
 		"open_url" => Run(() => OpenUrl(Str(args, "url"))),
+
+		// invoke("fetch_remote_text", {url: "https://..."})
+		"fetch_remote_text" => await _services.Http.GetStringAsync(Str(args, "url")),
+
+		// invoke("search_anysearch", {query, tag?, params?, endpoint?, apiKey?})
+		"search_anysearch" => await SearchAnySearchAsync(args),
 
 		// invoke("clipboard_write_text", {text: "..."})
 		"clipboard_write_text" => await WriteClipboardAsync(source, Str(args, "text")),
@@ -442,6 +468,71 @@ public sealed class BridgeCommands(AppServices services)
 			return arr;
 		}
 		return null;
+	}
+
+	private static McpServerConfig ParseMcpConfig(JsonElement args)
+	{
+		McpServerConfig? config = args.Deserialize<McpServerConfig>(BridgeJson.Options);
+		return config ?? throw new InvalidOperationException("无法解析 MCP 服务器配置");
+	}
+
+	private async Task<object?> CallMcpToolAsync(JsonElement args)
+	{
+		string serverId = Str(args, "serverId");
+		string toolName = Str(args, "toolName");
+		JsonObject? toolArgs = null;
+		if (args.TryGetProperty("arguments", out JsonElement argElem) && argElem.ValueKind == JsonValueKind.Object)
+		{
+			toolArgs = JsonNode.Parse(argElem.GetRawText()) as JsonObject;
+		}
+		return await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs);
+	}
+
+	private async Task<object?> SearchAnySearchAsync(JsonElement args)
+	{
+		string query = Str(args, "query");
+		string tag = OptionalStr(args, "tag") ?? "general";
+		string baseUrl = OptionalStr(args, "endpoint") ?? _services.Config.Get("anysearch_api_base")?.ToStorage() ?? "https://api.anysearch.com/v1/search";
+		string? apiKey = OptionalStr(args, "apiKey") ?? _services.Config.Get("anysearch_api_key")?.ToStorage();
+
+		JsonObject payload = new()
+		{
+			["query"] = query,
+			["tag"] = tag,
+		};
+
+		if (args.TryGetProperty("params", out JsonElement paramsElem) && paramsElem.ValueKind == JsonValueKind.Object)
+		{
+			payload["params"] = JsonNode.Parse(paramsElem.GetRawText());
+		}
+
+		using HttpRequestMessage req = new(HttpMethod.Post, baseUrl)
+		{
+			Content = new StringContent(payload.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
+		};
+
+		if (!string.IsNullOrEmpty(apiKey))
+		{
+			req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+		}
+
+		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
+		using HttpResponseMessage resp = await _services.Http.SendAsync(req, cts.Token);
+		string responseText = await resp.Content.ReadAsStringAsync(cts.Token);
+
+		if (!resp.IsSuccessStatusCode)
+		{
+			throw new HttpRequestException($"AnySearch API 返回 HTTP {(int)resp.StatusCode}: {responseText}");
+		}
+
+		try
+		{
+			return JsonNode.Parse(responseText);
+		}
+		catch
+		{
+			return responseText;
+		}
 	}
 
 	private async Task<object?> CreateEmbeddingAsync(JsonElement args)

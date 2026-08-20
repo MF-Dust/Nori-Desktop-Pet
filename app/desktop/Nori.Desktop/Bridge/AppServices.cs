@@ -40,6 +40,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>LLM 接口</summary>
 	public required LlmClient Llm { get; init; }
 
+	/// <summary>MCP (Model Context Protocol) 管理器</summary>
+	public required Nori.Core.Mcp.McpManager Mcp { get; init; }
+
 	/// <summary>回环资源服务</summary>
 	public required AssetServer Assets { get; init; }
 
@@ -54,6 +57,7 @@ public sealed class AppServices : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
+		await Mcp.DisposeAsync();
 		await Assets.DisposeAsync();
 		Http.Dispose();
 		Database.Dispose();
