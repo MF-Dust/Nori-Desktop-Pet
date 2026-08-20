@@ -7,9 +7,11 @@ import AiSettings from "./AiSettings.vue"
 import VoiceSettings from "./VoiceSettings.vue"
 import ProactiveSettings from "./ProactiveSettings.vue"
 import MemorySettings from "./MemorySettings.vue"
+import SkillsSettings from "./SkillsSettings.vue"
+import McpSettings from "./McpSettings.vue"
 import GeneralSettings from "./GeneralSettings.vue"
 
-type SettingsTabKey = "ai" | "voice" | "proactive" | "memory" | "general"
+type SettingsTabKey = "ai" | "voice" | "proactive" | "memory" | "skills" | "mcp" | "general"
 
 const I18N = computed(() => useLanguages().views.main.settingsTabs)
 
@@ -20,6 +22,8 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 	{key: "voice", label: I18N.value.voice, icon: "volume"},
 	{key: "proactive", label: I18N.value.proactive, icon: "noriOS"},
 	{key: "memory", label: I18N.value.memory, icon: "package"},
+	{key: "skills", label: I18N.value.skills, icon: "sparkles"},
+	{key: "mcp", label: I18N.value.mcp, icon: "plug"},
 	{key: "general", label: I18N.value.general, icon: "settings"},
 ])
 </script>
@@ -46,6 +50,8 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 			<VoiceSettings v-else-if="currentTab === 'voice'"/>
 			<ProactiveSettings v-else-if="currentTab === 'proactive'"/>
 			<MemorySettings v-else-if="currentTab === 'memory'"/>
+			<SkillsSettings v-else-if="currentTab === 'skills'"/>
+			<McpSettings v-else-if="currentTab === 'mcp'"/>
 			<GeneralSettings v-else-if="currentTab === 'general'"/>
 		</div>
 	</div>

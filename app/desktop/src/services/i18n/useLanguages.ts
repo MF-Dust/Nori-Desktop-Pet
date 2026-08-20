@@ -241,6 +241,8 @@ export default () => {
 					voice: t("views.main.settingsTabs.voice"),
 					proactive: t("views.main.settingsTabs.proactive"),
 					memory: t("views.main.settingsTabs.memory"),
+					skills: t("views.main.settingsTabs.skills"),
+					mcp: t("views.main.settingsTabs.mcp"),
 					general: t("views.main.settingsTabs.general"),
 				},
 			}

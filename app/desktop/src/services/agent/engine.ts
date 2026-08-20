@@ -5,6 +5,7 @@ import type {AgentProtocolItem, AgentState, AgentTextMessage, AgentToolCall, Emo
 import {StreamingJsonParser} from "./jsonParser"
 import {buildAgentSystemPrompt, type PromptBuildOptions} from "./promptBuilder"
 import {toolManager} from "./tools"
+import {mcpService} from "../mcp"
 import {memoryService} from "../memory"
 import {emotionManager} from "../emotion"
 import {ttsService} from "../tts"
@@ -36,6 +37,7 @@ export class AgentEngine {
 	private state: AgentState = "idle"
 	private maxToolIterations = 5
 	private unlistenChunk: UnlistenFn | null = null
+	private mcpSynced = false
 
 	/**
 	 * 获取当前状态
@@ -64,6 +66,12 @@ export class AgentEngine {
 		callbacks?: AgentRunCallbacks
 	): Promise<AgentTextMessage> {
 		this.setState("thinking", callbacks)
+
+		// 首次运行异步同步一次已连接的 MCP 工具
+		if (!this.mcpSynced) {
+			this.mcpSynced = true
+			void mcpService.syncToolsWithToolManager()
+		}
 
 		// 复制历史消息并在末尾加入当前用户输入
 		const WORKING_HISTORY: HistoryMessage[] = [...history, {role: "user", content: userText}]

@@ -1,4 +1,5 @@
 import {toolManager} from "./tools"
+import {skillService} from "../skills"
 
 /**
  * Prompt 构建选项
@@ -17,7 +18,7 @@ export interface PromptBuildOptions {
 const DEFAULT_PERSONA = `你是 Nori，一只生活在用户电脑桌面上的桌面宠物伴侣。
 你的特点：
 1. 语言自然生动，言简意赅，像真实的日常聊天一样交流。
-2. 当被问及时间、日期、天气、系统状态等时，你可以主动调用提供的工具获取精准信息。
+2. 当被问及实时资讯、技术代码文档、时间、日期、天气或系统状态等时，你可以主动调用 searchWeb (AnySearch 搜索引擎) 等工具获取最新精准信息。
 3. 【记忆能力】：在对话中一旦获知关于主人的个人信息、喜好、称呼、习惯或重要约定，务必主动调用 remember 工具将事实记录在长期记忆库中。
 4. 你可以通过协议中的 emotion、expression 与 action 字段联动驱动你的 Live2D 模型做出生动表情与动作。`
 
@@ -76,11 +77,17 @@ export function buildAgentSystemPrompt(options: PromptBuildOptions = {}): string
 		PARTS.push(`【可用表情列表 (expression)】：${options.availableExpressions.join(", ")}`)
 	}
 
-	// 5. 工具清单定义
+	// 5. 注入已激活的技能扩展
+	const SKILLS_PROMPT = skillService.buildSkillsPrompt()
+	if (SKILLS_PROMPT) {
+		PARTS.push(SKILLS_PROMPT)
+	}
+
+	// 6. 工具清单定义
 	const TOOLS_JSON = toolManager.buildToolsPrompt()
 	PARTS.push(`【可用工具列表】：\n${TOOLS_JSON}`)
 
-	// 6. 输出格式规则
+	// 7. 输出格式规则
 	PARTS.push(PROTOCOL_INSTRUCTION)
 
 	return PARTS.join("\n\n")

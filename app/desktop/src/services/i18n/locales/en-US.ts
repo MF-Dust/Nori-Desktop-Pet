@@ -67,6 +67,8 @@ export default {
 				voice: "Voice & Audio",
 				proactive: "Proactive & Routine",
 				memory: "Memory",
+				skills: "Skills",
+				mcp: "Tools & MCP",
 				general: "General",
 			},
 		},

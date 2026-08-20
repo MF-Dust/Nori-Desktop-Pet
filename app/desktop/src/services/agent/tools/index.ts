@@ -11,6 +11,11 @@ import type {EmotionType} from "../protocol"
 export type ToolPermissionLevel = "safe" | "confirm" | "dangerous"
 
 /**
+ * 工具所属分类
+ */
+export type ToolCategory = "builtin" | "mcp" | "custom"
+
+/**
  * 工具参数 JSON Schema 描述
  */
 export interface ToolParameterSchema {
@@ -32,6 +37,8 @@ export interface AgentTool {
 	description: string
 	parameters: ToolParameterSchema
 	permissionLevel: ToolPermissionLevel
+	category?: ToolCategory
+	enabled?: boolean
 	execute: (args: Record<string, unknown>) => Promise<unknown> | unknown
 }
 
@@ -40,6 +47,7 @@ export interface AgentTool {
  */
 export class ToolManager {
 	private tools: Map<string, AgentTool> = new Map()
+	private disabledTools: Set<string> = new Set()
 
 	constructor() {
 		this.registerBuiltinTools()
@@ -49,6 +57,9 @@ export class ToolManager {
 	 * 注册一个工具
 	 */
 	public register(tool: AgentTool): void {
+		if (tool.enabled === undefined) {
+			tool.enabled = !this.disabledTools.has(tool.name)
+		}
 		this.tools.set(tool.name, tool)
 	}
 
@@ -74,6 +85,28 @@ export class ToolManager {
 	}
 
 	/**
+	 * 获取所有当前启用的工具列表
+	 */
+	public listEnabled(): AgentTool[] {
+		return Array.from(this.tools.values()).filter(t => t.enabled !== false && !this.disabledTools.has(t.name))
+	}
+
+	/**
+	 * 设置工具启用状态
+	 */
+	public setEnabled(name: string, enabled: boolean): void {
+		const TOOL = this.tools.get(name)
+		if (TOOL) {
+			TOOL.enabled = enabled
+		}
+		if (enabled) {
+			this.disabledTools.delete(name)
+		} else {
+			this.disabledTools.add(name)
+		}
+	}
+
+	/**
 	 * 执行工具调用
 	 */
 	public async execute(name: string, args: Record<string, unknown>): Promise<{result?: unknown; error?: string}> {
@@ -82,20 +115,28 @@ export class ToolManager {
 			return {error: `未找到工具: ${name}`}
 		}
 
+		if (TOOL.enabled === false || this.disabledTools.has(name)) {
+			return {error: `工具 ${name} 已被禁用`}
+		}
+
 		try {
+			const START = Date.now()
 			const RESULT = await TOOL.execute(args)
+			const DURATION = Date.now() - START
+			void invoke("write_log", {level: "info", message: `执行工具 [${name}] 完成，耗时: ${DURATION}ms`})
 			return {result: RESULT}
 		} catch (error) {
 			const MSG = error instanceof Error ? error.message : String(error)
+			void invoke("write_log", {level: "warn", message: `执行工具 [${name}] 失败: ${MSG}`})
 			return {error: `执行工具 ${name} 失败: ${MSG}`}
 		}
 	}
 
 	/**
-	 * 生成注入 Prompt 的可用工具清单文本
+	 * 生成注入 Prompt 的可用工具清单文本 (仅包含当前启用的工具)
 	 */
 	public buildToolsPrompt(): string {
-		const TOOL_LIST = this.list().map((tool) => ({
+		const TOOL_LIST = this.listEnabled().map((tool) => ({
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters,
@@ -105,7 +146,7 @@ export class ToolManager {
 	}
 
 	/**
-	 * 注册第一批内置基础工具 (模块 13)
+	 * 注册内置基础工具
 	 */
 	private registerBuiltinTools(): void {
 		// 1. 获取当前时间
@@ -118,6 +159,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: () => {
 				const NOW = new Date()
 				return {
@@ -138,6 +180,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: () => {
 				const NOW = new Date()
 				const WEEK_DAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"]
@@ -161,6 +204,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async () => {
 				let lang = "zh-CN"
 				try {
@@ -195,12 +239,12 @@ export class ToolManager {
 				required: ["name"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const NAME = String(args.name || "")
 				if (!NAME) throw new Error("缺少动作名称")
 				const L2D = createLive2D()
 				await L2D.playMotionByName(NAME)
-				// 广播动作给所有窗口
 				await invoke("write_log", {level: "info", message: `Agent 触发动作: ${NAME}`})
 				return {success: true, played: NAME}
 			},
@@ -221,6 +265,7 @@ export class ToolManager {
 				required: ["name"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const NAME = String(args.name || "")
 				if (!NAME) throw new Error("缺少表情名称")
@@ -231,7 +276,7 @@ export class ToolManager {
 		})
 
 		// 6. 记住重要事实 / 偏好
-		const rememberTool = {
+		const rememberTool: AgentTool = {
 			name: "remember",
 			description: "在对话中获知主人的个人信息、喜好、称呼、习惯或重要约定后，主动记录到长期记忆库中",
 			parameters: {
@@ -252,7 +297,8 @@ export class ToolManager {
 				},
 				required: ["content"],
 			},
-			permissionLevel: "safe" as const,
+			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args: Record<string, any>) => {
 				const CONTENT = String(args.content || "")
 				if (!CONTENT) throw new Error("记忆内容不能为空")
@@ -268,6 +314,7 @@ export class ToolManager {
 			...rememberTool,
 			name: "addMemory",
 			description: "添加一条长期记忆到记忆库 (remember 的别名)",
+			category: "builtin",
 		})
 
 		// 7. 搜索长期记忆
@@ -285,6 +332,7 @@ export class ToolManager {
 				required: ["keyword"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const KW = String(args.keyword || "")
 				if (!KW) throw new Error("搜索关键词不能为空")
@@ -313,6 +361,7 @@ export class ToolManager {
 				required: ["emotion"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: (args) => {
 				const EMOTION = String(args.emotion || "neutral")
 				const INTENSITY = typeof args.intensity === "number" ? args.intensity : 0.8
@@ -340,6 +389,7 @@ export class ToolManager {
 				required: ["content", "delayMinutes"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: (args) => {
 				const CONTENT = String(args.content || "")
 				const MINUTES = Number(args.delayMinutes || 1)
@@ -358,6 +408,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: () => {
 				return {reminders: proactiveService.listReminders()}
 			},
@@ -373,6 +424,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async () => {
 				if (!navigator.clipboard || !navigator.clipboard.readText) {
 					throw new Error("当前环境不支持读取剪贴板")
@@ -397,6 +449,7 @@ export class ToolManager {
 				required: ["text"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const TEXT = String(args.text || "")
 				if (!navigator.clipboard || !navigator.clipboard.writeText) {
@@ -422,6 +475,7 @@ export class ToolManager {
 				required: ["url"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const URL = String(args.url || "")
 				if (!URL) throw new Error("网址不能为空")
@@ -440,6 +494,7 @@ export class ToolManager {
 				required: [],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async () => {
 				if (typeof navigator !== "undefined" && "getBattery" in navigator) {
 					const BATTERY = await (navigator as any).getBattery()
@@ -454,46 +509,84 @@ export class ToolManager {
 			},
 		})
 
-		// 15. 网页搜索 (参考 AstrBot search_web)
-		this.register({
+		// 15. AnySearch 网络搜索 (支持 tag 与 params 参数)
+		const searchTool: AgentTool = {
 			name: "searchWeb",
-			description: "在互联网上搜索特定关键词、新闻或实时信息",
+			description: "使用 AnySearch 搜索引擎在互联网上搜索特定关键词、技术文档、新闻与实时信息",
 			parameters: {
 				type: "object",
 				properties: {
 					query: {
 						type: "string",
-						description: "搜索关键词或查询短句",
+						description: "搜索关键词或查询短句 (例如: 'Go 1.26 release notes')",
+					},
+					tag: {
+						type: "string",
+						description: "搜索分类标签 (可选，例如: 'code.doc', 'web', 'general', 'news')",
+					},
+					params: {
+						type: "object",
+						description: "高级过滤参数 (可选，例如: { 'library': 'golang' })",
 					},
 				},
 				required: ["query"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const QUERY = String(args.query || "")
 				if (!QUERY) throw new Error("搜索词不能为空")
+				const TAG = typeof args.tag === "string" ? args.tag : "general"
+				const PARAMS = typeof args.params === "object" && args.params !== null ? args.params : {}
 
 				try {
-					const URL = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(QUERY)}`
-					const RES = await fetch(URL)
-					const HTML = await RES.text()
-					// 抽取前 3 条结果摘要
-					const MATCHES = [...HTML.matchAll(/<a class="result__snippet[^>]*>([\s\S]*?)<\/a>/g)]
-					const SNIPPETS = MATCHES.slice(0, 3).map((m) => m[1].replace(/<[^>]+>/g, "").trim())
+					const RES = await invoke<any>("search_anysearch", {
+						query: QUERY,
+						tag: TAG,
+						params: PARAMS,
+					})
 					return {
 						query: QUERY,
-						results: SNIPPETS.length > 0 ? SNIPPETS : [`已查询 "${QUERY}"，但网络摘要为空`],
+						tag: TAG,
+						results: RES,
 					}
 				} catch {
+					// 宿主调用失败时尝试前端直接 POST
+					try {
+						const DIRECT_RES = await fetch("https://api.anysearch.com/v1/search", {
+							method: "POST",
+							headers: {"Content-Type": "application/json"},
+							body: JSON.stringify({
+								query: QUERY,
+								tag: TAG,
+								params: PARAMS,
+							}),
+						})
+						if (DIRECT_RES.ok) {
+							const DATA = await DIRECT_RES.json()
+							return {query: QUERY, tag: TAG, results: DATA}
+						}
+					} catch {
+						/* 降级 */
+					}
 					return {
 						query: QUERY,
-						results: [`搜索服务请求完成，请在回复中为主人提供关于 "${QUERY}" 的友好解答。`],
+						tag: TAG,
+						results: [`AnySearch 查询 "${QUERY}" (tag: ${TAG}) 已触发，请为主人的提问提供详尽解答。`],
 					}
 				}
 			},
+		}
+
+		this.register(searchTool)
+		this.register({
+			...searchTool,
+			name: "anySearch",
+			description: "调用 AnySearch 专属 API 执行精准网络、技术代码与文档搜索",
+			category: "builtin",
 		})
 
-		// 16. 天气查询 (参考 AstrBot get_weather)
+		// 16. 天气查询
 		this.register({
 			name: "getWeather",
 			description: "查询指定城市当天的实时天气、温度与天气状况",
@@ -508,6 +601,7 @@ export class ToolManager {
 				required: ["city"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: async (args) => {
 				const CITY = String(args.city || "Beijing")
 				try {
@@ -551,12 +645,12 @@ export class ToolManager {
 				required: ["expression"],
 			},
 			permissionLevel: "safe",
+			category: "builtin",
 			execute: (args) => {
 				const EXPR = String(args.expression || "")
 				if (!EXPR) throw new Error("表达式不能为空")
 
 				try {
-					// 过滤非法字符，仅允许数字、运算符与 Math 函数
 					const SANITIZED = EXPR
 						.replace(/sqrt\(/g, "Math.sqrt(")
 						.replace(/pow\(/g, "Math.pow(")
@@ -568,6 +662,45 @@ export class ToolManager {
 					return {expression: EXPR, result: RESULT}
 				} catch (error) {
 					throw new Error(`计算表达式 "${EXPR}" 失败`)
+				}
+			},
+		})
+
+		// 18. 获取网页内容摘要
+		this.register({
+			name: "fetchWebPage",
+			description: "抓取并提取指定公开网址的网页文本正文内容",
+			parameters: {
+				type: "object",
+				properties: {
+					url: {
+						type: "string",
+						description: "网页完整 URL 地址",
+					},
+				},
+				required: ["url"],
+			},
+			permissionLevel: "safe",
+			category: "builtin",
+			execute: async (args) => {
+				const URL = String(args.url || "")
+				if (!URL) throw new Error("URL 不能为空")
+				try {
+					const RES = await fetch(URL)
+					const TEXT = await RES.text()
+					// 移除 script/style 标签与 HTML 标记
+					const CLEANED = TEXT
+						.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+						.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+						.replace(/<[^>]+>/g, " ")
+						.replace(/\s+/g, " ")
+						.trim()
+					return {
+						url: URL,
+						content: CLEANED.slice(0, 3000),
+					}
+				} catch (error) {
+					throw new Error(`无法获取网页内容: ${error instanceof Error ? error.message : String(error)}`)
 				}
 			},
 		})
