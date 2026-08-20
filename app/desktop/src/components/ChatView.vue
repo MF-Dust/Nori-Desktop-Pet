@@ -340,7 +340,10 @@ const toggleVoiceInput = async () => {
 			<!-- 点击展开详细指标弹窗 (Metrics Popover) -->
 			<div v-if="showMetricsDetail" class="metrics-detail-box">
 				<div class="detail-header">
-					<h4>📊 上下文用量与缓存统计明细</h4>
+					<div class="detail-title-wrap">
+						<Icon name="package" :size="13" class="text-teal"/>
+						<h4>上下文用量与缓存统计明细</h4>
+					</div>
 					<button class="btn-close-detail" @click.stop="showMetricsDetail = false">
 						<Icon name="close" :size="12"/>
 					</button>
@@ -373,9 +376,12 @@ const toggleVoiceInput = async () => {
 					</div>
 				</div>
 
-				<p class="detail-tip">
-					💡 提示：当使用支持 Prompt Caching 的模型（如 DeepSeek, Claude 3.5, OpenAI 等）时，系统人设、长期记忆与工具清单会被自动缓存，大幅降低响应延迟与 API 计费。
-				</p>
+				<div class="detail-tip-box">
+					<Icon name="info" :size="12" class="tip-icon"/>
+					<p class="detail-tip">
+						提示：当使用支持 Prompt Caching 的模型（如 DeepSeek, Claude 3.5, OpenAI 等）时，系统人设、长期记忆与工具清单会被自动缓存，大幅降低响应延迟与 API 计费。
+					</p>
+				</div>
 			</div>
 
 			<div ref="listRef" class="chat-list">
@@ -690,12 +696,37 @@ const toggleVoiceInput = async () => {
 	}
 }
 
+.detail-title-wrap {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+
+	h4 {
+		font-size: 1.25rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		margin: 0;
+	}
+}
+
+.detail-tip-box {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.6rem;
+	border-top: 0.1rem solid var(--line-subtle);
+	padding-top: 0.8rem;
+}
+
+.tip-icon {
+	color: var(--nori-teal-soft);
+	margin-top: 0.2rem;
+	flex-shrink: 0;
+}
+
 .detail-tip {
 	font-size: 1.1rem;
 	color: var(--text-muted);
 	line-height: 1.5;
-	border-top: 0.1rem solid var(--line-subtle);
-	padding-top: 0.8rem;
 	margin: 0;
 }
 

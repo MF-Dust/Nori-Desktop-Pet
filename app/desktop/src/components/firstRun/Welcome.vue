@@ -76,7 +76,10 @@ const handleLink = async (link: Link) => {
 <template>
 	<section key="welcome" class="page page-welcome">
 		<div class="hero-copy">
-			<span class="badge">✨ Desktop Pet</span>
+			<span class="badge">
+				<icon name="sparkles" :size="12"/>
+				<span>Desktop Pet</span>
+			</span>
 			<h1 class="hero-title glow-teal">{{I18N.title}}</h1>
 			<p class="hero-desc">{{I18N.subtitle}}</p>
 			<div class="links">
