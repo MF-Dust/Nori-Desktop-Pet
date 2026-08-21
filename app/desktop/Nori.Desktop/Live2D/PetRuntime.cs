@@ -38,6 +38,8 @@ public sealed class PetRuntime
 	private readonly BeatSyncBehavior _beatSync = new();
 	private readonly LipSyncBehavior _lipSync = new();
 	private readonly ModelParameters _modelParams = new();
+	/// <summary>行为上下文逐帧复用, 避免渲染热路径上每帧分配</summary>
+	private readonly BehaviorContext _behaviorContext = new();
 	private readonly Random _random = new();
 
 	private LAppDelegateOpenGL? _app;
@@ -74,7 +76,6 @@ public sealed class PetRuntime
 	public bool BeatSyncEnabled { get; set; }
 	public bool ClickInteraction { get; set; } = true;
 	public int MaxFps { get; set; }
-	public float RenderScale { get; set; } = 2.0f;
 
 	public event Action? ModelChanged;
 	public event Action? FrameRendered;
@@ -160,7 +161,6 @@ public sealed class PetRuntime
 		BeatSyncEnabled = ParseBoolConfig("l2d_beat_sync", false);
 		ClickInteraction = ParseBoolConfig("l2d_click_interaction", true);
 		MaxFps = (int)ParseFloatConfig("l2d_max_fps", 0.0f);
-		RenderScale = ParseFloatConfig("l2d_render_scale", 2.0f);
 	}
 
 	/// <summary>
@@ -363,23 +363,22 @@ public sealed class PetRuntime
 		bool isIdleMotion = model.IsMotionFinished()
 			|| string.Equals(model.CurrentMotionGroup, LAppDefine.MotionGroupIdle, StringComparison.OrdinalIgnoreCase);
 
-		var ctx = new BehaviorContext
-		{
-			Model = model,
-			Now = now,
-			TimeDelta = timeDelta,
-			IsIdleMotion = isIdleMotion,
-			AutoBlinkEnabled = AutoBlinkEnabled,
-			EyeTrackingEnabled = EyeTrackingEnabled,
-			IdleEyeAnimationEnabled = IdleEyeAnimationEnabled,
-			IdleAnimationEnabled = IdleAnimationEnabled,
-			ForceIdleEyeAnimation = IdleEyeAnimationEnabled,
-			BeatSyncEnabled = BeatSyncEnabled,
-			LipSyncEnabled = LipSyncEnabled,
-			ExpressionEnabled = ExpressionEnabled,
-			ClickInteraction = ClickInteraction,
-			ModelParameters = _modelParams,
-		};
+		var ctx = _behaviorContext;
+		ctx.ResetFrame();
+		ctx.Model = model;
+		ctx.Now = now;
+		ctx.TimeDelta = timeDelta;
+		ctx.IsIdleMotion = isIdleMotion;
+		ctx.AutoBlinkEnabled = AutoBlinkEnabled;
+		ctx.EyeTrackingEnabled = EyeTrackingEnabled;
+		ctx.IdleEyeAnimationEnabled = IdleEyeAnimationEnabled;
+		ctx.IdleAnimationEnabled = IdleAnimationEnabled;
+		ctx.ForceIdleEyeAnimation = IdleEyeAnimationEnabled;
+		ctx.BeatSyncEnabled = BeatSyncEnabled;
+		ctx.LipSyncEnabled = LipSyncEnabled;
+		ctx.ExpressionEnabled = ExpressionEnabled;
+		ctx.ClickInteraction = ClickInteraction;
+		ctx.ModelParameters = _modelParams;
 
 		// 运行 pre 插件（如 IdleDisable、BeatSync）
 		_pipeline.RunPre(ctx);
@@ -609,7 +608,6 @@ public sealed class PetRuntime
 			case "l2d_beat_sync" when ParseBool(value) is { } v: BeatSyncEnabled = v; break;
 			case "l2d_click_interaction" when ParseBool(value) is { } v: ClickInteraction = v; break;
 			case "l2d_max_fps" when ParseFloat(value) is { } v: MaxFps = (int)v; break;
-			case "l2d_render_scale" when ParseFloat(value) is { } v: RenderScale = Math.Clamp(v, 0.5f, 2.0f); break;
 			default: break;
 		}
 	}

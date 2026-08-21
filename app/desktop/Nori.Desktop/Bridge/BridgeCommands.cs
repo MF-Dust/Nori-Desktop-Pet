@@ -261,7 +261,6 @@ public sealed class BridgeCommands(AppServices services)
 			beatSync = pet?.BeatSyncEnabled ?? false,
 			clickInteraction = pet?.ClickInteraction ?? true,
 			maxFps = pet?.MaxFps ?? 0,
-			renderScale = pet?.RenderScale ?? 2.0f,
 		};
 	}
 

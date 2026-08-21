@@ -4,13 +4,16 @@ namespace Nori.Desktop.Live2D.Behaviors;
 
 /// <summary>
 /// 行为执行上下文
+///
+/// 每帧由 PetRuntime 复用同一个实例 (渲染热路径上避免每帧分配),
+/// 用完后调用 ResetFrame() 清除上一帧的短路标记。
 /// </summary>
 public sealed class BehaviorContext
 {
-	public required LAppModel Model { get; init; }
-	public required double Now { get; init; }
-	public required double TimeDelta { get; init; }
-	public required bool IsIdleMotion { get; init; }
+	public LAppModel Model { get; set; } = null!;
+	public double Now { get; set; }
+	public double TimeDelta { get; set; }
+	public bool IsIdleMotion { get; set; }
 	public bool EyeTrackingEnabled { get; set; } = true;
 	public bool EyeFocusSourceActive { get; set; }
 	public bool IdleEyeAnimationEnabled { get; set; } = true;
@@ -26,6 +29,9 @@ public sealed class BehaviorContext
 	public bool Handled { get; private set; }
 
 	public void MarkHandled() => Handled = true;
+
+	/// <summary>开始新一帧前清除上一帧的短路标记</summary>
+	public void ResetFrame() => Handled = false;
 }
 
 public enum PipelineStage
