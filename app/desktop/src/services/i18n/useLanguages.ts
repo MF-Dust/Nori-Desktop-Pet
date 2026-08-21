@@ -156,6 +156,7 @@ export default () => {
 					inputPlaceholder: t("views.main.chat.inputPlaceholder"),
 					sending: t("views.main.chat.sending"),
 					failed: t("views.main.chat.failed"),
+					loadEarlier: t("views.main.chat.loadEarlier"),
 				},
 				model: {
 					title: t("views.main.model.title"),

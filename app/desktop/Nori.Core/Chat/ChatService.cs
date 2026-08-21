@@ -84,6 +84,40 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 	});
 
 	/// <summary>
+	/// 分页读取聊天历史 (返回按时间正序)
+	///
+	/// chat_messages 随使用无限增长, 界面加载必须带 limit, 否则每次打开都全量拉取.
+	/// beforeId <= 0 表示从最新一条开始; limit <= 0 视为不限制 (兼容旧的全量读取).
+	/// </summary>
+	public IReadOnlyList<ChatMessage> GetHistory(int limit, long beforeId) => _database.Locked(connection =>
+	{
+		string sql = "SELECT id, role, content, created_at FROM chat_messages";
+		if (beforeId > 0) sql += " WHERE id < $before";
+		// 倒序取最新的 limit 条, 读完后反转回时间正序
+		sql += " ORDER BY id DESC";
+		if (limit > 0) sql += " LIMIT $limit";
+
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = sql;
+		if (beforeId > 0) command.Parameters.AddWithValue("$before", beforeId);
+		if (limit > 0) command.Parameters.AddWithValue("$limit", limit);
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<ChatMessage> messages = [];
+		while (reader.Read())
+		{
+			messages.Add(new ChatMessage
+			{
+				Id = reader.GetInt64(0),
+				Role = reader.GetString(1),
+				Content = reader.GetString(2),
+				CreatedAt = reader.GetString(3),
+			});
+		}
+		messages.Reverse();
+		return (IReadOnlyList<ChatMessage>)messages;
+	});
+
+	/// <summary>
 	/// 发起一次对话
 	///
 	/// 返回剥离动作标记后的回复文本; 动作名通过 onMotion 回调交给调用方广播

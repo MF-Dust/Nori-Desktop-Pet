@@ -310,4 +310,31 @@ public class ChatServiceTests : IDisposable
 		chat.ClearHistory();
 		Assert.Empty(chat.GetHistory());
 	}
+
+	[Fact]
+	public void ChatService_GetHistoryPagedReturnsLatestPageInOrder()
+	{
+		using HttpClient client = new();
+		ChatService chat = new(client, _database, _config);
+
+		for (int i = 1; i <= 5; i++) chat.SaveMessage("user", $"msg{i}");
+
+		// 首页: 取最新的 2 条, 返回时间正序
+		IReadOnlyList<ChatMessage> page = chat.GetHistory(2, 0);
+		Assert.Equal(2, page.Count);
+		Assert.Equal("msg4", page[0].Content);
+		Assert.Equal("msg5", page[1].Content);
+
+		// 翻页: 以本页最早一条的 id 为游标继续向前取
+		IReadOnlyList<ChatMessage> older = chat.GetHistory(2, page[0].Id);
+		Assert.Equal(2, older.Count);
+		Assert.Equal("msg2", older[0].Content);
+		Assert.Equal("msg3", older[1].Content);
+
+		// 剩余不足一页时返回余量, 取完之后返回空页
+		IReadOnlyList<ChatMessage> last = chat.GetHistory(2, older[0].Id);
+		Assert.Single(last);
+		Assert.Equal("msg1", last[0].Content);
+		Assert.Empty(chat.GetHistory(2, last[0].Id));
+	}
 }

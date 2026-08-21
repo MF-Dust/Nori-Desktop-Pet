@@ -152,6 +152,7 @@ export default {
 				inputPlaceholder: "Type a message, press Enter to send...",
 				sending: "Sending...",
 				failed: "Request failed",
+				loadEarlier: "Load earlier messages",
 			},
 			model: {
 				title: "Model Management",

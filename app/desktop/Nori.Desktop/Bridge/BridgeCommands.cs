@@ -81,8 +81,9 @@ public sealed class BridgeCommands(AppServices services)
 		"get_cursor_pos" => CursorPosition(),
 
 		// ---- 聊天 ----
-		// invoke("get_chat_history")
-		"get_chat_history" => _services.Chat.GetHistory(),
+		// invoke("get_chat_history", {limit?: 50, beforeId?: 0})
+		// 历史表随使用无限增长, 界面加载必须带 limit 分页; 不带参数时保持旧的全量行为
+		"get_chat_history" => _services.Chat.GetHistory(OptionalInt(args, "limit") ?? 0, (long)(OptionalDouble(args, "beforeId") ?? 0)),
 
 		// invoke("chat_completion", {provider?, baseUrl, apiKey, model, messages})
 		"chat_completion" => await ChatCompletionAsync(args),

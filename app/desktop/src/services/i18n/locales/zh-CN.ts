@@ -152,6 +152,7 @@ export default {
 				inputPlaceholder: "输入消息, 回车发送",
 				sending: "发送中...",
 				failed: "请求失败",
+				loadEarlier: "加载更早的消息",
 			},
 			model: {
 				title: "模型管理",

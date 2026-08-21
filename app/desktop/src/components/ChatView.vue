@@ -119,6 +119,54 @@ const tokensPerSecond = computed(() => {
 let unlistenChatChunk: UnlistenFn | null = null
 let currentStreamId = ""
 
+// 历史分页: 历史表随使用无限增长, 首屏只拉最新一页, 更早的按需加载
+const HISTORY_PAGE = 50
+const oldestLoadedId = ref(0)
+const hasMoreHistory = ref(false)
+const loadingMoreHistory = ref(false)
+
+// 过滤旧版本落库的工具调用 JSON 与系统反馈 (分页与首屏共用同一套规则)
+const normalizeHistoryPage = (list: Message[]): Message[] => {
+	const filtered: Message[] = []
+	for (const m of list) {
+		if (m.role === "assistant") {
+			const PARSED = StreamingJsonParser.parseComplete(m.content)
+			const MSG_OBJ = PARSED.find(p => p.type === "message") as AgentTextMessage | undefined
+			if (MSG_OBJ?.text) {
+				filtered.push({...m, content: MSG_OBJ.text})
+			}
+			continue
+		}
+		if (m.content.startsWith("【系统工具执行反馈 -")) {
+			continue
+		}
+		filtered.push(m)
+	}
+	return filtered
+}
+
+// 向上翻页加载更早的消息, 加载后保持视口停留在原消息位置
+const loadOlderHistory = async () => {
+	if (!hasMoreHistory.value || loadingMoreHistory.value) return
+	loadingMoreHistory.value = true
+	try {
+		const LIST_REF = listRef.value
+		const PREV_HEIGHT = LIST_REF?.scrollHeight ?? 0
+		const PAGE = await invoke<Message[]>("get_chat_history", {limit: HISTORY_PAGE, beforeId: oldestLoadedId.value})
+		if (PAGE.length > 0) {
+			oldestLoadedId.value = PAGE[0].id
+			messages.value = [...normalizeHistoryPage(PAGE), ...messages.value]
+		}
+		hasMoreHistory.value = PAGE.length >= HISTORY_PAGE
+		await nextTick()
+		if (LIST_REF) LIST_REF.scrollTop += LIST_REF.scrollHeight - PREV_HEIGHT
+	} catch (error) {
+		console.error("加载更早的历史失败:", error)
+	} finally {
+		loadingMoreHistory.value = false
+	}
+}
+
 onMounted(async () => {
 	try {
 		const [BASE, KEY, MODEL] = await Promise.all([
@@ -130,24 +178,10 @@ onMounted(async () => {
 		currentModel.value = MODEL || "未知模型"
 
 		if (configured.value) {
-			const historyList = await invoke<Message[]>("get_chat_history")
-			const filtered: Message[] = []
-			for (const m of historyList) {
-				// 旧版本会把工具调用 JSON 与系统反馈一并落库，加载时过滤掉，避免聊天区出现原始 JSON
-				if (m.role === "assistant") {
-					const PARSED = StreamingJsonParser.parseComplete(m.content)
-					const MSG_OBJ = PARSED.find(p => p.type === "message") as AgentTextMessage | undefined
-					if (MSG_OBJ?.text) {
-						filtered.push({...m, content: MSG_OBJ.text})
-					}
-					continue
-				}
-				if (m.content.startsWith("【系统工具执行反馈 -")) {
-					continue
-				}
-				filtered.push(m)
-			}
-			messages.value = filtered
+			const historyList = await invoke<Message[]>("get_chat_history", {limit: HISTORY_PAGE})
+			messages.value = normalizeHistoryPage(historyList)
+			hasMoreHistory.value = historyList.length >= HISTORY_PAGE
+			oldestLoadedId.value = historyList.length > 0 ? historyList[0].id : 0
 			await scrollToBottom()
 		}
 
@@ -402,6 +436,16 @@ const toggleVoiceInput = async () => {
 			</div>
 
 			<div ref="listRef" class="chat-list">
+				<!-- 更早的历史按需加载, 避免历史表增长后首屏全量拉取 -->
+				<button
+					v-if="hasMoreHistory"
+					class="btn-load-earlier"
+					:disabled="loadingMoreHistory"
+					@click="loadOlderHistory"
+				>
+					<Icon v-if="loadingMoreHistory" name="loading" class="btn-icon spin" :size="12"/>
+					<span>{{ I18N.loadEarlier }}</span>
+				</button>
 				<div
 					v-for="bubble in bubbles"
 					:key="bubble.key"
@@ -807,6 +851,31 @@ const toggleVoiceInput = async () => {
 	display: flex;
 	flex-direction: column;
 	gap: 1.2rem;
+}
+
+.btn-load-earlier {
+	align-self: center;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.5rem 1.4rem;
+	font-size: 1.2rem;
+	color: var(--text-muted);
+	background: var(--bg-card);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: 999rem;
+	cursor: pointer;
+	transition: color 0.2s, border-color 0.2s;
+
+	&:hover:not(:disabled) {
+		color: var(--text-primary);
+		border-color: var(--nori-teal-bright);
+	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
 }
 
 .chat-msg {
