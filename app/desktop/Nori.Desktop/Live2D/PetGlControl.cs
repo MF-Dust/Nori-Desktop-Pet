@@ -141,42 +141,48 @@ public sealed class PetGlControl : OpenGlControlBase
 	{
 		if (_glApi is null || w <= 0 || h <= 0) return;
 
-		int totalBytes = w * h * 4;
-		if (_pixelBuffer.Length != totalBytes)
+		// 只回读掩码需要的那几行, 而不是整个视口:
+		// glReadPixels 是同步点, 全视口 RGBA 在高 DPI 下一次就是几 MB,
+		// 而掩码只需要 128 行 x 96 列个采样点。逐行回读把流量降到约 1/6,
+		// 缓冲也不再随窗口尺寸变化。
+		int rowBytes = w * 4;
+		if (_pixelBuffer.Length != rowBytes)
 		{
-			_pixelBuffer = new byte[totalBytes];
+			_pixelBuffer = new byte[rowBytes];
 		}
+
+		// 阶段一 (无锁): 逐行回读并抽取采样点。_maskScratch 只有本方法 (渲染线程) 写,
+		// 不需要持锁; 锁只保护最后的发布阶段。
+		Array.Clear(_maskScratch, 0, _maskScratch.Length);
 
 		fixed (byte* ptr = _pixelBuffer)
 		{
-			_glApi.GLReadPixels(0, 0, w, h, _glApi.GL_RGBA, _glApi.GL_UNSIGNED_BYTE, (nint)ptr);
-		}
-
-		lock (_maskLock)
-		{
-			Array.Clear(_maskScratch, 0, _maskScratch.Length);
-
-			// glReadPixels 自下而上返回, 所以掩码第 0 行 (窗口顶部) 对应缓冲的最后一行
 			for (int row = 0; row < MaskHeight; row++)
 			{
+				// glReadPixels 自下而上返回, 掩码第 0 行 (窗口顶部) 对应缓冲的最后一行
 				int sampleY = h - 1 - (int)(row * (double)h / MaskHeight);
 				if (sampleY < 0 || sampleY >= h) continue;
+
+				_glApi.GLReadPixels(0, sampleY, w, 1, _glApi.GL_RGBA, _glApi.GL_UNSIGNED_BYTE, (nint)ptr);
 
 				for (int col = 0; col < MaskWidth; col++)
 				{
 					int sampleX = (int)(col * (double)w / MaskWidth);
 					if (sampleX < 0 || sampleX >= w) continue;
 
-					if (_pixelBuffer[(sampleY * w + sampleX) * 4 + 3] > 16)
+					if (_pixelBuffer[sampleX * 4 + 3] > 16)
 					{
 						int maskIndex = row * MaskWidth + col;
 						_maskScratch[maskIndex >> 3] |= (byte)(1 << (maskIndex & 7));
 					}
 				}
 			}
+		}
 
-			// 向外膨胀一格再作为可交互区域。掩码只用于命中测试, 不影响画面,
-			// 稍微外扩能让头发、手臂这类细部件真的抓得住, 也能吃掉 5Hz 采样的滞后。
+		// 阶段二 (持锁): 向外膨胀一格再作为可交互区域。掩码只用于命中测试, 不影响画面,
+		// 稍微外扩能让头发、手臂这类细部件真的抓得住, 也能吃掉采样的滞后。
+		lock (_maskLock)
+		{
 			Array.Clear(_maskBits, 0, _maskBits.Length);
 			for (int row = 0; row < MaskHeight; row++)
 			{
