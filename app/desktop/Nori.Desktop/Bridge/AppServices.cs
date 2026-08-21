@@ -4,6 +4,7 @@ using Nori.Core.Configuration;
 using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Resources;
+using Nori.Desktop.Live2D;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Bridge;
@@ -54,6 +55,9 @@ public sealed class AppServices : IAsyncDisposable
 
 	/// <summary>桥接命令, 服务装配完成后回填</summary>
 	public BridgeCommands Commands { get; set; } = null!;
+
+	/// <summary>原生 Live2D 桌宠运行时</summary>
+	public PetRuntime PetRuntime { get; set; } = null!;
 
 	public async ValueTask DisposeAsync()
 	{

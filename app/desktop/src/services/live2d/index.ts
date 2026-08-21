@@ -18,6 +18,7 @@ import type {Cubism4InternalModel} from "pixi-live2d-display/cubism4"
 type CubismModel = any
 import {ref, type Ref} from "vue"
 
+import {invoke} from "../host/invoke"
 import {assetUrl} from "./config"
 import {calcFitModel, calculateSafeBaseSize} from "./composables/fit-model"
 import {useMotionManagerUpdate} from "./plugins"
@@ -152,19 +153,39 @@ interface InteractionMaskCache {
 // 控制器工厂
 // ===================================================================
 
-export type Live2DController = ReturnType<typeof createLive2D>
-
-/**
- * 桌宠全局控制器 (PetView 挂载, 其他服务通过它控制桌宠)
- */
-export let petLive2DController: Live2DController | null = null
-
-/**
- * 设置桌宠控制器 (PetView 挂载成功后调用)
- */
-export const setPetLive2DController = (controller: Live2DController | null): void => {
-	petLive2DController = controller
+export interface PetLive2DProxy {
+	playMotionByName: (name: string) => Promise<boolean>
+	playMotionByIndex: (group: string, index: number) => Promise<boolean>
+	playExpression: (name: string) => Promise<void>
+	stopExpression: () => Promise<void>
+	toggleExpression: (name: string) => Promise<void>
+	getMotions: () => Promise<MotionGroup[]>
+	setMouthOpen: (value: number) => Promise<void>
+	setNowSpeaking: (speaking: boolean) => Promise<void>
+	triggerBeat: (timestamp?: number) => Promise<void>
 }
+
+export type Live2DController = ReturnType<typeof createLive2D> | PetLive2DProxy
+
+/**
+ * 桌宠全局控制器 (代理至 C# 原生 Live2D 运行时)
+ */
+export const petLive2DController: PetLive2DProxy = {
+	playMotionByName: async (name: string) => (await invoke<boolean>("pet_play_motion", {name})) ?? false,
+	playMotionByIndex: async (group: string, index: number) => (await invoke<boolean>("pet_play_motion", {group, index})) ?? false,
+	playExpression: async (name: string) => { await invoke("pet_play_expression", {name}) },
+	stopExpression: async () => { await invoke("pet_stop_expression") },
+	toggleExpression: async (name: string) => { await invoke("pet_toggle_expression", {name}) },
+	getMotions: async () => (await invoke<MotionGroup[]>("pet_get_motions")) ?? [],
+	setMouthOpen: async (value: number) => { await invoke("pet_set_mouth_open", {value, speaking: true}) },
+	setNowSpeaking: async (speaking: boolean) => { await invoke("pet_set_mouth_open", {value: 0, speaking}) },
+	triggerBeat: async (timestamp?: number) => { await invoke("pet_trigger_beat", {timestamp}) },
+}
+
+/**
+ * 兼容旧接口 (空操作)
+ */
+export const setPetLive2DController = (_controller: unknown): void => {}
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
 
@@ -187,13 +208,15 @@ export const createLive2D = () => {
 		const inner = internal
 		if (!inner) return
 		const rect = inner.container.getBoundingClientRect()
+		const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1
+		const totalScale = inner.renderScale * dpr
 		inner.baseWidth = Math.max(1, rect.width)
 		inner.baseHeight = Math.max(1, rect.height)
 		inner.app.renderer.resize(
-			Math.max(1, Math.round(inner.baseWidth * inner.renderScale)),
-			Math.max(1, Math.round(inner.baseHeight * inner.renderScale)),
+			Math.max(1, Math.round(inner.baseWidth * totalScale)),
+			Math.max(1, Math.round(inner.baseHeight * totalScale)),
 		)
-		inner.app.stage.scale.set(inner.renderScale)
+		inner.app.stage.scale.set(totalScale)
 	}
 
 	const applyLayout = () => {
@@ -440,6 +463,23 @@ export const createLive2D = () => {
 			const model = new Live2DModel<Cubism4InternalModel>()
 			const url = `${assetUrl(`live2d/${spec.directory}`)}/${spec.fileBase}.model3.json`
 			await Live2DFactory.setupLive2DModel(model, url, {autoInteract: false})
+
+			// 开启纹理 Mipmap 生成与 2048 蒙版缓冲（修复设置页预览颗粒感与边缘锯齿）
+			const textures = (model as unknown as {textures?: {baseTexture?: {mipmap?: number; update?: () => void}}[]}).textures
+			if (textures) {
+				for (const tex of textures) {
+					if (tex?.baseTexture) {
+						tex.baseTexture.mipmap = 1
+						tex.baseTexture.update?.()
+					}
+				}
+			}
+			// 裁剪蒙版缓冲: pixi-live2d-display 默认 256, 眼/口/发的蒙版边缘会有明显阶梯。
+			// 渲染器挂在 internalModel.renderer 上 (不是 coreModel.renderer), 且只接受一个参数。
+			const CUBISM_RENDERER = (model.internalModel as unknown as {
+				renderer?: {setClippingMaskBufferSize?: (size: number) => void}
+			}).renderer
+			CUBISM_RENDERER?.setClippingMaskBufferSize?.(2048)
 
 			app.stage.addChild(model)
 			model.anchor.set(0.5, 0.5)

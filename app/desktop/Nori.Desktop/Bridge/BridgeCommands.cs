@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Avalonia;
@@ -155,6 +155,28 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("mcp_test_server", {id, name, transport, command?, args?, env?, url?})
 		"mcp_test_server" => await _services.Mcp.TestServerAsync(ParseMcpConfig(args)),
 
+		// ---- 桌宠 Live2D 原生控制 ----
+		// invoke("pet_get_state")
+		"pet_get_state" => GetPetState(),
+		// invoke("pet_play_motion", {name?, group?, index?})
+		"pet_play_motion" => PlayPetMotion(args),
+		// invoke("pet_play_expression", {name: "xxx"})
+		"pet_play_expression" => Run(() => _services.PetRuntime.PlayExpression(Str(args, "name"))),
+		// invoke("pet_stop_expression")
+		"pet_stop_expression" => Run(() => _services.PetRuntime.StopExpression()),
+		// invoke("pet_toggle_expression", {name: "xxx"})
+		"pet_toggle_expression" => Run(() => _services.PetRuntime.ToggleExpression(Str(args, "name"))),
+		// invoke("pet_get_motions")
+		"pet_get_motions" => _services.PetRuntime.MotionGroups,
+		// invoke("pet_get_expressions")
+		"pet_get_expressions" => _services.PetRuntime.Expressions,
+		// invoke("pet_set_mouth_open", {value: 0.5, speaking: true})
+		"pet_set_mouth_open" => Run(() => _services.PetRuntime.SetMouthOpen((float)Num(args, "value"), OptionalBool(args, "speaking") ?? true)),
+		// invoke("pet_reload_model", {modelId?: "arg-nori"})
+		"pet_reload_model" => Run(() => _services.PetRuntime.RequestModelLoad(OptionalStr(args, "modelId") ?? _services.PetRuntime.CurrentModelId)),
+		// invoke("pet_trigger_beat", {timestamp?})
+		"pet_trigger_beat" => Run(() => _services.PetRuntime.TriggerBeat(OptionalDouble(args, "timestamp"))),
+
 		// ---- 窗口 ----
 		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
 		"window_hide" => await OnUi(() => Run(() => _services.Windows.Hide(Str(args, "label")))),
@@ -166,9 +188,7 @@ public sealed class BridgeCommands(AppServices services)
 		"window_outer_size" => await OnUi(() => OuterSize(Target(source, args))),
 		"window_set_size" => await OnUi(() => SetSize(Target(source, args), args)),
 		"window_set_position" => await OnUi(() => SetPosition(Target(source, args), args)),
-		// invoke("window_set_input_mask", {label: "pet", width, height, data, enabled})
-		"window_set_input_mask" => await OnUi(() => SetInputMask(Target(source, args), args)),
-		"window_start_drag" => await OnUi(() => Run(() => PlatformServices.Current.StartWindowDrag(Target(source, args).NativeHandle))),
+		"window_start_drag" => await OnUi(() => Run(() => PlatformServices.Current.StartWindowDrag(NativeHandleOf(Target(source, args))))),
 
 		// ---- 插件替代 ----
 		// invoke("open_url", {url: "https://..."})
@@ -218,6 +238,54 @@ public sealed class BridgeCommands(AppServices services)
 	}
 
 	/// <summary>
+	/// 获取桌宠运行时状态
+	/// </summary>
+	private object GetPetState()
+	{
+		var pet = _services.PetRuntime;
+		return new
+		{
+			modelId = pet?.CurrentModelId ?? "arg-nori",
+			expressions = pet?.Expressions ?? [],
+			motionGroups = pet?.MotionGroups ?? [],
+			userScale = pet?.UserScale ?? 1.0f,
+			opacity = pet?.Opacity ?? 1.0f,
+			autoBlink = pet?.AutoBlinkEnabled ?? true,
+			eyeTracking = pet?.EyeTrackingEnabled ?? true,
+			idleEyeAnimation = pet?.IdleEyeAnimationEnabled ?? true,
+			idleAnimation = pet?.IdleAnimationEnabled ?? true,
+			expressionEnabled = pet?.ExpressionEnabled ?? true,
+			shadow = pet?.ShadowEnabled ?? true,
+			lipSync = pet?.LipSyncEnabled ?? true,
+			beatSync = pet?.BeatSyncEnabled ?? false,
+			clickInteraction = pet?.ClickInteraction ?? true,
+			maxFps = pet?.MaxFps ?? 0,
+			renderScale = pet?.RenderScale ?? 2.0f,
+		};
+	}
+
+	/// <summary>
+	/// 播放桌宠动作
+	/// </summary>
+	private object? PlayPetMotion(JsonElement args)
+	{
+		if (_services.PetRuntime is null) return false;
+		string? name = OptionalStr(args, "name");
+		if (!string.IsNullOrEmpty(name))
+		{
+			return _services.PetRuntime.PlayMotionByName(name);
+		}
+		string? group = OptionalStr(args, "group");
+		int? index = OptionalInt(args, "index");
+		if (!string.IsNullOrEmpty(group) && index.HasValue)
+		{
+			return _services.PetRuntime.PlayMotionByIndex(group, index.Value);
+		}
+		_services.PetRuntime.PlayRandomMotion();
+		return true;
+	}
+
+	/// <summary>
 	/// 写配置并全局广播, 桌宠窗口据此热更新模型与显示参数
 	/// </summary>
 	private object? SetConfig(string key, JsonElement rawValue)
@@ -226,6 +294,7 @@ public sealed class BridgeCommands(AppServices services)
 		if (value is null) throw new InvalidOperationException("配置值不能为空");
 		_services.Config.Set(key, value);
 		string storage = value.ToStorage();
+		_services.PetRuntime?.ApplyConfig(key, storage);
 		Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:config-changed", new {key, value = storage}));
 		return null;
 	}
@@ -242,7 +311,11 @@ public sealed class BridgeCommands(AppServices services)
 			Str(args, "apiKey"),
 			Str(args, "model"),
 			messages,
-			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})),
+			motion => Dispatcher.UIThread.Post(() =>
+			{
+				_services.PetRuntime?.PlayMotionByName(motion);
+				_services.Windows.Broadcast("nori:play-motion", new {name = motion});
+			}),
 			OptionalBool(args, "persist") ?? true);
 	}
 
@@ -260,7 +333,11 @@ public sealed class BridgeCommands(AppServices services)
 			Str(args, "model"),
 			messages,
 			chunk => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-chunk", new {streamId, chunk, done = false})),
-			motion => Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:play-motion", new {name = motion})),
+			motion => Dispatcher.UIThread.Post(() =>
+			{
+				_services.PetRuntime?.PlayMotionByName(motion);
+				_services.Windows.Broadcast("nori:play-motion", new {name = motion});
+			}),
 			usage => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-usage", new
 			{
 				streamId,
@@ -349,18 +426,27 @@ public sealed class BridgeCommands(AppServices services)
 
 	/// <summary>
 	/// 目标窗口: 参数里带 label 用 label, 否则用消息来源窗口
+	///
+	/// 返回基类 Window: 桌宠是原生 PetWindow 而非 NoriWindow, 如果这里按 NoriWindow 取,
+	/// {label: "pet"} 会取不到而静默回退到调用方窗口, 让 window_is_visible 之类的命令
+	/// 报告主窗口的状态 (主界面的唤出按钮因此永远以为桌宠已显示).
 	/// </summary>
-	private NoriWindow Target(NoriWindow source, JsonElement args) =>
+	private Window Target(NoriWindow source, JsonElement args) =>
 		_services.Windows.Get(OptionalLabel(args)) ?? source;
+
+	/// <summary>
+	/// 窗口原生句柄 (拖动用), 取不到返回 0
+	/// </summary>
+	private static nint NativeHandleOf(Window window) => window.TryGetPlatformHandle()?.Handle ?? 0;
 
 	private static string? OptionalLabel(JsonElement args) =>
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty("label", out JsonElement value) && value.ValueKind == JsonValueKind.String
 			? value.GetString()
 			: null;
 
-	private static object OuterPosition(NoriWindow window) => new {x = window.Position.X, y = window.Position.Y};
+	private static object OuterPosition(Window window) => new {x = window.Position.X, y = window.Position.Y};
 
-	private static object OuterSize(NoriWindow window)
+	private static object OuterSize(Window window)
 	{
 		double scale = window.RenderScaling;
 		return new
@@ -373,7 +459,7 @@ public sealed class BridgeCommands(AppServices services)
 	/// <summary>
 	/// 按物理像素设置窗口尺寸 (前端传的是 PhysicalSize)
 	/// </summary>
-	private static object? SetSize(NoriWindow window, JsonElement args)
+	private static object? SetSize(Window window, JsonElement args)
 	{
 		double scale = window.RenderScaling;
 		window.Width = Num(args, "width") / scale;
@@ -384,22 +470,9 @@ public sealed class BridgeCommands(AppServices services)
 	/// <summary>
 	/// 按物理像素设置窗口位置
 	/// </summary>
-	private static object? SetPosition(NoriWindow window, JsonElement args)
+	private static object? SetPosition(Window window, JsonElement args)
 	{
 		window.Position = new PixelPoint((int)Math.Round(Num(args, "x")), (int)Math.Round(Num(args, "y")));
-		return null;
-	}
-
-	/// <summary>
-	/// 更新桌宠透明区域命中图.
-	/// </summary>
-	private static object? SetInputMask(NoriWindow window, JsonElement args)
-	{
-		int width = checked((int)Num(args, "width"));
-		int height = checked((int)Num(args, "height"));
-		string data = OptionalStr(args, "data") ?? "";
-		bool enabled = OptionalBool(args, "enabled") ?? false;
-		window.SetInputMask(width, height, data, enabled);
 		return null;
 	}
 

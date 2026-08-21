@@ -120,7 +120,7 @@ public sealed class App : Application
 			services.Windows = new WindowManager(assets, desktop);
 			services.Commands = new BridgeCommands(services);
 			NoriBridge bridge = new(services);
-			services.Windows.CreateAll(bridge);
+			services.Windows.CreateAll(bridge, services);
 
 			TrayMenu.Install(this, services);
 

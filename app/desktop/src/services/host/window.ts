@@ -133,8 +133,8 @@ export class HostWindow {
 		await invoke("window_start_drag", {label: this.label})
 	}
 
-	async setInputMask(mask: WindowInputMask): Promise<void> {
-		await invoke("window_set_input_mask", {label: this.label, ...mask})
+	async setInputMask(_mask: WindowInputMask): Promise<void> {
+		// 原生 Avalonia 窗口自管逐像素透明与命中，前端不再推送掩码
 	}
 }
 

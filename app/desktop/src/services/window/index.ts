@@ -1,4 +1,3 @@
-import {emit} from "../host/event"
 import {getCurrentWindow, getWindowByLabel} from "../host/window"
 
 /**
@@ -19,11 +18,10 @@ export const NAMESPACE = {
 /**
  * 窗口 label → 页面路由表
  */
-export const WINDOW_ROUTES: Record<WindowLabel, string> = {
+export const WINDOW_ROUTES: Partial<Record<WindowLabel, string>> = {
 	[NAMESPACE.firstRun]: "/first-run",
 	[NAMESPACE.init]: "/init",
 	[NAMESPACE.main]: "/main",
-	[NAMESPACE.pet]: "/pet",
 }
 
 /**
@@ -39,7 +37,7 @@ export async function getCurrentWindowLabel(): Promise<WindowLabel | null> {
  */
 export async function getCurrentWindowRoute(): Promise<string | null> {
 	const LABEL = await getCurrentWindowLabel()
-	return LABEL ? WINDOW_ROUTES[LABEL] : null
+	return LABEL ? (WINDOW_ROUTES[LABEL] ?? null) : null
 }
 
 /**
@@ -56,10 +54,6 @@ export async function showWindow(label: WindowLabel) {
 	const WINDOW = getTarget(label)
 	await WINDOW.show()
 	await WINDOW.setFocus()
-	// 桌宠窗口显示后通知其前端加载模型
-	if (label === NAMESPACE.pet) {
-		await emit("nori:pet-start")
-	}
 }
 
 /**

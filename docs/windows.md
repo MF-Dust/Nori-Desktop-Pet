@@ -54,15 +54,9 @@
 
 ## 桌宠窗口的关键约束
 
-1. **manifest 必须声明 `<supportedOS>`**. WebView 依赖 `NativeControlHost`, 缺这段会直接抛
-   `Unable to create child window for native control host`. 见 `Nori.Desktop/app.manifest`.
-2. **逐像素透明的完整配方**: 窗口 `WindowDecorations=None` + `Background=Transparent` +
-   `TransparencyLevelHint=[Transparent]`; `NativeWebView.Background=Transparent`
-   (它会写进 WebView2 的 `DefaultBackgroundColor`); 页面 `html,body{background:transparent}`;
-   WebGL 上下文 `alpha:true` 且 `clearColor(0,0,0,0)`. 缺任意一环都会变成不透明底色.
-   验证数据见 `技术.md`.
-3. **窗口拖动不能靠 CSS**. WebView 吞掉指针事件, `data-tauri-drag-region` 那套失效,
-   改为 `invoke("window_start_drag")` 回调宿主, 由 `IPlatformServices.StartWindowDrag`
-   发 `WM_NCLBUTTONDOWN` 交给系统.
-4. **DIP 与物理像素别混**. `Width/Height` 是 DIP, `Position` 是物理像素,
-   前端 `PhysicalSize`/`PhysicalPosition` 传的也是物理像素, 换算统一乘 `RenderScaling`.
+1. **manifest 必须声明 `<supportedOS>`**. 见 `Nori.Desktop/app.manifest`。
+2. **逐像素透明的完整配方 (原生 OpenGL)**: 窗口 `WindowDecorations=None` + `Background=Transparent` +
+   `TransparencyLevelHint=[Transparent]`; 控件 `PetGlControl` (继承 `OpenGlControlBase`) 直接渲染在 DirectComposition 透明表面上;
+   `WM_NCHITTEST` 拦截钩子根据 ~10Hz 采样的 alpha 缓冲判断是否穿透桌面（`HTTRANSPARENT` / `HTCLIENT`）。
+3. **窗口拖拽与交互**: `PetWindow` 原生监听指针按下与移动事件，位移超过 4px 时拖拽窗口并持久化坐标，点击时触发 HitTest / 动作表情，右键弹出深海微光原生菜单。
+4. **DIP 与物理像素别混**. `Width/Height` 是 DIP, `Position` 是物理像素, 渲染视口与模型投影换算统一按 `Bounds * RenderScaling` 物理像素铺满。

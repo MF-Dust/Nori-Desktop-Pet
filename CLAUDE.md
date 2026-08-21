@@ -35,20 +35,22 @@ pnpm dev                                      # vite only; must be running for N
 
 ## Architecture
 
-### Four windows, one SPA, one WebView2 each
+### Four windows, three WebView2 + one native OpenGL
 
-`Nori.Desktop/Windows/WindowDefinition.cs` declares four windows — `first-run`, `init`, `main`, `pet` — all created hidden, borderless (`WindowDecorations.None`) and transparent. Every window hosts its own `NativeWebView` loading the *same* Vue bundle; which page it shows is decided at runtime:
+`Nori.Desktop/Windows/WindowDefinition.cs` declares four windows — `first-run`, `init`, `main`, `pet` — all created hidden, borderless (`WindowDecorations.None`) and transparent.
+- Three windows (`first-run`, `init`, `main`) are `NoriWindow` hosting `NativeWebView` and loading the Vue bundle.
+- The desktop pet (`pet`) is a native Avalonia `PetWindow` hosting `PetGlControl` (OpenGL via `Live2DCSharpSDK`), bypassing WebView2 airspace and window-region clipping issues completely.
 
 1. `App.cs` reads `first_run_completed` from SQLite and shows `first-run` or `init`.
 2. The host navigates each webview to `…/app/index.html?window=<label>`.
 3. Each webview mounts `App.vue`, which calls `navigateToOwnWindow()` — it reads its own label from the query string and `router.replace()`s to the mapped route.
 4. The label→route table is `WINDOW_ROUTES` in `src/services/window/index.ts`.
 
-**Adding a window means touching four places**: `WindowDefinition.All`, the `WindowLabel` union, `WINDOW_ROUTES`, and `src/services/router/index.ts`. Miss one and the window renders `/init`.
+**Adding a webview window means touching four places**: `WindowDefinition.All`, the `WindowLabel` union, `WINDOW_ROUTES`, and `src/services/router/index.ts`.
 
 First-run flow: wizard in `first-run` → `complete_first_run` (C#) marks the DB, closes `first-run`, shows `init`, broadcasts `nori:init-start` → `InitView` checks the local Live2D model → `showWindow("main")`, then closes `init`. Normal launch shows `init` directly. Because `init` starts hidden on the first-run path, `InitView` checks `isVisible()` and otherwise *waits* for `nori:init-start`.
 
-The tray (`Tray/TrayMenu.cs`) is the only always-available entry point: left-click opens `main`, menu toggles `pet`. Closing a window only hides it (`NoriWindow.AllowClose` gates real disposal); `ShutdownMode.OnExplicitShutdown` keeps the process alive.
+The tray (`Tray/TrayMenu.cs`) is the only always-available entry point: left-click opens `main`, menu toggles `pet`. Closing a window only hides it (`NoriWindow.AllowClose` / `PetWindow.AllowClose` gates real disposal); `ShutdownMode.OnExplicitShutdown` keeps the process alive.
 
 ### The bridge (replaces Tauri IPC)
 
@@ -69,12 +71,9 @@ Host→frontend events:
 | Event | Emitted by | Consumed by |
 |---|---|---|
 | `nori:init-start` | `complete_first_run` | `InitView.vue` |
-| `nori:pet-start` | frontend `emit` → rebroadcast | `PetView.vue` — loads the model |
-| `nori:config-changed` | every `set_config` | `PetView.vue` — hot-applies display config |
-| `nori:play-motion` | `chat_completion` | `PetView.vue` |
+| `nori:config-changed` | every `set_config` | WebViews — hot-applies display config |
+| `nori:play-motion` | `chat_completion` | WebViews |
 | `nori:window-metrics` | `NoriWindow.PostMetrics` | `services/host/window.ts` cache |
-
-That last one exists for performance: `PetView`'s head tracking runs per animation frame, and three JSON round-trips per frame would be far heavier than Tauri's IPC. The host pushes position/size/scale on change, `host/window.ts` caches it, and only `get_cursor_pos` still does a round-trip.
 
 Blocking work (HTTP, zip extraction, SQLite) must stay off the UI thread; anything touching windows or `InvokeScript` must go through `Dispatcher.UIThread`.
 
@@ -107,11 +106,15 @@ Models are local resources under `data/resources/live2d/<name>/`; there is no re
 
 `ZipExtractor` is hardened — rejects absolute paths, UNC, drive letters, `..`, control chars and symlink entries, and re-canonicalizes each parent against the target. It also strips a single common top-level directory. Don't loosen it.
 
-### Live2D
+### Live2D: Native OpenGL Desk Pet + PixiJS Setting Preview
 
-Live2D uses `pixi-live2d-display` with PixiJS and Cubism 4. Models are loaded from the local `AssetServer` and `createLive2D()` owns the body-level canvas lifecycle. The renderer uses `preserveDrawingBuffer` so the pet can build a low-resolution alpha interaction mask; the native pet window applies that mask to pass transparent pixels through to the desktop.
-
-The library appends its `<canvas>` to `document.body` and never removes it, so `createLive2D()` owns the DOM lifecycle and `stage.ts` positions that body-level canvas with `position: fixed`. The pet window sizes *itself* to the model (`applyWindowSize`, center-preserving). Head tracking calls `get_cursor_pos` because a webview can't observe the cursor outside its own window.
+Desktop Pet rendering is implemented natively in Avalonia (`PetWindow.cs` + `PetGlControl.cs`) using `Live2DCSharpSDK` and Cubism Native Core:
+- Direct OpenGL ES 2.0 rendering in a transparent Avalonia window (`OpenGlControlBase`).
+- High-quality 2048x2048 clipping mask buffer, 16x anisotropic filtering, and high precision mask enabled.
+- Alpha mask sampling (~10Hz) provides non-blocking Win32 `WM_NCHITTEST` pixel-accurate transparency pass-through without window region clipping artifacts.
+- 1:1 C# behavioral pipeline (`AutoBlink`, `EyeFocus`, `IdleDisable`, `BeatSync`, `LipSync`, `ExpressionStore`, `ExpressionBehavior`).
+- Native mouse drag (4px threshold + position persistence), tap actions/expressions, global cursor tracking, and deep sea glow themed context menu.
+- Settings page preview retains PixiJS + `pixi-live2d-display` with texture mipmapping (`baseTexture.mipmap = 1`), 2048 mask buffer, and `devicePixelRatio` DPI super-sampling.
 
 ### Local model management
 

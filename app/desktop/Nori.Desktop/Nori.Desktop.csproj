@@ -9,6 +9,7 @@
 		<RootNamespace>Nori.Desktop</RootNamespace>
 		<AssemblyName>Nori.Desktop</AssemblyName>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<ApplicationManifest>app.manifest</ApplicationManifest>
 		<ApplicationIcon>Assets/icon.ico</ApplicationIcon>
 		<Version>0.1.0</Version>
@@ -23,6 +24,11 @@
 
 	<ItemGroup>
 		<ProjectReference Include="../Nori.Core/Nori.Core.csproj"/>
+		<ProjectReference Include="../Live2DCSharpSDK.OpenGL/Live2DCSharpSDK.OpenGL.csproj"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="../Live2D/native/win-x64/Live2DCubismCore.dll" Link="Live2DCubismCore.dll" CopyToOutputDirectory="PreserveNewest"/>
 	</ItemGroup>
 
 	<ItemGroup>

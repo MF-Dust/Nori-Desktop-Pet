@@ -1,3 +1,4 @@
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Nori.Core.Assets;
 using Nori.Desktop.Bridge;
@@ -8,42 +9,67 @@ namespace Nori.Desktop.Windows;
 /// 窗口调度
 ///
 /// 承接原来 Rust 侧 lib.rs setup / tray.rs 与前端 services/window/index.ts 的窗口调度职责.
-/// 四个窗口在启动时一次性建好并全部隐藏, 之后只做显示/隐藏/关闭.
+/// 包含三个 WebView2 窗口 (first-run, init, main) 与一个原生 OpenGL 桌宠窗口 (pet)。
 /// </summary>
 public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleApplicationLifetime lifetime)
 {
 	private readonly AssetServer _assetServer = assetServer;
 	private readonly IClassicDesktopStyleApplicationLifetime _lifetime = lifetime;
-	private readonly Dictionary<string, NoriWindow> _windows = [];
+	private readonly Dictionary<string, Window> _windows = [];
+	private PetWindow? _petWindow;
 
 	/// <summary>
 	/// 建好全部窗口 (不显示)
 	/// </summary>
-	public void CreateAll(NoriBridge bridge)
+	public void CreateAll(NoriBridge bridge, AppServices services)
 	{
 		foreach (WindowDefinition definition in WindowDefinition.All)
 		{
-			NoriWindow window = new(definition, bridge, _assetServer.WindowUrl(definition.Label));
-			// 关闭窗口不退出应用: 与 Tauri 版一致, 只有托盘退出与 exit_app 才结束进程
-			window.Closing += (_, args) =>
+			if (definition.Label == WindowLabels.Pet)
 			{
-				if (window.AllowClose) return;
-				args.Cancel = true;
-				window.Hide();
-			};
-			_windows[definition.Label] = window;
+				PetWindow petWindow = new(definition, services);
+				petWindow.Closing += (_, args) =>
+				{
+					if (petWindow.AllowClose) return;
+					args.Cancel = true;
+					petWindow.Hide();
+				};
+				_windows[definition.Label] = petWindow;
+				_petWindow = petWindow;
+			}
+			else
+			{
+				NoriWindow window = new(definition, bridge, _assetServer.WindowUrl(definition.Label));
+				window.Closing += (_, args) =>
+				{
+					if (window.AllowClose) return;
+					args.Cancel = true;
+					window.Hide();
+				};
+				_windows[definition.Label] = window;
+			}
 		}
 	}
 
 	/// <summary>
 	/// 按标签取窗口, 不存在返回 null
 	/// </summary>
-	public NoriWindow? Get(string? label) => label is not null && _windows.TryGetValue(label, out NoriWindow? window) ? window : null;
+	public Window? Get(string? label) => label is not null && _windows.TryGetValue(label, out Window? window) ? window : null;
+
+	/// <summary>
+	/// 按标签取 WebView2 窗口
+	/// </summary>
+	public NoriWindow? GetNoriWindow(string? label) => Get(label) as NoriWindow;
+
+	/// <summary>
+	/// 原生桌宠窗口引用
+	/// </summary>
+	public PetWindow? Pet => _petWindow;
 
 	/// <summary>
 	/// 全部窗口
 	/// </summary>
-	public IEnumerable<NoriWindow> All => _windows.Values;
+	public IEnumerable<Window> All => _windows.Values;
 
 	/// <summary>
 	/// 显示并聚焦窗口
@@ -53,10 +79,10 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		if (Get(label) is not { } window) return;
 		window.Show();
 		window.Activate();
-		if (label == WindowLabels.Pet)
+		if (window is PetWindow pet)
 		{
-			window.Topmost = true;
-			Broadcast("nori:pet-start", null);
+			pet.Topmost = true;
+			pet.ApplyWindowSize();
 		}
 	}
 
@@ -72,7 +98,8 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 	{
 		if (Get(label) is not { } window) return;
 		_windows.Remove(label);
-		window.AllowClose = true;
+		if (window is NoriWindow nw) nw.AllowClose = true;
+		else if (window is PetWindow pw) pw.AllowClose = true;
 		window.Close();
 	}
 
@@ -87,11 +114,17 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 	}
 
 	/// <summary>
-	/// 向所有窗口广播事件
+	/// 向所有 WebView2 窗口广播事件
 	/// </summary>
 	public void Broadcast(string name, object? payload)
 	{
-		foreach (NoriWindow window in _windows.Values) window.PostEvent(name, payload);
+		foreach (Window window in _windows.Values)
+		{
+			if (window is NoriWindow noriWindow)
+			{
+				noriWindow.PostEvent(name, payload);
+			}
+		}
 	}
 
 	/// <summary>
