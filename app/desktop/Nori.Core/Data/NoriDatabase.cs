@@ -33,6 +33,7 @@ public sealed class NoriDatabase : IDisposable
 		    created_at  TEXT NOT NULL,
 		    updated_at  TEXT NOT NULL
 		);
+		CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC, id DESC);
 		""";
 
 	private readonly SqliteConnection _connection;

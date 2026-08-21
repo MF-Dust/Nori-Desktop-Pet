@@ -54,6 +54,38 @@ public sealed class MemoryStore(NoriDatabase database)
 {
 	private readonly NoriDatabase _database = database;
 
+	// 向量缓存: 语义检索的热路径上避免每次全量反序列化 JSON 向量。
+	// 以 updated_at 做失效比对, 内容变更后自动重解析。
+	private readonly Lock _vectorCacheGate = new();
+	private readonly Dictionary<long, (string UpdatedAt, float[] Vector)> _vectorCache = [];
+
+	/// <summary>
+	/// 取记忆的向量, 命中缓存时不再反序列化 JSON
+	/// </summary>
+	private float[]? VectorOf(MemoryItem item)
+	{
+		if (string.IsNullOrWhiteSpace(item.Embedding)) return null;
+		lock (_vectorCacheGate)
+		{
+			if (_vectorCache.TryGetValue(item.Id, out var cached) && cached.UpdatedAt == item.UpdatedAt)
+			{
+				return cached.Vector;
+			}
+			float[]? vector = item.GetVector();
+			if (vector is not null) _vectorCache[item.Id] = (item.UpdatedAt, vector);
+			return vector;
+		}
+	}
+
+	/// <summary>从向量缓存中逐出一条 (行被删改时调用)</summary>
+	private void EvictVector(long id)
+	{
+		lock (_vectorCacheGate)
+		{
+			_vectorCache.Remove(id);
+		}
+	}
+
 	/// <summary>
 	/// 添加一条新记忆
 	/// </summary>
@@ -103,14 +135,19 @@ public sealed class MemoryStore(NoriDatabase database)
 	/// <summary>
 	/// 更新记忆的向量嵌入 (用于后台批量补全或重新生成 Embedding)
 	/// </summary>
-	public bool UpdateEmbedding(long id, string embedding) => _database.Locked(connection =>
+	public bool UpdateEmbedding(long id, string embedding)
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "UPDATE memories SET embedding = $embedding WHERE id = $id";
-		command.Parameters.AddWithValue("$id", id);
-		command.Parameters.AddWithValue("$embedding", embedding);
-		return command.ExecuteNonQuery() > 0;
-	});
+		bool updated = _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "UPDATE memories SET embedding = $embedding WHERE id = $id";
+			command.Parameters.AddWithValue("$id", id);
+			command.Parameters.AddWithValue("$embedding", embedding);
+			return command.ExecuteNonQuery() > 0;
+		});
+		if (updated) EvictVector(id);
+		return updated;
+	}
 
 	/// <summary>
 	/// 获取所有记忆 (按重要度与创建时间降序)
@@ -154,6 +191,22 @@ public sealed class MemoryStore(NoriDatabase database)
 	});
 
 	/// <summary>
+	/// 全表读取记忆 (语义检索用, 不截断: 截断会静默丢掉更早的记忆)
+	/// </summary>
+	private IReadOnlyList<MemoryItem> GetAllUnbounded() => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at FROM memories";
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<MemoryItem> list = [];
+		while (reader.Read())
+		{
+			list.Add(ReadRow(reader));
+		}
+		return (IReadOnlyList<MemoryItem>)list;
+	});
+
+	/// <summary>
 	/// 基于 BGE-M3 / OpenAI 向量的语义检索 (余弦相似度)
 	/// </summary>
 	public IReadOnlyList<MemorySearchResult> SearchSemantic(
@@ -161,12 +214,12 @@ public sealed class MemoryStore(NoriDatabase database)
 		int limit = 10,
 		double minSimilarity = 0.25)
 	{
-		IReadOnlyList<MemoryItem> all = GetAll(500);
+		IReadOnlyList<MemoryItem> all = GetAllUnbounded();
 		List<MemorySearchResult> results = [];
 
 		foreach (MemoryItem item in all)
 		{
-			float[]? vec = item.GetVector();
+			float[]? vec = VectorOf(item);
 			if (vec == null || vec.Length != queryVector.Length) continue;
 
 			double sim = CosineSimilarity(queryVector, vec);
@@ -245,23 +298,35 @@ public sealed class MemoryStore(NoriDatabase database)
 	/// <summary>
 	/// 删除单条记忆
 	/// </summary>
-	public bool Delete(long id) => _database.Locked(connection =>
+	public bool Delete(long id)
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "DELETE FROM memories WHERE id = $id";
-		command.Parameters.AddWithValue("$id", id);
-		return command.ExecuteNonQuery() > 0;
-	});
+		bool deleted = _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "DELETE FROM memories WHERE id = $id";
+			command.Parameters.AddWithValue("$id", id);
+			return command.ExecuteNonQuery() > 0;
+		});
+		if (deleted) EvictVector(id);
+		return deleted;
+	}
 
 	/// <summary>
 	/// 清空所有记忆
 	/// </summary>
-	public void Clear() => _database.Locked(connection =>
+	public void Clear()
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "DELETE FROM memories";
-		command.ExecuteNonQuery();
-	});
+		_database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "DELETE FROM memories";
+			command.ExecuteNonQuery();
+		});
+		lock (_vectorCacheGate)
+		{
+			_vectorCache.Clear();
+		}
+	}
 
 	/// <summary>
 	/// 计算两个向量的余弦相似度
