@@ -2,7 +2,6 @@ name: Bug 反馈
 description: 在使用 Nori Desktop Pet 的过程中遇到了问题或程序异常。
 title: "【Bug】（将此栏【替换】为你的简要问题描述）"
 labels: ["Bug", "待查看", "优先级：无"]
-type: Bug
 body:
   - type: markdown
     attributes:
