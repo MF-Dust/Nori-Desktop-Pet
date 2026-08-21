@@ -182,11 +182,6 @@ export const petLive2DController: PetLive2DProxy = {
 	triggerBeat: async (timestamp?: number) => { await invoke("pet_trigger_beat", {timestamp}) },
 }
 
-/**
- * 兼容旧接口 (空操作)
- */
-export const setPetLive2DController = (_controller: unknown): void => {}
-
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
 
 export const createLive2D = () => {

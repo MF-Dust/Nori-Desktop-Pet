@@ -77,8 +77,6 @@ public sealed class BridgeCommands(AppServices services)
 		"import_local_resource" => await ImportLocalResourceAsync(source, args),
 
 		// ---- 系统 ----
-		// invoke("get_cursor_pos") → [x, y] (物理像素)
-		"get_cursor_pos" => CursorPosition(),
 
 		// ---- 聊天 ----
 		// invoke("get_chat_history", {limit?: 50, beforeId?: 0})
