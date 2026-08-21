@@ -7,6 +7,30 @@ import {assetUrl, resolveModelFileBase} from "./config"
 import type {MotionGroup} from "./index"
 
 /**
+ * 按动作组名称选择点击互动候选。
+ *
+ * 与原生 C# 运行时保持同一排序: TapBody -> 点击/触摸 -> 反应 -> 动作/交互 ->
+ * 其他非 Idle / Background 组。返回对象保留模型声明的原始组名。
+ */
+export const selectInteractionMotionGroups = (groups: MotionGroup[]): MotionGroup[] => {
+	return groups
+		.map((group, index) => ({group, index, priority: classifyInteractionGroup(group.group)}))
+		.filter((candidate) => candidate.priority >= 0 && candidate.group.names.some((name) => name.trim() !== ""))
+		.sort((left, right) => left.priority - right.priority || left.index - right.index)
+		.map((candidate) => candidate.group)
+}
+
+const classifyInteractionGroup = (group: string): number => {
+	const NORMALIZED = group.replace(/[^a-z0-9]/gi, "").toLowerCase()
+	if (NORMALIZED === "" || NORMALIZED.startsWith("idle") || NORMALIZED.startsWith("background")) return -1
+	if (NORMALIZED === "tapbody") return 0
+	if (NORMALIZED.includes("tap") || NORMALIZED.includes("touch") || NORMALIZED.includes("click")) return 1
+	if (NORMALIZED.includes("reaction")) return 2
+	if (NORMALIZED.includes("action") || NORMALIZED.includes("interaction")) return 3
+	return 4
+}
+
+/**
  * 读取指定模型的全部动作组
  * 资源缺失 / 解析失败返回 null
  */

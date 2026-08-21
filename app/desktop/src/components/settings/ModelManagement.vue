@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
+import {listen, type UnlistenFn} from "../../services/host/event"
 import {invoke} from "../../services/host/invoke"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {MODEL_LIST, type ModelInfo} from "../../services/live2d/models"
@@ -8,6 +9,7 @@ import {
 	l2dModelKey,
 	parseExpressionList,
 	parseNumber,
+	readBehaviorConfig,
 	readModelConfig,
 	resolveModelFileBase,
 } from "../../services/live2d/config"
@@ -111,10 +113,19 @@ onMounted(async () => {
 	}
 	await refreshStatus()
 	window.addEventListener("resize", onWindowResize)
+	const UNLISTEN = await listen<{key?: string}>("nori:config-changed", ({payload}) => {
+		if (payload?.key === "l2d_click_interaction") void syncPreviewClickInteraction()
+	})
+	if (disposed) UNLISTEN()
+	else unlistenConfigChanged = UNLISTEN
 })
 
 onBeforeUnmount(() => {
+	disposed = true
 	window.removeEventListener("resize", onWindowResize)
+	unbindPreviewClick()
+	unlistenConfigChanged?.()
+	unlistenConfigChanged = null
 	void PREVIEW.destroy()
 })
 
@@ -141,6 +152,29 @@ const enableModel = async (model: ModelInfo) => {
 const PREVIEW = createLive2D()
 const showcaseRef = ref<HTMLElement>()
 const previewReady = ref(false)
+const previewClickInteraction = ref(true)
+let unlistenConfigChanged: UnlistenFn | null = null
+let disposed = false
+
+const onPreviewClick = (event: MouseEvent) => {
+	if (!previewReady.value || !previewClickInteraction.value) return
+	PREVIEW.tapAt(event.clientX, event.clientY)
+}
+
+const bindPreviewClick = () => {
+	const CANVAS = PREVIEW.canvas()
+	CANVAS?.addEventListener("click", onPreviewClick)
+}
+
+const unbindPreviewClick = () => {
+	const CANVAS = PREVIEW.canvas()
+	CANVAS?.removeEventListener("click", onPreviewClick)
+}
+
+const syncPreviewClickInteraction = async () => {
+	previewClickInteraction.value = (await readBehaviorConfig("l2d_click_interaction")) !== false
+	PREVIEW.setClickInteraction(previewClickInteraction.value)
+}
 
 // 预览模型显示参数 (调整的模型, 非桌宠当前模型)
 const pvScale = ref(1)
@@ -212,6 +246,7 @@ const openAdjust = async (model: ModelInfo) => {
 	const RECT = showcaseRef.value?.getBoundingClientRect()
 	if (!RECT) return
 	try {
+		unbindPreviewClick()
 		await PREVIEW.destroy()
 		await PREVIEW.mount(
 			{directory: model.id, fileBase: resolveModelFileBase(model.id)},
@@ -222,6 +257,8 @@ const openAdjust = async (model: ModelInfo) => {
 		console.error("加载预览模型失败:", error)
 	}
 	previewReady.value = true
+	await syncPreviewClickInteraction()
+	bindPreviewClick()
 	refreshPreviewLayout()
 	await applyPreviewExpressions(previewExpressionList.value)
 }
@@ -230,6 +267,7 @@ const openAdjust = async (model: ModelInfo) => {
 const closeAdjust = () => {
 	adjustFor.value = null
 	previewReady.value = false
+	unbindPreviewClick()
 	void PREVIEW.destroy()
 }
 </script>

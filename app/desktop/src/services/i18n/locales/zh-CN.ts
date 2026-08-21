@@ -176,7 +176,7 @@ export default {
 				behavior: {
 					title: "行为与交互",
 					clickInteraction: "点击交互",
-					clickInteractionDesc: "点击身体播放 tap_body 动作, 点击头部随机表情",
+					clickInteractionDesc: "点击模型播放可用互动动作, 命中 Head 区域时随机切换表情",
 					autoBlink: "自动眨眼",
 					autoBlinkDesc: "每 3~8 秒平滑眨眼一次",
 					eyeTracking: "光标追踪",

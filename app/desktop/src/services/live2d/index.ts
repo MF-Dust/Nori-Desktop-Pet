@@ -20,6 +20,7 @@ import {ref, type Ref} from "vue"
 
 import {invoke} from "../host/invoke"
 import {assetUrl} from "./config"
+import {selectInteractionMotionGroups} from "./motions"
 import {calcFitModel, calculateSafeBaseSize} from "./composables/fit-model"
 import {useMotionManagerUpdate} from "./plugins"
 import {useAutoBlinkPlugin} from "./plugins/auto-blink"
@@ -288,32 +289,16 @@ export const createLive2D = () => {
 		lastTapAt = now
 
 		const AREAS = hitAreas.map((area) => area.toLowerCase())
-		if (AREAS.includes("body")) {
-			// 尝试 tap_body, 不存在时随机播放一个动作
-			inner.model.motion("tap_body", 0, MotionPriority.FORCE).then((ok) => {
-				if (!ok) {
-					const manager = inner.model.internalModel.motionManager
-					const groups = ["Idle", "Reactions", "Poses", "Effects"]
-					for (const group of groups) {
-						if (manager.definitions[group]?.length) {
-							const idx = Math.floor(Math.random() * manager.definitions[group].length)
-							manager.startMotion(group, idx, MotionPriority.FORCE).catch(() => {})
-							break
-						}
-					}
-				}
-			}).catch(() => {})
-			return
-		}
-		if (AREAS.includes("head")) {
+		if (AREAS.includes("head") && inner.expressionEnabled) {
 			const names = expressionStore.allGroupNames()
-			if (names.length > 0) {
-				const random = names[Math.floor(Math.random() * names.length)]
-				expressionStore.toggle(random)
-			} else {
-				inner.model.motion("tap_body", 0, MotionPriority.FORCE).catch(() => {})
+			const EXPRESSIONS = names.length > 0 ? names : expressionStore.allNames()
+			if (EXPRESSIONS.length > 0) {
+				const random = EXPRESSIONS[Math.floor(Math.random() * EXPRESSIONS.length)]
+				if (expressionStore.toggle(random)) return
 			}
 		}
+
+		void playInteractionMotion(inner)
 	}
 
 	const modelWorldPoint = (clientX: number, clientY: number): {x: number; y: number; rect: DOMRect} | null => {
@@ -604,8 +589,12 @@ export const createLive2D = () => {
 		if (!point) return
 
 		if (!isRenderedPixel(clientX, clientY)) return
-		const hitAreas = inner.model.hitTest(point.x, point.y)
-		handleHit(hitAreas.length > 0 ? hitAreas : ["body"])
+		try {
+			const hitAreas = inner.model.hitTest(point.x, point.y)
+			handleHit(hitAreas.length > 0 ? hitAreas : ["body"])
+		} catch {
+			/* 命中区定义异常时忽略本次点击 */
+		}
 	}
 
 	const getInteractionMask = (width = 96, height = 128): Live2DInteractionMask | null => {
@@ -688,11 +677,27 @@ export const createLive2D = () => {
 		const inner = internal
 		if (!inner?.model) return false
 		try {
-			await inner.model.motion(group, no, priority)
-			return true
+			return await inner.model.motion(group, no, priority)
 		} catch {
 			return false
 		}
+	}
+
+	async function playInteractionMotion(inner: Live2DInternal): Promise<boolean> {
+		if (!inner.model) return false
+		try {
+			const groups = selectInteractionMotionGroups((await getMotions()) ?? [])
+			for (const group of groups) {
+				const start = Math.floor(Math.random() * group.names.length)
+				for (let offset = 0; offset < group.names.length; offset++) {
+					const index = (start + offset) % group.names.length
+					if (await playMotionByIndex(group.group, index)) return true
+				}
+			}
+		} catch {
+			/* 模型动作定义异常时保持点击事件安全 */
+		}
+		return false
 	}
 
 	const playMotionByName = async (name: string, priority = MOTION_PRIORITY.force): Promise<boolean> => {

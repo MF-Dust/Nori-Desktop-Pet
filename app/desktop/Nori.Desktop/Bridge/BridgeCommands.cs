@@ -303,12 +303,11 @@ public sealed class BridgeCommands(AppServices services)
 		}
 		string? group = OptionalStr(args, "group");
 		int? index = OptionalInt(args, "index");
-		if (!string.IsNullOrEmpty(group) && index.HasValue)
+		if (!string.IsNullOrWhiteSpace(group))
 		{
-			return _services.PetRuntime.PlayMotionByIndex(group, index.Value);
+			return index.HasValue && _services.PetRuntime.PlayMotionByIndex(group, index.Value);
 		}
-		_services.PetRuntime.PlayRandomMotion();
-		return true;
+		return _services.PetRuntime.PlayTapBodyOrRandomMotion();
 	}
 
 	/// <summary>

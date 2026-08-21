@@ -176,7 +176,7 @@ export default {
 				behavior: {
 					title: "Behavior & Interaction",
 					clickInteraction: "Click Interaction",
-					clickInteractionDesc: "Click body for tap_body, click head for a random expression",
+					clickInteractionDesc: "Click the model for an available interaction motion; Head hit areas toggle a random expression",
 					autoBlink: "Auto Blink",
 					autoBlinkDesc: "Smoothly blink every 3-8 seconds",
 					eyeTracking: "Cursor Tracking",

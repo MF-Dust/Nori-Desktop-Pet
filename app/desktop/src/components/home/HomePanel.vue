@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import {invoke} from "../../services/host/invoke"
-import {emit as emitEvent} from "../../services/host/event"
 import {openUrl, writeText} from "../../services/host/shell"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../Icon.vue"
@@ -118,8 +117,8 @@ const loadDashboardState = async () => {
 // 快速动作: 触发打招呼/随机动作
 const triggerQuickMotion = async () => {
 	try {
-		// 广播随机动作或 Idle 动作
-		await emitEvent("nori:play-motion", {group: "TapBody", no: 0})
+		const PLAYED = await invoke<boolean>("pet_play_motion")
+		if (!PLAYED) return
 		motionFeedback.value = true
 		if (feedbackTimer) clearTimeout(feedbackTimer)
 		feedbackTimer = setTimeout(() => {

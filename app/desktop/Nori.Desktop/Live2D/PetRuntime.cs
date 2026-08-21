@@ -8,6 +8,7 @@ using Live2DCSharpSDK.Framework.Motion;
 using Live2DCSharpSDK.OpenGL;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
+using Nori.Core.Live2D;
 using Nori.Core.Logging;
 using Nori.Core.Resources;
 using Nori.Desktop.Bridge;
@@ -15,12 +16,6 @@ using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Live2D.Behaviors;
 
 namespace Nori.Desktop.Live2D;
-
-public sealed record MotionGroupInfo
-{
-	public required string Group { get; init; }
-	public required List<string> Names { get; init; }
-}
 
 /// <summary>
 /// 原生 Live2D 桌宠运行时
@@ -475,85 +470,106 @@ public sealed class PetRuntime
 		float normX = (clientX / windowW) * 2.0f - 1.0f;
 		float normY = -((clientY / windowH) * 2.0f - 1.0f);
 
-		if (_currentModel.HitTest(LAppDefine.HitAreaNameHead, normX, normY))
+		if (_currentModel.HitTest(LAppDefine.HitAreaNameHead, normX, normY)
+			&& ExpressionEnabled
+			&& ToggleRandomExpression())
 		{
-			ToggleRandomExpression();
 			return;
 		}
 
+		// 没有 HitAreas 的模型也会走这里: PetWindow 已经用 alpha 掩码确认点击的是模型像素。
 		PlayTapBodyOrRandomMotion();
 	}
 
-	public void PlayTapBodyOrRandomMotion()
+	/// <summary>
+	/// 播放点击互动动作。动作组按语义优先级选择，同组从随机位置开始逐项尝试。
+	/// </summary>
+	public bool PlayTapBodyOrRandomMotion()
 	{
-		if (_currentModel is null) return;
-
-		var entry = _currentModel.StartMotion(LAppDefine.MotionGroupTapBody, 0, MotionPriority.PriorityForce);
-		if (entry is null)
+		foreach (MotionGroupInfo group in MotionSelector.GetInteractionCandidates(_motionGroups))
 		{
-			string[] candidateGroups = ["Idle", "Reactions", "Poses", "Effects"];
-			foreach (string group in candidateGroups)
-			{
-				var matched = _motionGroups.FirstOrDefault(g => g.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
-				if (matched != null && matched.Names.Count > 0)
-				{
-					int idx = _random.Next(matched.Names.Count);
-					_currentModel.StartMotion(matched.Group, idx, MotionPriority.PriorityForce);
-					break;
-				}
-			}
+			if (TryPlayGroup(group)) return true;
 		}
+		return false;
+	}
+
+	private bool TryPlayGroup(MotionGroupInfo group)
+	{
+		if (_currentModel is null || group.Names.Count == 0) return false;
+
+		int start = _random.Next(group.Names.Count);
+		for (int offset = 0; offset < group.Names.Count; offset++)
+		{
+			int index = (start + offset) % group.Names.Count;
+			if (TryStartMotion(group.Group, index) is not null) return true;
+		}
+		return false;
+	}
+
+	private CubismMotionQueueEntry? TryStartMotion(string group, int index)
+	{
+		if (_currentModel is null) return null;
+		try
+		{
+			return _currentModel.StartMotion(group, index, MotionPriority.PriorityForce);
+		}
+		catch (Exception ex)
+		{
+			WriteCubismLog($"动作播放异常 [{group}_{index}]: {ex.Message}");
+			return null;
+		}
+	}
+
+	private MotionGroupInfo? FindMotionGroup(string group)
+	{
+		if (string.IsNullOrWhiteSpace(group)) return null;
+		return _motionGroups.FirstOrDefault(item => item.Group.Equals(group, StringComparison.OrdinalIgnoreCase));
 	}
 
 	public bool PlayMotionByName(string name)
 	{
-		if (_currentModel is null) return false;
-		foreach (var group in _motionGroups)
+		if (_currentModel is null || string.IsNullOrWhiteSpace(name)) return false;
+		foreach (MotionGroupInfo group in _motionGroups)
 		{
-			int idx = group.Names.FindIndex(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
-			if (idx >= 0)
-			{
-				var entry = _currentModel.StartMotion(group.Group, idx, MotionPriority.PriorityForce);
-				return entry != null;
-			}
+			int index = group.Names.FindIndex(item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
+			if (index >= 0) return TryStartMotion(group.Group, index) is not null;
 		}
 		return false;
 	}
 
 	public bool PlayMotionByIndex(string group, int no)
 	{
-		if (_currentModel is null) return false;
-		var entry = _currentModel.StartMotion(group, no, MotionPriority.PriorityForce);
-		return entry != null;
+		MotionGroupInfo? matched = FindMotionGroup(group);
+		if (matched is null || no < 0 || no >= matched.Names.Count) return false;
+		return TryStartMotion(matched.Group, no) is not null;
 	}
 
-	public void PlayRandomMotion()
+	public bool PlayRandomMotion()
 	{
-		if (_currentModel is null || _motionGroups.Count == 0) return;
-		var group = _motionGroups[_random.Next(_motionGroups.Count)];
-		if (group.Names.Count > 0)
+		IReadOnlyList<MotionGroupInfo> candidates = MotionSelector.GetInteractionCandidates(_motionGroups);
+		if (candidates.Count == 0) return false;
+
+		int start = _random.Next(candidates.Count);
+		for (int offset = 0; offset < candidates.Count; offset++)
 		{
-			int idx = _random.Next(group.Names.Count);
-			_currentModel.StartMotion(group.Group, idx, MotionPriority.PriorityForce);
+			MotionGroupInfo group = candidates[(start + offset) % candidates.Count];
+			if (TryPlayGroup(group)) return true;
 		}
+		return false;
 	}
 
 	public void PlayExpression(string name) => _expressionStore.Play(name);
 	public void StopExpression() => _expressionStore.Stop();
 	public void ToggleExpression(string name) => _expressionStore.Toggle(name);
 
-	public void ToggleRandomExpression()
+	public bool ToggleRandomExpression()
 	{
-		var groupNames = _expressionStore.AllGroupNames();
-		if (groupNames.Count > 0)
-		{
-			string randomName = groupNames[_random.Next(groupNames.Count)];
-			_expressionStore.Toggle(randomName);
-		}
-		else
-		{
-			PlayTapBodyOrRandomMotion();
-		}
+		IReadOnlyList<string> names = _expressionStore.AllGroupNames();
+		if (names.Count == 0) names = _expressionStore.AllNames();
+		if (names.Count == 0) return false;
+
+		string randomName = names[_random.Next(names.Count)];
+		return _expressionStore.Toggle(randomName);
 	}
 
 	public void SetMouthOpen(float value, bool speaking)

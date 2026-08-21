@@ -1,4 +1,5 @@
 ﻿// [Nori Modification] Embedded Live2DCSharpSDK with customized Update hooks for desktop pet behaviors.
+using System.Globalization;
 using System.Text.Json;
 using Live2DCSharpSDK.Framework;
 using Live2DCSharpSDK.Framework.Effect;
@@ -485,16 +486,90 @@ public class LAppModel : CubismUserModel
     /// <returns>開始したモーションの識別番号を返す。個別のモーションが終了したか否かを判定するIsFinished()の引数で使用する。開始できない時は「-1」</returns>
     public CubismMotionQueueEntry? StartMotion(string name, MotionPriority priority, FinishedMotionCallback? onFinishedMotionHandler = null)
     {
-        var temp = name.Split("_");
-        if (temp.Length != 2)
+        if (string.IsNullOrWhiteSpace(name))
         {
-            throw new Exception("motion name error");
+            return null;
         }
-        return StartMotion(temp[0], int.Parse(temp[1]), priority, onFinishedMotionHandler);
+
+        int separator = name.LastIndexOf('_');
+        if (separator <= 0 || separator == name.Length - 1)
+        {
+            return null;
+        }
+
+        string group = name[..separator];
+        string indexText = name[(separator + 1)..];
+        if (!int.TryParse(indexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int no))
+        {
+            return null;
+        }
+
+        return StartMotion(group, no, priority, onFinishedMotionHandler);
     }
 
     public CubismMotionQueueEntry? StartMotion(string group, int no, MotionPriority priority, FinishedMotionCallback? onFinishedMotionHandler = null)
     {
+        if (string.IsNullOrWhiteSpace(group) || no < 0 || !TryGetMotionGroup(group, out var motionGroup, out string resolvedGroup))
+        {
+            return null;
+        }
+        if (no >= motionGroup.Count)
+        {
+            return null;
+        }
+
+        var item = motionGroup[no];
+        if (item is null || string.IsNullOrWhiteSpace(item.File))
+        {
+            return null;
+        }
+
+        string path;
+        try
+        {
+            path = Path.GetFullPath(_modelHomeDir + item.File);
+        }
+        catch
+        {
+            return null;
+        }
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        // 先确认动作文件可加载, 再预约优先级, 避免无效请求残留 PriorityForce。
+        CubismMotion motion;
+        string name = $"{resolvedGroup}_{no}";
+        try
+        {
+            if (!_motions.TryGetValue(name, out var value))
+            {
+                motion = new CubismMotion(path, onFinishedMotionHandler);
+                float fadeTime = item.FadeInTime;
+                if (fadeTime >= 0.0f)
+                {
+                    motion.FadeInSeconds = fadeTime;
+                }
+
+                fadeTime = item.FadeOutTime;
+                if (fadeTime >= 0.0f)
+                {
+                    motion.FadeOutSeconds = fadeTime;
+                }
+                motion.SetEffectIds(_eyeBlinkIds, _lipSyncIds);
+            }
+            else
+            {
+                motion = (value as CubismMotion)!;
+                motion.OnFinishedMotion = onFinishedMotionHandler;
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
         if (priority == MotionPriority.PriorityForce)
         {
             _motionManager.ReservePriority = priority;
@@ -503,41 +578,6 @@ public class LAppModel : CubismUserModel
         {
             CubismLog.Debug("[Live2D App]can't start motion.");
             return null;
-        }
-
-        var item = _modelSetting.FileReferences.Motions[group][no];
-
-        //ex) idle_0
-        string name = $"{group}_{no}";
-
-        CubismMotion motion;
-        if (!_motions.TryGetValue(name, out var value))
-        {
-            string path = item.File;
-            path = Path.GetFullPath(_modelHomeDir + path);
-            if (!File.Exists(path))
-            {
-                return null;
-            }
-
-            motion = new CubismMotion(path, onFinishedMotionHandler);
-            float fadeTime = item.FadeInTime;
-            if (fadeTime >= 0.0f)
-            {
-                motion.FadeInSeconds = fadeTime;
-            }
-
-            fadeTime = item.FadeOutTime;
-            if (fadeTime >= 0.0f)
-            {
-                motion.FadeOutSeconds = fadeTime;
-            }
-            motion.SetEffectIds(_eyeBlinkIds, _lipSyncIds);
-        }
-        else
-        {
-            motion = (value as CubismMotion)!;
-            motion.OnFinishedMotion = onFinishedMotionHandler;
         }
 
         //voice
@@ -549,9 +589,47 @@ public class LAppModel : CubismUserModel
             //_wavFileHandler.Start(path);
         }
 
-        CubismLog.Debug($"[Live2D App]start motion: [{group}_{no}]");
-        CurrentMotionGroup = group;
+        CubismLog.Debug($"[Live2D App]start motion: [{resolvedGroup}_{no}]");
+        CurrentMotionGroup = resolvedGroup;
         return _motionManager.StartMotionPriority(motion, priority);
+    }
+
+    private bool TryGetMotionGroup(
+        string group,
+        out List<ModelSettingObj.FileReference.Motion> motionGroup,
+        out string resolvedGroup)
+    {
+        motionGroup = [];
+        resolvedGroup = "";
+        if (string.IsNullOrWhiteSpace(group))
+        {
+            return false;
+        }
+
+        var motions = _modelSetting.FileReferences?.Motions;
+        if (motions is null)
+        {
+            return false;
+        }
+
+        if (motions.TryGetValue(group, out var exactGroup) && exactGroup is not null)
+        {
+            motionGroup = exactGroup;
+            resolvedGroup = group;
+            return true;
+        }
+
+        foreach (var item in motions)
+        {
+            if (item.Key.Equals(group, StringComparison.OrdinalIgnoreCase) && item.Value is not null)
+            {
+                motionGroup = item.Value;
+                resolvedGroup = item.Key;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -563,13 +641,15 @@ public class LAppModel : CubismUserModel
     /// <returns>開始したモーションの識別番号を返す。個別のモーションが終了したか否かを判定するIsFinished()の引数で使用する。開始できない時は「-1」</returns>
     public object? StartRandomMotion(string group, MotionPriority priority, FinishedMotionCallback? onFinishedMotionHandler = null)
     {
-        if (_modelSetting.FileReferences?.Motions?.ContainsKey(group) == true)
+        if (string.IsNullOrWhiteSpace(group)
+            || !TryGetMotionGroup(group, out var motionGroup, out string resolvedGroup)
+            || motionGroup.Count == 0)
         {
-            int no = _random.Next() % _modelSetting.FileReferences.Motions[group].Count;
-            return StartMotion(group, no, priority, onFinishedMotionHandler);
+            return null;
         }
 
-        return null;
+        int no = _random.Next(motionGroup.Count);
+        return StartMotion(resolvedGroup, no, priority, onFinishedMotionHandler);
     }
 
     /// <summary>
@@ -639,16 +719,21 @@ public class LAppModel : CubismUserModel
         {
             return false;
         }
-        if (_modelSetting.HitAreas?.Count > 0)
+        if (string.IsNullOrWhiteSpace(hitAreaName) || _modelSetting.HitAreas is null)
         {
-            for (int i = 0; i < _modelSetting.HitAreas?.Count; i++)
-            {
-                if (_modelSetting.HitAreas[i].Name == hitAreaName)
-                {
-                    var id = CubismFramework.CubismIdManager.GetId(_modelSetting.HitAreas[i].Id);
+            return false;
+        }
 
-                    return IsHit(id, x, y);
-                }
+        foreach (var hitArea in _modelSetting.HitAreas)
+        {
+            if (hitArea is null || string.IsNullOrWhiteSpace(hitArea.Name) || string.IsNullOrWhiteSpace(hitArea.Id))
+            {
+                continue;
+            }
+            if (hitArea.Name.Equals(hitAreaName, StringComparison.OrdinalIgnoreCase))
+            {
+                var id = CubismFramework.CubismIdManager.GetId(hitArea.Id);
+                return IsHit(id, x, y);
             }
         }
         return false; // 存在しない場合はfalse
