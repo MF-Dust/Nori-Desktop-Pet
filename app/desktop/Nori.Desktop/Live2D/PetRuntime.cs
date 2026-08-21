@@ -11,6 +11,7 @@ using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Resources;
 using Nori.Desktop.Bridge;
+using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Live2D.Behaviors;
 
 namespace Nori.Desktop.Live2D;
@@ -342,7 +343,8 @@ public sealed class PetRuntime
 
 			if (_currentModel != null)
 			{
-				_ = _expressionBehavior.InitializeAsync(_currentModelDir, expRefs, _currentModel.Model);
+				// fire-and-forget: 异步失败只记日志, 不能拖到 GC 时变成无时间线的 UnobservedTaskException
+				CrashReporter.Forget(_expressionBehavior.InitializeAsync(_currentModelDir, expRefs, _currentModel.Model), "表情初始化");
 			}
 		}
 		catch (Exception ex)

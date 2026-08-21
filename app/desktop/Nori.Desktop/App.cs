@@ -12,6 +12,7 @@ using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Resources;
 using Nori.Desktop.Bridge;
+using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Tray;
 using Nori.Desktop.Windows;
 
@@ -34,6 +35,7 @@ public sealed class App : Application
 		{
 			// 关掉最后一个窗口不退应用: 托盘常驻
 			desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+			CrashReporter.Register(desktop); // UI 线程与任务级异常兜底
 			desktop.Exit += async (_, _) =>
 			{
 				if (_services is not null) await _services.DisposeAsync();
@@ -57,15 +59,8 @@ public sealed class App : Application
 		}
 		catch (Exception exception)
 		{
-			try
-			{
-				new FileLogger().Write(LogSource.Backend, "error", $"应用启动失败: {exception}");
-			}
-			catch
-			{
-				// 日志系统自身不可用时只能放弃记录
-			}
-			await Dispatcher.UIThread.InvokeAsync(() => ShowFatal("应用启动失败", exception.Message, desktop));
+			// 记日志与崩溃窗展示都在 Report 内部完成 (critical: 关窗即退出码 1)
+			CrashReporter.Report(exception, critical: true);
 		}
 	}
 
@@ -77,6 +72,7 @@ public sealed class App : Application
 
 		FileLogger logger = new();
 		logger.Initialize();
+		CrashReporter.AttachLogger(logger); // 兜底日志与应用共用同一个写入器
 		logger.Write(LogSource.Backend, "info", "日志系统初始化完成");
 
 		// WebView2 运行时缺失时给个能看懂的提示, 而不是弹四个空白窗口
@@ -85,7 +81,7 @@ public sealed class App : Application
 		if (!adapter.IsInstalled)
 		{
 			logger.Write(LogSource.Backend, "error", $"WebView2 运行时不可用: {adapter.UnavailableReason}");
-			await Dispatcher.UIThread.InvokeAsync(() => ShowFatal("缺少 Microsoft Edge WebView2 运行时", "Nori 需要 WebView2 运行时才能显示界面。\n请安装 Microsoft Edge WebView2 Evergreen Runtime 后重试。", desktop));
+			CrashReporter.ReportStartupFatal("缺少 Microsoft Edge WebView2 运行时", "Nori 需要 WebView2 运行时才能显示界面。\n请安装 Microsoft Edge WebView2 Evergreen Runtime 后重试。");
 			return;
 		}
 
@@ -99,7 +95,7 @@ public sealed class App : Application
 		catch (InvalidOperationException exception)
 		{
 			logger.Write(LogSource.Backend, "error", exception.Message);
-			await Dispatcher.UIThread.InvokeAsync(() => ShowFatal("配置数据库版本过高", exception.Message, desktop));
+			CrashReporter.ReportStartupFatal("配置数据库版本过高", exception.Message);
 			return;
 		}
 		logger.Write(LogSource.Backend, "info", $"数据库已打开: {AppPaths.DatabasePath}");
@@ -149,8 +145,8 @@ public sealed class App : Application
 		};
 		_services = services;
 
-		// 异步自动连接已启用的 MCP 服务
-		_ = mcp.AutoConnectEnabledAsync();
+		// 异步自动连接已启用的 MCP 服务; 后台任务失败只记日志, 不崩进程
+		CrashReporter.Forget(mcp.AutoConnectEnabledAsync(), "MCP 自动连接");
 
 		await Dispatcher.UIThread.InvokeAsync(() =>
 		{
@@ -166,29 +162,6 @@ public sealed class App : Application
 			logger.Write(LogSource.Backend, "info", firstRun ? "首次启动应用" : "应用启动完成");
 			services.Windows.Show(firstRun ? WindowLabels.FirstRun : WindowLabels.Init);
 		});
-	}
-
-	/// <summary>
-	/// 致命错误提示窗: 说明原因并退出
-	/// </summary>
-	private static void ShowFatal(string title, string message, IClassicDesktopStyleApplicationLifetime desktop)
-	{
-		Window window = new()
-		{
-			Title = title,
-			Width = 460,
-			Height = 200,
-			CanResize = false,
-			WindowStartupLocation = WindowStartupLocation.CenterScreen,
-			Content = new TextBlock
-			{
-				Text = message,
-				Margin = new Thickness(24),
-				TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-			},
-		};
-		window.Closed += (_, _) => desktop.Shutdown(1);
-		window.Show();
 	}
 
 	/// <summary>
