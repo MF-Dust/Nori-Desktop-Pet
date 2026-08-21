@@ -55,6 +55,10 @@ public sealed class NoriDatabase : IDisposable
 		}.ToString());
 		connection.Open();
 		NoriDatabase database = new(connection);
+		// WAL: 写不阻塞读, 拖拽落盘这类高频小写不会让界面卡在 fsync 上
+		database.Execute("PRAGMA journal_mode=WAL;");
+		// 多线程争用单连接时等锁而不是立刻抛 "database is locked"
+		database.Execute("PRAGMA busy_timeout=5000;");
 		database.Execute(Schema);
 
 		// 检查并自动升级旧版数据库缺失的 embedding 列

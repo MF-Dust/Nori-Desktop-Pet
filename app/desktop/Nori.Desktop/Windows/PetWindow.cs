@@ -229,8 +229,21 @@ public sealed class PetWindow : Window
 
 	private void SaveWindowPosition()
 	{
-		_services.Config.Set("pet_window_x", new Nori.Core.Configuration.ConfigValue.Text(Position.X.ToString()));
-		_services.Config.Set("pet_window_y", new Nori.Core.Configuration.ConfigValue.Text(Position.Y.ToString()));
+		int x = Position.X;
+		int y = Position.Y;
+		// SQLite 写入含 fsync, 拖拽收尾时别堵在 UI 线程上; Config.Set 自身有锁, 线程安全
+		Task.Run(() =>
+		{
+			try
+			{
+				_services.Config.Set("pet_window_x", new Nori.Core.Configuration.ConfigValue.Text(x.ToString()));
+				_services.Config.Set("pet_window_y", new Nori.Core.Configuration.ConfigValue.Text(y.ToString()));
+			}
+			catch
+			{
+				// 落盘失败只影响下次启动的位置恢复
+			}
+		});
 	}
 
 	private void OnCursorTrackingTick(object? sender, EventArgs e)
