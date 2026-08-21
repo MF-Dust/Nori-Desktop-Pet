@@ -78,14 +78,10 @@ const cancelReminder = (id: string) => {
 							<span class="switch-title">无操作挂机互动</span>
 							<p class="switch-desc">长时间无鼠标或键盘操作时，Nori 会主动向主人表达关怀、伸懒腰或做出小动作</p>
 						</div>
-						<label class="toggle-switch">
-							<input
-								v-model="idleEnabled"
-								type="checkbox"
-								@change="saveConfig('proactive_idle_enabled', String(idleEnabled))"
-							/>
-							<span class="toggle-slider"/>
-						</label>
+						<n-switch
+							v-model:value="idleEnabled"
+							@update:value="(val: boolean) => saveConfig('proactive_idle_enabled', String(val))"
+						/>
 					</div>
 
 					<div v-if="idleEnabled" class="form-item">
@@ -122,14 +118,10 @@ const cancelReminder = (id: string) => {
 							<span class="switch-title">定点生活问候</span>
 							<p class="switch-desc">在早晨（8:30）、午餐（12:00）和深夜（23:00）主动向主人问安与提醒休息</p>
 						</div>
-						<label class="toggle-switch">
-							<input
-								v-model="dailyGreeting"
-								type="checkbox"
-								@change="saveConfig('proactive_daily_greeting', String(dailyGreeting))"
-							/>
-							<span class="toggle-slider"/>
-						</label>
+						<n-switch
+							v-model:value="dailyGreeting"
+							@update:value="(val: boolean) => saveConfig('proactive_daily_greeting', String(val))"
+						/>
 					</div>
 				</div>
 			</div>
@@ -148,16 +140,20 @@ const cancelReminder = (id: string) => {
 							placeholder="例如: 喝杯水 / 站起来走走 / 准备开会..."
 							@keydown.enter="createReminder"
 						/>
-						<select v-model="newReminderMinutes" class="select-box">
-							<option :value="5">5 分钟后</option>
-							<option :value="15">15 分钟后</option>
-							<option :value="30">30 分钟后</option>
-							<option :value="60">1 小时后</option>
-							<option :value="120">2 小时后</option>
-						</select>
-						<button class="btn-primary" :disabled="!newReminderText.trim()" @click="createReminder">
+						<n-select
+							v-model:value="newReminderMinutes"
+							:options="[
+								{label: '5 分钟后', value: 5},
+								{label: '15 分钟后', value: 15},
+								{label: '30 分钟后', value: 30},
+								{label: '1 小时后', value: 60},
+								{label: '2 小时后', value: 120}
+							]"
+							style="width: 14rem;"
+						/>
+						<n-button type="primary" :disabled="!newReminderText.trim()" @click="createReminder">
 							添加提醒
-						</button>
+						</n-button>
 					</div>
 
 					<div class="reminder-list">

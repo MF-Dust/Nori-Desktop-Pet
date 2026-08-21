@@ -83,29 +83,26 @@ onMounted(async () => {
 	}
 })
 
-const onModelScale = (e: Event) => {
-	const val = parseFloat((e.target as HTMLInputElement).value)
-	if (!Number.isNaN(val)) {
-		modelScale.value = val
-		debouncedWrite(l2dModelKey("l2d_scale", props.modelId), val)
-	}
+const onModelScaleUpdate = (val: number) => {
+	modelScale.value = val
+	debouncedWrite(l2dModelKey("l2d_scale", props.modelId), val)
 }
 
-const onRenderScale = (e: Event) => {
-	const val = parseFloat((e.target as HTMLInputElement).value)
-	if (!Number.isNaN(val)) {
-		renderScale.value = val
-		debouncedWrite("l2d_render_scale", val)
-	}
+const onRenderScaleUpdate = (val: number) => {
+	renderScale.value = val
+	debouncedWrite("l2d_render_scale", val)
 }
 
-const onMaxFps = (e: Event) => {
-	const val = parseInt((e.target as HTMLSelectElement).value, 10)
-	if (!Number.isNaN(val)) {
-		maxFps.value = val
-		debouncedWrite("l2d_max_fps", val)
-	}
+const onMaxFpsUpdate = (val: number) => {
+	maxFps.value = val
+	debouncedWrite("l2d_max_fps", val)
 }
+
+const fpsOptions = computed(() => [
+	{label: I18N.value.maxFpsNone, value: 0},
+	{label: I18N.value.maxFps30, value: 30},
+	{label: I18N.value.maxFps60, value: 60},
+])
 </script>
 
 <template>
@@ -113,73 +110,91 @@ const onMaxFps = (e: Event) => {
 		<h3 class="behavior-title">{{ I18N.title }}</h3>
 
 		<div class="toggle-grid">
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.clickInteraction }}</span>
-				<span class="toggle-desc">{{ I18N.clickInteractionDesc }}</span>
-				<input v-model="clickInteractionToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.clickInteraction }}</span>
+					<span class="toggle-desc">{{ I18N.clickInteractionDesc }}</span>
+				</div>
+				<n-switch v-model:value="clickInteractionToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.autoBlink }}</span>
-				<span class="toggle-desc">{{ I18N.autoBlinkDesc }}</span>
-				<input v-model="autoBlinkToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.autoBlink }}</span>
+					<span class="toggle-desc">{{ I18N.autoBlinkDesc }}</span>
+				</div>
+				<n-switch v-model:value="autoBlinkToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.eyeTracking }}</span>
-				<span class="toggle-desc">{{ I18N.eyeTrackingDesc }}</span>
-				<input v-model="eyeTrackingToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.eyeTracking }}</span>
+					<span class="toggle-desc">{{ I18N.eyeTrackingDesc }}</span>
+				</div>
+				<n-switch v-model:value="eyeTrackingToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.idleEyeAnimation }}</span>
-				<span class="toggle-desc">{{ I18N.idleEyeAnimationDesc }}</span>
-				<input v-model="idleEyeToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.idleEyeAnimation }}</span>
+					<span class="toggle-desc">{{ I18N.idleEyeAnimationDesc }}</span>
+				</div>
+				<n-switch v-model:value="idleEyeToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.idleAnimation }}</span>
-				<span class="toggle-desc">{{ I18N.idleAnimationDesc }}</span>
-				<input v-model="idleAnimToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.idleAnimation }}</span>
+					<span class="toggle-desc">{{ I18N.idleAnimationDesc }}</span>
+				</div>
+				<n-switch v-model:value="idleAnimToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.expressionEnabled }}</span>
-				<span class="toggle-desc">{{ I18N.expressionEnabledDesc }}</span>
-				<input v-model="expressionEnabledToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.expressionEnabled }}</span>
+					<span class="toggle-desc">{{ I18N.expressionEnabledDesc }}</span>
+				</div>
+				<n-switch v-model:value="expressionEnabledToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.lipSync }}</span>
-				<span class="toggle-desc">{{ I18N.lipSyncDesc }}</span>
-				<input v-model="lipSyncToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.lipSync }}</span>
+					<span class="toggle-desc">{{ I18N.lipSyncDesc }}</span>
+				</div>
+				<n-switch v-model:value="lipSyncToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.shadow }}</span>
-				<span class="toggle-desc">{{ I18N.shadowDesc }}</span>
-				<input v-model="shadowToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.shadow }}</span>
+					<span class="toggle-desc">{{ I18N.shadowDesc }}</span>
+				</div>
+				<n-switch v-model:value="shadowToggle"/>
+			</div>
 
-			<label class="toggle-row">
-				<span class="toggle-label">{{ I18N.beatSync }}</span>
-				<span class="toggle-desc">{{ I18N.beatSyncDesc }}</span>
-				<input v-model="beatSyncToggle" type="checkbox" class="toggle-input"/>
-			</label>
+			<div class="toggle-row">
+				<div class="toggle-info">
+					<span class="toggle-label">{{ I18N.beatSync }}</span>
+					<span class="toggle-desc">{{ I18N.beatSyncDesc }}</span>
+				</div>
+				<n-switch v-model:value="beatSyncToggle"/>
+			</div>
 		</div>
 
 		<div class="adjust-section">
 			<span class="toggle-label">{{ I18N.modelScale }}</span>
 			<span class="toggle-desc">{{ I18N.modelScaleDesc }}</span>
 			<div class="scale-row">
-				<input
+				<n-slider
 					:value="modelScale"
-					class="adjust-range"
-					type="range"
-					min="0.5"
-					max="2"
-					step="0.05"
-					@input="onModelScale"
+					:min="0.5"
+					:max="2"
+					:step="0.05"
+					:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
+					class="scale-slider"
+					@update:value="onModelScaleUpdate"
 				/>
 				<span class="scale-value">{{ Math.round(modelScale * 100) }}%</span>
 			</div>
@@ -189,14 +204,14 @@ const onMaxFps = (e: Event) => {
 			<span class="toggle-label">{{ I18N.renderScale }}</span>
 			<span class="toggle-desc">{{ I18N.renderScaleDesc }}</span>
 			<div class="scale-row">
-				<input
+				<n-slider
 					:value="renderScale"
-					class="adjust-range"
-					type="range"
-					min="0.5"
-					max="2"
-					step="0.25"
-					@input="onRenderScale"
+					:min="0.5"
+					:max="2"
+					:step="0.25"
+					:format-tooltip="(v: number) => `${v.toFixed(2)}x`"
+					class="scale-slider"
+					@update:value="onRenderScaleUpdate"
 				/>
 				<span class="scale-value">{{ renderScale.toFixed(2) }}x</span>
 			</div>
@@ -204,11 +219,12 @@ const onMaxFps = (e: Event) => {
 
 		<div class="adjust-section">
 			<span class="toggle-label">{{ I18N.maxFps }}</span>
-			<select :value="maxFps" class="fps-select" @change="onMaxFps">
-				<option :value="0">{{ I18N.maxFpsNone }}</option>
-				<option :value="30">{{ I18N.maxFps30 }}</option>
-				<option :value="60">{{ I18N.maxFps60 }}</option>
-			</select>
+			<n-select
+				:value="maxFps"
+				:options="fpsOptions"
+				class="fps-select"
+				@update:value="onMaxFpsUpdate"
+			/>
 		</div>
 	</div>
 </template>
@@ -235,17 +251,14 @@ const onMaxFps = (e: Event) => {
 }
 
 .toggle-row {
-	display: grid;
-	grid-template-columns: 1fr auto;
-	grid-template-rows: auto auto;
-	column-gap: 1.4rem;
-	row-gap: 0.25rem;
+	display: flex;
 	align-items: center;
-	padding: 0.8rem 1.1rem;
+	justify-content: space-between;
+	gap: 1.4rem;
+	padding: 0.9rem 1.2rem;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	background: rgba(255, 255, 255, 0.03);
-	cursor: pointer;
 	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover {
@@ -254,29 +267,27 @@ const onMaxFps = (e: Event) => {
 	}
 }
 
+.toggle-info {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	flex: 1;
+}
+
 .toggle-label {
-	grid-column: 1;
-	grid-row: 1;
 	font-size: 1.25rem;
 	color: var(--text-primary);
 	font-weight: 500;
 }
 
 .toggle-desc {
-	grid-column: 1;
-	grid-row: 2;
 	font-size: 1.1rem;
 	color: var(--text-faint);
 	line-height: 1.35;
 }
 
-.toggle-input {
-	grid-column: 2;
-	grid-row: 1 / 3;
-	width: 1.8rem;
-	height: 1.8rem;
-	accent-color: var(--nori-teal-bright);
-	cursor: pointer;
+.scale-slider {
+	flex: 1;
 }
 
 .adjust-section {

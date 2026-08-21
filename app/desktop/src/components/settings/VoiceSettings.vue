@@ -129,13 +129,13 @@ const testVoice = async () => {
 				</div>
 				<div class="card-body">
 					<div class="slider-row">
-						<input
-							v-model.number="volume"
-							type="range"
-							min="0"
-							max="100"
-							class="range-slider"
-							@input="onVolumeChange"
+						<n-slider
+							v-model:value="volume"
+							:min="0"
+							:max="100"
+							:format-tooltip="(v: number) => `${v}%`"
+							class="volume-slider"
+							@update:value="onVolumeChange"
 						/>
 						<span class="slider-value">{{ volume }}%</span>
 					</div>
@@ -270,14 +270,14 @@ const testVoice = async () => {
 
 						<div class="form-item flex-1">
 							<label class="label">语速: {{ ttsSpeed }}x</label>
-							<input
-								v-model.number="ttsSpeed"
-								type="range"
-								min="0.5"
-								max="2.0"
-								step="0.1"
-								class="range-slider"
-								@change="saveConfig('tts_speed', String(ttsSpeed))"
+							<n-slider
+								v-model:value="ttsSpeed"
+								:min="0.5"
+								:max="2.0"
+								:step="0.1"
+								:format-tooltip="(v: number) => `${v}x`"
+								class="speed-slider"
+								@update:value="(v: number) => saveConfig('tts_speed', String(v))"
 							/>
 						</div>
 					</div>
@@ -287,21 +287,24 @@ const testVoice = async () => {
 							<span class="switch-title">对话自动朗读</span>
 							<p class="switch-desc">当桌宠生成回复消息时，自动进行语音朗读播放</p>
 						</div>
-						<label class="toggle-switch">
-							<input
-								v-model="ttsAutoPlay"
-								type="checkbox"
-								@change="saveConfig('tts_auto_play', String(ttsAutoPlay))"
-							/>
-							<span class="toggle-slider"/>
-						</label>
+						<n-switch
+							v-model:value="ttsAutoPlay"
+							@update:value="(v: boolean) => saveConfig('tts_auto_play', String(v))"
+						/>
 					</div>
 
 					<div class="action-row">
-						<button class="btn-secondary" :disabled="isSpeakingTest" @click="testVoice">
-							<Icon :name="isSpeakingTest ? 'loading' : 'play'" :size="15"/>
-							<span>{{ isSpeakingTest ? "正在试听..." : "试听当前音色" }}</span>
-						</button>
+						<n-button
+							type="primary"
+							:loading="isSpeakingTest"
+							:disabled="isSpeakingTest"
+							@click="testVoice"
+						>
+							<template #icon>
+								<Icon :name="isSpeakingTest ? 'loading' : 'play'" :size="15"/>
+							</template>
+							{{ isSpeakingTest ? "正在试听..." : "试听当前音色" }}
+						</n-button>
 					</div>
 				</div>
 			</div>

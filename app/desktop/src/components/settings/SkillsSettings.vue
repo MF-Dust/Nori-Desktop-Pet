@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
+import {useMessage} from "naive-ui"
 import Icon from "../Icon.vue"
 import {skillService, type Skill} from "../../services/skills"
+
+const message = useMessage()
 
 // 当前子标签: "installed" | "market"
 const activeTab = ref<"installed" | "market">("installed")
@@ -100,6 +103,7 @@ const CATEGORIES: {key: string; label: string}[] = [
 const toggleSkill = async (skill: Skill) => {
 	await skillService.toggleSkill(skill.id, !skill.enabled)
 	await refresh()
+	message.success(skill.enabled ? `已停用技能 ${skill.name}` : `已激活技能 ${skill.name}`)
 }
 
 // 从市场安装
@@ -108,8 +112,9 @@ const installFromMarket = async (item: Skill) => {
 	try {
 		await skillService.installFromMarketplace(item.id)
 		await refresh()
+		message.success(`成功安装技能「${item.name}」！`)
 	} catch (error) {
-		alert(`安装失败: ${error instanceof Error ? error.message : String(error)}`)
+		message.error(`安装失败: ${error instanceof Error ? error.message : String(error)}`)
 	} finally {
 		loading.value = false
 	}
@@ -132,8 +137,10 @@ const executeUrlInstall = async () => {
 		await skillService.installFromUrl(installUrl.value.trim())
 		isUrlModalOpen.value = false
 		await refresh()
+		message.success("成功从 URL 导入并安装新技能！")
 	} catch (error) {
 		urlInstallError.value = error instanceof Error ? error.message : String(error)
+		message.error(`导入失败: ${urlInstallError.value}`)
 	} finally {
 		isUrlInstalling.value = false
 	}
@@ -164,7 +171,18 @@ const openNewSkillModal = () => {
 // 打开编辑技能弹窗
 const openEditSkillModal = (skill: Skill) => {
 	editForm.value = {
-		...skill,
+		id: skill.id,
+		name: skill.name,
+		description: skill.description,
+		author: skill.author,
+		version: skill.version,
+		icon: skill.icon,
+		tags: [...skill.tags],
+		category: skill.category,
+		instructions: skill.instructions,
+		tools: [...(skill.tools || [])],
+		enabled: skill.enabled,
+		source: skill.source,
 	}
 	tagsInput.value = skill.tags.join(", ")
 	toolsInput.value = skill.tools ? skill.tools.join(", ") : ""
@@ -191,6 +209,7 @@ const saveSkill = async () => {
 		await skillService.saveCustomSkill(editForm.value)
 		isEditModalOpen.value = false
 		await refresh()
+		message.success(isEditing.value ? "技能更新成功！" : "新技能创建成功！")
 	} finally {
 		loading.value = false
 	}
@@ -198,11 +217,13 @@ const saveSkill = async () => {
 
 // 卸载技能
 const deleteSkill = async (id: string) => {
-	if (!confirm("确定要卸载该技能吗？")) return
 	loading.value = true
 	try {
 		await skillService.uninstallSkill(id)
 		await refresh()
+		message.success("技能已成功卸载")
+	} catch (error) {
+		message.error(`卸载失败: ${error instanceof Error ? error.message : String(error)}`)
 	} finally {
 		loading.value = false
 	}
@@ -309,13 +330,10 @@ const viewSkillDetail = (skill: Skill) => {
 							</div>
 
 							<div class="skill-switch-wrap">
-								<button
-									class="btn-toggle"
-									:class="{active: skill.enabled}"
-									@click="toggleSkill(skill)"
-								>
-									{{ skill.enabled ? '已激活' : '未激活' }}
-								</button>
+								<n-switch
+									:value="skill.enabled"
+									@update:value="() => toggleSkill(skill)"
+								/>
 							</div>
 						</div>
 
@@ -334,14 +352,20 @@ const viewSkillDetail = (skill: Skill) => {
 								<Icon name="edit" :size="12"/>
 								<span>编辑</span>
 							</button>
-							<button
+							<n-popconfirm
 								v-if="skill.source !== 'builtin'"
-								class="btn-card-action btn-danger"
-								@click="deleteSkill(skill.id)"
+								positive-text="确定卸载"
+								negative-text="取消"
+								@positive-click="deleteSkill(skill.id)"
 							>
-								<Icon name="trash" :size="12"/>
-								<span>卸载</span>
-							</button>
+								<template #trigger>
+									<button class="btn-card-action btn-danger">
+										<Icon name="trash" :size="12"/>
+										<span>卸载</span>
+									</button>
+								</template>
+								确定要卸载技能「{{ skill.name }}」吗？
+							</n-popconfirm>
 						</div>
 					</div>
 				</div>

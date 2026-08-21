@@ -119,7 +119,15 @@ onMounted(() => {
 		<div class="adjust-section">
 			<span class="adjust-label">{{ I18N.scale }}</span>
 			<div class="adjust-scale-row">
-				<input v-model.number="scale" class="adjust-range" type="range" min="0.5" max="2" step="0.05" @input="onScaleInput"/>
+				<n-slider
+					v-model:value="scale"
+					:min="0.5"
+					:max="2"
+					:step="0.05"
+					:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
+					class="adjust-slider"
+					@update:value="onScaleInput"
+				/>
 				<span class="adjust-value">{{ scalePercent }}%</span>
 			</div>
 		</div>

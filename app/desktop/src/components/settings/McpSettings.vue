@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
+import {useMessage} from "naive-ui"
 import Icon from "../Icon.vue"
 import {
 	mcpService,
@@ -9,6 +10,8 @@ import {
 	type McpMarketplaceItem,
 } from "../../services/mcp"
 import {toolManager, type AgentTool} from "../../services/agent/tools"
+
+const message = useMessage()
 
 // 视图子标签: "servers" | "market" | "builtin"
 const subTab = ref<"servers" | "market" | "builtin">("servers")
@@ -147,8 +150,9 @@ const executeMarketInstall = async () => {
 		isMarketInstallModalOpen.value = false
 		subTab.value = "servers"
 		await refresh()
+		message.success(`成功安装 MCP 服务「${targetMarketItem.value.name}」！`)
 	} catch (error) {
-		alert(`安装失败: ${error instanceof Error ? error.message : String(error)}`)
+		message.error(`安装失败: ${error instanceof Error ? error.message : String(error)}`)
 	} finally {
 		loading.value = false
 	}
@@ -172,8 +176,10 @@ const executeImport = async () => {
 		isImportModalOpen.value = false
 		subTab.value = "servers"
 		await refresh()
+		message.success("成功导入并配置新 MCP 服务器！")
 	} catch (error) {
 		importError.value = error instanceof Error ? error.message : String(error)
+		message.error(`导入失败: ${importError.value}`)
 	} finally {
 		isImporting.value = false
 	}
@@ -211,6 +217,7 @@ const saveServer = async () => {
 		await mcpService.saveServer(form.value)
 		isModalOpen.value = false
 		await refresh()
+		message.success(isEditing.value ? "MCP 服务器已更新！" : "已添加新 MCP 服务器！")
 	} finally {
 		loading.value = false
 	}
@@ -228,6 +235,11 @@ const testConnection = async () => {
 
 	try {
 		testResult.value = await mcpService.testServer(testConfig)
+		if (testResult.value?.status === "connected") {
+			message.success("MCP 服务连接测试成功！")
+		} else {
+			message.warning("MCP 服务返回非就绪状态，请检查日志")
+		}
 	} catch (err) {
 		testResult.value = {
 			serverId: testConfig.id,
@@ -237,6 +249,7 @@ const testConnection = async () => {
 			tools: [],
 			resources: [],
 		}
+		message.error("MCP 服务连接测试失败")
 	} finally {
 		testing.value = false
 	}
@@ -248,6 +261,7 @@ const connectServer = async (id: string) => {
 	try {
 		await mcpService.connectServer(id)
 		await refresh()
+		message.success("服务器已连接")
 	} finally {
 		loading.value = false
 	}
@@ -259,6 +273,7 @@ const disconnectServer = async (id: string) => {
 	try {
 		await mcpService.disconnectServer(id)
 		await refresh()
+		message.info("服务器连接已断开")
 	} finally {
 		loading.value = false
 	}
@@ -266,11 +281,11 @@ const disconnectServer = async (id: string) => {
 
 // 删除服务器
 const deleteServer = async (id: string) => {
-	if (!confirm("确定要删除该 MCP 服务器配置吗？")) return
 	loading.value = true
 	try {
 		await mcpService.deleteServer(id)
 		await refresh()
+		message.success("已删除该 MCP 服务器配置")
 	} finally {
 		loading.value = false
 	}
@@ -425,9 +440,18 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 								>
 									连接
 								</button>
-								<button class="btn-sm btn-danger" @click="deleteServer(srv.serverId)">
-									<Icon name="trash" :size="12"/>
-								</button>
+								<n-popconfirm
+									positive-text="确定删除"
+									negative-text="取消"
+									@positive-click="deleteServer(srv.serverId)"
+								>
+									<template #trigger>
+										<button class="btn-sm btn-danger">
+											<Icon name="trash" :size="12"/>
+										</button>
+									</template>
+									确定要删除 MCP 服务器「{{ srv.name }}」吗？
+								</n-popconfirm>
 							</div>
 						</div>
 

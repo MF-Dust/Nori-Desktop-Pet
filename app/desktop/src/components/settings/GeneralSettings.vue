@@ -84,14 +84,10 @@ const saveConfig = (key: string, value: string) => {
 							<span class="switch-title">启动时自动唤出桌宠</span>
 							<p class="switch-desc">软件启动完成后自动在桌面上显示 Nori 桌宠窗口</p>
 						</div>
-						<label class="toggle-switch">
-							<input
-								v-model="autoSummon"
-								type="checkbox"
-								@change="saveConfig('pet_auto_summon', String(autoSummon))"
-							/>
-							<span class="toggle-slider"/>
-						</label>
+						<n-switch
+							v-model:value="autoSummon"
+							@update:value="(val: boolean) => saveConfig('pet_auto_summon', String(val))"
+						/>
 					</div>
 				</div>
 			</div>

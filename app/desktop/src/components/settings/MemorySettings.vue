@@ -107,13 +107,11 @@ const deleteMemory = async (id: number) => {
 
 // 清空记忆
 const clearAll = async () => {
-	if (confirm("确定要清空全部长期记忆吗？此操作不可恢复。")) {
-		try {
-			await memoryService.clear()
-			await loadMemories()
-		} catch (error) {
-			console.error("清空记忆失败:", error)
-		}
+	try {
+		await memoryService.clear()
+		await loadMemories()
+	} catch (error) {
+		console.error("清空记忆失败:", error)
 	}
 }
 </script>
@@ -133,10 +131,12 @@ const clearAll = async () => {
 						<Icon name="sparkles" :size="18" class="card-icon"/>
 						<span class="card-title">向量嵌入与语义检索配置 (Embedding)</span>
 					</div>
-					<button class="btn-secondary" :disabled="isReembedding" @click="reembedAll">
-						<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
-						<span>{{ isReembedding ? "正在索引..." : "重新计算记忆向量" }}</span>
-					</button>
+					<n-button type="primary" :loading="isReembedding" :disabled="isReembedding" @click="reembedAll">
+						<template #icon>
+							<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
+						</template>
+						{{ isReembedding ? "正在索引..." : "重新计算记忆向量" }}
+					</n-button>
 				</div>
 				<div class="card-body">
 					<div class="form-row">
@@ -203,21 +203,23 @@ const clearAll = async () => {
 						<div class="form-item">
 							<div class="importance-wrap">
 								<span class="label">重要度: {{ Math.round(newImportance * 100) }}%</span>
-								<input
-									v-model.number="newImportance"
-									type="range"
-									min="0.1"
-									max="1.0"
-									step="0.1"
-									class="range-slider"
+								<n-slider
+									v-model:value="newImportance"
+									:min="0.1"
+									:max="1.0"
+									:step="0.1"
+									:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
+									style="width: 12rem;"
 								/>
 							</div>
 						</div>
 
-						<button class="btn-primary" :disabled="!newContent.trim() || adding" @click="addMemory">
-							<Icon :name="adding ? 'loading' : 'check'" :size="14"/>
-							<span>保存记忆</span>
-						</button>
+						<n-button type="primary" :disabled="!newContent.trim() || adding" :loading="adding" @click="addMemory">
+							<template #icon>
+								<Icon :name="adding ? 'loading' : 'check'" :size="14"/>
+							</template>
+							保存记忆
+						</n-button>
 					</div>
 				</div>
 			</div>
@@ -229,9 +231,19 @@ const clearAll = async () => {
 						<Icon name="package" :size="18" class="card-icon"/>
 						<span class="card-title">记忆列表 (共 {{ memories.length }} 条)</span>
 					</div>
-					<button v-if="memories.length > 0" class="btn-danger-text" @click="clearAll">
-						清空所有记忆
-					</button>
+					<n-popconfirm
+						v-if="memories.length > 0"
+						positive-text="确定清空"
+						negative-text="取消"
+						@positive-click="clearAll"
+					>
+						<template #trigger>
+							<button class="btn-danger-text">
+								清空所有记忆
+							</button>
+						</template>
+						确定要清空全部长期记忆吗？此操作不可恢复。
+					</n-popconfirm>
 				</div>
 
 				<div class="card-body">
@@ -263,9 +275,18 @@ const clearAll = async () => {
 								<p class="item-content">{{ item.content }}</p>
 								<span class="item-time">{{ new Date(item.createdAt).toLocaleString("zh-CN") }}</span>
 							</div>
-							<button class="btn-del" title="删除此记忆" @click="deleteMemory(item.id)">
-								<Icon name="close" :size="14"/>
-							</button>
+							<n-popconfirm
+								positive-text="删除"
+								negative-text="取消"
+								@positive-click="deleteMemory(item.id)"
+							>
+								<template #trigger>
+									<button class="btn-del" title="删除此记忆">
+										<Icon name="close" :size="14"/>
+									</button>
+								</template>
+								确定删除这条记忆吗？
+							</n-popconfirm>
 						</div>
 					</div>
 				</div>

@@ -2,7 +2,6 @@
 import {computed, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {invoke} from "../../services/host/invoke"
-import Icon from "../Icon.vue"
 
 const I18N = computed(() => useLanguages().views.main.ai)
 
@@ -168,6 +167,14 @@ const fetchModels = async () => {
 		loading.value = false
 	}
 }
+
+const providerOptions = computed(() =>
+	PROVIDER_OPTIONS.map(p => ({label: I18N.value.providers[p], value: p}))
+)
+
+const modelOptions = computed(() =>
+	models.value.map(m => ({label: m, value: m}))
+)
 </script>
 
 <template>
@@ -178,14 +185,14 @@ const fetchModels = async () => {
 		</div>
 
 		<div class="ai-form">
-			<label class="field">
+			<div class="field">
 				<span class="field-label">{{ I18N.provider }}</span>
-				<select v-model="provider" class="input select" @change="onProviderChange">
-					<option v-for="p in PROVIDER_OPTIONS" :key="p" :value="p">
-						{{ I18N.providers[p] }}
-					</option>
-				</select>
-			</label>
+				<n-select
+					v-model:value="provider"
+					:options="providerOptions"
+					@update:value="onProviderChange"
+				/>
+			</div>
 
 			<label class="field">
 				<span class="field-label">{{ I18N.apiBaseUrl }}</span>
@@ -213,14 +220,21 @@ const fetchModels = async () => {
 			<div class="field">
 				<span class="field-label">{{ I18N.model }}</span>
 				<div class="model-row">
-					<select v-model="selectedModel" class="input select" :disabled="models.length === 0">
-						<option v-if="models.length === 0" value="" disabled>{{ I18N.modelEmpty }}</option>
-						<option v-for="m in models" :key="m" :value="m">{{ m }}</option>
-					</select>
-					<button class="fetch-btn" :disabled="loading" @click="fetchModels">
-						<Icon v-if="loading" name="loading" class="btn-icon spin"/>
+					<n-select
+						v-model:value="selectedModel"
+						:options="modelOptions"
+						:disabled="models.length === 0"
+						:placeholder="models.length === 0 ? I18N.modelEmpty : '请选择模型'"
+						class="flex-1"
+					/>
+					<n-button
+						type="primary"
+						:loading="loading"
+						:disabled="loading"
+						@click="fetchModels"
+					>
 						{{ loading ? I18N.getting : I18N.getModel }}
-					</button>
+					</n-button>
 				</div>
 			</div>
 

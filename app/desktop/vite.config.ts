@@ -1,12 +1,20 @@
 import {defineConfig} from "vite"
 import vue from "@vitejs/plugin-vue"
+import Components from "unplugin-vue-components/vite"
+import {NaiveUiResolver} from "unplugin-vue-components/resolvers"
 
 // 宿主开发模式下 AssetServer 固定监听的端口 (见 Nori.Core/Assets/AssetServer.cs)
 const HOST_ASSET_PORT = 14201
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-	plugins: [vue()],
+	plugins: [
+		vue(),
+		Components({
+			resolvers: [NaiveUiResolver()],
+			dts: true,
+		}),
+	],
 	// 相对基址: 生产下页面挂在 /<随机前缀>/app/ 里, 用绝对路径引资源会漏掉前缀直接 404.
 	// 路由用的是 hash history, 不受相对基址影响.
 	base: "./",

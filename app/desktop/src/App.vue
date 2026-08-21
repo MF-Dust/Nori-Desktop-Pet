@@ -3,6 +3,7 @@ import {onMounted} from "vue"
 import {useRouter} from "vue-router"
 import {invoke} from "./services/host/invoke"
 import {getCurrentWindowLabel, navigateToOwnWindow} from "./services/window"
+import {naiveDarkTheme, naiveThemeOverrides} from "./assets/style/naiveTheme"
 
 const ROUTER = useRouter()
 
@@ -19,5 +20,14 @@ onMounted(async () => {
 </script>
 
 <template>
-	<RouterView/>
+	<NConfigProvider :theme="naiveDarkTheme" :theme-overrides="naiveThemeOverrides">
+		<NMessageProvider>
+			<NDialogProvider>
+				<NNotificationProvider>
+					<RouterView/>
+				</NNotificationProvider>
+			</NDialogProvider>
+		</NMessageProvider>
+	</NConfigProvider>
 </template>
+
