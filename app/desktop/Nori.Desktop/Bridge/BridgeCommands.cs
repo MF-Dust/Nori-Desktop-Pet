@@ -95,7 +95,7 @@ public sealed class BridgeCommands(AppServices services)
 		"fetch_llm_models" => await _services.Llm.FetchModelsAsync(OptionalStr(args, "provider"), Str(args, "baseUrl"), Str(args, "apiKey")),
 
 		// ---- 记忆库与向量 Embedding ----
-		// invoke("create_embedding", {text, baseUrl?, apiKey?, model?})
+		// invoke("create_embedding", {text, baseUrl?, apiKey?, model?, dimensions?})
 		"create_embedding" => await CreateEmbeddingAsync(args),
 		// invoke("add_memory", {type?, content, importance?, source?, tags?, embedding?})
 		"add_memory" => _services.Memory.Add(
@@ -606,7 +606,19 @@ public sealed class BridgeCommands(AppServices services)
 		string? apiKey = OptionalStr(args, "apiKey") ?? _services.Config.Get("embedding_api_key")?.ToStorage() ?? _services.Config.Get("llm_api_key")?.ToStorage() ?? "";
 		string? model = OptionalStr(args, "model") ?? _services.Config.Get("embedding_model")?.ToStorage() ?? "BAAI/bge-m3";
 
-		return await _services.Embedding.GetEmbeddingAsync(baseUrl, apiKey, model, text);
+		// 维数: 调用方显式传入优先, 否则读配置; 非法值一律视为不指定 (用模型默认维数)
+		int? dimensions = OptionalInt(args, "dimensions") ?? ParsePositiveConfigInt("embedding_dimensions");
+
+		return await _services.Embedding.GetEmbeddingAsync(baseUrl, apiKey, model, text, dimensions);
+	}
+
+	/// <summary>
+	/// 读取正整数配置, 缺失或非法时返回 null
+	/// </summary>
+	private int? ParsePositiveConfigInt(string key)
+	{
+		string raw = _services.Config.GetStringOr(key, "").Trim();
+		return int.TryParse(raw, out int value) && value > 0 ? value : null;
 	}
 
 	/// <summary>

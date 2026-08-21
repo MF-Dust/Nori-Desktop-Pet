@@ -12,6 +12,7 @@ const loading = ref(false)
 const embeddingModel = ref("BAAI/bge-m3")
 const embeddingBaseUrl = ref("")
 const embeddingApiKey = ref("")
+const embeddingDimensions = ref("")
 const isReembedding = ref(false)
 const reembedMessage = ref("")
 
@@ -39,14 +40,17 @@ const loadMemories = async () => {
 
 onMounted(async () => {
 	try {
-		const [SAVED_MODEL, SAVED_BASE, SAVED_KEY] = await Promise.all([
+		const [SAVED_MODEL, SAVED_BASE, SAVED_KEY, SAVED_DIMS] = await Promise.all([
 			invoke<string | null>("get_config", {key: "embedding_model"}),
 			invoke<string | null>("get_config", {key: "embedding_api_base"}),
 			invoke<string | null>("get_config", {key: "embedding_api_key"}),
+			// ConfigValue 读取时会重新推断类型, 存的数字串会以 number 回来, 统一转字符串
+			invoke<string | number | null>("get_config", {key: "embedding_dimensions"}),
 		])
 		if (SAVED_MODEL) embeddingModel.value = SAVED_MODEL
 		if (SAVED_BASE) embeddingBaseUrl.value = SAVED_BASE
 		if (SAVED_KEY) embeddingApiKey.value = SAVED_KEY
+		if (SAVED_DIMS != null && SAVED_DIMS !== "") embeddingDimensions.value = String(SAVED_DIMS)
 	} catch (error) {
 		console.error("加载 Embedding 配置失败:", error)
 	}
@@ -55,6 +59,23 @@ onMounted(async () => {
 
 const saveConfig = (key: string, value: string) => {
 	void invoke("set_config", {key, value})
+}
+
+// 保存维数: 留空表示用模型默认; 非正整数一律回退为空
+const saveDimensions = () => {
+	const RAW = embeddingDimensions.value.trim()
+	if (RAW === "") {
+		saveConfig("embedding_dimensions", "")
+		return
+	}
+	const NUM = Number.parseInt(RAW, 10)
+	if (Number.isNaN(NUM) || NUM <= 0) {
+		embeddingDimensions.value = ""
+		saveConfig("embedding_dimensions", "")
+		return
+	}
+	embeddingDimensions.value = String(NUM)
+	saveConfig("embedding_dimensions", String(NUM))
 }
 
 // 重新计算向量嵌入
@@ -160,16 +181,31 @@ const clearAll = async () => {
 						</div>
 					</div>
 
-					<div class="form-item">
-						<label class="label">API Key (留空复用 AI 大脑配置)</label>
-						<input
-							v-model="embeddingApiKey"
-							type="password"
-							class="input"
-							placeholder="sk-..."
-							@blur="saveConfig('embedding_api_key', embeddingApiKey)"
-						/>
+					<div class="form-row">
+						<div class="form-item flex-1">
+							<label class="label">API Key (留空复用 AI 大脑配置)</label>
+							<input
+								v-model="embeddingApiKey"
+								type="password"
+								class="input"
+								placeholder="sk-..."
+								@blur="saveConfig('embedding_api_key', embeddingApiKey)"
+							/>
+						</div>
+						<div class="form-item dims-item">
+							<label class="label">向量维数</label>
+							<input
+								v-model="embeddingDimensions"
+								type="number"
+								min="1"
+								class="input"
+								placeholder="默认"
+								@blur="saveDimensions"
+							/>
+						</div>
 					</div>
+
+					<p class="dims-hint">留空使用模型默认维数；仅部分模型支持自定义 (如 text-embedding-3-small/large)，修改后请点击右上角“重新计算记忆向量”，否则新旧向量维数不一致无法参与语义检索。</p>
 
 					<p v-if="reembedMessage" class="status-tip">{{ reembedMessage }}</p>
 				</div>
@@ -452,6 +488,18 @@ const clearAll = async () => {
 .form-row {
 	display: flex;
 	gap: 1.2rem;
+}
+
+.dims-item {
+	width: 11rem;
+	flex-shrink: 0;
+}
+
+.dims-hint {
+	margin: 0;
+	font-size: 1.1rem;
+	color: var(--text-faint);
+	line-height: 1.5;
 }
 
 .status-tip {

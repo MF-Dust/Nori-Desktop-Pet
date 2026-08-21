@@ -13,6 +13,7 @@ public interface IEmbeddingAdapter
 		string apiKey,
 		string model,
 		string input,
+		int? dimensions = null,
 		CancellationToken cancellationToken = default);
 
 	/// <summary>
@@ -23,5 +24,6 @@ public interface IEmbeddingAdapter
 		string apiKey,
 		string model,
 		IReadOnlyList<string> inputs,
+		int? dimensions = null,
 		CancellationToken cancellationToken = default);
 }

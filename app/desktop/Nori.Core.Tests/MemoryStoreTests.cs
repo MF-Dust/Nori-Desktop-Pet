@@ -180,4 +180,51 @@ public class EmbeddingAdapterTests
 		Assert.Equal(-0.456f, vec[1]);
 		Assert.Equal(0.789f, vec[2]);
 	}
+
+	[Fact]
+	public async Task OpenAiEmbeddingAdapter_指定维数时请求体携带dimensions()
+	{
+		string? capturedBody = null;
+
+		using MockHttpMessageHandler handler = new(req =>
+		{
+			capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+
+			string json = """
+				{
+				  "data": [
+				    {"index": 0, "embedding": [0.1, 0.2]}
+				  ]
+				}
+				""";
+
+			return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+			{
+				Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+			};
+		});
+
+		using HttpClient client = new(handler);
+		Nori.Core.Embedding.OpenAiEmbeddingAdapter adapter = new(client);
+
+		await adapter.GetEmbeddingAsync(
+			"https://api.openai.com/v1",
+			"sk-test",
+			"text-embedding-3-small",
+			"测试输入文本",
+			dimensions: 512);
+
+		Assert.NotNull(capturedBody);
+		Assert.Contains("\"dimensions\":512", capturedBody);
+
+		// 不指定维数时请求体不应携带该字段, 避免不支持的端点报错
+		await adapter.GetEmbeddingAsync(
+			"https://api.openai.com/v1",
+			"sk-test",
+			"text-embedding-3-small",
+			"测试输入文本");
+
+		Assert.NotNull(capturedBody);
+		Assert.DoesNotContain("dimensions", capturedBody);
+	}
 }

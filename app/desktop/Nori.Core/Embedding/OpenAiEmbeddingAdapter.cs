@@ -16,9 +16,10 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 		string apiKey,
 		string model,
 		string input,
+		int? dimensions = null,
 		CancellationToken cancellationToken = default)
 	{
-		IReadOnlyList<float[]> results = await GetEmbeddingsAsync(baseUrl, apiKey, model, [input], cancellationToken);
+		IReadOnlyList<float[]> results = await GetEmbeddingsAsync(baseUrl, apiKey, model, [input], dimensions, cancellationToken);
 		if (results.Count == 0)
 		{
 			throw new InvalidOperationException("Embedding 服务未返回任何向量数据。");
@@ -31,6 +32,7 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 		string apiKey,
 		string model,
 		IReadOnlyList<string> inputs,
+		int? dimensions = null,
 		CancellationToken cancellationToken = default)
 	{
 		string normalizedBase = baseUrl.Trim().TrimEnd('/');
@@ -44,11 +46,17 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
 		}
 
-		var payload = new
+		// OpenAI 兼容接口的可选参数: 指定后服务端按该维数截断/补齐输出向量
+		// (text-embedding-3-small/large 等支持; 不支持的端点会报错, 由调用方决定是否设置)
+		Dictionary<string, object> payload = new()
 		{
-			input = inputs.Count == 1 ? (object)inputs[0] : inputs,
-			model = string.IsNullOrWhiteSpace(model) ? "BAAI/bge-m3" : model.Trim()
+			["input"] = inputs.Count == 1 ? inputs[0] : inputs,
+			["model"] = string.IsNullOrWhiteSpace(model) ? "BAAI/bge-m3" : model.Trim(),
 		};
+		if (dimensions is > 0)
+		{
+			payload["dimensions"] = dimensions.Value;
+		}
 
 		request.Content = new StringContent(
 			JsonSerializer.Serialize(payload),
