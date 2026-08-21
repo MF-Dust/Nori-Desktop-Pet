@@ -94,6 +94,18 @@ const scrollToBottom = async () => {
 	listRef.value?.scrollTo({top: listRef.value.scrollHeight})
 }
 
+// 流式输出期间每个 chunk 都 nextTick+scrollTo 太频, 合并到 ~100ms 一次;
+// 用户发送/最终完成仍走即时 scrollToBottom
+let scrollPending = false
+const scheduleScrollToBottom = () => {
+	if (scrollPending) return
+	scrollPending = true
+	setTimeout(() => {
+		scrollPending = false
+		void scrollToBottom()
+	}, 100)
+}
+
 // 读取字符串配置 (失败返回空串)
 const readConfig = async (key: string): Promise<string> => {
 	try {
@@ -199,7 +211,7 @@ onMounted(async () => {
 			const lastMsg = messages.value[messages.value.length - 1]
 			if (lastMsg && lastMsg.role === "assistant") {
 				lastMsg.content += payload.chunk
-				void scrollToBottom()
+				scheduleScrollToBottom()
 			}
 		}
 	})
@@ -248,7 +260,7 @@ const send = async () => {
 					const lastMsg = messages.value[messages.value.length - 1]
 					if (lastMsg && lastMsg.role === "assistant") {
 						lastMsg.content += chunk
-						void scrollToBottom()
+						scheduleScrollToBottom()
 					}
 				},
 			}

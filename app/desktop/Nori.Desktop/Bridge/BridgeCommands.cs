@@ -321,18 +321,22 @@ public sealed class BridgeCommands(AppServices services)
 
 	/// <summary>
 	/// 一次流式对话, 逐 chunk 通过 nori:chat-chunk 事件向来源窗口推送
+	///
+	/// LLM 高速输出时每个 chunk 都走一次 UI Post + 序列化 + InvokeScript,
+	/// 开销全花在小信封上, 这里用 ChunkBatcher 按 ~33ms 合帧。
 	/// </summary>
 	private async Task<object?> ChatCompletionStreamAsync(NoriWindow source, JsonElement args)
 	{
 		ChatMessageInput[] messages = args.GetProperty("messages").Deserialize<ChatMessageInput[]>(BridgeJson.Options) ?? [];
 		string streamId = OptionalStr(args, "streamId") ?? Guid.NewGuid().ToString("N");
-		return await _services.Chat.StreamAsync(
+		ChunkBatcher batcher = new(source, streamId);
+		string final = await _services.Chat.StreamAsync(
 			OptionalStr(args, "provider"),
 			Str(args, "baseUrl"),
 			Str(args, "apiKey"),
 			Str(args, "model"),
 			messages,
-			chunk => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-chunk", new {streamId, chunk, done = false})),
+			batcher.Append,
 			motion => Dispatcher.UIThread.Post(() =>
 			{
 				_services.PetRuntime?.PlayMotionByName(motion);
@@ -350,16 +354,66 @@ public sealed class BridgeCommands(AppServices services)
 				model = usage.Model,
 			})),
 			OptionalBool(args, "persist") ?? true);
+
+		// 流结束: 残余缓冲必须在 invoke 返回前发出, 否则前端会丢尾巴。
+		// PostResult 也走 UI 线程 FIFO 队列, 这里的先发保证 chunk 先于 resolve 到达页面。
+		batcher.FlushNow();
+		return final;
 	}
 
 	/// <summary>
-	/// 全局光标位置与鼠标按键状态, 返回 [x, y, isDown] (物理像素)
+	/// 聊天流 chunk 合批器
+	///
+	/// 把到达的 chunk 攒进缓冲, 首个 chunk 到达后排一次 UI 线程刷新,
+	/// 刷新时把期间积压的一并带走; 流结束时 FlushNow 保证不丢尾。
 	/// </summary>
-	private object CursorPosition()
+	private sealed class ChunkBatcher(NoriWindow source, string streamId)
 	{
-		(double x, double y) = PlatformServices.Current.GetCursorPosition();
-		bool isDown = PlatformServices.Current.IsMouseButtonDown(0);
-		return new object[] {x, y, isDown};
+		private readonly object _gate = new();
+		private readonly System.Text.StringBuilder _buffer = new();
+		private bool _flushQueued;
+
+		public void Append(string chunk)
+		{
+			bool schedule = false;
+			lock (_gate)
+			{
+				_buffer.Append(chunk);
+				if (!_flushQueued)
+				{
+					_flushQueued = true;
+					schedule = true;
+				}
+			}
+			if (schedule)
+			{
+				Dispatcher.UIThread.Post(Flush);
+			}
+		}
+
+		/// <summary>流结束前调用: 立即送出残余缓冲</summary>
+		public void FlushNow() => Dispatch(Drain());
+
+		private void Flush() => Dispatch(Drain());
+
+		/// <summary>取走全部积压内容; 无内容返回 null 并允许下次重新排队</summary>
+		private string? Drain()
+		{
+			lock (_gate)
+			{
+				_flushQueued = false;
+				if (_buffer.Length == 0) return null;
+				string payload = _buffer.ToString();
+				_buffer.Clear();
+				return payload;
+			}
+		}
+
+		private void Dispatch(string? payload)
+		{
+			if (string.IsNullOrEmpty(payload)) return;
+			source.PostEvent("nori:chat-chunk", new {streamId, chunk = payload, done = false});
+		}
 	}
 
 	/// <summary>

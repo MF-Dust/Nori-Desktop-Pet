@@ -32,6 +32,7 @@ public sealed class NoriWindow : Window
 	private readonly NoriBridge _bridge;
 	private bool _ready;
 	private readonly List<string> _pendingScripts = [];
+	private readonly DispatcherTimer _metricsTimer;
 
 	public NoriWindow(WindowDefinition definition, NoriBridge bridge, string url)
 	{
@@ -63,8 +64,19 @@ public sealed class NoriWindow : Window
 
 		_webView.Source = new Uri(url);
 
-		// 窗口移动 / DPI 变化时主动推度量, 前端据此免掉每帧的位置与缩放往返
-		PositionChanged += (_, _) => PostMetrics();
+		// 窗口移动 / DPI 变化时主动推度量, 前端据此免掉每帧的位置与缩放往返。
+		// 拖动时 PositionChanged 每个像素都触发, 用 50ms 定时器合帧:
+		// 移动中至多 ~20Hz, 停下后必补发一次最终值。
+		_metricsTimer = new DispatcherTimer {Interval = TimeSpan.FromMilliseconds(50)};
+		_metricsTimer.Tick += (_, _) =>
+		{
+			_metricsTimer.Stop();
+			PostMetrics();
+		};
+		PositionChanged += (_, _) =>
+		{
+			if (!_metricsTimer.IsEnabled) _metricsTimer.Start();
+		};
 		ScalingChanged += (_, _) => PostMetrics();
 	}
 
