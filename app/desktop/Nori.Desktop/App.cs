@@ -45,8 +45,31 @@ public sealed class App : Application
 
 	/// <summary>
 	/// 启动流程: 目录 → 日志 → 数据库 → 资源服务 → 窗口 → 托盘 → 窗口调度
+	///
+	/// 整个流程包在 try/catch 里: 这里是 fire-and-forget 调用, 异常不兜底的话
+	/// 只会留下一个无窗口无提示的僵尸进程。
 	/// </summary>
 	private async Task StartAsync(IClassicDesktopStyleApplicationLifetime desktop)
+	{
+		try
+		{
+			await StartAsyncCore(desktop);
+		}
+		catch (Exception exception)
+		{
+			try
+			{
+				new FileLogger().Write(LogSource.Backend, "error", $"应用启动失败: {exception}");
+			}
+			catch
+			{
+				// 日志系统自身不可用时只能放弃记录
+			}
+			await Dispatcher.UIThread.InvokeAsync(() => ShowFatal("应用启动失败", exception.Message, desktop));
+		}
+	}
+
+	private async Task StartAsyncCore(IClassicDesktopStyleApplicationLifetime desktop)
 	{
 		bool devMode = Environment.GetEnvironmentVariable("NORI_DEV") == "1";
 
@@ -81,11 +104,25 @@ public sealed class App : Application
 		}
 		logger.Write(LogSource.Backend, "info", $"数据库已打开: {AppPaths.DatabasePath}");
 
+		// 默认校验服务器证书。自签名/私有部署的大模型端点可通过 allow_insecure_tls 显式放开,
+		// 不能全局忽略: 这个 client 承载了 LLM/Embedding/MCP 全部出站 HTTPS,
+		// 关掉校验等于把 API Key 暴露给中间人。
+		bool insecureTls = ParseBoolFlag(config.GetStringOr("allow_insecure_tls", "")) ?? false;
 		HttpClientHandler httpHandler = new()
 		{
-			ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+			ServerCertificateCustomValidationCallback = insecureTls
+				? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+				: null,
 		};
-		HttpClient http = new(httpHandler);
+		// 超时要大于聊天流式的 120s 上限, 否则 HttpClient 默认的 100s 会先一步捨断长回复
+		HttpClient http = new(httpHandler)
+		{
+			Timeout = TimeSpan.FromSeconds(ChatService.TimeoutSeconds + 10),
+		};
+		if (insecureTls)
+		{
+			logger.Write(LogSource.Backend, "warn", "已启用 allow_insecure_tls: 出站 HTTPS 不再校验服务器证书, 仅建议对本地/自签名端点使用");
+		}
 		AssetServer assets = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),
@@ -166,4 +203,16 @@ public sealed class App : Application
 	/// </summary>
 	private static string AppVersion() =>
 		Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1.0";
+
+	/// <summary>
+	/// 解析布尔配置文本, 与 PetRuntime.ParseBool 同口径
+	/// </summary>
+	private static bool? ParseBoolFlag(string raw) => raw switch
+	{
+		"1" => true,
+		"0" => false,
+		_ when raw.Equals("true", StringComparison.OrdinalIgnoreCase) => true,
+		_ when raw.Equals("false", StringComparison.OrdinalIgnoreCase) => false,
+		_ => null,
+	};
 }

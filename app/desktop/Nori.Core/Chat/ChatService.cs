@@ -49,8 +49,11 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 	/// <summary>配置键: LLM 协议类型</summary>
 	public const string KeyLlmProvider = "llm_provider";
 
-	/// <summary>聊天请求超时 (秒): 防止接口挂起导致后台任务永久阻塞</summary>
-	private const int TimeoutSeconds = 120;
+	/// <summary>
+	/// 聊天请求超时 (秒): 防止接口挂起导致后台任务永久阻塞。
+	/// public: App 组装 HttpClient 时超时要大于这个值, 否则 HttpClient 会先一步捨断长回复。
+	/// </summary>
+	public const int TimeoutSeconds = 120;
 
 	/// <summary>嵌入资源名</summary>
 	private const string PromptResource = "Nori.Core.Chat.nori-system-prompt.md";
