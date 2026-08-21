@@ -146,6 +146,10 @@ export default () => {
 				placeholderPrefix: t("views.main.placeholderPrefix"),
 				placeholderSuffix: t("views.main.placeholderSuffix"),
 				chat: {
+					title: t("views.main.chat.title"),
+					emptyTitle: t("views.main.chat.emptyTitle"),
+					emptyDesc: t("views.main.chat.emptyDesc"),
+					clearHistory: t("views.main.chat.clearHistory"),
 					notConfigured: t("views.main.chat.notConfigured"),
 					notConfiguredDesc: t("views.main.chat.notConfiguredDesc"),
 					goSettings: t("views.main.chat.goSettings"),

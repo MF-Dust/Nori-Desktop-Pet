@@ -372,7 +372,7 @@ const testVoice = async () => {
 	display: flex;
 	flex-direction: column;
 	overflow-y: auto;
-	padding: 1.5rem 2rem;
+	padding: 1.6rem 2.4rem;
 	gap: 1.6rem;
 }
 
@@ -392,24 +392,29 @@ const testVoice = async () => {
 .subtitle {
 	margin: 0;
 	font-size: 1.2rem;
-	color: var(--text-muted);
+	color: var(--text-faint);
 }
 
 .settings-content {
 	display: flex;
 	flex-direction: column;
-	gap: 1.6rem;
+	gap: 1.4rem;
 	padding-bottom: 2rem;
 }
 
 .setting-card {
-	background: rgba(255, 255, 255, 0.03);
+	background: var(--bg-card);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-md);
-	padding: 1.4rem;
+	padding: 1.6rem;
 	display: flex;
 	flex-direction: column;
 	gap: 1.2rem;
+	transition: all 0.2s ease;
+
+	&:hover {
+		border-color: var(--line-strong);
+	}
 }
 
 .card-header {
@@ -434,21 +439,23 @@ const testVoice = async () => {
 .slider-row {
 	display: flex;
 	align-items: center;
-	gap: 1.2rem;
+	gap: 1.4rem;
 }
 
 .range-slider {
 	flex: 1;
+	height: 0.6rem;
 	accent-color: var(--nori-teal-bright);
 	cursor: pointer;
 }
 
 .slider-value {
-	min-width: 4rem;
+	width: 4.8rem;
 	font-size: 1.2rem;
 	color: var(--nori-teal-bright);
+	font-family: monospace;
 	font-weight: 600;
-	font-variant-numeric: tabular-nums;
+	text-align: right;
 }
 
 .form-item {
@@ -467,23 +474,26 @@ const testVoice = async () => {
 }
 
 .label {
-	font-size: 1.15rem;
+	font-size: 1.2rem;
+	font-weight: 500;
 	color: var(--text-muted);
 }
 
 .input {
-	padding: 0.8rem 1.2rem;
+	padding: 0.9rem 1.2rem;
 	background: rgba(255, 255, 255, 0.04);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	font-size: 1.25rem;
+	font-family: inherit;
 	outline: none;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
@@ -497,24 +507,31 @@ const testVoice = async () => {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.6rem;
-	padding: 0.6rem 1.2rem;
+	padding: 0.65rem 1.3rem;
 	border: 0.1rem solid var(--line-subtle);
-	border-radius: 2rem;
+	border-radius: var(--radius-pill);
 	background: rgba(255, 255, 255, 0.03);
 	color: var(--text-body);
 	font-size: 1.15rem;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	input {
 		display: none;
 	}
 
+	&:hover {
+		color: var(--nori-teal-bright);
+		background: rgba(125, 227, 255, 0.06);
+		border-color: var(--nori-teal-soft);
+	}
+
 	&.active {
 		border-color: transparent;
-		background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-		color: #05121a;
+		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+		color: #03101c;
 		font-weight: 600;
+		box-shadow: 0 0.2rem 1.2rem var(--glow-teal-soft);
 	}
 }
 
@@ -523,7 +540,7 @@ const testVoice = async () => {
 	align-items: center;
 	justify-content: space-between;
 	padding: 0.8rem 0;
-	border-top: 0.1rem solid rgba(255, 255, 255, 0.05);
+	border-top: 0.1rem solid var(--line-subtle);
 }
 
 .switch-title {
@@ -540,8 +557,8 @@ const testVoice = async () => {
 
 .toggle-switch {
 	position: relative;
-	width: 4rem;
-	height: 2.2rem;
+	width: 4.2rem;
+	height: 2.4rem;
 	cursor: pointer;
 
 	input {
@@ -552,33 +569,32 @@ const testVoice = async () => {
 
 	.toggle-slider {
 		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background: rgba(255, 255, 255, 0.15);
-		border-radius: 2rem;
-		transition: 0.2s;
+		inset: 0;
+		background: rgba(255, 255, 255, 0.12);
+		border-radius: var(--radius-pill);
+		transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 		&::before {
 			position: absolute;
 			content: "";
-			height: 1.6rem;
-			width: 1.6rem;
+			height: 1.8rem;
+			width: 1.8rem;
 			left: 0.3rem;
 			bottom: 0.3rem;
 			background: white;
 			border-radius: 50%;
-			transition: 0.2s;
+			transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 		}
 	}
 
 	input:checked + .toggle-slider {
-		background: var(--nori-teal-bright);
+		background: var(--nori-teal);
+		box-shadow: 0 0 1rem var(--glow-teal);
 	}
 
 	input:checked + .toggle-slider::before {
 		transform: translateX(1.8rem);
+		background: #03101c;
 	}
 }
 
@@ -592,12 +608,11 @@ const testVoice = async () => {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.6rem;
-	padding: 0.7rem 1.4rem;
+	padding: 0.75rem 1.6rem;
 	background: rgba(125, 227, 255, 0.08);
 	border: 0.1rem solid var(--nori-teal-soft);
 	border-radius: var(--radius-sm);
 	color: var(--nori-teal-bright);
-	font-size: 1.2rem;
 	cursor: pointer;
 	transition: all 0.2s ease;
 

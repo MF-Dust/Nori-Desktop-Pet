@@ -90,8 +90,16 @@ onMounted(async () => {
 		</TitleBar>
 
 		<div class="body">
-			<img class="avatar" :src="logo" alt="Nori"/>
-			<div class="status">{{ statusText }}</div>
+			<div class="avatar-stage">
+				<div class="avatar-ring-outer"></div>
+				<div class="avatar-ring-inner"></div>
+				<img class="avatar" :src="logo" alt="Nori"/>
+			</div>
+
+			<div class="status-pill">
+				<Icon name="loading" class="spin status-icon" :size="13"/>
+				<span class="status-text">{{ statusText }}</span>
+			</div>
 		</div>
 	</div>
 </template>
@@ -100,8 +108,10 @@ onMounted(async () => {
 .init-window {
 	width: 100vw;
 	height: 100vh;
-	background: linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-abyss) 100%);
+	background: radial-gradient(40rem 26rem at 50% 45%, rgba(94, 234, 212, 0.16) 0%, transparent 68%),
+		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
 	border-radius: var(--radius-lg);
+	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65), inset 0 0 0 0.1rem var(--line-subtle);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -114,20 +124,65 @@ onMounted(async () => {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 1.8rem;
+	gap: 2.2rem;
 	padding-bottom: 2rem;
 }
 
-.avatar {
-	width: 7.2rem;
-	height: 7.2rem;
-	object-fit: contain;
-	animation: breathe 2.2s ease-in-out infinite;
+.avatar-stage {
+	position: relative;
+	width: 13rem;
+	height: 13rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
-.status {
-	color: var(--text-body);
-	font-size: 1.3rem;
+.avatar-ring-outer {
+	position: absolute;
+	inset: 0;
+	border-radius: 50%;
+	border: 0.1rem dashed rgba(125, 227, 255, 0.35);
+	animation: rotate 12s linear infinite;
+}
+
+.avatar-ring-inner {
+	position: absolute;
+	inset: 1rem;
+	border-radius: 50%;
+	background: radial-gradient(circle, rgba(125, 227, 255, 0.2) 0%, rgba(94, 234, 212, 0.05) 50%, transparent 70%);
+	animation: glow-pulse 2.5s ease-in-out infinite;
+}
+
+.avatar {
+	width: 7.6rem;
+	height: 7.6rem;
+	object-fit: contain;
+	animation: breathe 2.4s ease-in-out infinite;
+	position: relative;
+	z-index: 1;
+}
+
+.status-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.8rem;
+	padding: 0.5rem 1.4rem;
+	border-radius: var(--radius-pill);
+	background: rgba(255, 255, 255, 0.04);
+	border: 0.1rem solid var(--line-subtle);
+	backdrop-filter: blur(0.8rem);
+	box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.25);
+}
+
+.status-icon {
+	color: var(--nori-teal-bright);
+}
+
+.status-text {
+	color: var(--text-primary);
+	font-size: 1.25rem;
+	font-weight: 500;
+	letter-spacing: 0.02rem;
 }
 
 .close-btn {
@@ -141,9 +196,10 @@ onMounted(async () => {
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	transition: all 0.15s ease;
 
 	&:hover {
-		background-color: rgba(255, 255, 255, 0.08);
+		background-color: rgba(251, 60, 68, 0.18);
 		color: var(--danger);
 	}
 }
@@ -153,3 +209,4 @@ onMounted(async () => {
 	height: 1.4rem;
 }
 </style>
+

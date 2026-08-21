@@ -1435,8 +1435,8 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 .modal-overlay {
 	position: fixed;
 	inset: 0;
-	background: rgba(0, 0, 0, 0.65);
-	backdrop-filter: blur(0.4rem);
+	background: rgba(0, 0, 0, 0.75);
+	backdrop-filter: blur(0.8rem);
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -1446,14 +1446,14 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 
 .modal-card {
 	width: 100%;
-	max-width: 52rem;
+	max-width: 54rem;
 	max-height: 90vh;
-	background: #091a26;
+	background: var(--bg-glass-modal);
 	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
+	border-radius: var(--radius-lg);
 	display: flex;
 	flex-direction: column;
-	box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.7), 0 0 2rem var(--glow-teal-soft);
 	overflow: hidden;
 }
 
@@ -1463,6 +1463,7 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 	justify-content: space-between;
 	padding: 1.6rem 2rem;
 	border-bottom: 0.1rem solid var(--line-subtle);
+	background: rgba(8, 22, 36, 0.5);
 
 	h3 {
 		font-size: 1.5rem;
@@ -1476,6 +1477,11 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 	border: none;
 	color: var(--text-faint);
 	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0.2rem;
+	transition: color 0.15s ease;
 
 	&:hover {
 		color: var(--text-primary);
@@ -1483,23 +1489,24 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 }
 
 .modal-body {
-	padding: 1.6rem 2rem;
+	padding: 1.8rem 2rem;
 	overflow-y: auto;
 	display: flex;
 	flex-direction: column;
-	gap: 1.2rem;
+	gap: 1.4rem;
 }
 
 .modal-hint {
-	font-size: 1.18rem;
+	font-size: 1.2rem;
 	color: var(--text-muted);
-	line-height: 1.5;
+	line-height: 1.55;
 
 	code {
-		background: rgba(0, 0, 0, 0.3);
-		padding: 0.2rem 0.5rem;
-		border-radius: 0.3rem;
+		background: rgba(0, 0, 0, 0.35);
+		padding: 0.2rem 0.6rem;
+		border-radius: 0.4rem;
 		color: var(--nori-teal-bright);
+		font-family: monospace;
 	}
 }
 
@@ -1516,23 +1523,26 @@ const toggleBuiltinTool = (tool: AgentTool) => {
 }
 
 .input, .textarea {
-	padding: 0.8rem 1.2rem;
+	padding: 0.9rem 1.3rem;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	background: rgba(255, 255, 255, 0.04);
 	color: var(--text-primary);
-	font-size: 1.2rem;
+	font-size: 1.25rem;
 	font-family: inherit;
 	outline: none;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
 .code-font {
 	font-family: monospace;
-	line-height: 1.4;
+	line-height: 1.45;
 }
 
 .radio-group {

@@ -16,6 +16,10 @@ const I18N = computed(() => useLanguages().views.firstRun)
 // 首次初始化配置
 const initConfig = ref<Awaited<ReturnType<typeof getInitConfig>>>(null)
 
+// 步骤配置与名称
+const STEP_LABELS = ["欢迎", "语言", "形象", "就绪"]
+const STEPS_COUNT = STEP_LABELS.length
+
 // 组件挂载后拉取首次初始化配置 (语言/模型/版本/时间)
 onMounted(async () => {
 	try {
@@ -24,9 +28,6 @@ onMounted(async () => {
 		console.error("加载初始化配置失败:", error)
 	}
 })
-
-// 初始化步骤数量
-const STEPS_COUNT = 4
 
 // 当前步骤索引
 const currentStep = ref(0)
@@ -76,16 +77,32 @@ const finish = async () => {
 <template>
 	<div class="first-run-window" :class="`bg-step-${currentStep + 1}`">
 		<TitleBar>
-			<div class="titlebar-right">
-				<div class="steps-indicator">
-					<span
-						v-for="i in STEPS_COUNT"
-						:key="i"
-						class="seg"
-						:class="{active: i <= currentStep + 1}"
-					/>
+			<div class="titlebar-center">
+				<div class="step-badge-group">
+					<div
+						v-for="(label, idx) in STEP_LABELS"
+						:key="idx"
+						class="step-badge-item"
+						:class="{active: idx === currentStep, done: idx < currentStep}"
+					>
+						<span class="step-dot"/>
+						<span class="step-text">{{ label }}</span>
+					</div>
 				</div>
-				<span class="step-count">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
+			</div>
+
+			<div class="titlebar-right">
+				<div class="steps-progress-wrap">
+					<div class="steps-indicator">
+						<span
+							v-for="i in STEPS_COUNT"
+							:key="i"
+							class="seg"
+							:class="{active: i <= currentStep + 1}"
+						/>
+					</div>
+					<span class="step-count">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
+				</div>
 				<button class="close-btn" title="关闭" @click="closeApp">
 					<Icon name="close" class="close-icon"/>
 				</button>
@@ -104,15 +121,19 @@ const finish = async () => {
 		<!-- 底部导航 -->
 		<div class="footer">
 			<button v-if="!isFirst" class="btn btn-ghost" @click="prev">
-				<icon name="arrow-left" class="btn-icon"/>
-				{{ I18N.back }}
+				<Icon name="arrow-left" class="btn-icon"/>
+				<span>{{ I18N.back }}</span>
 			</button>
-			<span v-else/>
+			<span v-else class="footer-spacer"/>
+
 			<button v-if="!isLast" class="btn btn-primary" @click="next">
-				{{ I18N.next }}
-				<icon name="arrow-right" class="btn-icon"/>
+				<span>{{ I18N.next }}</span>
+				<Icon name="arrow-right" class="btn-icon"/>
 			</button>
-			<button v-else class="btn btn-primary" @click="finish">{{ I18N.start }}</button>
+			<button v-else class="btn btn-primary btn-start" @click="finish">
+				<Icon name="sparkles" class="btn-icon"/>
+				<span>{{ I18N.start }}</span>
+			</button>
 		</div>
 	</div>
 </template>
@@ -127,56 +148,121 @@ const finish = async () => {
 	overflow: hidden;
 	user-select: none;
 	color: var(--text-body);
-	background: linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-abyss) 100%);
-	transition: background 0.6s ease;
+	background: linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
+	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65), inset 0 0 0 0.1rem var(--line-subtle);
+	transition: background 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+	position: relative;
 
-	// 每页不同的背景: 渐变 + 位置/明度不同的光晕
+	// 各步骤动态环境光晕
 	&.bg-step-1 {
-		background-image: radial-gradient(56rem 34rem at 88% 36%, rgba(94, 234, 212, 0.16), transparent 65%),
-		linear-gradient(160deg, #10304b 0%, var(--bg-deep) 58%, var(--bg-abyss) 100%);
+		background-image: radial-gradient(64rem 40rem at 85% 30%, rgba(94, 234, 212, 0.18), transparent 65%),
+			radial-gradient(40rem 28rem at 15% 85%, rgba(125, 227, 255, 0.08), transparent 60%),
+			linear-gradient(160deg, #10324e 0%, var(--bg-deep) 58%, var(--bg-abyss) 100%);
 	}
 
 	&.bg-step-2 {
-		background-image: radial-gradient(62rem 42rem at 50% 115%, rgba(127, 212, 232, 0.18), transparent 60%),
-		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
+		background-image: radial-gradient(62rem 42rem at 50% 115%, rgba(127, 212, 232, 0.2), transparent 60%),
+			radial-gradient(38rem 26rem at 50% 0%, rgba(94, 234, 212, 0.1), transparent 60%),
+			linear-gradient(160deg, #0e2e48 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
 	}
 
 	&.bg-step-3 {
-		background-image: radial-gradient(42rem 34rem at 50% 52%, rgba(125, 227, 255, 0.14), transparent 68%),
-		linear-gradient(160deg, #0c2440 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
+		background-image: radial-gradient(52rem 38rem at 50% 48%, rgba(125, 227, 255, 0.16), transparent 70%),
+			radial-gradient(40rem 26rem at 20% 20%, rgba(94, 234, 212, 0.1), transparent 60%),
+			linear-gradient(160deg, #0c2642 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
 	}
 
 	&.bg-step-4 {
-		background-image: radial-gradient(42rem 34rem at 50% 58%, rgba(94, 234, 212, 0.14), transparent 68%),
-		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
+		background-image: radial-gradient(56rem 40rem at 50% 50%, rgba(94, 234, 212, 0.22), transparent 68%),
+			radial-gradient(48rem 32rem at 50% 10%, rgba(125, 227, 255, 0.15), transparent 60%),
+			linear-gradient(160deg, #123654 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
+	}
+}
+
+.titlebar-center {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.step-badge-group {
+	display: flex;
+	align-items: center;
+	gap: 1.4rem;
+	padding: 0.35rem 1.2rem;
+	background: rgba(0, 0, 0, 0.25);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-pill);
+	backdrop-filter: blur(0.8rem);
+}
+
+.step-badge-item {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 1.15rem;
+	color: var(--text-faint);
+	transition: all 0.3s ease;
+
+	.step-dot {
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.2);
+		transition: all 0.3s ease;
 	}
 
-	&.bg-step-5 {
-		background-image: radial-gradient(42rem 34rem at 50% 46%, rgba(94, 234, 212, 0.16), transparent 68%),
-		linear-gradient(160deg, #10304b 0%, var(--bg-deep) 58%, var(--bg-abyss) 100%);
+	&.active {
+		color: var(--nori-teal-bright);
+		font-weight: 600;
+
+		.step-dot {
+			width: 0.7rem;
+			height: 0.7rem;
+			background: var(--nori-teal-bright);
+			box-shadow: 0 0 0.8rem var(--glow-teal);
+		}
+	}
+
+	&.done {
+		color: var(--nori-teal-soft);
+
+		.step-dot {
+			background: var(--nori-teal);
+		}
 	}
 }
 
 .titlebar-right {
 	display: flex;
 	align-items: center;
-	gap: 1rem;
+	gap: 1.2rem;
+
+	.steps-progress-wrap {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		background: rgba(255, 255, 255, 0.04);
+		padding: 0.3rem 0.8rem;
+		border-radius: var(--radius-sm);
+		border: 0.1rem solid var(--line-subtle);
+	}
 
 	.steps-indicator {
 		display: flex;
-		gap: 0.24rem;
+		gap: 0.3rem;
 	}
 
 	.seg {
-		width: 2.2rem;
-		height: 0.3rem;
-		border-radius: 0.02rem;
-		background-color: rgba(255, 255, 255, 0.14);
+		width: 1.8rem;
+		height: 0.35rem;
+		border-radius: 0.2rem;
+		background-color: rgba(255, 255, 255, 0.12);
 		transition: all 0.3s ease;
 
 		&.active {
 			background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-			box-shadow: 0 0 0.6rem var(--glow-teal-soft);
+			box-shadow: 0 0 0.8rem var(--glow-teal-soft);
 		}
 	}
 
@@ -184,7 +270,7 @@ const finish = async () => {
 		font-size: 1.1rem;
 		color: var(--text-faint);
 		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.05rem;
+		font-family: monospace;
 	}
 }
 
@@ -194,34 +280,35 @@ const finish = async () => {
 	width: 100%;
 	height: 100%;
 	min-height: 0;
+	position: relative;
 }
 
-// 页面过渡: 下一步向右滑入, 上一步向左滑入
+// 页面过渡: 带有细微缩放与透明度的平滑滑入
 .page-next-enter-active,
 .page-next-leave-active,
 .page-prev-enter-active,
 .page-prev-leave-active {
-	transition: opacity 0.32s ease, transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .page-next-enter-from {
 	opacity: 0;
-	transform: translateX(3.6rem);
+	transform: translateX(3rem) scale(0.98);
 }
 
 .page-next-leave-to {
 	opacity: 0;
-	transform: translateX(-3.6rem);
+	transform: translateX(-3rem) scale(0.98);
 }
 
 .page-prev-enter-from {
 	opacity: 0;
-	transform: translateX(-3.6rem);
+	transform: translateX(-3rem) scale(0.98);
 }
 
 .page-prev-leave-to {
 	opacity: 0;
-	transform: translateX(3.6rem);
+	transform: translateX(3rem) scale(0.98);
 }
 
 // 底部导航
@@ -232,39 +319,25 @@ const finish = async () => {
 	align-items: center;
 	justify-content: space-between;
 	flex-shrink: 0;
+	background: rgba(5, 14, 26, 0.4);
+	border-top: 0.1rem solid var(--line-subtle);
+	backdrop-filter: blur(0.8rem);
 
-	.btn {
-		padding: 0.9rem 2.2rem;
-		border: none;
-		border-radius: var(--radius-sm);
-		font-size: 1.4rem;
-		cursor: pointer;
-		transition: all 0.2s ease;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.6rem;
-
-		&:hover {
-			transform: translateY(-0.1rem);
-		}
+	.footer-spacer {
+		width: 1rem;
 	}
 
 	.btn-icon {
 		width: 1.5rem;
 		height: 1.5rem;
-		color: inherit;
 		flex-shrink: 0;
 	}
 
-	.btn-ghost {
-		background-color: transparent;
-		color: var(--text-muted);
-		border: 0.1rem solid var(--line-subtle);
-
-		&:hover {
-			color: var(--text-primary);
-			border-color: var(--line-strong);
-		}
+	.btn-start {
+		padding: 1rem 2.6rem;
+		font-size: 1.4rem;
+		box-shadow: 0 0.4rem 2rem var(--glow-teal-strong);
 	}
 }
 </style>
+

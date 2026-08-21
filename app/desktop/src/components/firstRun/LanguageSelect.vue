@@ -21,16 +21,20 @@ const FLAG_MAP: Record<string, string> = {
 }
 
 // 语言 code → 显示名称 (fallback 用 Intl.DisplayNames)
-const NAME_MAP: Record<string, string> = {
-	"zh-CN": "简体中文",
-	"zh": "简体中文",
-	"en": "English",
-	"en-US": "English (US)",
+const NAME_MAP: Record<string, {name: string; sub: string}> = {
+	"zh-CN": {name: "简体中文", sub: "Chinese (Simplified)"},
+	"zh": {name: "简体中文", sub: "Chinese (Simplified)"},
+	"en": {name: "English", sub: "English (UK)"},
+	"en-US": {name: "English (US)", sub: "American English"},
 }
 
 const flagOf = (code: string): string => FLAG_MAP[code] ?? FLAG_MAP[code.split("-")[0]] ?? ""
 
-const nameOf = (code: string): string => NAME_MAP[code] ?? new Intl.DisplayNames([code], {type: "language"}).of(code.split("-")[0]) ?? code
+const nameInfoOf = (code: string): {name: string; sub: string} => {
+	if (NAME_MAP[code]) return NAME_MAP[code]
+	const autoName = new Intl.DisplayNames([code], {type: "language"}).of(code.split("-")[0]) || code
+	return {name: autoName, sub: code}
+}
 
 // 可用语言列表
 const languages = ref<string[]>([])
@@ -60,129 +64,214 @@ const select = async (code: string) => {
 </script>
 
 <template>
-	<div class="lang">
+	<div class="lang-page">
 		<div class="lang-head">
-			<h3 class="lang-title glow-teal">{{ I18N.title }}</h3>
-			<p class="lang-sub">{{ current }}</p>
+			<span class="lang-badge">
+				<Icon name="noriOS" :size="12"/>
+				<span>Language Preference</span>
+			</span>
+			<h2 class="lang-title glow-teal">{{ I18N.title }}</h2>
+			<p class="lang-sub">请选择您希望与 Nori 交互及阅读界面的主要语言</p>
 		</div>
-		<div class="lang-list">
+
+		<div class="lang-grid">
 			<button
 				v-for="code in languages"
 				:key="code"
-				class="lang-item"
+				class="lang-card"
 				:class="{active: current === code}"
 				@click="select(code)"
 			>
-				<img v-if="flagOf(code)" class="lang-flag" :src="flagOf(code)" :alt="nameOf(code)"/>
-				<span v-else class="lang-flag lang-flag-empty"></span>
-				<span class="lang-name">{{ nameOf(code) }}</span>
-				<span class="lang-check"><icon name="check"/></span>
+				<div class="flag-wrap">
+					<img v-if="flagOf(code)" class="lang-flag" :src="flagOf(code)" :alt="nameInfoOf(code).name"/>
+					<span v-else class="lang-flag lang-flag-empty"></span>
+				</div>
+
+				<div class="lang-info">
+					<span class="lang-name">{{ nameInfoOf(code).name }}</span>
+					<span class="lang-subname">{{ nameInfoOf(code).sub }}</span>
+				</div>
+
+				<div class="lang-check-pill">
+					<Icon name="check" :size="12"/>
+				</div>
 			</button>
+
 			<p v-if="languages.length === 0" class="lang-empty">{{ I18N.langEmpty }}</p>
 		</div>
 	</div>
 </template>
 
 <style scoped lang="less">
-.lang {
+.lang-page {
 	width: 100%;
+	height: 100%;
+	padding: 1.6rem 5.6rem;
 	display: flex;
 	flex-direction: column;
-	gap: 1rem;
+	align-items: center;
+	justify-content: center;
+	gap: 2.2rem;
 }
 
 .lang-head {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 0.2rem;
+	gap: 0.6rem;
+	text-align: center;
+}
+
+.lang-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.3rem 0.9rem;
+	border-radius: var(--radius-pill);
+	background: rgba(125, 227, 255, 0.08);
+	border: 0.1rem solid var(--line-subtle);
+	color: var(--nori-teal);
+	font-size: 1.1rem;
 }
 
 .lang-title {
-	font-size: 1.6rem;
-	font-weight: 600;
+	font-size: 2.4rem;
+	font-weight: 700;
 	color: var(--text-primary);
 }
 
 .lang-sub {
-	font-size: 1.1rem;
-	color: var(--text-muted);
+	font-size: 1.25rem;
+	color: var(--text-faint);
 }
 
-.lang-list {
-	padding: 0.2rem 1rem;
+.lang-grid {
 	width: 100%;
-	max-height: 24rem;
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-	overflow-y: auto;
+	max-width: 48rem;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 1.4rem;
 }
 
-.lang-item {
-	padding: 0.8rem 1.2rem;
+.lang-card {
+	padding: 1.4rem 1.6rem;
 	display: flex;
 	align-items: center;
-	gap: 1rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background-color: rgba(255, 255, 255, 0.04);
+	gap: 1.2rem;
+	border: 0.15rem solid var(--line-subtle);
+	border-radius: var(--radius-md);
+	background: rgba(255, 255, 255, 0.03);
 	color: var(--text-primary);
-	font-size: 1.3rem;
 	font-family: inherit;
 	cursor: pointer;
 	text-align: left;
-	transition: all 0.2s ease;
+	transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+	position: relative;
+	overflow: hidden;
+
+	&::before {
+		content: "";
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: radial-gradient(circle at 10% 20%, rgba(125, 227, 255, 0.1) 0%, transparent 60%);
+		opacity: 0;
+		transition: opacity 0.25s ease;
+	}
 
 	&:hover {
-		background-color: rgba(125, 227, 255, 0.08);
+		background: rgba(125, 227, 255, 0.08);
 		border-color: var(--nori-teal-soft);
+		transform: translateY(-0.2rem);
+		box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.3), 0 0 1.2rem var(--glow-teal-soft);
+
+		&::before {
+			opacity: 1;
+		}
 	}
 
 	&.active {
 		border-color: var(--nori-teal);
-		background-color: rgba(125, 227, 255, 0.12);
-		box-shadow: 0 0 1rem var(--glow-teal-soft);
+		background: rgba(125, 227, 255, 0.12);
+		box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.4), 0 0 1.6rem var(--glow-teal);
+
+		.lang-check-pill {
+			opacity: 1;
+			transform: scale(1);
+			background: var(--nori-teal);
+			color: #05121a;
+		}
+
+		.lang-name {
+			color: var(--nori-teal-bright);
+			font-weight: 600;
+		}
 	}
 }
 
-.lang-flag {
-	width: 2.6rem;
-	height: 1.7rem;
-	object-fit: cover;
-	border-radius: 0.2rem;
+.flag-wrap {
+	width: 3.8rem;
+	height: 2.6rem;
+	border-radius: 0.4rem;
+	overflow: hidden;
 	flex-shrink: 0;
-	box-shadow: 0 0 0.4rem rgba(0, 0, 0, 0.3);
+	box-shadow: 0 0.2rem 0.8rem rgba(0, 0, 0, 0.4);
+	border: 0.1rem solid rgba(255, 255, 255, 0.1);
+}
+
+.lang-flag {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
 
 	&.lang-flag-empty {
 		background-color: rgba(255, 255, 255, 0.1);
 	}
 }
 
-.lang-name {
+.lang-info {
 	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	min-width: 0;
 }
 
-.lang-check {
-	color: var(--nori-teal);
-	display: inline-flex;
+.lang-name {
+	font-size: 1.35rem;
+	font-weight: 500;
+	color: var(--text-primary);
+	white-space: nowrap;
+}
+
+.lang-subname {
+	font-size: 1.05rem;
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+
+.lang-check-pill {
+	width: 2rem;
+	height: 2rem;
+	border-radius: 50%;
+	display: flex;
 	align-items: center;
+	justify-content: center;
 	opacity: 0;
-	transition: opacity 0.2s ease;
-
-	:deep(svg) {
-		width: 1.4rem;
-		height: 1.4rem;
-	}
-
-	.active & {
-		opacity: 1;
-	}
+	transform: scale(0.6);
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+	flex-shrink: 0;
 }
 
 .lang-empty {
+	grid-column: 1 / -1;
 	font-size: 1.2rem;
 	color: var(--text-faint);
 	text-align: center;
+	padding: 2rem 0;
 }
 </style>
+

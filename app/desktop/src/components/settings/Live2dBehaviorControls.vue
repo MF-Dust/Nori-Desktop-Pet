@@ -217,13 +217,13 @@ const onMaxFps = (e: Event) => {
 .behavior-controls {
 	display: flex;
 	flex-direction: column;
-	gap: 1.2rem;
+	gap: 1.4rem;
 	width: 100%;
 }
 
 .behavior-title {
 	margin: 0;
-	font-size: 1.5rem;
+	font-size: 1.6rem;
 	font-weight: 700;
 	color: var(--text-primary);
 }
@@ -238,23 +238,26 @@ const onMaxFps = (e: Event) => {
 	display: grid;
 	grid-template-columns: 1fr auto;
 	grid-template-rows: auto auto;
-	column-gap: 1.2rem;
-	row-gap: 0.2rem;
+	column-gap: 1.4rem;
+	row-gap: 0.25rem;
 	align-items: center;
-	padding: 0.6rem 0.8rem;
+	padding: 0.8rem 1.1rem;
+	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.03);
 	cursor: pointer;
-	transition: background 0.15s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover {
 		background: rgba(125, 227, 255, 0.06);
+		border-color: var(--nori-teal-soft);
 	}
 }
 
 .toggle-label {
 	grid-column: 1;
 	grid-row: 1;
-	font-size: 1.15rem;
+	font-size: 1.25rem;
 	color: var(--text-primary);
 	font-weight: 500;
 }
@@ -262,16 +265,16 @@ const onMaxFps = (e: Event) => {
 .toggle-desc {
 	grid-column: 1;
 	grid-row: 2;
-	font-size: 1.0rem;
+	font-size: 1.1rem;
 	color: var(--text-faint);
-	line-height: 1.3;
+	line-height: 1.35;
 }
 
 .toggle-input {
 	grid-column: 2;
 	grid-row: 1 / 3;
-	width: 1.6rem;
-	height: 1.6rem;
+	width: 1.8rem;
+	height: 1.8rem;
 	accent-color: var(--nori-teal-bright);
 	cursor: pointer;
 }
@@ -279,37 +282,51 @@ const onMaxFps = (e: Event) => {
 .adjust-section {
 	display: flex;
 	flex-direction: column;
-	gap: 0.5rem;
+	gap: 0.6rem;
+	padding: 0.8rem 1.1rem;
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.03);
 }
 
 .scale-row {
 	display: flex;
 	align-items: center;
-	gap: 0.8rem;
+	gap: 1rem;
 }
 
 .adjust-range {
 	flex: 1;
+	height: 0.6rem;
 	accent-color: var(--nori-teal-bright);
 	cursor: pointer;
 }
 
 .scale-value {
 	width: 5rem;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-	font-variant-numeric: tabular-nums;
+	font-size: 1.2rem;
+	color: var(--nori-teal-bright);
+	font-family: monospace;
+	font-weight: 600;
+	text-align: right;
 }
 
 .fps-select {
-	width: 12rem;
-	padding: 0.4rem 0.8rem;
+	width: 14rem;
+	padding: 0.6rem 1rem;
 	background: rgba(255, 255, 255, 0.04);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
-	color: var(--text-body);
-	font-size: 1.15rem;
+	color: var(--text-primary);
+	font-size: 1.2rem;
 	font-family: inherit;
 	cursor: pointer;
+	outline: none;
+	transition: all 0.2s ease;
+
+	&:focus {
+		border-color: var(--nori-teal-soft);
+		box-shadow: 0 0 1rem var(--glow-teal-soft);
+	}
 }
 </style>

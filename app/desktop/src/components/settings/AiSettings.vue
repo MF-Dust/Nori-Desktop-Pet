@@ -244,21 +244,21 @@ const fetchModels = async () => {
 .ai-settings {
 	width: 100%;
 	height: 100%;
-	padding: 2.4rem 3.2rem;
 	display: flex;
 	flex-direction: column;
-	gap: 2rem;
 	overflow-y: auto;
+	padding: 1.6rem 2.4rem;
+	gap: 1.6rem;
 }
 
 .ai-head {
 	display: flex;
 	flex-direction: column;
-	gap: 0.6rem;
+	gap: 0.4rem;
 }
 
 .ai-title {
-	font-size: 2.2rem;
+	font-size: 1.8rem;
 	font-weight: 700;
 	color: var(--text-primary);
 }
@@ -270,10 +270,14 @@ const fetchModels = async () => {
 
 .ai-form {
 	width: 100%;
-	max-width: 46rem;
+	max-width: 52rem;
 	display: flex;
 	flex-direction: column;
 	gap: 1.4rem;
+	background: var(--bg-card);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-md);
+	padding: 1.8rem;
 }
 
 .field {
@@ -284,11 +288,12 @@ const fetchModels = async () => {
 
 .field-label {
 	font-size: 1.2rem;
+	font-weight: 500;
 	color: var(--text-muted);
 }
 
 .input {
-	padding: 0.9rem 1.2rem;
+	padding: 0.95rem 1.4rem;
 	width: 100%;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
@@ -297,17 +302,18 @@ const fetchModels = async () => {
 	font-size: 1.3rem;
 	font-family: inherit;
 	outline: none;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
 .input::placeholder {
-	color: var(--text-muted);
-	opacity: 0.6;
+	color: var(--text-faint);
+	opacity: 0.7;
 }
 
 .select {
@@ -315,7 +321,7 @@ const fetchModels = async () => {
 
 	option {
 		color: var(--text-primary);
-		background: var(--bg-deep);
+		background: #081a2e;
 	}
 }
 
@@ -330,16 +336,16 @@ const fetchModels = async () => {
 }
 
 .fetch-btn {
-	padding: 0.9rem 1.8rem;
+	padding: 0.95rem 1.8rem;
 	border: none;
 	border-radius: var(--radius-sm);
-	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-	color: #05121a;
+	background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+	color: #03101c;
 	font-size: 1.3rem;
 	font-weight: 600;
 	font-family: inherit;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 	display: inline-flex;
 	align-items: center;
 	gap: 0.6rem;
@@ -347,12 +353,18 @@ const fetchModels = async () => {
 	flex-shrink: 0;
 
 	&:hover:not(:disabled) {
-		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
+		box-shadow: 0 0.4rem 1.6rem var(--glow-teal-strong);
+		transform: translateY(-0.15rem);
+	}
+
+	&:active:not(:disabled) {
+		transform: scale(0.96);
 	}
 
 	&:disabled {
 		opacity: 0.6;
 		cursor: default;
+		filter: grayscale(0.5);
 	}
 }
 
@@ -364,5 +376,9 @@ const fetchModels = async () => {
 .error {
 	font-size: 1.2rem;
 	color: var(--danger);
+	padding: 0.6rem 1rem;
+	background: rgba(251, 60, 68, 0.1);
+	border: 0.1rem solid rgba(251, 60, 68, 0.25);
+	border-radius: var(--radius-sm);
 }
 </style>

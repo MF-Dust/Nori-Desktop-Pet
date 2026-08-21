@@ -281,7 +281,7 @@ const clearAll = async () => {
 	display: flex;
 	flex-direction: column;
 	overflow-y: auto;
-	padding: 1.5rem 2rem;
+	padding: 1.6rem 2.4rem;
 	gap: 1.6rem;
 }
 
@@ -301,24 +301,29 @@ const clearAll = async () => {
 .subtitle {
 	margin: 0;
 	font-size: 1.2rem;
-	color: var(--text-muted);
+	color: var(--text-faint);
 }
 
 .settings-content {
 	display: flex;
 	flex-direction: column;
-	gap: 1.6rem;
+	gap: 1.4rem;
 	padding-bottom: 2rem;
 }
 
 .setting-card {
-	background: rgba(255, 255, 255, 0.03);
+	background: var(--bg-card);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-md);
-	padding: 1.4rem;
+	padding: 1.6rem;
 	display: flex;
 	flex-direction: column;
 	gap: 1.2rem;
+	transition: all 0.2s ease;
+
+	&:hover {
+		border-color: var(--line-strong);
+	}
 }
 
 .card-header {
@@ -357,40 +362,45 @@ const clearAll = async () => {
 }
 
 .label {
-	font-size: 1.15rem;
+	font-size: 1.2rem;
+	font-weight: 500;
 	color: var(--text-muted);
 }
 
 .input {
-	padding: 0.8rem 1.2rem;
+	padding: 0.9rem 1.4rem;
 	background: rgba(255, 255, 255, 0.04);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
-	font-size: 1.25rem;
+	font-size: 1.3rem;
+	font-family: inherit;
 	outline: none;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
 .textarea {
-	padding: 0.8rem 1.2rem;
+	padding: 1rem 1.4rem;
 	background: rgba(255, 255, 255, 0.04);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
-	font-size: 1.25rem;
+	font-size: 1.3rem;
 	font-family: inherit;
 	resize: vertical;
 	outline: none;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
@@ -408,9 +418,12 @@ const clearAll = async () => {
 	display: flex;
 	align-items: center;
 	gap: 0.8rem;
+	font-size: 1.2rem;
+	color: var(--text-muted);
 }
 
 .range-slider {
+	height: 0.6rem;
 	accent-color: var(--nori-teal-bright);
 	cursor: pointer;
 }
@@ -422,7 +435,7 @@ const clearAll = async () => {
 
 .status-tip {
 	margin: 0;
-	font-size: 1.15rem;
+	font-size: 1.2rem;
 	color: var(--nori-teal-bright);
 }
 
@@ -430,19 +443,22 @@ const clearAll = async () => {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.6rem;
-	padding: 0.6rem 1.2rem;
+	padding: 0.75rem 1.6rem;
 	background: rgba(125, 227, 255, 0.08);
 	border: 0.1rem solid var(--nori-teal-soft);
 	border-radius: var(--radius-sm);
 	color: var(--nori-teal-bright);
-	font-size: 1.15rem;
+	font-size: 1.25rem;
+	font-family: inherit;
+	font-weight: 500;
 	cursor: pointer;
 	white-space: nowrap;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover:not(:disabled) {
 		background: rgba(125, 227, 255, 0.18);
-		box-shadow: 0 0 1rem var(--glow-teal-soft);
+		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
+		transform: translateY(-0.1rem);
 	}
 
 	&:disabled {
@@ -455,24 +471,27 @@ const clearAll = async () => {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.6rem;
-	padding: 0.8rem 1.4rem;
+	padding: 0.85rem 1.8rem;
 	border: none;
 	border-radius: var(--radius-sm);
-	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-	color: #05121a;
+	background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+	color: #03101c;
 	font-weight: 600;
-	font-size: 1.2rem;
+	font-size: 1.3rem;
+	font-family: inherit;
 	cursor: pointer;
 	white-space: nowrap;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover:not(:disabled) {
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
+		box-shadow: 0 0.4rem 1.6rem var(--glow-teal-strong);
+		transform: translateY(-0.15rem);
 	}
 
 	&:disabled {
 		opacity: 0.5;
 		cursor: default;
+		filter: grayscale(0.5);
 	}
 }
 
@@ -480,9 +499,9 @@ const clearAll = async () => {
 	background: none;
 	border: none;
 	color: var(--danger);
-	font-size: 1.15rem;
+	font-size: 1.2rem;
 	cursor: pointer;
-	opacity: 0.8;
+	opacity: 0.85;
 	transition: opacity 0.2s;
 
 	&:hover {
@@ -505,9 +524,9 @@ const clearAll = async () => {
 }
 
 .empty-hint {
-	font-size: 1.15rem;
+	font-size: 1.2rem;
 	color: var(--text-faint);
-	padding: 1.2rem 0;
+	padding: 1.6rem 0;
 	text-align: center;
 }
 
@@ -515,17 +534,23 @@ const clearAll = async () => {
 	display: flex;
 	align-items: flex-start;
 	justify-content: space-between;
-	padding: 1rem 1.2rem;
-	background: rgba(255, 255, 255, 0.04);
+	padding: 1.1rem 1.4rem;
+	background: rgba(255, 255, 255, 0.03);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
-	gap: 1rem;
+	gap: 1.2rem;
+	transition: all 0.2s ease;
+
+	&:hover {
+		background: rgba(125, 227, 255, 0.04);
+		border-color: var(--line-strong);
+	}
 }
 
 .item-main {
 	display: flex;
 	flex-direction: column;
-	gap: 0.5rem;
+	gap: 0.6rem;
 	flex: 1;
 }
 
@@ -538,22 +563,24 @@ const clearAll = async () => {
 .tag-badge, .source-badge, .imp-badge {
 	font-size: 1.05rem;
 	padding: 0.2rem 0.6rem;
-	border-radius: 0.4rem;
+	border-radius: var(--radius-pill);
 }
 
 .tag-badge {
 	background: rgba(125, 227, 255, 0.12);
 	color: var(--nori-teal-bright);
+	border: 0.1rem solid rgba(125, 227, 255, 0.2);
 }
 
 .source-badge {
-	background: rgba(255, 255, 255, 0.08);
+	background: rgba(255, 255, 255, 0.06);
 	color: var(--text-muted);
 }
 
 .imp-badge {
 	background: rgba(255, 180, 50, 0.15);
 	color: #ffb432;
+	border: 0.1rem solid rgba(255, 180, 50, 0.25);
 }
 
 .item-content {

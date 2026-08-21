@@ -142,6 +142,10 @@ export default {
 			placeholderPrefix: "此区域为",
 			placeholderSuffix: "页面占位, 功能将在此处实现。",
 			chat: {
+				title: "AI 伴侣对话",
+				emptyTitle: "准备好与 Nori 对话了吗？",
+				emptyDesc: "在下方输入框中输入消息，或点击麦克风进行实时语音对话。",
+				clearHistory: "清空记录",
 				notConfigured: "尚未配置 AI API",
 				notConfiguredDesc: "配置后即可开始对话, 历史记录保存在本机数据目录, 永不清除。",
 				goSettings: "前往设置",

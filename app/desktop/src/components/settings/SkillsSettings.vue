@@ -924,8 +924,8 @@ const viewSkillDetail = (skill: Skill) => {
 .modal-overlay {
 	position: fixed;
 	inset: 0;
-	background: rgba(0, 0, 0, 0.65);
-	backdrop-filter: blur(0.4rem);
+	background: rgba(0, 0, 0, 0.75);
+	backdrop-filter: blur(0.8rem);
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -935,18 +935,18 @@ const viewSkillDetail = (skill: Skill) => {
 
 .modal-card {
 	width: 100%;
-	max-width: 52rem;
+	max-width: 54rem;
 	max-height: 90vh;
-	background: #091a26;
+	background: var(--bg-glass-modal);
 	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
+	border-radius: var(--radius-lg);
 	display: flex;
 	flex-direction: column;
-	box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.7), 0 0 2rem var(--glow-teal-soft);
 	overflow: hidden;
 
 	&.modal-large {
-		max-width: 64rem;
+		max-width: 66rem;
 	}
 }
 
@@ -956,6 +956,7 @@ const viewSkillDetail = (skill: Skill) => {
 	justify-content: space-between;
 	padding: 1.6rem 2rem;
 	border-bottom: 0.1rem solid var(--line-subtle);
+	background: rgba(8, 22, 36, 0.5);
 
 	h3 {
 		font-size: 1.5rem;
@@ -969,6 +970,11 @@ const viewSkillDetail = (skill: Skill) => {
 	border: none;
 	color: var(--text-faint);
 	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0.2rem;
+	transition: color 0.15s ease;
 
 	&:hover {
 		color: var(--text-primary);
@@ -976,11 +982,11 @@ const viewSkillDetail = (skill: Skill) => {
 }
 
 .modal-body {
-	padding: 1.6rem 2rem;
+	padding: 1.8rem 2rem;
 	overflow-y: auto;
 	display: flex;
 	flex-direction: column;
-	gap: 1.2rem;
+	gap: 1.4rem;
 }
 
 .modal-hint {
@@ -996,7 +1002,7 @@ const viewSkillDetail = (skill: Skill) => {
 	}
 }
 
-.form-grid-2 {
+.form-grid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: 1rem;
@@ -1015,17 +1021,20 @@ const viewSkillDetail = (skill: Skill) => {
 }
 
 .input, .textarea {
-	padding: 0.8rem 1.2rem;
+	padding: 0.9rem 1.3rem;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	background: rgba(255, 255, 255, 0.04);
 	color: var(--text-primary);
-	font-size: 1.2rem;
+	font-size: 1.25rem;
 	font-family: inherit;
 	outline: none;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
@@ -1039,16 +1048,16 @@ const viewSkillDetail = (skill: Skill) => {
 	align-items: center;
 	gap: 0.6rem;
 	padding: 0.6rem 1rem;
-	background: rgba(255, 75, 75, 0.08);
-	border: 0.1rem solid rgba(255, 75, 75, 0.2);
+	background: rgba(251, 60, 68, 0.1);
+	border: 0.1rem solid rgba(251, 60, 68, 0.25);
 	border-radius: var(--radius-sm);
 	color: var(--danger);
 	font-size: 1.15rem;
 }
 
 .prompt-pre {
-	padding: 1.2rem;
-	background: rgba(0, 0, 0, 0.3);
+	padding: 1.2rem 1.4rem;
+	background: rgba(0, 0, 0, 0.4);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--nori-teal-bright);
@@ -1064,7 +1073,7 @@ const viewSkillDetail = (skill: Skill) => {
 .detail-desc {
 	font-size: 1.25rem;
 	color: var(--text-body);
-	line-height: 1.5;
+	line-height: 1.55;
 }
 
 .modal-footer {
@@ -1074,48 +1083,61 @@ const viewSkillDetail = (skill: Skill) => {
 	gap: 0.8rem;
 	padding: 1.4rem 2rem;
 	border-top: 0.1rem solid var(--line-subtle);
-	background: rgba(0, 0, 0, 0.15);
+	background: rgba(5, 14, 26, 0.4);
 }
 
 .btn-primary {
-	padding: 0.7rem 1.6rem;
+	padding: 0.75rem 1.8rem;
 	border: none;
 	border-radius: var(--radius-sm);
-	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-	color: #05121a;
-	font-size: 1.2rem;
+	background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+	color: #03101c;
+	font-size: 1.25rem;
 	font-weight: 600;
 	cursor: pointer;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+	&:hover:not(:disabled) {
+		box-shadow: 0 0.4rem 1.6rem var(--glow-teal-strong);
+		transform: translateY(-0.1rem);
+	}
 
 	&:disabled {
 		opacity: 0.5;
+		cursor: not-allowed;
 	}
 }
 
 .btn-ghost {
-	padding: 0.6rem 1.2rem;
-	border: none;
+	padding: 0.7rem 1.4rem;
+	border: 0.1rem solid transparent;
 	background: transparent;
 	color: var(--text-muted);
 	font-size: 1.2rem;
 	cursor: pointer;
+	border-radius: var(--radius-sm);
+	transition: all 0.2s ease;
 
 	&:hover {
 		color: var(--text-primary);
+		background: rgba(255, 255, 255, 0.04);
 	}
 }
 
 .btn-outline {
-	padding: 0.7rem 1.4rem;
-	border: 0.1rem solid var(--line-subtle);
+	padding: 0.7rem 1.6rem;
+	border: 0.1rem solid var(--line-strong);
 	border-radius: var(--radius-sm);
-	background: transparent;
+	background: rgba(125, 227, 255, 0.08);
 	color: var(--nori-teal-bright);
 	font-size: 1.2rem;
+	font-weight: 500;
 	cursor: pointer;
+	transition: all 0.2s ease;
 
 	&:hover {
-		border-color: var(--nori-teal-soft);
+		background: rgba(125, 227, 255, 0.16);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 

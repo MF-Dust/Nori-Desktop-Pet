@@ -154,102 +154,108 @@ onMounted(() => {
 .adjust-controls {
 	display: flex;
 	flex-direction: column;
-	gap: 1.6rem;
+	gap: 1.8rem;
 	width: 100%;
 }
 
 .adjust-title {
 	margin: 0;
-	font-size: 1.5rem;
+	font-size: 1.6rem;
 	font-weight: 700;
 	color: var(--text-primary);
-	text-align: center;
+	text-align: left;
 }
 
 .adjust-model {
 	margin-left: 0.8rem;
-	font-size: 1.1rem;
-	font-weight: 400;
-	color: var(--text-muted);
+	font-size: 1.15rem;
+	font-weight: 500;
+	color: var(--nori-teal-bright);
 }
 
 .adjust-section {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-start;
-	gap: 0.8rem;
+	gap: 0.9rem;
 }
 
 .adjust-label {
-	font-size: 1.15rem;
-	color: var(--text-muted);
+	font-size: 1.2rem;
+	font-weight: 500;
+	color: var(--text-body);
 }
 
 .adjust-scale-row {
 	display: flex;
 	align-items: center;
-	gap: 0.8rem;
+	gap: 1.2rem;
 	width: 100%;
 }
 
 .adjust-range {
 	flex: 1;
 	min-width: 0;
+	height: 0.6rem;
 	accent-color: var(--nori-teal-bright);
 	cursor: pointer;
 }
 
 .adjust-value {
-	width: 4.6rem;
+	width: 4.8rem;
 	flex-shrink: 0;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-	font-variant-numeric: tabular-nums;
-	text-align: left;
+	font-size: 1.2rem;
+	color: var(--nori-teal-bright);
+	font-family: monospace;
+	font-weight: 600;
+	text-align: right;
 }
 
 .expression-list {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.7rem;
+	gap: 0.8rem;
 	width: 100%;
 }
 
 .expression-chip {
-	padding: 0.5rem 1.1rem;
+	padding: 0.55rem 1.2rem;
 	border: 0.1rem solid var(--line-subtle);
-	border-radius: 2rem;
+	border-radius: var(--radius-pill);
 	background: rgba(255, 255, 255, 0.04);
 	color: var(--text-body);
-	font-size: 1.1rem;
+	font-size: 1.15rem;
 	font-family: inherit;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover {
-		color: var(--text-primary);
-		border-color: var(--line-strong);
+		color: var(--nori-teal-bright);
+		border-color: var(--nori-teal-soft);
 		background: rgba(125, 227, 255, 0.08);
+		transform: translateY(-0.1rem);
 	}
 
 	&.active {
 		color: #05121a;
 		border-color: transparent;
-		background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
+		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+		box-shadow: 0 0.2rem 1rem var(--glow-teal-soft);
 		font-weight: 600;
 	}
 }
 
 .adjust-count {
 	margin: 0;
-	font-size: 1.1rem;
+	font-size: 1.15rem;
 	font-weight: 600;
 	color: var(--nori-teal-bright);
 }
 
 .adjust-hint {
 	margin: 0;
-	font-size: 1.05rem;
+	font-size: 1.1rem;
 	color: var(--text-faint);
+	line-height: 1.4;
 }
 </style>

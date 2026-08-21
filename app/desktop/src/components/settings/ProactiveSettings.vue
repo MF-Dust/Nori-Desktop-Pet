@@ -193,7 +193,7 @@ const cancelReminder = (id: string) => {
 	display: flex;
 	flex-direction: column;
 	overflow-y: auto;
-	padding: 1.5rem 2rem;
+	padding: 1.6rem 2.4rem;
 	gap: 1.6rem;
 }
 
@@ -213,24 +213,29 @@ const cancelReminder = (id: string) => {
 .subtitle {
 	margin: 0;
 	font-size: 1.2rem;
-	color: var(--text-muted);
+	color: var(--text-faint);
 }
 
 .settings-content {
 	display: flex;
 	flex-direction: column;
-	gap: 1.6rem;
+	gap: 1.4rem;
 	padding-bottom: 2rem;
 }
 
 .setting-card {
-	background: rgba(255, 255, 255, 0.03);
+	background: var(--bg-card);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-md);
-	padding: 1.4rem;
+	padding: 1.6rem;
 	display: flex;
 	flex-direction: column;
 	gap: 1.2rem;
+	transition: all 0.2s ease;
+
+	&:hover {
+		border-color: var(--line-strong);
+	}
 }
 
 .card-header {
@@ -259,34 +264,44 @@ const cancelReminder = (id: string) => {
 }
 
 .label {
-	font-size: 1.15rem;
+	font-size: 1.2rem;
+	font-weight: 500;
 	color: var(--text-muted);
 }
 
 .input {
-	padding: 0.8rem 1.2rem;
+	padding: 0.9rem 1.4rem;
 	background: rgba(255, 255, 255, 0.04);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
-	font-size: 1.25rem;
+	font-size: 1.3rem;
+	font-family: inherit;
 	outline: none;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+		border-color: var(--nori-teal);
+		background: rgba(125, 227, 255, 0.06);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
 
 .select-box {
-	padding: 0.8rem 1.2rem;
-	background: #0f1d24;
+	padding: 0.9rem 1.2rem;
+	background: #081a2e;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	font-size: 1.25rem;
+	font-family: inherit;
 	outline: none;
+	cursor: pointer;
+	transition: all 0.2s ease;
+
+	&:focus {
+		border-color: var(--nori-teal-soft);
+	}
 }
 
 .flex-1 {
@@ -303,24 +318,31 @@ const cancelReminder = (id: string) => {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.6rem;
-	padding: 0.6rem 1.2rem;
+	padding: 0.65rem 1.3rem;
 	border: 0.1rem solid var(--line-subtle);
-	border-radius: 2rem;
+	border-radius: var(--radius-pill);
 	background: rgba(255, 255, 255, 0.03);
 	color: var(--text-body);
 	font-size: 1.15rem;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	input {
 		display: none;
 	}
 
+	&:hover {
+		color: var(--nori-teal-bright);
+		background: rgba(125, 227, 255, 0.06);
+		border-color: var(--nori-teal-soft);
+	}
+
 	&.active {
 		border-color: transparent;
-		background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-		color: #05121a;
+		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+		color: #03101c;
 		font-weight: 600;
+		box-shadow: 0 0.2rem 1.2rem var(--glow-teal-soft);
 	}
 }
 
@@ -331,21 +353,21 @@ const cancelReminder = (id: string) => {
 }
 
 .switch-title {
-	font-size: 1.25rem;
+	font-size: 1.3rem;
 	color: var(--text-primary);
 	font-weight: 500;
 }
 
 .switch-desc {
 	margin: 0.2rem 0 0;
-	font-size: 1.1rem;
+	font-size: 1.15rem;
 	color: var(--text-faint);
 }
 
 .toggle-switch {
 	position: relative;
-	width: 4rem;
-	height: 2.2rem;
+	width: 4.2rem;
+	height: 2.4rem;
 	cursor: pointer;
 
 	input {
@@ -356,33 +378,32 @@ const cancelReminder = (id: string) => {
 
 	.toggle-slider {
 		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background: rgba(255, 255, 255, 0.15);
-		border-radius: 2rem;
-		transition: 0.2s;
+		inset: 0;
+		background: rgba(255, 255, 255, 0.12);
+		border-radius: var(--radius-pill);
+		transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 		&::before {
 			position: absolute;
 			content: "";
-			height: 1.6rem;
-			width: 1.6rem;
+			height: 1.8rem;
+			width: 1.8rem;
 			left: 0.3rem;
 			bottom: 0.3rem;
 			background: white;
 			border-radius: 50%;
-			transition: 0.2s;
+			transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 		}
 	}
 
 	input:checked + .toggle-slider {
-		background: var(--nori-teal-bright);
+		background: var(--nori-teal);
+		box-shadow: 0 0 1rem var(--glow-teal);
 	}
 
 	input:checked + .toggle-slider::before {
 		transform: translateX(1.8rem);
+		background: #03101c;
 	}
 }
 
@@ -391,36 +412,15 @@ const cancelReminder = (id: string) => {
 	gap: 0.8rem;
 }
 
-.btn-primary {
-	padding: 0.8rem 1.4rem;
-	border: none;
-	border-radius: var(--radius-sm);
-	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-	color: #05121a;
-	font-weight: 600;
-	font-size: 1.2rem;
-	cursor: pointer;
-	transition: all 0.2s ease;
-
-	&:hover:not(:disabled) {
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-	}
-
-	&:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-}
-
 .reminder-list {
 	display: flex;
 	flex-direction: column;
-	gap: 0.6rem;
+	gap: 0.8rem;
 	margin-top: 0.6rem;
 }
 
 .empty-hint {
-	font-size: 1.15rem;
+	font-size: 1.2rem;
 	color: var(--text-faint);
 	padding: 0.8rem 0;
 }
@@ -429,26 +429,34 @@ const cancelReminder = (id: string) => {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0.8rem 1.2rem;
-	background: rgba(255, 255, 255, 0.04);
+	padding: 0.9rem 1.4rem;
+	background: rgba(255, 255, 255, 0.03);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
+	transition: all 0.2s ease;
+
+	&:hover {
+		background: rgba(125, 227, 255, 0.04);
+		border-color: var(--line-strong);
+	}
 }
 
 .reminder-info {
 	display: flex;
 	flex-direction: column;
-	gap: 0.2rem;
+	gap: 0.25rem;
 }
 
 .reminder-text {
-	font-size: 1.25rem;
+	font-size: 1.3rem;
 	color: var(--text-primary);
+	font-weight: 500;
 }
 
 .reminder-time {
-	font-size: 1.05rem;
-	color: var(--nori-teal-soft);
+	font-size: 1.1rem;
+	color: var(--nori-teal-bright);
+	font-family: monospace;
 }
 
 .btn-del {
@@ -456,17 +464,17 @@ const cancelReminder = (id: string) => {
 	height: 2.8rem;
 	border: none;
 	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.06);
+	background: rgba(255, 255, 255, 0.05);
 	color: var(--text-muted);
 	cursor: pointer;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	transition: all 0.2s ease;
+	transition: all 0.15s ease;
 
 	&:hover {
-		background: rgba(255, 75, 75, 0.2);
-		color: #ff4b4b;
+		background: rgba(251, 60, 68, 0.18);
+		color: var(--danger);
 	}
 }
 </style>

@@ -166,8 +166,10 @@ onMounted(() => {
 			<div class="hero-left">
 				<div class="avatar-wrap" :class="{active: props.petVisible}">
 					<img :src="currentModel.thumb" :alt="currentModel.name" class="pet-thumb"/>
+					<div class="avatar-glow-ring"></div>
 					<span class="status-indicator" :class="{online: props.petVisible}"/>
 				</div>
+
 				<div class="hero-info">
 					<div class="hero-header-row">
 						<h2 class="pet-name glow-teal">{{ currentModel.name }}</h2>
@@ -191,6 +193,7 @@ onMounted(() => {
 					<Icon :name="props.petVisible ? 'close' : 'sparkles'" :size="16"/>
 					<span>{{ props.petVisible ? I18N.hidePet : I18N.summonPet }}</span>
 				</button>
+
 				<button
 					v-if="props.petVisible"
 					class="btn-action btn-motion"
@@ -207,6 +210,7 @@ onMounted(() => {
 		<section class="nav-grid">
 			<!-- AI 对话卡片 -->
 			<div class="grid-card chat-card" @click="emit('navigate', 'talk')">
+				<div class="card-glow-backdrop"></div>
 				<div class="card-icon-wrap icon-chat">
 					<Icon name="send" :size="22"/>
 				</div>
@@ -215,18 +219,20 @@ onMounted(() => {
 					<p class="card-desc">{{ I18N.cards.chat.desc }}</p>
 					<div class="card-status">
 						<span class="status-pill" :class="{ok: aiConfigured}">
-							{{ aiConfigured ? I18N.cards.chat.statusConfigured : I18N.cards.chat.statusNotConfigured }}
+							<span class="pill-dot"/>
+							{{ aiConfigured ? (aiModel ? `已连接: ${aiModel}` : I18N.cards.chat.statusConfigured) : I18N.cards.chat.statusNotConfigured }}
 						</span>
 					</div>
 				</div>
-				<button class="card-btn">
+				<div class="card-btn">
 					<span>{{ I18N.cards.chat.action }}</span>
-					<Icon name="arrow-right" :size="14"/>
-				</button>
+					<Icon name="arrow-right" :size="14" class="card-btn-arrow"/>
+				</div>
 			</div>
 
 			<!-- 模型换装卡片 -->
 			<div class="grid-card model-card" @click="emit('navigate', 'model')">
+				<div class="card-glow-backdrop"></div>
 				<div class="card-icon-wrap icon-model">
 					<Icon name="package" :size="22"/>
 				</div>
@@ -235,18 +241,20 @@ onMounted(() => {
 					<p class="card-desc">{{ I18N.cards.model.desc }}</p>
 					<div class="card-status">
 						<span class="status-pill ok">
+							<span class="pill-dot"/>
 							{{ I18N.cards.model.current }}: {{ currentModel.name }}
 						</span>
 					</div>
 				</div>
-				<button class="card-btn">
+				<div class="card-btn">
 					<span>{{ I18N.cards.model.action }}</span>
-					<Icon name="arrow-right" :size="14"/>
-				</button>
+					<Icon name="arrow-right" :size="14" class="card-btn-arrow"/>
+				</div>
 			</div>
 
 			<!-- AI 大脑配置卡片 -->
 			<div class="grid-card ai-card" @click="emit('navigate', 'settings')">
+				<div class="card-glow-backdrop"></div>
 				<div class="card-icon-wrap icon-ai">
 					<Icon name="cpu" :size="22"/>
 				</div>
@@ -255,14 +263,15 @@ onMounted(() => {
 					<p class="card-desc">{{ I18N.cards.ai.desc }}</p>
 					<div class="card-status">
 						<span class="status-pill" :class="{ok: aiConfigured}">
+							<span class="pill-dot"/>
 							{{ aiProvider ? `${I18N.cards.ai.provider}: ${aiProvider}` : I18N.cards.chat.statusNotConfigured }}
 						</span>
 					</div>
 				</div>
-				<button class="card-btn">
+				<div class="card-btn">
 					<span>{{ I18N.cards.ai.action }}</span>
-					<Icon name="arrow-right" :size="14"/>
-				</button>
+					<Icon name="arrow-right" :size="14" class="card-btn-arrow"/>
+				</div>
 			</div>
 		</section>
 
@@ -312,7 +321,7 @@ onMounted(() => {
 	flex-direction: column;
 	gap: 1.6rem;
 	overflow-y: auto;
-	padding: 0.4rem 0.6rem;
+	padding: 0.2rem 0.4rem;
 }
 
 // ---- Hero 顶部卡片 ----
@@ -321,10 +330,10 @@ onMounted(() => {
 	align-items: center;
 	justify-content: space-between;
 	padding: 1.8rem 2.4rem;
-	background: linear-gradient(135deg, rgba(125, 227, 255, 0.08) 0%, rgba(5, 14, 26, 0.6) 100%);
+	background: linear-gradient(135deg, rgba(125, 227, 255, 0.08) 0%, rgba(5, 14, 26, 0.75) 100%);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-lg);
-	box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.25);
+	box-shadow: 0 0.8rem 2.8rem rgba(0, 0, 0, 0.35);
 	backdrop-filter: blur(1.2rem);
 	position: relative;
 	overflow: hidden;
@@ -332,12 +341,12 @@ onMounted(() => {
 	&::before {
 		content: "";
 		position: absolute;
-		top: -50%;
-		left: -20%;
-		width: 40rem;
-		height: 20rem;
+		top: -40%;
+		left: -10%;
+		width: 36rem;
+		height: 18rem;
 		background: radial-gradient(circle, var(--glow-teal-soft) 0%, transparent 70%);
-		opacity: 0.35;
+		opacity: 0.4;
 		pointer-events: none;
 	}
 }
@@ -351,26 +360,38 @@ onMounted(() => {
 
 .avatar-wrap {
 	position: relative;
-	width: 6.4rem;
-	height: 6.4rem;
+	width: 6.8rem;
+	height: 6.8rem;
 	border-radius: 50%;
-	background: rgba(8, 22, 38, 0.8);
+	background: rgba(8, 22, 38, 0.85);
 	border: 0.2rem solid var(--line-strong);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	overflow: hidden;
-	transition: all 0.3s ease;
+	transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+	.avatar-glow-ring {
+		position: absolute;
+		inset: -0.4rem;
+		border-radius: 50%;
+		border: 0.1rem solid transparent;
+		transition: all 0.3s ease;
+	}
 
 	&.active {
 		border-color: var(--nori-teal-bright);
-		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
+		box-shadow: 0 0 2rem var(--glow-teal);
+
+		.avatar-glow-ring {
+			border-color: rgba(94, 234, 212, 0.4);
+			animation: glow-pulse 2.5s ease-in-out infinite;
+		}
 	}
 }
 
 .pet-thumb {
-	width: 5.6rem;
-	height: 5.6rem;
+	width: 6rem;
+	height: 6rem;
 	object-fit: cover;
 	border-radius: 50%;
 }
@@ -379,15 +400,16 @@ onMounted(() => {
 	position: absolute;
 	bottom: 0.2rem;
 	right: 0.2rem;
-	width: 1.2rem;
-	height: 1.2rem;
+	width: 1.3rem;
+	height: 1.3rem;
 	border-radius: 50%;
 	background: #7a8c9e;
 	border: 0.2rem solid #050e1a;
+	transition: all 0.3s ease;
 
 	&.online {
 		background: #20e090;
-		box-shadow: 0 0 0.8rem #20e090;
+		box-shadow: 0 0 1rem #20e090;
 	}
 }
 
@@ -414,18 +436,20 @@ onMounted(() => {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.5rem;
-	padding: 0.3rem 0.8rem;
-	border-radius: 1.2rem;
-	font-size: 1.1rem;
+	padding: 0.3rem 0.9rem;
+	border-radius: var(--radius-pill);
+	font-size: 1.15rem;
 	background: rgba(255, 255, 255, 0.06);
 	color: var(--text-muted);
 	border: 0.1rem solid rgba(255, 255, 255, 0.08);
+	transition: all 0.3s ease;
 
 	.status-dot {
 		width: 0.6rem;
 		height: 0.6rem;
 		border-radius: 50%;
 		background: #7a8c9e;
+		transition: all 0.3s ease;
 	}
 
 	&.online {
@@ -435,13 +459,13 @@ onMounted(() => {
 
 		.status-dot {
 			background: #20e090;
-			box-shadow: 0 0 0.6rem #20e090;
+			box-shadow: 0 0 0.8rem #20e090;
 		}
 	}
 }
 
 .pet-desc {
-	font-size: 1.2rem;
+	font-size: 1.25rem;
 	color: var(--text-faint);
 }
 
@@ -453,26 +477,25 @@ onMounted(() => {
 }
 
 .btn-action {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	gap: 0.7rem;
-	padding: 0.9rem 1.6rem;
+	padding: 0.9rem 1.8rem;
 	border-radius: var(--radius-sm);
-	font-size: 1.3rem;
+	font-size: 1.35rem;
 	font-family: inherit;
-	font-weight: 500;
+	font-weight: 600;
 	cursor: pointer;
 	border: none;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&.btn-pet-summon {
 		background: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
 		color: #03101c;
-		font-weight: 600;
 		box-shadow: 0 0.4rem 1.6rem var(--glow-teal-soft);
 
 		&:hover {
-			box-shadow: 0 0.6rem 2.2rem var(--glow-teal-strong);
+			box-shadow: 0 0.6rem 2.4rem var(--glow-teal-strong);
 			transform: translateY(-0.15rem);
 		}
 	}
@@ -483,9 +506,10 @@ onMounted(() => {
 		border: 0.1rem solid var(--line-subtle);
 
 		&:hover {
-			background: rgba(255, 80, 80, 0.15);
-			border-color: rgba(255, 80, 80, 0.4);
+			background: rgba(251, 60, 68, 0.15);
+			border-color: rgba(251, 60, 68, 0.4);
 			color: #ff6b6b;
+			transform: translateY(-0.1rem);
 		}
 	}
 
@@ -496,6 +520,7 @@ onMounted(() => {
 
 		&:hover:not(:disabled) {
 			background: rgba(125, 227, 255, 0.18);
+			box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 			transform: translateY(-0.15rem);
 		}
 
@@ -517,35 +542,61 @@ onMounted(() => {
 	display: flex;
 	flex-direction: column;
 	justify-content: space-between;
-	padding: 1.6rem;
+	padding: 1.8rem 1.6rem;
 	background: var(--bg-card);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-md);
 	cursor: pointer;
-	transition: all 0.25s ease;
-	min-height: 16rem;
+	transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+	min-height: 17rem;
+	position: relative;
+	overflow: hidden;
+
+	.card-glow-backdrop {
+		position: absolute;
+		top: -20%;
+		right: -20%;
+		width: 14rem;
+		height: 14rem;
+		border-radius: 50%;
+		background: radial-gradient(circle, rgba(125, 227, 255, 0.08) 0%, transparent 70%);
+		opacity: 0;
+		transition: opacity 0.3s ease;
+		pointer-events: none;
+	}
 
 	&:hover {
 		border-color: var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.06);
-		box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.3);
-		transform: translateY(-0.25rem);
+		background: rgba(125, 227, 255, 0.08);
+		box-shadow: 0 0.8rem 2.6rem rgba(0, 0, 0, 0.35), 0 0 1.4rem var(--glow-teal-soft);
+		transform: translateY(-0.3rem);
+
+		.card-glow-backdrop {
+			opacity: 1;
+		}
 
 		.card-btn {
 			color: var(--nori-teal-bright);
 			border-color: var(--nori-teal-soft);
+			background: rgba(125, 227, 255, 0.1);
+
+			.card-btn-arrow {
+				transform: translateX(0.3rem);
+			}
 		}
 	}
 }
 
 .card-icon-wrap {
-	width: 4rem;
-	height: 4rem;
+	width: 4.2rem;
+	height: 4.2rem;
 	border-radius: var(--radius-sm);
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	margin-bottom: 1.2rem;
+	border: 0.1rem solid var(--line-subtle);
+	transition: transform 0.2s ease;
 
 	&.icon-chat {
 		background: rgba(125, 227, 255, 0.12);
@@ -571,32 +622,48 @@ onMounted(() => {
 }
 
 .card-title {
-	font-size: 1.5rem;
+	font-size: 1.55rem;
 	font-weight: 600;
 	color: var(--text-primary);
 }
 
 .card-desc {
-	font-size: 1.15rem;
+	font-size: 1.2rem;
 	color: var(--text-muted);
 	line-height: 1.45;
 }
 
 .card-status {
-	margin-top: 0.6rem;
+	margin-top: 0.8rem;
 }
 
 .status-pill {
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
 	font-size: 1.05rem;
-	padding: 0.2rem 0.6rem;
-	border-radius: var(--radius-sm);
+	padding: 0.25rem 0.8rem;
+	border-radius: var(--radius-pill);
 	background: rgba(255, 255, 255, 0.05);
 	color: var(--text-faint);
+	border: 0.1rem solid var(--line-subtle);
+
+	.pill-dot {
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+		background: var(--text-faint);
+	}
 
 	&.ok {
 		background: rgba(125, 227, 255, 0.1);
-		color: var(--nori-teal-soft);
+		color: var(--nori-teal-bright);
+		border-color: rgba(125, 227, 255, 0.25);
+
+		.pill-dot {
+			background: var(--nori-teal-bright);
+			box-shadow: 0 0 0.6rem var(--glow-teal);
+		}
 	}
 }
 
@@ -605,15 +672,18 @@ onMounted(() => {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0.6rem 0.8rem;
-	background: transparent;
+	padding: 0.7rem 1rem;
+	background: rgba(255, 255, 255, 0.03);
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	color: var(--text-muted);
 	font-size: 1.2rem;
-	font-family: inherit;
-	cursor: pointer;
+	font-weight: 500;
 	transition: all 0.2s ease;
+
+	.card-btn-arrow {
+		transition: transform 0.2s ease;
+	}
 }
 
 // ---- 底部区域 ----
@@ -621,7 +691,7 @@ onMounted(() => {
 	display: flex;
 	flex-direction: column;
 	gap: 1.2rem;
-	padding-top: 0.6rem;
+	padding-top: 0.8rem;
 	border-top: 0.1rem solid var(--line-subtle);
 }
 
@@ -642,7 +712,7 @@ onMounted(() => {
 	display: flex;
 	align-items: center;
 	gap: 0.7rem;
-	padding: 0.7rem 1.3rem;
+	padding: 0.75rem 1.4rem;
 	border-radius: var(--radius-sm);
 	background: rgba(255, 255, 255, 0.04);
 	border: 0.1rem solid var(--line-subtle);
@@ -650,13 +720,14 @@ onMounted(() => {
 	font-size: 1.2rem;
 	font-family: inherit;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover {
-		background: rgba(125, 227, 255, 0.08);
-		border-color: var(--line-strong);
+		background: rgba(125, 227, 255, 0.1);
+		border-color: var(--nori-teal-soft);
 		color: var(--nori-teal-bright);
-		transform: translateY(-0.1rem);
+		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
+		transform: translateY(-0.15rem);
 	}
 
 	&.copied {
@@ -670,7 +741,7 @@ onMounted(() => {
 	display: flex;
 	align-items: center;
 	gap: 0.8rem;
-	font-size: 1.1rem;
+	font-size: 1.15rem;
 	color: var(--text-faint);
 	padding-top: 0.4rem;
 }
@@ -691,14 +762,16 @@ onMounted(() => {
 .status-ok {
 	display: inline-flex;
 	align-items: center;
-	gap: 0.4rem;
+	gap: 0.5rem;
 	color: #20e090;
 
 	.sys-dot {
-		width: 0.5rem;
-		height: 0.5rem;
+		width: 0.6rem;
+		height: 0.6rem;
 		border-radius: 50%;
 		background: #20e090;
+		box-shadow: 0 0 0.8rem #20e090;
 	}
 }
 </style>
+

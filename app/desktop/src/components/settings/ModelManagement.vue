@@ -263,6 +263,7 @@ const closeAdjust = () => {
 			>
 				<div class="mm-thumb-wrap">
 					<img class="mm-thumb" :src="model.thumb" :alt="model.name"/>
+					<div class="thumb-glow-overlay"></div>
 				</div>
 
 				<span class="mm-name">{{ model.name }}</span>
@@ -280,20 +281,22 @@ const closeAdjust = () => {
 						<div class="mm-card-menu" @click.stop>
 							<button
 								v-if="installedMap[model.id]"
-								class="mm-menu-btn"
+								class="mm-menu-btn btn-primary"
 								:class="{enabled: selectedModel === model.id}"
 								:disabled="!installedMap[model.id] || selectedModel === model.id"
 								@click="enableModel(model)"
 							>
-								{{ selectedModel === model.id ? I18N.enabled : I18N.enable }}
+								<Icon name="check" :size="13"/>
+								<span>{{ selectedModel === model.id ? I18N.enabled : I18N.enable }}</span>
 							</button>
 							<button
 								v-if="installedMap[model.id]"
-								class="mm-menu-btn"
+								class="mm-menu-btn btn-ghost"
 								:disabled="!installedMap[model.id]"
 								@click="openAdjust(model)"
 							>
-								{{ I18N.adjust }}
+								<Icon name="settings" :size="13"/>
+								<span>{{ I18N.adjust }}</span>
 							</button>
 						</div>
 					</div>
@@ -302,7 +305,7 @@ const closeAdjust = () => {
 		</div>
 
 		<!-- 行为与交互设置 (始终可见) -->
-		<div class="mm-behavior-section">
+		<div class="mm-behavior-section glass-panel">
 			<Live2dBehaviorControls :model-id="selectedModel"/>
 		</div>
 
@@ -315,7 +318,7 @@ const closeAdjust = () => {
 
 				<div ref="showcaseRef" class="mm-showcase"></div>
 
-				<div class="mm-adjust-pane">
+				<div class="mm-adjust-pane glass-panel">
 					<AdjustControls
 						:model-id="adjustFor"
 						:model-name="modelNameOf(adjustFor)"
@@ -337,7 +340,7 @@ const closeAdjust = () => {
 .model-management {
 	width: 100%;
 	height: 100%;
-	padding: 2.4rem 3.2rem;
+	padding: 1.6rem 2.4rem;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -371,22 +374,24 @@ const closeAdjust = () => {
 }
 
 .btn-import {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	gap: 0.7rem;
-	padding: 0.8rem 1.4rem;
-	background: rgba(125, 227, 255, 0.1);
+	padding: 0.85rem 1.6rem;
+	background: rgba(125, 227, 255, 0.08);
 	border: 0.1rem solid var(--line-strong);
 	border-radius: var(--radius-sm);
 	color: var(--nori-teal-bright);
-	font-size: 1.2rem;
+	font-size: 1.25rem;
 	font-family: inherit;
+	font-weight: 500;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover:not(:disabled) {
 		background: rgba(125, 227, 255, 0.18);
-		transform: translateY(-0.1rem);
+		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
+		transform: translateY(-0.15rem);
 	}
 
 	&:disabled {
@@ -406,34 +411,6 @@ const closeAdjust = () => {
 	text-align: center;
 }
 
-.mm-progress-panel {
-	width: 100%;
-	padding: 1.4rem 2rem;
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	display: flex;
-	flex-direction: column;
-	gap: 1rem;
-	box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.2);
-
-	.progress-info {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		font-size: 1.25rem;
-
-		.progress-model {
-			color: var(--text-primary);
-			font-weight: 600;
-		}
-
-		.progress-state {
-			color: var(--nori-teal-bright);
-		}
-	}
-}
-
 .mm-grid {
 	display: flex;
 	flex-wrap: wrap;
@@ -441,37 +418,41 @@ const closeAdjust = () => {
 	gap: 2.4rem;
 }
 
-
 .mm-card {
 	position: relative;
-	padding: 0.8rem 0.8rem 1rem;
+	padding: 1rem 1rem 1.2rem;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 0.8rem;
-	border: 0.2rem solid var(--line-subtle);
+	gap: 0.9rem;
+	border: 0.15rem solid var(--line-subtle);
 	border-radius: var(--radius-md);
-	background: rgba(255, 255, 255, 0.04);
+	background: rgba(255, 255, 255, 0.03);
 	cursor: default;
-	transition: all 0.2s ease;
+	transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover {
 		background: rgba(125, 227, 255, 0.08);
+		border-color: var(--nori-teal-soft);
+		transform: translateY(-0.25rem);
+		box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.35), 0 0 1.2rem var(--glow-teal-soft);
 	}
 
 	&.active {
 		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.1);
-		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
+		background: rgba(125, 227, 255, 0.12);
+		box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.4), 0 0 1.8rem var(--glow-teal);
 	}
 }
 
-// 统一展示尺寸: 固定外框 + cover 铺满, 避免不同图片尺寸导致大小不一
 .mm-thumb-wrap {
 	width: 15.2rem;
 	height: 25.2rem;
 	overflow: hidden;
 	border-radius: var(--radius-sm);
+	background: rgba(0, 0, 0, 0.3);
+	border: 0.1rem solid var(--line-subtle);
+	position: relative;
 }
 
 .mm-thumb {
@@ -479,10 +460,18 @@ const closeAdjust = () => {
 	height: 100%;
 	object-fit: cover;
 	display: block;
+	transition: transform 0.3s ease;
+}
+
+.thumb-glow-overlay {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(180deg, transparent 65%, rgba(5, 14, 26, 0.7) 100%);
+	pointer-events: none;
 }
 
 .mm-name {
-	font-size: 1.3rem;
+	font-size: 1.35rem;
 	font-weight: 500;
 	color: var(--text-primary);
 }
@@ -494,8 +483,8 @@ const closeAdjust = () => {
 }
 
 .mm-tag {
-	padding: 0.2rem 0.8rem;
-	border-radius: 1rem;
+	padding: 0.25rem 0.8rem;
+	border-radius: var(--radius-pill);
 	font-size: 1.05rem;
 	color: var(--text-faint);
 	background: rgba(255, 255, 255, 0.06);
@@ -503,12 +492,15 @@ const closeAdjust = () => {
 
 	&.ok {
 		color: var(--nori-teal);
-		background: rgba(94, 234, 212, 0.1);
+		background: rgba(94, 234, 212, 0.12);
+		border: 0.1rem solid rgba(94, 234, 212, 0.25);
 	}
 
 	&.current {
 		color: var(--nori-teal-bright);
-		background: rgba(125, 227, 255, 0.12);
+		background: rgba(125, 227, 255, 0.15);
+		border: 0.1rem solid var(--nori-teal);
+		font-weight: 600;
 	}
 }
 
@@ -520,49 +512,38 @@ const closeAdjust = () => {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: rgba(2, 10, 18, 0.6);
-	backdrop-filter: blur(2px);
+	background: rgba(2, 10, 18, 0.75);
+	backdrop-filter: blur(4px);
 	border-radius: var(--radius-md);
 	cursor: default;
 }
 
 .mm-card-menu {
 	position: relative;
-	width: 82%;
+	width: 84%;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 0.7rem;
-	padding: 1.4rem 1.2rem 1.2rem;
+	gap: 0.8rem;
+	padding: 1.6rem 1.2rem;
 	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-abyss) 100%);
-	box-shadow: 0 0 2rem rgba(0, 0, 0, 0.5);
+	border-radius: var(--radius-md);
+	background: linear-gradient(160deg, #0e2a44 0%, var(--bg-abyss) 100%);
+	box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6), 0 0 1.4rem var(--glow-teal-soft);
 }
 
 .mm-menu-btn {
 	width: 100%;
-	padding: 0.6rem 0;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
-	color: var(--text-body);
+	padding: 0.75rem 0;
 	font-size: 1.25rem;
 	font-family: inherit;
+	border-radius: var(--radius-sm);
 	cursor: pointer;
-	transition: all 0.2s ease;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	gap: 0.6rem;
 
-	&:hover:not(:disabled) {
-		color: var(--text-primary);
-		border-color: var(--line-strong);
-		background: rgba(125, 227, 255, 0.08);
-	}
-
-	// 已启用 / 未安装: 灰色禁用
 	&.enabled,
 	&:disabled {
 		color: var(--text-muted);
@@ -570,12 +551,8 @@ const closeAdjust = () => {
 		cursor: default;
 		background: rgba(255, 255, 255, 0.04);
 		border-color: var(--line-subtle);
+		filter: none;
 	}
-}
-
-.mm-menu-btn-icon {
-	width: 1.4rem;
-	height: 1.4rem;
 }
 
 // ---- 整页调整面板: 铺满页面 ----
@@ -585,8 +562,8 @@ const closeAdjust = () => {
 	z-index: 100;
 	display: flex;
 	flex-direction: column;
-	background: linear-gradient(165deg, rgba(8, 18, 28, 0.96) 0%, rgba(2, 10, 18, 0.98) 100%);
-	backdrop-filter: blur(5px);
+	background: linear-gradient(165deg, rgba(8, 20, 32, 0.97) 0%, rgba(2, 10, 18, 0.98) 100%);
+	backdrop-filter: blur(1.2rem);
 	cursor: default;
 }
 
@@ -595,8 +572,8 @@ const closeAdjust = () => {
 	top: 1.6rem;
 	left: 2rem;
 	z-index: 3;
-	width: 3.6rem;
-	height: 3.6rem;
+	width: 3.8rem;
+	height: 3.8rem;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: 50%;
 	background: rgba(255, 255, 255, 0.05);
@@ -605,12 +582,14 @@ const closeAdjust = () => {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	transition: all 0.2s ease;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:hover {
-		color: var(--text-primary);
-		border-color: var(--line-strong);
-		background: rgba(125, 227, 255, 0.1);
+		color: var(--nori-teal-bright);
+		border-color: var(--nori-teal-soft);
+		background: rgba(125, 227, 255, 0.12);
+		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
+		transform: translateY(-0.1rem);
 	}
 }
 
@@ -619,7 +598,6 @@ const closeAdjust = () => {
 	height: 1.8rem;
 }
 
-// 预览区域: 无边框锚点, 预览画布定位于此 (预览画布层级 200 高于遮罩 100)
 .mm-showcase {
 	position: absolute;
 	top: 5.6rem;
@@ -629,7 +607,6 @@ const closeAdjust = () => {
 	z-index: 201;
 }
 
-// 右侧控制区
 .mm-adjust-pane {
 	position: absolute;
 	top: 5.6rem;
@@ -637,7 +614,7 @@ const closeAdjust = () => {
 	right: 2.4rem;
 	bottom: 2rem;
 	overflow-y: auto;
-	padding: 0.4rem 0.8rem 1rem 0.2rem;
+	padding: 1.6rem 2rem;
 }
 
 .mm-behavior-section {
@@ -645,9 +622,6 @@ const closeAdjust = () => {
 	max-width: 60rem;
 	margin: 0 auto;
 	padding: 1.6rem 2.4rem;
-	background: var(--bg-card, rgba(255,255,255,0.04));
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
 }
 
 .mm-behavior-divider {
