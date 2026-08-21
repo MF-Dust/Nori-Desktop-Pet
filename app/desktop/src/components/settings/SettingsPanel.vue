@@ -10,8 +10,9 @@ import MemorySettings from "./MemorySettings.vue"
 import SkillsSettings from "./SkillsSettings.vue"
 import McpSettings from "./McpSettings.vue"
 import GeneralSettings from "./GeneralSettings.vue"
+import DebugSettings from "./DebugSettings.vue"
 
-type SettingsTabKey = "ai" | "voice" | "proactive" | "memory" | "skills" | "mcp" | "general"
+type SettingsTabKey = "ai" | "voice" | "proactive" | "memory" | "skills" | "mcp" | "general" | "debug"
 
 const I18N = computed(() => useLanguages().views.main.settingsTabs)
 
@@ -25,6 +26,7 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 	{key: "skills", label: I18N.value.skills, icon: "sparkles"},
 	{key: "mcp", label: I18N.value.mcp, icon: "plug"},
 	{key: "general", label: I18N.value.general, icon: "settings"},
+	{key: "debug", label: I18N.value.debug, icon: "terminal"},
 ])
 </script>
 
@@ -54,6 +56,7 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 				<SkillsSettings v-else-if="currentTab === 'skills'"/>
 				<McpSettings v-else-if="currentTab === 'mcp'"/>
 				<GeneralSettings v-else-if="currentTab === 'general'"/>
+				<DebugSettings v-else-if="currentTab === 'debug'"/>
 			</Transition>
 		</div>
 	</div>

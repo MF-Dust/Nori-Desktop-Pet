@@ -265,6 +265,7 @@ export default () => {
 					skills: t("views.main.settingsTabs.skills"),
 					mcp: t("views.main.settingsTabs.mcp"),
 					general: t("views.main.settingsTabs.general"),
+					debug: t("views.main.settingsTabs.debug"),
 				},
 			}
 		}

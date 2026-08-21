@@ -26,8 +26,14 @@ public sealed class FileLogger
 	/// <summary>日志保留天数</summary>
 	private const int RetentionDays = 7;
 
+	/// <summary>内存缓冲上限 (调试页日志查看器用, 对应 ClassIsland AppLogService 的环形队列)</summary>
+	private const int MaxMemoryEntries = 500;
+
 	private readonly string _directory;
 	private readonly Lock _gate = new();
+
+	// 内存环形缓冲: 供调试页 get_recent_logs 读取, 与文件写入共用一把锁保证顺序一致
+	private readonly Queue<LogEntry> _memory = new();
 
 	// 常驻写入器: 每条日志都重新开关一次文件在高频路径 (Cubism 告警 / 前端 write_log)
 	// 上是纯开销, 改为按来源各持一个追加写入器, 跨天时滚动重建
@@ -66,11 +72,15 @@ public sealed class FileLogger
 	/// </summary>
 	public void Write(LogSource source, string level, string message)
 	{
-		string line = $"[{DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}] [{level}] {message}";
+		// 先入内存缓冲再写文件: 文件系统失败时调试页仍能看到这条日志
+		LogEntry entry = LogEntry.Create(source, level, message);
+		string line = $"[{entry.Time}] [{level}] {message}";
 		try
 		{
 			lock (_gate)
 			{
+				_memory.Enqueue(entry);
+				while (_memory.Count > MaxMemoryEntries) _memory.Dequeue();
 				StreamWriter writer = GetWriter(source);
 				writer.WriteLine(line);
 				writer.Flush();
@@ -82,6 +92,28 @@ public sealed class FileLogger
 		}
 		catch (UnauthorizedAccessException)
 		{
+		}
+	}
+
+	/// <summary>
+	/// 读取内存缓冲快照 (时间升序), 快照与源隔离, 后续写入不影响已取回的列表
+	/// </summary>
+	public IReadOnlyList<LogEntry> RecentLogs()
+	{
+		lock (_gate)
+		{
+			return _memory.ToArray();
+		}
+	}
+
+	/// <summary>
+	/// 清空内存缓冲 (只影响调试页查看器, 不动磁盘文件)
+	/// </summary>
+	public void ClearRecentLogs()
+	{
+		lock (_gate)
+		{
+			_memory.Clear();
 		}
 	}
 

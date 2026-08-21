@@ -8,10 +8,12 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
+using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Mcp;
 using Nori.Core.Platform;
 using Nori.Core.Resources;
+using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Bridge;
@@ -201,6 +203,32 @@ public sealed class BridgeCommands(AppServices services)
 
 		// invoke("clipboard_write_text", {text: "..."})
 		"clipboard_write_text" => await WriteClipboardAsync(source, Str(args, "text")),
+
+		// ---- 调试 (参考 ClassIsland DebugPage / AppLogsWindow) ----
+		// invoke("get_recent_logs")
+		"get_recent_logs" => _services.Logger.RecentLogs().Select(entry => new
+		{
+			time = entry.Time,
+			level = entry.Level,
+			source = entry.Source == LogSource.Frontend ? "frontend" : "backend",
+			message = entry.Message,
+		}).ToArray(),
+
+		// invoke("clear_recent_logs")
+		"clear_recent_logs" => Run(() => _services.Logger.ClearRecentLogs()),
+
+		// invoke("get_diagnostic_info")
+		"get_diagnostic_info" => DiagnosticInfo.Build(),
+
+		// invoke("open_log_folder")
+		"open_log_folder" => Run(OpenLogFolder),
+
+		// invoke("run_gc_collect")
+		"run_gc_collect" => RunGcCollect(),
+
+		// invoke("debug_crash_test", {mode: "ui_thread"})
+		// mode: ui_thread / background_thread / unobserved_task, 分别命中三层兑底路径
+		"debug_crash_test" => Run(() => DebugCrashTest(Str(args, "mode"))),
 
 		_ => throw new InvalidOperationException($"未知的命令: {cmd}"),
 	};
@@ -424,6 +452,54 @@ public sealed class BridgeCommands(AppServices services)
 			throw new InvalidOperationException($"不允许打开的链接: {url}");
 		}
 		Process.Start(new ProcessStartInfo(parsed.ToString()) {UseShellExecute = true});
+	}
+
+	/// <summary>
+	/// 在资源管理器中打开日志目录
+	/// 只开放固定目录, 不提供通用 open_path, 避免变成任意路径打开入口
+	/// </summary>
+	private static void OpenLogFolder()
+	{
+		Directory.CreateDirectory(AppPaths.LogDir);
+		Process.Start(new ProcessStartInfo {FileName = AppPaths.LogDir, UseShellExecute = true});
+	}
+
+	/// <summary>
+	/// 触发一次垃圾回收并返回释放量
+	/// </summary>
+	private object? RunGcCollect()
+	{
+		long before = GC.GetTotalMemory(false);
+		GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, true);
+		long after = GC.GetTotalMemory(true);
+		long released = Math.Max(0, before - after);
+		_services.Logger.Write(LogSource.Backend, "info", $"调试垃圾回收完成: 释放 {released} 字节");
+		return new {released_bytes = released};
+	}
+
+	/// <summary>
+	/// 调试崩溃测试: 故意触发未捕获异常, 验证 CrashReporter 三层兑底 (对齐 ClassIsland 危险操作区)
+	/// </summary>
+	private object? DebugCrashTest(string mode)
+	{
+		switch (mode)
+		{
+			case "ui_thread":
+				// Post 让异常脱离当前 invoke 调用栈, 命中 Dispatcher.UIThread.UnhandledException → 非致命崩溃窗
+				Dispatcher.UIThread.Post(() => throw new InvalidOperationException("调试崩溃测试: UI 线程未处理异常"));
+				break;
+			case "background_thread":
+				// 对齐 ClassIsland MenuItemCrashTestGlobal: 原生线程异常命中 AppDomain.UnhandledException (IsTerminating), 展示致命崩溃窗后退出
+				new Thread(() => throw new InvalidOperationException("调试崩溃测试: 后台线程未处理异常")).Start();
+				break;
+			case "unobserved_task":
+				// 被丢弃的任务异常延迟到 GC 时浮出, 由 TaskScheduler.UnobservedTaskException 记入日志
+				_ = Task.Run(() => throw new InvalidOperationException("调试崩溃测试: 未观察任务异常"));
+				break;
+			default:
+				throw new InvalidOperationException($"未知的崩溃测试模式: {mode}");
+		}
+		return null;
 	}
 
 	/// <summary>

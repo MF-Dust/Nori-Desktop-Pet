@@ -261,6 +261,7 @@ export default {
 				skills: "技能工坊",
 				mcp: "工具与 MCP",
 				general: "系统常规",
+				debug: "调试",
 			},
 		}
 	}

@@ -14,6 +14,7 @@ declare module 'vue' {
     AdjustControls: typeof import('./src/components/settings/AdjustControls.vue')['default']
     AiSettings: typeof import('./src/components/settings/AiSettings.vue')['default']
     ChatView: typeof import('./src/components/ChatView.vue')['default']
+    DebugSettings: typeof import('./src/components/settings/DebugSettings.vue')['default']
     GeneralSettings: typeof import('./src/components/settings/GeneralSettings.vue')['default']
     HomePanel: typeof import('./src/components/home/HomePanel.vue')['default']
     Icon: typeof import('./src/components/Icon.vue')['default']

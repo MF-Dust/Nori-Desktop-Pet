@@ -261,6 +261,7 @@ export default {
 				skills: "Skills Workshop",
 				mcp: "Tools & MCP",
 				general: "General System",
+				debug: "Debug",
 			},
 		},
 	},
