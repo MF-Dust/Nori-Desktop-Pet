@@ -85,7 +85,9 @@ public static class ZipExtractor
 			if (sanitized.Length == 0) continue;
 			entries.Add((entry, sanitized));
 		}
-		string? commonTop = FindCommonTopDirectory(entries.Select(item => item.Path));
+		string? commonTop = FindCommonTopDirectory(entries
+			.Where(item => item.Entry.Name.Length > 0)
+			.Select(item => item.Path));
 
 		foreach ((ZipArchiveEntry entry, string sanitized) in entries)
 		{

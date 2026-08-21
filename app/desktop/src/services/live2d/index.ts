@@ -19,7 +19,7 @@ type CubismModel = any
 import {ref, type Ref} from "vue"
 
 import {assetUrl} from "./config"
-import {calcFitModel} from "./composables/fit-model"
+import {calcFitModel, calculateSafeBaseSize} from "./composables/fit-model"
 import {useMotionManagerUpdate} from "./plugins"
 import {useAutoBlinkPlugin} from "./plugins/auto-blink"
 import {useIdleEyeFocusPlugin} from "./plugins/eye-focus"
@@ -74,6 +74,16 @@ export interface Live2DMountOptions {
 	 * 挂载目标容器 (预览模式), 不传则挂到 body
 	 */
 	container?: HTMLElement
+	/**
+	 * 兼容字段: 预览与桌宠都统一按 userScale 缩放, 这里保留给旧调用.
+	 */
+	fitModelToContainer?: boolean
+}
+
+export interface Live2DInteractionMask {
+	width: number
+	height: number
+	data: string
 }
 
 export interface Live2DConfigPatch {
@@ -127,6 +137,15 @@ interface Live2DInternal {
 	maxFps: number
 	userScale: number
 	modelName: string
+	fitModelToContainer: boolean
+}
+
+interface InteractionMaskCache {
+	width: number
+	height: number
+	viewWidth: number
+	viewHeight: number
+	bits: Uint8Array
 }
 
 // ===================================================================
@@ -151,6 +170,7 @@ const clamp = (value: number, min: number, max: number): number => Math.min(max,
 
 export const createLive2D = () => {
 	let internal: Live2DInternal | null = null
+	let interactionMaskCache: InteractionMaskCache | null = null
 	let lastTapAt = 0
 
 	const autoBlinkPlugin = useAutoBlinkPlugin()
@@ -283,11 +303,38 @@ export const createLive2D = () => {
 		if (!inner?.model) return null
 		const rect = inner.app.view.getBoundingClientRect()
 		if (rect.width <= 0 || rect.height <= 0) return null
+		const view = inner.app.view
 		return {
-			x: (clientX - rect.left) * inner.renderScale,
-			y: (clientY - rect.top) * inner.renderScale,
+			x: (clientX - rect.left) * view.width / rect.width,
+			y: (clientY - rect.top) * view.height / rect.height,
 			rect,
 		}
+	}
+
+	const readAlpha = (x: number, y: number): number | null => {
+		const inner = internal
+		if (!inner?.model) return null
+		try {
+			const renderer = inner.app.renderer as unknown as {gl?: WebGLRenderingContext | null}
+			const gl = renderer.gl
+			if (!gl) return null
+			const view = inner.app.view
+			const pixelX = Math.floor(x)
+			const pixelY = view.height - 1 - Math.floor(y)
+			if (pixelX < 0 || pixelX >= view.width || pixelY < 0 || pixelY >= view.height) return 0
+			const pixel = new Uint8Array(4)
+			gl.readPixels(pixelX, pixelY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+			return pixel[3]
+		} catch {
+			return null
+		}
+	}
+
+	const isRenderedPixel = (clientX: number, clientY: number): boolean => {
+		const point = modelWorldPoint(clientX, clientY)
+		if (!point) return false
+		const alpha = readAlpha(point.x, point.y)
+		return alpha != null && alpha > 16
 	}
 
 	// ===================================================================
@@ -296,11 +343,13 @@ export const createLive2D = () => {
 
 	const mount = async (spec: Live2DModelSpec, options: Live2DMountOptions = {}): Promise<void> => {
 		await destroy()
+		interactionMaskCache = null
 
 		const mountTarget = options.container ?? document.body
 		const fixedSize = options.canvasWidth != null && options.canvasHeight != null
 
 		const container = document.createElement("div")
+		const fitModelToContainer = options.fitModelToContainer ?? true
 		container.style.zIndex = "1"
 		container.style.pointerEvents = "none"
 		container.style.overflow = "hidden"
@@ -383,6 +432,7 @@ export const createLive2D = () => {
 			maxFps: 0,
 			userScale: 1,
 			modelName,
+			fitModelToContainer,
 		}
 		internal = placeholder
 
@@ -422,11 +472,14 @@ export const createLive2D = () => {
 				return response.text()
 			}
 
+			const rawModelWidth = model.internalModel.width || model.internalModel.originalWidth || 400
+			const rawModelHeight = model.internalModel.height || model.internalModel.originalHeight || 520
+
 			internal = {
 				...placeholder,
 				model,
-				initialModelWidth: model.internalModel.width || model.internalModel.originalWidth,
-				initialModelHeight: model.internalModel.height || model.internalModel.originalHeight,
+				initialModelWidth: rawModelWidth,
+				initialModelHeight: rawModelHeight,
 				expressionController,
 				beatSync,
 				pluginSystem,
@@ -467,6 +520,7 @@ export const createLive2D = () => {
 		const inner = internal
 		if (!inner) return
 		internal = null
+		interactionMaskCache = null
 		try {
 			inner.expressionController.dispose()
 		} catch {
@@ -495,24 +549,17 @@ export const createLive2D = () => {
 		if (!inner?.model) return false
 		const point = modelWorldPoint(clientX, clientY)
 		if (!point) return false
-
-		const hitAreas = inner.model.hitTest(point.x, point.y)
-		if (hitAreas.length > 0) return true
-
-		// 无 hit area 时降级为 alpha 像素检测
-		try {
-			const renderer = inner.app.renderer as unknown as {gl: WebGL2RenderingContext | null}
-			const gl = renderer?.gl
-			if (!gl) return true
-			const view = inner.app.view
-			const x = Math.min(view.width - 1, Math.max(0, Math.floor(point.x)))
-			const y = Math.min(view.height - 1, Math.max(0, Math.floor(point.y)))
-			const pixel = new Uint8Array(4)
-			gl.readPixels(x, view.height - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
-			return pixel[3] > 8
-		} catch {
-			return true
+		const cache = interactionMaskCache
+		const view = inner.app.view
+		if (cache && cache.viewWidth === view.width && cache.viewHeight === view.height) {
+			const column = Math.floor((clientX - point.rect.left) / point.rect.width * cache.width)
+			const row = Math.floor((clientY - point.rect.top) / point.rect.height * cache.height)
+			if (column < 0 || row < 0 || column >= cache.width || row >= cache.height) return false
+			const index = row * cache.width + column
+			return (cache.bits[index >> 3] & (1 << (index & 7))) !== 0
 		}
+
+		return isRenderedPixel(clientX, clientY)
 	}
 
 	const tapAt = (clientX: number, clientY: number): void => {
@@ -521,15 +568,68 @@ export const createLive2D = () => {
 		const point = modelWorldPoint(clientX, clientY)
 		if (!point) return
 
+		if (!isRenderedPixel(clientX, clientY)) return
 		const hitAreas = inner.model.hitTest(point.x, point.y)
-		if (hitAreas.length > 0) {
-			handleHit(hitAreas)
-			return
+		handleHit(hitAreas.length > 0 ? hitAreas : ["body"])
+	}
+
+	const getInteractionMask = (width = 96, height = 128): Live2DInteractionMask | null => {
+		const inner = internal
+		interactionMaskCache = null
+		if (!inner?.model || width <= 0 || height <= 0) return null
+		const view = inner.app.view
+		const rect = view.getBoundingClientRect()
+		if (rect.width <= 0 || rect.height <= 0) return null
+		const renderer = inner.app.renderer as unknown as {gl?: WebGLRenderingContext | null}
+		const gl = renderer.gl
+		if (!gl) return null
+		const filters = inner.model.filters
+		const pixels = new Uint8Array(view.width * view.height * 4)
+		try {
+			// 阴影是视觉效果，不应把透明桌面区域扩成可交互区域。
+			inner.model.filters = []
+			inner.app.renderer.render(inner.app.stage)
+			gl.readPixels(0, 0, view.width, view.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+		} catch {
+			return null
+		} finally {
+			inner.model.filters = filters
+			try {
+				inner.app.renderer.render(inner.app.stage)
+			} catch {
+				/* 恢复视觉帧失败时由 ticker 下一帧重绘 */
+			}
 		}
-		// 模型定义了 hit area 但未命中时, 不再降级
-		if (Object.keys(inner.model.internalModel.hitAreas).length === 0 && isPointOnModel(clientX, clientY)) {
-			handleHit(["body"])
+		const bits = new Uint8Array(Math.ceil(width * height / 8))
+		const sample = (clientX: number, clientY: number): boolean => {
+			const point = modelWorldPoint(clientX, clientY)
+			if (!point) return false
+			const x = Math.floor(point.x)
+			const y = view.height - 1 - Math.floor(point.y)
+			if (x < 0 || x >= view.width || y < 0 || y >= view.height) return false
+			return pixels[(y * view.width + x) * 4 + 3] > 16
 		}
+		for (let row = 0; row < height; row++) {
+			for (let column = 0; column < width; column++) {
+				const left = rect.left + column * rect.width / width
+				const top = rect.top + row * rect.height / height
+				const cellWidth = rect.width / width
+				const cellHeight = rect.height / height
+				const hit = sample(left + cellWidth * 0.5, top + cellHeight * 0.5)
+					|| sample(left + cellWidth * 0.2, top + cellHeight * 0.2)
+					|| sample(left + cellWidth * 0.8, top + cellHeight * 0.2)
+					|| sample(left + cellWidth * 0.2, top + cellHeight * 0.8)
+					|| sample(left + cellWidth * 0.8, top + cellHeight * 0.8)
+				if (hit) {
+					const index = row * width + column
+					bits[index >> 3] |= 1 << (index & 7)
+				}
+			}
+		}
+		let binary = ""
+		for (const byte of bits) binary += String.fromCharCode(byte)
+		interactionMaskCache = {width, height, viewWidth: view.width, viewHeight: view.height, bits}
+		return {width, height, data: btoa(binary)}
 	}
 
 	const getMotions = async (): Promise<MotionGroup[] | null> => {
@@ -602,8 +702,8 @@ export const createLive2D = () => {
 
 	const getBaseSize = (): {width: number; height: number} => {
 		const inner = internal
-		if (!inner) return {width: window.innerWidth, height: window.innerHeight}
-		return {width: inner.initialModelWidth, height: inner.initialModelHeight}
+		if (!inner) return {width: 400, height: 520}
+		return calculateSafeBaseSize(inner.initialModelWidth, inner.initialModelHeight)
 	}
 
 	const resize = (width?: number, height?: number): void => {
@@ -701,7 +801,7 @@ export const createLive2D = () => {
 	const setUserScale = (scale: number): void => {
 		const inner = internal
 		if (!inner) return
-		inner.userScale = clamp(scale, 0.5, 2)
+		inner.userScale = clamp(scale, 0.1, 2)
 		applyLayout()
 	}
 
@@ -740,6 +840,7 @@ export const createLive2D = () => {
 			normalizedScale: inner.normalizedScale,
 			userScale: inner.userScale,
 			renderScale: inner.renderScale,
+			fitModelToContainer: inner.fitModelToContainer,
 		}
 	}
 
@@ -775,5 +876,6 @@ export const createLive2D = () => {
 		setNowSpeaking,
 		applyConfig,
 		getState,
+		getInteractionMask,
 	}
 }

@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using Nori.Core.Data;
 
 namespace Nori.Core.Resources;
@@ -94,92 +93,57 @@ public sealed class ResourceManager(string? dataDir = null)
 	private IReadOnlyList<string> ImportFromZip(ResourceType type, string zipPath)
 	{
 		List<string> importedModels = [];
-		using (ZipArchive archive = ZipFile.OpenRead(zipPath))
+		string staging = Path.Combine(Path.GetTempPath(), $"nori-import-{Guid.NewGuid():N}");
+		try
 		{
-			var modelEntries = archive.Entries
-				.Where(e => e.FullName.EndsWith(".model3.json", StringComparison.OrdinalIgnoreCase))
-				.ToList();
+			ZipExtractor.Extract(zipPath, staging);
+			string[] modelFiles = Directory.GetFiles(staging, "*.model3.json", SearchOption.AllDirectories);
 
-			if (modelEntries.Count == 0)
+			if (modelFiles.Length == 0)
 			{
 				throw new ResourceException("压缩包中未找到任何 .model3.json 模型定义文件");
 			}
 
-			foreach (var modelEntry in modelEntries)
+			foreach (string modelFile in modelFiles)
 			{
-				string entryPath = modelEntry.FullName.Replace('\\', '/');
-				string modelFileName = Path.GetFileName(entryPath);
-				string prefixDir = "";
-				int lastSlash = entryPath.LastIndexOf('/');
-				if (lastSlash >= 0)
-				{
-					prefixDir = entryPath[..(lastSlash + 1)];
-				}
-
-				string modelId;
-				if (modelFileName.Equals("ARGNori.model3.json", StringComparison.OrdinalIgnoreCase))
-				{
-					modelId = "arg-nori";
-				}
-				else if (modelFileName.Equals("Nori.model3.json", StringComparison.OrdinalIgnoreCase))
-				{
-					modelId = "nori";
-				}
-				else if (!string.IsNullOrEmpty(prefixDir))
-				{
-					string folderName = prefixDir.TrimEnd('/');
-					int prevSlash = folderName.LastIndexOf('/');
-					if (prevSlash >= 0) folderName = folderName[(prevSlash + 1)..];
-					folderName = folderName.Replace("_web", "", StringComparison.OrdinalIgnoreCase)
-						.Replace(" ", "-").ToLowerInvariant();
-					modelId = folderName;
-				}
-				else
-				{
-					modelId = Path.GetFileNameWithoutExtension(modelFileName)
-						.Replace(".model3", "", StringComparison.OrdinalIgnoreCase)
-						.ToLowerInvariant();
-				}
+				string modelId = ModelIdFromPath(Path.GetRelativePath(staging, modelFile));
+				string sourceDir = Path.GetDirectoryName(modelFile) ?? staging;
 
 				string targetDir = ResourceDir(type, modelId);
 				if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
 				Directory.CreateDirectory(targetDir);
-
-				foreach (var entry in archive.Entries)
-				{
-					string ePath = entry.FullName.Replace('\\', '/');
-					if (!string.IsNullOrEmpty(prefixDir) && !ePath.StartsWith(prefixDir, StringComparison.Ordinal))
-					{
-						continue;
-					}
-
-					string relPath = string.IsNullOrEmpty(prefixDir) ? ePath : ePath[prefixDir.Length..];
-					relPath = relPath.TrimStart('/');
-					if (string.IsNullOrEmpty(relPath) || relPath.EndsWith('/'))
-					{
-						continue;
-					}
-
-					string destFile = Path.Combine(targetDir, relPath.Replace('/', Path.DirectorySeparatorChar));
-					string? destFolder = Path.GetDirectoryName(destFile);
-					if (!string.IsNullOrEmpty(destFolder)) Directory.CreateDirectory(destFolder);
-
-					entry.ExtractToFile(destFile, true);
-				}
+				CopyDirectory(sourceDir, targetDir);
 
 				if (IsInstalled(type, modelId))
 				{
 					importedModels.Add(modelId);
 				}
 			}
-		}
 
-		if (importedModels.Count == 0)
+			if (importedModels.Count == 0) throw new ResourceException("未能成功解析和导入任何模型");
+			return importedModels;
+		}
+		finally
 		{
-			throw new ResourceException("未能成功解析和导入任何模型");
+			if (Directory.Exists(staging))
+			{
+				try { Directory.Delete(staging, true); }
+				catch (IOException) { /* 临时目录清理失败不影响已完成导入 */ }
+				catch (UnauthorizedAccessException) { /* 临时目录清理失败不影响已完成导入 */ }
+			}
 		}
+	}
 
-		return importedModels;
+	private static string ModelIdFromPath(string relativePath)
+	{
+		string fileName = Path.GetFileName(relativePath);
+		if (fileName.Equals("ARGNori.model3.json", StringComparison.OrdinalIgnoreCase)) return "arg-nori";
+		if (fileName.Equals("Nori.model3.json", StringComparison.OrdinalIgnoreCase)) return "nori";
+		string? folder = Path.GetDirectoryName(relativePath);
+		string modelId = !string.IsNullOrEmpty(folder) ? Path.GetFileName(folder) : Path.GetFileNameWithoutExtension(fileName);
+		return modelId.Replace(".model3", "", StringComparison.OrdinalIgnoreCase)
+			.Replace("_web", "", StringComparison.OrdinalIgnoreCase)
+			.Replace(" ", "-").ToLowerInvariant();
 	}
 
 	private IReadOnlyList<string> ImportFromDirectory(ResourceType type, string sourceDir)
@@ -214,11 +178,14 @@ public sealed class ResourceManager(string? dataDir = null)
 	{
 		foreach (string dir in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
 		{
-			Directory.CreateDirectory(dir.Replace(sourceDir, targetDir));
+			Directory.CreateDirectory(Path.Combine(targetDir, Path.GetRelativePath(sourceDir, dir)));
 		}
-		foreach (string file in Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories))
+		foreach (string file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
 		{
-			File.Copy(file, file.Replace(sourceDir, targetDir), true);
+			string destination = Path.Combine(targetDir, Path.GetRelativePath(sourceDir, file));
+			string? parent = Path.GetDirectoryName(destination);
+			if (parent is not null) Directory.CreateDirectory(parent);
+			File.Copy(file, destination, true);
 		}
 	}
 

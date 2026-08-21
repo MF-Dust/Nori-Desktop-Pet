@@ -114,4 +114,25 @@ describe("Live2D 控制器挂载 source 格式", () => {
 
 		await CONTROLLER.destroy()
 	})
+
+	it("setUserScale 会直接缩放模型且保留更小的最小值", async () => {
+		const CONTAINER = makeContainer()
+		const documentMock = {
+			body: {appendChild: vi.fn()},
+			createElement: vi.fn(() => CONTAINER),
+		}
+		;(globalThis as Record<string, unknown>).document = documentMock
+
+		const {createLive2D} = await import("../../src/services/live2d/index")
+		const CONTROLLER = createLive2D()
+
+		await CONTROLLER.mount({directory: "arg-nori", fileBase: "ARGNori"})
+		currentModel.scale.set.mockClear()
+
+		CONTROLLER.setUserScale(0.05)
+
+		expect(currentModel.scale.set).toHaveBeenLastCalledWith(0.1, 0.1)
+
+		await CONTROLLER.destroy()
+	})
 })

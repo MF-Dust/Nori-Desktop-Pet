@@ -109,12 +109,7 @@ Models are local resources under `data/resources/live2d/<name>/`; there is no re
 
 ### Live2D
 
-`live2d-easy-control` is patched **twice**, both applied at `pnpm install`:
-
-- `patches/live2d-easy-control.patch` (pnpm `patchedDependencies`) — sets `img.crossOrigin = "anonymous"` on textures. Now that assets are same-origin this is no longer load-bearing, but it is harmless and still correct.
-- `scripts/patch-live2d.mjs` (postinstall, idempotent string replacement on the built bundle) — four behavioral fixes: allow stacked expressions, restore parameters on `stopAllExpressions`, enable `preserveDrawingBuffer`, and make a failed model load *reject* instead of hanging forever.
-
-Both are pinned to exact source snippets. **Upgrading the package will make them no-ops without failing** — the script just logs `跳过`. Re-derive them if you bump the version.
+Live2D uses `pixi-live2d-display` with PixiJS and Cubism 4. Models are loaded from the local `AssetServer` and `createLive2D()` owns the body-level canvas lifecycle. The renderer uses `preserveDrawingBuffer` so the pet can build a low-resolution alpha interaction mask; the native pet window applies that mask to pass transparent pixels through to the desktop.
 
 The library appends its `<canvas>` to `document.body` and never removes it, so `createLive2D()` owns the DOM lifecycle and `stage.ts` positions that body-level canvas with `position: fixed`. The pet window sizes *itself* to the model (`applyWindowSize`, center-preserving). Head tracking calls `get_cursor_pos` because a webview can't observe the cursor outside its own window.
 

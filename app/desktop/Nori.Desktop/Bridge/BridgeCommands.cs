@@ -166,6 +166,8 @@ public sealed class BridgeCommands(AppServices services)
 		"window_outer_size" => await OnUi(() => OuterSize(Target(source, args))),
 		"window_set_size" => await OnUi(() => SetSize(Target(source, args), args)),
 		"window_set_position" => await OnUi(() => SetPosition(Target(source, args), args)),
+		// invoke("window_set_input_mask", {label: "pet", width, height, data, enabled})
+		"window_set_input_mask" => await OnUi(() => SetInputMask(Target(source, args), args)),
 		"window_start_drag" => await OnUi(() => Run(() => PlatformServices.Current.StartWindowDrag(Target(source, args).NativeHandle))),
 
 		// ---- 插件替代 ----
@@ -385,6 +387,19 @@ public sealed class BridgeCommands(AppServices services)
 	private static object? SetPosition(NoriWindow window, JsonElement args)
 	{
 		window.Position = new PixelPoint((int)Math.Round(Num(args, "x")), (int)Math.Round(Num(args, "y")));
+		return null;
+	}
+
+	/// <summary>
+	/// 更新桌宠透明区域命中图.
+	/// </summary>
+	private static object? SetInputMask(NoriWindow window, JsonElement args)
+	{
+		int width = checked((int)Num(args, "width"));
+		int height = checked((int)Num(args, "height"));
+		string data = OptionalStr(args, "data") ?? "";
+		bool enabled = OptionalBool(args, "enabled") ?? false;
+		window.SetInputMask(width, height, data, enabled);
 		return null;
 	}
 

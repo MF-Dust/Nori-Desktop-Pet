@@ -29,6 +29,7 @@ const modelName = ref("arg-nori")
 const scale = ref(1)
 const opacity = ref(1)
 const expressionList = ref<string[]>([])
+let maskSyncId = 0
 
 // 模型动作组数组 (挂载后读取, 供 AI / 主窗口调用)
 const motionGroups = ref<MotionGroup[]>([])
@@ -36,7 +37,7 @@ const motionGroups = ref<MotionGroup[]>([])
 // 行为配置 (缓存, 热更新)
 const behaviorConfig = ref<Record<string, string | number | boolean>>({})
 
-// ---- 窗口尺寸动态适配: 固定基础尺寸 × 缩放系数, 始终保持窗口中心不动 ----
+// ---- 窗口尺寸适配: 固定基础尺寸, 始终保持窗口中心不动 ----
 const applyWindowSize = async (): Promise<void> => {
 	const WEBVIEW = getCurrentWindow()
 	try {
@@ -44,15 +45,38 @@ const applyWindowSize = async (): Promise<void> => {
 		const SCALE_FACTOR = await WEBVIEW.scaleFactor()
 		const OLD_POS = await WEBVIEW.outerPosition()
 		const OLD_SIZE = await WEBVIEW.outerSize()
-		const NEW_W = Math.max(80, Math.round(BASE.width * scale.value * SCALE_FACTOR))
-		const NEW_H = Math.max(80, Math.round(BASE.height * scale.value * SCALE_FACTOR))
+
+		const SCREEN_W = typeof window !== "undefined" && window.screen ? window.screen.availWidth : 1920
+		const SCREEN_H = typeof window !== "undefined" && window.screen ? window.screen.availHeight : 1080
+		const MAX_PHYSICAL_W = Math.max(200, Math.round(SCREEN_W * SCALE_FACTOR * 0.85))
+		const MAX_PHYSICAL_H = Math.max(200, Math.round(SCREEN_H * SCALE_FACTOR * 0.85))
+
+		const NEW_W = Math.min(MAX_PHYSICAL_W, Math.max(80, Math.round(BASE.width * SCALE_FACTOR)))
+		const NEW_H = Math.min(MAX_PHYSICAL_H, Math.max(80, Math.round(BASE.height * SCALE_FACTOR)))
 		await WEBVIEW.setSize(new PhysicalSize(NEW_W, NEW_H))
 		const CENTER_X = OLD_POS.x + OLD_SIZE.width / 2
 		const CENTER_Y = OLD_POS.y + OLD_SIZE.height / 2
 		await WEBVIEW.setPosition(new PhysicalPosition(Math.round(CENTER_X - NEW_W / 2), Math.round(CENTER_Y - NEW_H / 2)))
 		await L2D.resize()
+		void syncInteractionMask()
 	} catch (error) {
 		console.error("窗口尺寸适配失败:", error)
+	}
+}
+
+const syncInteractionMask = async (enabled = true): Promise<void> => {
+	const SYNC_ID = ++maskSyncId
+	try {
+		const MASK = enabled ? L2D.getInteractionMask() : null
+		if (SYNC_ID !== maskSyncId) return
+		await getCurrentWindow().setInputMask({
+			width: MASK?.width ?? 0,
+			height: MASK?.height ?? 0,
+			data: MASK?.data ?? "",
+			enabled: MASK != null,
+		})
+	} catch (error) {
+		console.error("同步桌宠交互区域失败:", error)
 	}
 }
 
@@ -290,10 +314,19 @@ let unlistenPetStart: UnlistenFn | null = null
 let unlistenConfigChanged: UnlistenFn | null = null
 let unlistenPlayMotion: UnlistenFn | null = null
 let mountedOnce = false
+let modelLoadId = 0
+let modelLoadQueue: Promise<void> = Promise.resolve()
+
+const queueModelLoad = (job: () => Promise<void>): Promise<void> => {
+	const RUN = modelLoadQueue.catch(() => {}).then(job)
+	modelLoadQueue = RUN.catch(() => {})
+	return RUN
+}
 let disposed = false
 
-const afterMount = async () => {
+const afterMount = async (loadId: number) => {
 	await applyWindowSize()
+	if (loadId !== modelLoadId || disposed) return
 	L2D.resize()
 	// 读取模型动作组数组 (供 AI 调用)
 	try {
@@ -301,6 +334,7 @@ const afterMount = async () => {
 	} catch {
 		motionGroups.value = []
 	}
+	if (loadId !== modelLoadId || disposed) return
 	// 写入配置, 聊天时 Rust 据此把可用动作列表注入系统提示词
 	if (motionGroups.value.length > 0) {
 		invoke("set_config", {
@@ -318,7 +352,9 @@ const afterMount = async () => {
 		CANVAS.addEventListener("pointermove", onCanvasPointerMove)
 		CANVAS.addEventListener("pointerleave", onCanvasPointerLeave)
 		CANVAS.addEventListener("pointerdown", onCanvasPointerDown)
+		CANVAS.addEventListener("contextmenu", onCanvasContextMenu)
 	}
+	void syncInteractionMask()
 	await applyExpressions(expressionList.value)
 }
 
@@ -331,21 +367,25 @@ const ensureResourceInstalled = async (name: string): Promise<boolean> => {
 	}
 }
 
-const mountModel = async () => {
+const mountModel = (): Promise<void> => queueModelLoad(async () => {
 	if (mountedOnce) return
 	mountedOnce = true
+	const LOAD_ID = ++modelLoadId
 	await loadModelConfigs()
 	await loadBehaviorConfigs()
+	if (LOAD_ID !== modelLoadId || disposed) return
 	try {
-		const INSTALLED = await ensureResourceInstalled(modelName.value)
+		const MODEL_NAME = modelName.value
+		const INSTALLED = await ensureResourceInstalled(MODEL_NAME)
 		if (!INSTALLED) {
-			await invoke("write_log", {level: "warn", message: `桌宠检测到模型 ${modelName.value} 未安装`})
+			await invoke("write_log", {level: "warn", message: `桌宠检测到模型 ${MODEL_NAME} 未安装`})
 			mountedOnce = false
 			return
 		}
+		if (LOAD_ID !== modelLoadId || disposed) return
 		await L2D.mount({
-			directory: modelName.value,
-			fileBase: resolveModelFileBase(modelName.value),
+			directory: MODEL_NAME,
+			fileBase: resolveModelFileBase(MODEL_NAME),
 		})
 		L2D.setUserScale(scale.value)
 	} catch (error) {
@@ -355,33 +395,40 @@ const mountModel = async () => {
 			message: `桌宠模型加载失败: ${String(error)}`,
 		}).catch(() => {})
 		// 失败时允许下次 pet-start / 可见性轮询重试, 否则窗口会永远空着
-		mountedOnce = false
+		if (LOAD_ID === modelLoadId) mountedOnce = false
 		return
 	}
-	await afterMount()
-}
+	if (LOAD_ID !== modelLoadId || disposed) return
+	await afterMount(LOAD_ID)
+})
 
 // 切换模型: 卸载旧模型并加载新模型
-const reloadModel = async () => {
-	mountedOnce = true
-	try {
+const reloadModel = (): Promise<void> => {
+	const LOAD_ID = ++modelLoadId
+	return queueModelLoad(async () => {
+		mountedOnce = true
 		await L2D.destroy()
-	} catch {
-		/* 未加载时忽略 */
-	}
-	await loadModelConfigs()
-	await loadBehaviorConfigs()
-	try {
-		await ensureResourceInstalled(modelName.value)
-		await L2D.mount({
-			directory: modelName.value,
-			fileBase: resolveModelFileBase(modelName.value),
-		})
-		L2D.setUserScale(scale.value)
-	} catch (error) {
-		console.error("加载 Live2D 模型失败:", error)
-	}
-	await afterMount()
+		await loadModelConfigs()
+		await loadBehaviorConfigs()
+		if (LOAD_ID !== modelLoadId || disposed) return
+		try {
+			const MODEL_NAME = modelName.value
+			const INSTALLED = await ensureResourceInstalled(MODEL_NAME)
+			if (!INSTALLED) throw new Error(`模型未安装: ${MODEL_NAME}`)
+			if (LOAD_ID !== modelLoadId || disposed) return
+			await L2D.mount({
+				directory: MODEL_NAME,
+				fileBase: resolveModelFileBase(MODEL_NAME),
+			})
+			L2D.setUserScale(scale.value)
+		} catch (error) {
+			console.error("加载 Live2D 模型失败:", error)
+			if (LOAD_ID === modelLoadId) mountedOnce = false
+			return
+		}
+		if (LOAD_ID !== modelLoadId || disposed) return
+		await afterMount(LOAD_ID)
+	})
 }
 
 // 当前窗口是否可见 (非 Tauri 环境视为可见, 保持原行为)
@@ -420,6 +467,7 @@ const applyBehaviorConfigKey = async (key: string) => {
 		renderScale: key === "l2d_render_scale" && typeof VALUE === "number" ? VALUE : undefined,
 		maxFps: key === "l2d_max_fps" && typeof VALUE === "number" ? VALUE : undefined,
 	})
+	if (key === "l2d_render_scale") void syncInteractionMask()
 }
 
 // 应用配置键 (按模型过滤 + 旧版全局键兜底)
@@ -435,7 +483,7 @@ const applyConfigKey = (base: L2DConfigKey, value: string) => {
 		if (!Number.isNaN(NUM)) {
 			scale.value = NUM
 			L2D.setUserScale(NUM)
-			void applyWindowSize()
+			void syncInteractionMask()
 		}
 	}
 }
@@ -524,11 +572,13 @@ onMounted(async () => {
 
 const onWindowResize = () => {
 	L2D.resize()
+	void syncInteractionMask()
 }
 
 // ---- 右键菜单操作 ----
 const closeContextMenu = () => {
 	contextMenuVisible.value = false
+	void syncInteractionMask()
 }
 
 const onContextMenu = (event: MouseEvent) => {
@@ -538,6 +588,7 @@ const onContextMenu = (event: MouseEvent) => {
 		y: Math.max(8, Math.min(event.clientY, window.innerHeight - 210)),
 	}
 	contextMenuVisible.value = true
+	void syncInteractionMask(false)
 }
 
 const openMainWindow = async () => {
@@ -601,6 +652,7 @@ const onCanvasPointerLeave = () => {
 const onCanvasPointerDown = (event: PointerEvent) => {
 	const CANVAS = L2D.canvas()
 	if (!CANVAS || event.button !== 0 || dragPending || isDragging || event.target !== CANVAS) return
+	if (!L2D.isPointOnModel(event.clientX, event.clientY)) return
 	if (contextMenuVisible.value) closeContextMenu()
 	pointerDown = true
 	activePointerId = event.pointerId
@@ -615,6 +667,11 @@ const onCanvasPointerDown = (event: PointerEvent) => {
 		/* 不支持 pointer capture 时由 window 的释放兜底 */
 	}
 	void beginDrag(event)
+}
+
+const onCanvasContextMenu = (event: MouseEvent) => {
+	event.preventDefault()
+	onContextMenu(event)
 }
 
 const onCanvasClick = (event: MouseEvent) => {
@@ -716,7 +773,10 @@ onBeforeUnmount(() => {
 		CANVAS.removeEventListener("pointermove", onCanvasPointerMove)
 		CANVAS.removeEventListener("pointerleave", onCanvasPointerLeave)
 		CANVAS.removeEventListener("pointerdown", onCanvasPointerDown)
+		CANVAS.removeEventListener("contextmenu", onCanvasContextMenu)
 	}
+	maskSyncId++
+	void syncInteractionMask(false)
 	finishDrag()
 	if (trackRafId != null) cancelAnimationFrame(trackRafId)
 	if (lipSyncInterval != null) {

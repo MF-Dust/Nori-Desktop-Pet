@@ -26,6 +26,16 @@ export class PhysicalPosition {
 }
 
 /**
+ * 桌宠窗口命中图
+ */
+export interface WindowInputMask {
+	width: number
+	height: number
+	data: string
+	enabled: boolean
+}
+
+/**
  * 窗口度量缓存 (label → 值)
  */
 interface Metrics {
@@ -121,6 +131,10 @@ export class HostWindow {
 	 */
 	async startDragging(): Promise<void> {
 		await invoke("window_start_drag", {label: this.label})
+	}
+
+	async setInputMask(mask: WindowInputMask): Promise<void> {
+		await invoke("window_set_input_mask", {label: this.label, ...mask})
 	}
 }
 

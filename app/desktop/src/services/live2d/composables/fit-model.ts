@@ -41,3 +41,60 @@ export const calcFitModel = (
 		y: canvas.height / 2,
 	}
 }
+
+export const DEFAULT_PET_WIDTH = 400
+export const DEFAULT_PET_HEIGHT = 520
+export const MAX_PET_BASE_WIDTH = 600
+export const MAX_PET_BASE_HEIGHT = 700
+export const MIN_PET_BASE_WIDTH = 240
+export const MIN_PET_BASE_HEIGHT = 320
+
+/**
+ * 计算安全的桌宠基准视口尺寸 (DIP)
+ *
+ * 避免模型原始画布过大 (如 2048x2048 或 4096) 导致窗口尺寸爆炸、
+ * 产生巨大矩形透明区域或 WebGL 显存溢出。
+ */
+export const calculateSafeBaseSize = (
+	rawWidth?: number,
+	rawHeight?: number,
+): {width: number; height: number} => {
+	if (
+		!rawWidth ||
+		!rawHeight ||
+		rawWidth <= 0 ||
+		rawHeight <= 0 ||
+		!Number.isFinite(rawWidth) ||
+		!Number.isFinite(rawHeight)
+	) {
+		return {width: DEFAULT_PET_WIDTH, height: DEFAULT_PET_HEIGHT}
+	}
+
+	// 原始尺寸如果已经在合理的桌宠范围内，直接使用
+	if (
+		rawWidth <= MAX_PET_BASE_WIDTH &&
+		rawHeight <= MAX_PET_BASE_HEIGHT &&
+		rawWidth >= MIN_PET_BASE_WIDTH &&
+		rawHeight >= MIN_PET_BASE_HEIGHT
+	) {
+		return {width: Math.round(rawWidth), height: Math.round(rawHeight)}
+	}
+
+	const ASPECT = Math.max(0.3, Math.min(3.0, rawWidth / rawHeight))
+
+	// 优先以 DEFAULT_PET_HEIGHT 为高度基准适配
+	let fitW = Math.round(DEFAULT_PET_HEIGHT * ASPECT)
+	let fitH = DEFAULT_PET_HEIGHT
+
+	if (fitW > MAX_PET_BASE_WIDTH) {
+		fitW = MAX_PET_BASE_WIDTH
+		fitH = Math.round(MAX_PET_BASE_WIDTH / ASPECT)
+	} else if (fitW < MIN_PET_BASE_WIDTH) {
+		fitW = MIN_PET_BASE_WIDTH
+		fitH = Math.round(MIN_PET_BASE_WIDTH / ASPECT)
+	}
+
+	fitH = Math.max(MIN_PET_BASE_HEIGHT, Math.min(MAX_PET_BASE_HEIGHT, fitH))
+
+	return {width: fitW, height: fitH}
+}
