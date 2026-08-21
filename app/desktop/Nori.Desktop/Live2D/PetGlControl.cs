@@ -40,6 +40,8 @@ public sealed class PetGlControl : OpenGlControlBase
 	// 帧驱动
 	private CancellationTokenSource? _fpsCts;
 	private Thread? _renderThread;
+	/// <summary>渲染线程是否在运行 (窗口隐藏时暂停, 避免不可见空转)</summary>
+	private volatile bool _renderLoopRunning;
 	/// <summary>已排队但尚未渲染的帧请求, 用于避免 Dispatcher 队列堆积</summary>
 	private int _framePending;
 
@@ -231,7 +233,9 @@ public sealed class PetGlControl : OpenGlControlBase
 
 	private void StartRenderLoop()
 	{
+		if (_renderLoopRunning) return;
 		_fpsCts = new CancellationTokenSource();
+		_renderLoopRunning = true;
 		var token = _fpsCts.Token;
 
 		_renderThread = new Thread(() =>
@@ -267,9 +271,44 @@ public sealed class PetGlControl : OpenGlControlBase
 
 	private void StopRenderLoop()
 	{
+		if (!_renderLoopRunning) return;
+		_renderLoopRunning = false;
+
+		try
+		{
+			Interlocked.Exchange(ref _framePending, 0);
+			_fpsCts?.Cancel();
+			// 渲染线程最多还在睡一个帧间隔, 先等它退出再释放 CTS,
+			// 否则线程访问已释放的 token 会抛 ObjectDisposedException
+			_renderThread?.Join(200);
+		}
+		finally
+		{
+			_fpsCts?.Dispose();
+			_fpsCts = null;
+			_renderThread = null;
+		}
+	}
+
+	/// <summary>
+	/// 暂停帧驱动 (窗口隐藏时调用)
+	///
+	/// 窗口隐藏后合成器对帧请求的处理不可控: 要么继续全速渲染 + 采样 alpha (白烧 CPU/GPU),
+	/// 要么帧请求滞留导致重新显示后停帧。显式停掉渲染线程可以同时避免这两种问题,
+	/// GL 上下文保持存活, 重新显示后无缝恢复。
+	/// </summary>
+	public void PauseRenderLoop() => StopRenderLoop();
+
+	/// <summary>
+	/// 恢复帧驱动 (窗口重新显示时调用)
+	///
+	/// GL 尚未初始化时是空操作 —— 首次显示会走 OnOpenGlInit 自行启动渲染循环。
+	/// </summary>
+	public void ResumeRenderLoop()
+	{
+		if (_lapp is null || _glApi is null) return;
+		// 清掉可能滞留的旧帧请求标记, 最坏情况多画一帧
 		Interlocked.Exchange(ref _framePending, 0);
-		_fpsCts?.Cancel();
-		_fpsCts?.Dispose();
-		_fpsCts = null;
+		StartRenderLoop();
 	}
 }

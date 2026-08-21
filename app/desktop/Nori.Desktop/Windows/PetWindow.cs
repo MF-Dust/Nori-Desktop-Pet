@@ -97,6 +97,26 @@ public sealed class PetWindow : Window
 		Closed += OnClosed;
 	}
 
+	/// <summary>
+	/// 窗口可见性变化: 隐藏时暂停渲染循环与光标追踪, 显示时恢复
+	/// </summary>
+	protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+	{
+		base.OnPropertyChanged(change);
+		if (change.Property != Visual.IsVisibleProperty) return;
+
+		if (change.GetNewValue<bool>())
+		{
+			_glControl.ResumeRenderLoop();
+			_cursorTrackingTimer.Start();
+		}
+		else
+		{
+			_glControl.PauseRenderLoop();
+			_cursorTrackingTimer.Stop();
+		}
+	}
+
 	private void OnOpened(object? sender, EventArgs e)
 	{
 		if (OperatingSystem.IsWindows())
