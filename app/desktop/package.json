@@ -3,13 +3,14 @@
 	"private": true,
 	"description": "Nori Desktop Pet - a desktop pet application",
 	"version": "0.1.0",
+	"license": "GPL-3.0",
 	"author": "erhio, Nori, qicajie",
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
 		"build": "vue-tsc --noEmit && vite build",
 		"preview": "vite preview",
-		"test": "node --test tests/*.test.mjs && vitest run"
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@pixi/app": "^6.5.10",
