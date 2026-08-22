@@ -8,3 +8,4 @@ srv/publish/
 node_modules/
 app/desktop/dist/
 app/desktop/bin/
+.rpiv/

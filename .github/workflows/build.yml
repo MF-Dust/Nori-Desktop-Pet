@@ -1,0 +1,142 @@
+# 手动触发的多平台构建工作流
+#
+# 用法: Actions → Build → Run workflow → 选择平台 (all / windows / linux / macos)
+#
+# 说明:
+# - 前端只在 Ubuntu 上构建一次, 产物 (dist/) 通过 artifact 分发给各平台任务;
+#   Nori.Desktop.csproj 会把 ../dist/** 作为 wwwroot 打进发布目录。
+# - Live2D Cubism Core 原生库由 csproj 按 RID 打包
+#   (win-x64.dll / linux-x64.so / osx dylib)。
+# - 发布参数与 app/desktop/publish.bat 一致 (默认框架依赖模式),
+#   可通过 self_contained 输入切换为自包含运行时。
+# - 已知限制: 主界面三个 WebView 窗口依赖 Microsoft WebView2 运行时 (仅 Windows 提供);
+#   linux/macos 产物可编译分发、原生桌宠窗口 (pet) 不依赖 WebView2,
+#   但完整应用流程目前仅在 Windows 上验证过。
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "构建平台"
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - windows
+          - linux
+          - macos
+      self_contained:
+        description: "自包含 .NET 运行时 (否则目标机需自行安装)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------- 前端 (构建一次, 各平台共用) ----------
+  frontend:
+    name: Frontend (web bundle)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/desktop/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: app/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend (vue-tsc + vite)
+        working-directory: app/desktop
+        run: pnpm build
+
+      - name: Upload web bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: app/desktop/dist/
+          retention-days: 7
+
+  # ---------- 平台矩阵 ----------
+  native:
+    name: Native (${{ matrix.rid }})
+    needs: frontend
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            rid: win-x64
+          - platform: linux
+            os: ubuntu-latest
+            rid: linux-x64
+          - platform: macos
+            os: macos-latest
+            rid: osx-x64
+          - platform: macos
+            os: macos-latest
+            rid: osx-arm64
+    if: ${{ inputs.platform == 'all' || inputs.platform == matrix.platform }}
+    env:
+      SELF_CONTAINED_ARGS: --self-contained false
+    steps:
+      - name: Resolve self-contained flag
+        if: ${{ inputs.self_contained }}
+        shell: bash
+        run: echo "SELF_CONTAINED_ARGS=--self-contained true" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: app/desktop/dist
+
+      # 参数与 publish.bat 保持一致; 单文件/ReadyToRun 关闭, 不生成 pdb
+      - name: Publish (${{ matrix.rid }})
+        working-directory: app/desktop
+        run: >
+          dotnet publish Nori.Desktop/Nori.Desktop.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          ${{ env.SELF_CONTAINED_ARGS }}
+          -p:PublishSingleFile=false
+          -p:PublishReadyToRun=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o bin/publish/${{ matrix.rid }}
+
+      - name: Remove pdb files
+        working-directory: app/desktop/bin/publish/${{ matrix.rid }}
+        run: find . -name "*.pdb" -delete
+
+      - name: Upload artifact (${{ matrix.rid }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-${{ matrix.rid }}
+          path: app/desktop/bin/publish/${{ matrix.rid }}/
+          retention-days: 14
