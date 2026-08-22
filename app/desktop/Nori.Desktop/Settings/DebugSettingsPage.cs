@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+using FluentAvalonia.UI.Controls;
 using Nori.Desktop.Runtime;
 
 namespace Nori.Desktop.Settings;
@@ -33,14 +34,12 @@ public sealed class DebugSettingsPage : SettingsPageBase
 	private void Build()
 	{
 		StackPanel root = CreateRoot();
-		Border warning = new()
+		FAInfoBar warning = new()
 		{
-			Background = Brush("#3D2630"),
-			BorderBrush = Brush("#9A5564"),
-			BorderThickness = new Thickness(1),
-			Padding = new Thickness(14),
-			CornerRadius = new CornerRadius(8),
-			Child = Hint(T("debug.warning")),
+			IsOpen = true,
+			Severity = FAInfoBarSeverity.Warning,
+			Message = T("debug.warning"),
+			IsClosable = false,
 		};
 		root.Children.Add(warning);
 

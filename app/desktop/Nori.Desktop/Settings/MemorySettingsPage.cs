@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using FluentAvalonia.UI.Controls;
 using Nori.Core.Memory;
 using Nori.Desktop.Runtime;
 
@@ -183,7 +184,12 @@ public sealed class MemorySettingsPage : SettingsPageBase
 			text.Children.Add(new TextBlock {Text = item.Content, FontSize = 13, Foreground = Brush("#E8F6FF"), TextWrapping = TextWrapping.Wrap});
 			text.Children.Add(new TextBlock {Text = item.CreatedAt, FontSize = 11, Foreground = Brush("#718C9E")});
 			row.Children.Add(text);
-			Button delete = new() {Content = "×"};
+			Button delete = new()
+			{
+				Content = new FASymbolIcon {Symbol = FASymbol.Delete, FontSize = 14},
+				Width = 36,
+			};
+			ToolTip.SetTip(delete, T("memory.delete"));
 			delete.Classes.Add("danger");
 			delete.Click += async (_, _) =>
 			{

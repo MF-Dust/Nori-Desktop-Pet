@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using FluentAvalonia.UI.Controls;
 using Nori.Desktop.Runtime;
 
 namespace Nori.Desktop.Settings;
@@ -121,7 +122,12 @@ public sealed class ProactiveSettingsPage : SettingsPageBase
 			text.Children.Add(new TextBlock {Text = item.Content, Foreground = Brush("#E8F6FF"), FontSize = 13});
 			text.Children.Add(new TextBlock {Text = DateTimeOffset.FromUnixTimeMilliseconds(item.TriggerTime).ToLocalTime().ToString("g"), Foreground = Brush("#8CA6B8"), FontSize = 11});
 			row.Children.Add(text);
-			Button cancel = new() {Content = "×"};
+			Button cancel = new()
+			{
+				Content = new FASymbolIcon {Symbol = FASymbol.Dismiss, FontSize = 14},
+				Width = 36,
+			};
+			ToolTip.SetTip(cancel, T("common.cancel"));
 			cancel.Classes.Add("danger");
 			cancel.Click += async (_, _) =>
 			{

@@ -62,11 +62,13 @@ public sealed class SkillsSettingsPage : SettingsPageBase
 		Grid.SetColumn(_category, 3);
 		toolbar.Children.Add(_category);
 		Button url = new() {Content = T("skills.url")};
+		url.Classes.Add("settings-action");
 		url.Click += async (_, _) => await InstallUrlAsync();
 		Grid.SetColumn(url, 4);
 		toolbar.Children.Add(url);
 		root.Children.Add(toolbar);
 		Button create = new() {Content = T("skills.new"), HorizontalAlignment = HorizontalAlignment.Left};
+		create.Classes.Add("settings-action");
 		create.Classes.Add("accent");
 		create.Click += async (_, _) => await EditSkillAsync(null);
 		root.Children.Add(create);
@@ -212,17 +214,7 @@ public sealed class SkillsSettingsPage : SettingsPageBase
 		catch (Exception exception) { ViewModel.ReportError(exception); }
 	}
 
-	private StackPanel CardBody(string title, string subtitle)
-	{
-		StackPanel body = new() {Spacing = 8};
-		Border card = new() {Background = Brush("#0D2232"), BorderBrush = Brush("#1D4053"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14), Child = body};
-		_list.Children.Add(card);
-		StackPanel heading = new() {Orientation = Orientation.Horizontal, Spacing = 8};
-		heading.Children.Add(new TextBlock {Text = title, FontSize = 14, FontWeight = FontWeight.SemiBold, Foreground = Brush("#E8F6FF")});
-		heading.Children.Add(new TextBlock {Text = subtitle, FontSize = 11, Foreground = Brush("#718C9E"), VerticalAlignment = VerticalAlignment.Center});
-		body.Children.Add(heading);
-		return body;
-	}
+	private StackPanel CardBody(string title, string subtitle) => CreateCard(_list, title, subtitle);
 
 	private static bool Matches(string name, string description, IReadOnlyList<string> tags, string query, string category, string itemCategory)
 	{

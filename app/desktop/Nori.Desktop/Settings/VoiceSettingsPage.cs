@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using FluentAvalonia.UI.Controls;
 using Nori.Desktop.Runtime;
 
 namespace Nori.Desktop.Settings;
@@ -24,7 +25,7 @@ public sealed class VoiceSettingsPage : SettingsPageBase
 	private TextBox _ttsVoice = null!;
 	private TextBox _sttBaseUrl = null!;
 	private TextBox _sttKey = null!;
-	private Border _notice = null!;
+	private FAInfoBar _notice = null!;
 	private VoiceSnapshot? _lastSnapshot;
 	private bool _synchronizing;
 
@@ -51,7 +52,7 @@ public sealed class VoiceSettingsPage : SettingsPageBase
 			_autoPlay.IsChecked = snapshot.Voice.TtsAutoPlay;
 			_sttBaseUrl.Text = snapshot.Voice.SttBaseUrl;
 			_sttKey.PlaceholderText = snapshot.Voice.HasSttApiKey ? T("ai.saved") : "sk-…";
-			_notice.IsVisible = snapshot.Voice.NoticePending;
+			_notice.IsOpen = snapshot.Voice.NoticePending;
 		}
 		finally
 		{
@@ -109,6 +110,7 @@ public sealed class VoiceSettingsPage : SettingsPageBase
 			if (!_synchronizing) RunBackground(() => Operations.UpdateVoice(new VoiceSettingsPatch {TtsAutoPlay = value}));
 		});
 		Button test = new() {Content = T("voice.test")};
+		test.Classes.Add("settings-action");
 		test.Classes.Add("accent");
 		test.Click += async (_, _) =>
 		{
@@ -118,36 +120,21 @@ public sealed class VoiceSettingsPage : SettingsPageBase
 		};
 		ttsCard.Children.Add(test);
 
-		_notice = new Border
+		_notice = new FAInfoBar
 		{
-			Background = Brush("#3B3020"),
-			BorderBrush = Brush("#8A6936"),
-			BorderThickness = new Thickness(1),
-			Padding = new Thickness(14),
-			CornerRadius = new CornerRadius(8),
-			Child = CreateNotice(),
+			Title = T("voice.noticeTitle"),
+			Message = T("voice.notice"),
+			Severity = FAInfoBarSeverity.Warning,
+			IsClosable = true,
+			IsOpen = true,
 		};
+		_notice.Closed += (_, _) => RunBackground(Operations.AcknowledgeVoiceNotice);
 		root.Children.Insert(0, _notice);
 
 		StackPanel sttCard = CreateCard(root, T("voice.stt"), T("voice.sttHint"));
 		_sttBaseUrl = AddTextField(sttCard, T("voice.sttBaseUrl"), "", value => DebouncedVoice("sttBase", new VoiceSettingsPatch {SttProvider = "whisper", SttBaseUrl = value.Trim()}), hint: "https://api.openai.com/v1");
 		_sttKey = AddTextField(sttCard, T("voice.sttApiKey"), "", password: true, hint: "sk-…");
 		_sttKey.LostFocus += (_, _) => SaveSecret(_sttKey, patch => new VoiceSettingsPatch {SttApiKey = patch});
-	}
-
-	private StackPanel CreateNotice()
-	{
-		StackPanel content = new() {Spacing = 6};
-		content.Children.Add(new TextBlock {Text = T("voice.noticeTitle"), FontSize = 13, FontWeight = FontWeight.SemiBold, Foreground = Brush("#FFD895")});
-		content.Children.Add(new TextBlock {Text = T("voice.notice"), FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Brush("#E4D1A8")});
-		Button dismiss = new() {Content = T("voice.dismiss"), HorizontalAlignment = HorizontalAlignment.Left};
-		dismiss.Click += (_, _) =>
-		{
-			_notice.IsVisible = false;
-			RunBackground(Operations.AcknowledgeVoiceNotice);
-		};
-		content.Children.Add(dismiss);
-		return content;
 	}
 
 	private ComboBox AddProvider(StackPanel parent)

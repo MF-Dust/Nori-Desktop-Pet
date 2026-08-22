@@ -62,8 +62,8 @@ public sealed class GeneralSettingsPage : SettingsPageBase
 	private static void AddInfo(StackPanel parent, string label, out TextBlock value)
 	{
 		Grid row = new() {ColumnDefinitions = new ColumnDefinitions("*,Auto")};
-		row.Children.Add(new TextBlock {Text = label, Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#A9C0CE")), FontSize = 12});
-		value = new TextBlock {Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#E8F6FF")), FontSize = 12};
+		row.Children.Add(new TextBlock {Text = label, Foreground = SettingsTheme.FromLegacy("#A9C0CE"), FontSize = 12});
+		value = new TextBlock {Foreground = SettingsTheme.FromLegacy("#E8F6FF"), FontSize = 12};
 		Grid.SetColumn(value, 1);
 		row.Children.Add(value);
 		parent.Children.Add(row);

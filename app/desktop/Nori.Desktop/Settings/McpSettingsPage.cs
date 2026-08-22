@@ -221,17 +221,7 @@ public sealed class McpSettingsPage : SettingsPageBase
 		catch (Exception exception) { ViewModel.ReportError(exception); }
 	}
 
-	private StackPanel CardBody(string title, string subtitle)
-	{
-		StackPanel body = new() {Spacing = 8};
-		Border card = new() {Background = Brush("#0D2232"), BorderBrush = Brush("#1D4053"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14), Child = body};
-		_list.Children.Add(card);
-		StackPanel heading = new() {Orientation = Orientation.Horizontal, Spacing = 8};
-		heading.Children.Add(new TextBlock {Text = title, FontSize = 14, FontWeight = FontWeight.SemiBold, Foreground = Brush("#E8F6FF")});
-		heading.Children.Add(new TextBlock {Text = subtitle, FontSize = 11, Foreground = Brush("#718C9E"), VerticalAlignment = VerticalAlignment.Center});
-		body.Children.Add(heading);
-		return body;
-	}
+	private StackPanel CardBody(string title, string subtitle) => CreateCard(_list, title, subtitle);
 
 	private static Dictionary<string, string> ParseEnv(string text)
 	{

@@ -84,6 +84,7 @@ public sealed class AiSettingsPage : SettingsPageBase
 		modelField.Children.Add(_model);
 		modelRow.Children.Add(modelField);
 		Button fetch = new() {Content = T("ai.fetch"), VerticalAlignment = VerticalAlignment.Bottom};
+		fetch.Classes.Add("settings-action");
 		fetch.Classes.Add("accent");
 		fetch.Click += async (_, _) => await FetchModelsAsync(fetch);
 		Grid.SetColumn(fetch, 1);

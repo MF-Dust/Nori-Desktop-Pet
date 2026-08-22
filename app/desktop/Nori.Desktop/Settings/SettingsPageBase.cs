@@ -1,9 +1,9 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
+using System.Collections.Specialized;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
+using FluentAvalonia.UI.Controls;
 using Nori.Desktop.Runtime;
 
 namespace Nori.Desktop.Settings;
@@ -13,11 +13,20 @@ public sealed class SettingsNavigationItem
 {
 	public required string Key { get; init; }
 	public required string Title { get; init; }
-	public required string Glyph { get; init; }
+	public required FAIconSource IconSource { get; init; }
 	public IBrush AccentBrush => SettingsLocalization.AccentBrush;
 }
 
-/// <summary>设置页面统一基类，提供深海 Fluent 卡片和异步错误出口。</summary>
+/// <summary>设置导航分组。</summary>
+public sealed class SettingsNavigationGroup
+{
+	public required string Key { get; init; }
+	public required string Title { get; init; }
+	public required FAIconSource IconSource { get; init; }
+	public required IReadOnlyList<SettingsNavigationItem> Items { get; init; }
+}
+
+/// <summary>设置页面统一基类，提供 ClassIsland 风格的 Fluent 设置项和异步错误出口。</summary>
 public abstract class SettingsPageBase : UserControl
 {
 	private readonly Dictionary<string, (DispatcherTimer Timer, Action Action)> _debouncers = [];
@@ -88,92 +97,84 @@ public abstract class SettingsPageBase : UserControl
 	{
 		StackPanel root = new()
 		{
-			Spacing = 14,
-			Margin = new Thickness(0, 0, 8, 24),
+			Spacing = 4,
+			Margin = new Thickness(12, 12, 18, 12),
+			MaxWidth = 960,
 		};
+		root.Classes.Add("settings-container");
 		Content = root;
 		return root;
 	}
 
 	protected StackPanel CreateCard(StackPanel root, string title, string? description = null)
 	{
-		StackPanel body = new() {Spacing = 10};
-		StackPanel heading = new() {Spacing = 3};
-		heading.Children.Add(new TextBlock
+		FASettingsExpander expander = new()
 		{
-			Text = title,
-			FontSize = 16,
-			FontWeight = FontWeight.SemiBold,
-			Foreground = Brush("#E8F6FF"),
-		});
-		if (!string.IsNullOrWhiteSpace(description))
-		{
-			heading.Children.Add(new TextBlock
-			{
-				Text = description,
-				FontSize = 12,
-				TextWrapping = TextWrapping.Wrap,
-				Foreground = Brush("#8CA6B8"),
-			});
-		}
-		body.Children.Add(heading);
-		Border card = new()
-		{
-			Background = Brush("#0D2232"),
-			BorderBrush = Brush("#1D4053"),
-			BorderThickness = new Thickness(1),
-			CornerRadius = new CornerRadius(10),
-			Padding = new Thickness(18),
-			Child = body,
+			Header = title,
+			Description = description ?? "",
+			IsExpanded = true,
 		};
-		root.Children.Add(card);
+		SettingsItemsHost body = new(expander);
+		root.Children.Add(expander);
 		return body;
 	}
 
 	protected TextBox AddTextField(StackPanel parent, string label, string value, Action<string>? onChanged = null, bool password = false, bool multiline = false, string? hint = null)
 	{
-		StackPanel field = new() {Spacing = 5};
-		field.Children.Add(Label(label));
 		TextBox textBox = new()
 		{
 			Text = value,
 			PlaceholderText = hint,
 			AcceptsReturn = multiline,
 			TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
-			MinHeight = multiline ? 96 : 34,
+			MinHeight = multiline ? 100 : 32,
+			MinWidth = multiline ? 320 : 180,
+			MaxWidth = 480,
+			HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
 			VerticalContentAlignment = multiline ? Avalonia.Layout.VerticalAlignment.Top : Avalonia.Layout.VerticalAlignment.Center,
 		};
 		if (password) textBox.PasswordChar = '•';
 		if (multiline) textBox.MaxLines = 8;
 		if (onChanged is not null) textBox.TextChanged += (_, _) => onChanged(textBox.Text ?? "");
-		field.Children.Add(textBox);
-		if (!string.IsNullOrWhiteSpace(hint) && multiline)
+		FASettingsExpanderItem item = new()
 		{
-			field.Children.Add(new TextBlock {Text = hint, FontSize = 11, Foreground = Brush("#718C9E"), TextWrapping = TextWrapping.Wrap});
-		}
-		parent.Children.Add(field);
+			Content = label,
+			Description = multiline ? hint : null,
+			Footer = textBox,
+		};
+		parent.Children.Add(item);
 		return textBox;
 	}
 
 	protected ComboBox AddComboField(StackPanel parent, string label, IReadOnlyList<string> items, int selectedIndex, Action<int>? onChanged = null)
 	{
-		StackPanel field = new() {Spacing = 5};
-		field.Children.Add(Label(label));
 		ComboBox combo = new()
 		{
 			ItemsSource = items,
 			SelectedIndex = selectedIndex,
+			MinWidth = 180,
+			MaxWidth = 360,
+			HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
 			HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
 		};
 		if (onChanged is not null) combo.SelectionChanged += (_, _) => onChanged(combo.SelectedIndex);
-		field.Children.Add(combo);
-		parent.Children.Add(field);
+		FASettingsExpanderItem item = new()
+		{
+			Content = label,
+			Footer = combo,
+		};
+		parent.Children.Add(item);
 		return combo;
 	}
 
 	protected Button AddButton(StackPanel parent, string text, Action onClick, bool accent = false, bool danger = false)
 	{
-		Button button = new() {Content = text};
+		Button button = new()
+		{
+			Content = text,
+			HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+			MinHeight = 32,
+		};
 		if (accent) button.Classes.Add("accent");
 		if (danger) button.Classes.Add("danger");
 		button.Click += (_, _) => onClick();
@@ -183,16 +184,21 @@ public abstract class SettingsPageBase : UserControl
 
 	protected ToggleSwitch AddSwitch(StackPanel parent, string title, string description, bool value, Action<bool> onChanged)
 	{
-		Grid row = new() {ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 4)};
-		StackPanel text = new() {Spacing = 3};
-		text.Children.Add(new TextBlock {Text = title, FontSize = 13, Foreground = Brush("#E8F6FF")});
-		text.Children.Add(new TextBlock {Text = description, FontSize = 11, Foreground = Brush("#8CA6B8"), TextWrapping = TextWrapping.Wrap});
-		ToggleSwitch toggle = new() {IsChecked = value, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center, OffContent = "", OnContent = ""};
+		ToggleSwitch toggle = new()
+		{
+			IsChecked = value,
+			OnContent = T("common.on"),
+			OffContent = T("common.off"),
+			VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+		};
 		toggle.IsCheckedChanged += (_, _) => onChanged(toggle.IsChecked == true);
-		row.Children.Add(text);
-		Grid.SetColumn(toggle, 1);
-		row.Children.Add(toggle);
-		parent.Children.Add(row);
+		FASettingsExpanderItem item = new()
+		{
+			Content = title,
+			Description = description,
+			Footer = toggle,
+		};
+		parent.Children.Add(item);
 		return toggle;
 	}
 
@@ -200,7 +206,41 @@ public abstract class SettingsPageBase : UserControl
 
 	protected TextBlock Hint(string text) => new() {Text = text, FontSize = 12, Foreground = Brush("#8CA6B8"), TextWrapping = TextWrapping.Wrap};
 
-	protected static SolidColorBrush Brush(string value) => new(Color.Parse(value));
+	protected static IBrush Brush(string value) => SettingsTheme.FromLegacy(value);
 
-	protected static Border Separator() => new() {Height = 1, Background = Brush("#1D4053"), Margin = new Thickness(0, 5)};
+	protected static Control Separator() => new Avalonia.Controls.Separator
+	{
+		Margin = new Thickness(0, 12, 0, 4),
+	};
+
+	private sealed class SettingsItemsHost : StackPanel
+	{
+		private readonly FASettingsExpander _owner;
+		private bool _redirecting;
+
+		public SettingsItemsHost(FASettingsExpander owner)
+		{
+			_owner = owner;
+			Children.CollectionChanged += OnChildrenChanged;
+		}
+
+		private void OnChildrenChanged(object? sender, NotifyCollectionChangedEventArgs e)
+		{
+			if (_redirecting || e.NewItems is null) return;
+			foreach (object item in e.NewItems)
+			{
+				if (item is not Control control) continue;
+				_redirecting = true;
+				try
+				{
+					Children.Remove(control);
+					_owner.Items.Add(control);
+				}
+				finally
+				{
+					_redirecting = false;
+				}
+			}
+		}
+	}
 }
