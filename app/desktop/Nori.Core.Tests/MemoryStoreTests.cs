@@ -68,8 +68,9 @@ public class MemoryStoreTests : IDisposable
 	[Fact]
 	public void 更新记忆()
 	{
-		MemoryItem item = _memory.Add("fact", "主人住在北京", 0.5);
+		MemoryItem item = _memory.Add("fact", "主人住在北京", 0.5, embedding: "[1, 0]");
 
+		Assert.NotEmpty(_memory.SearchSemantic([1, 0], 5, 0));
 		bool updated = _memory.Update(item.Id, "主人住在上海", 0.8, "city");
 		Assert.True(updated);
 
@@ -78,6 +79,19 @@ public class MemoryStoreTests : IDisposable
 		Assert.Equal("主人住在上海", all[0].Content);
 		Assert.Equal(0.8, all[0].Importance);
 		Assert.Equal("city", all[0].Tags);
+		Assert.Null(all[0].Embedding);
+		Assert.Empty(_memory.SearchSemantic([1, 0], 5, 0));
+	}
+
+	[Fact]
+	public void 更新内容时可在同一次操作提交新向量()
+	{
+		MemoryItem item = _memory.Add("fact", "旧内容", embedding: "[1, 0]");
+
+		Assert.True(_memory.Update(item.Id, "新内容", embedding: "[0, 1]"));
+		MemoryItem updated = Assert.Single(_memory.GetAll());
+		Assert.Equal("[0, 1]", updated.Embedding);
+		Assert.Equal("新内容", Assert.Single(_memory.SearchSemantic([0, 1], 5, 0)).Item.Content);
 	}
 
 	[Fact]
@@ -128,6 +142,95 @@ public class MemoryStoreTests : IDisposable
 		IReadOnlyList<MemoryItem> hybrid = _memory.SearchHybrid("咖啡", queryDrink, 5);
 		Assert.NotEmpty(hybrid);
 		Assert.Equal("主人喜欢喝拿铁", hybrid[0].Content);
+	}
+
+	[Fact]
+	public void 语义候选集有上限()
+	{
+		MemoryStore bounded = new(_database, semanticCandidateLimit: 2, vectorCacheCapacity: 4);
+		bounded.Add("fact", "高重要度一", 1.0, embedding: "[1, 0, 0]");
+		bounded.Add("fact", "高重要度二", 0.9, embedding: "[0, 1, 0]");
+		bounded.Add("fact", "低重要度目标", 0.1, embedding: "[0, 0, 1]");
+
+		Assert.Empty(bounded.SearchSemantic([0, 0, 1], 5, 0.9));
+	}
+
+	[Fact]
+	public void 向量缓存按LRU容量逐出()
+	{
+		MemoryStore bounded = new(_database, semanticCandidateLimit: 10, vectorCacheCapacity: 1);
+		MemoryItem first = bounded.Add("fact", "第一条", 0.9, embedding: "[1, 0]");
+		MemoryItem second = bounded.Add("fact", "第二条", 0.8, embedding: "[0, 1]");
+
+		Assert.NotEmpty(bounded.SearchSemantic([1, 0], 5, 0));
+		Assert.NotEmpty(bounded.SearchSemantic([0, 1], 5, 0));
+		_database.Locked(connection =>
+		{
+			using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "UPDATE memories SET embedding = '[0, 0]' WHERE id = $id";
+			command.Parameters.AddWithValue("$id", first.Id);
+			command.ExecuteNonQuery();
+		});
+
+		// first 已被 second 挤出缓存, 读取时必须看到数据库中的新向量.
+		Assert.Empty(bounded.SearchSemantic([1, 0], 5, 0.9));
+		Assert.Equal(second.Id, Assert.Single(bounded.SearchSemantic([0, 1], 5, 0.9)).Item.Id);
+	}
+
+	[Fact]
+	public void 待嵌入记忆支持id游标分页()
+	{
+		_memory.Add("fact", "已有向量", embedding: "[1]");
+		MemoryItem pending1 = _memory.Add("fact", "待处理一");
+		MemoryItem pending2 = _memory.Add("fact", "待处理二");
+
+		IReadOnlyList<MemoryItem> first = _memory.GetUnembedded(1);
+		Assert.Single(first);
+		Assert.Equal(pending1.Id, first[0].Id);
+		IReadOnlyList<MemoryItem> second = _memory.GetUnembedded(1, first[0].Id);
+		Assert.Equal(pending2.Id, Assert.Single(second).Id);
+	}
+
+	[Fact]
+	public void 旧数据库打开时会补列并清空历史向量()
+	{
+		string oldPath = Path.Combine(Path.GetTempPath(), $"nori-memory-old-{Guid.NewGuid():N}.db");
+		try
+		{
+			using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={oldPath}"))
+			{
+				connection.Open();
+				using var command = connection.CreateCommand();
+				command.CommandText = """
+					CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, content TEXT NOT NULL, importance REAL NOT NULL, source TEXT NOT NULL, tags TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+					INSERT INTO memories (type, content, importance, source, tags, created_at, updated_at) VALUES ('fact', '旧记录', 0.5, 'chat', NULL, 'a', 'a');
+					""";
+				command.ExecuteNonQuery();
+			}
+
+			using Nori.Core.Data.NoriDatabase migrated = Nori.Core.Data.NoriDatabase.Open(oldPath);
+			MemoryStore store = new(migrated);
+			MemoryItem item = Assert.Single(store.GetAll());
+			Assert.Null(item.Embedding);
+			Assert.Equal(Nori.Core.Data.NoriDatabase.DatabaseSchemaVersion, migrated.Locked(connection =>
+			{
+				using var command = connection.CreateCommand();
+				command.CommandText = "PRAGMA user_version";
+				return Convert.ToInt64(command.ExecuteScalar());
+			}));
+		}
+		finally
+		{
+			try
+			{
+				File.Delete(oldPath);
+				File.Delete($"{oldPath}-wal");
+				File.Delete($"{oldPath}-shm");
+			}
+			catch (IOException)
+			{
+			}
+		}
 	}
 }
 

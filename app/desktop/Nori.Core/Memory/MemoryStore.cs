@@ -50,29 +50,60 @@ public sealed record MemorySearchResult
 /// <summary>
 /// SQLite 记忆库存储层 (集成 BGE-M3 语义向量检索与混合搜索)
 /// </summary>
-public sealed class MemoryStore(NoriDatabase database)
+public sealed class MemoryStore
 {
-	private readonly NoriDatabase _database = database;
+	/// <summary>语义检索最多读取的候选记录数</summary>
+	public const int DefaultSemanticCandidateLimit = 500;
+
+	/// <summary>解析向量的本地 LRU 缓存容量</summary>
+	public const int DefaultVectorCacheCapacity = 512;
+
+	private readonly NoriDatabase _database;
+	private readonly int _semanticCandidateLimit;
+	private readonly int _vectorCacheCapacity;
 
 	// 向量缓存: 语义检索的热路径上避免每次全量反序列化 JSON 向量。
-	// 以 updated_at 做失效比对, 内容变更后自动重解析。
+	// Dictionary 的枚举顺序作为 LRU 顺序: 末尾是最近使用项.
 	private readonly Lock _vectorCacheGate = new();
 	private readonly Dictionary<long, (string UpdatedAt, float[] Vector)> _vectorCache = [];
 
+	public MemoryStore(
+		NoriDatabase database,
+		int semanticCandidateLimit = DefaultSemanticCandidateLimit,
+		int vectorCacheCapacity = DefaultVectorCacheCapacity)
+	{
+		if (semanticCandidateLimit <= 0) throw new ArgumentOutOfRangeException(nameof(semanticCandidateLimit));
+		if (vectorCacheCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(vectorCacheCapacity));
+		_database = database;
+		_semanticCandidateLimit = semanticCandidateLimit;
+		_vectorCacheCapacity = vectorCacheCapacity;
+	}
+
 	/// <summary>
-	/// 取记忆的向量, 命中缓存时不再反序列化 JSON
+	/// 取记忆的向量, 命中缓存时不再反序列化 JSON 向量
 	/// </summary>
 	private float[]? VectorOf(MemoryItem item)
 	{
 		if (string.IsNullOrWhiteSpace(item.Embedding)) return null;
 		lock (_vectorCacheGate)
 		{
-			if (_vectorCache.TryGetValue(item.Id, out var cached) && cached.UpdatedAt == item.UpdatedAt)
+			if (_vectorCache.Remove(item.Id, out (string UpdatedAt, float[] Vector) cached))
 			{
-				return cached.Vector;
+				if (cached.UpdatedAt == item.UpdatedAt)
+				{
+					_vectorCache[item.Id] = cached;
+					return cached.Vector;
+				}
 			}
+
 			float[]? vector = item.GetVector();
-			if (vector is not null) _vectorCache[item.Id] = (item.UpdatedAt, vector);
+			if (vector is null) return null;
+			if (_vectorCache.Count >= _vectorCacheCapacity)
+			{
+				long oldest = _vectorCache.Keys.First();
+				_vectorCache.Remove(oldest);
+			}
+			_vectorCache[item.Id] = (item.UpdatedAt, vector);
 			return vector;
 		}
 	}
@@ -119,7 +150,7 @@ public sealed class MemoryStore(NoriDatabase database)
 		});
 
 		return new MemoryItem
-		{
+	{
 			Id = id,
 			Type = type,
 			Content = content,
@@ -167,6 +198,30 @@ public sealed class MemoryStore(NoriDatabase database)
 	});
 
 	/// <summary>
+	/// 按 id 游标读取待嵌入记忆, 用于显式的分页重建流程.
+	/// </summary>
+	public IReadOnlyList<MemoryItem> GetUnembedded(int limit = 100, long afterId = 0) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = """
+			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at
+			FROM memories
+			WHERE id > $afterId AND (embedding IS NULL OR embedding = '')
+			ORDER BY id ASC
+			LIMIT $limit
+			""";
+		command.Parameters.AddWithValue("$afterId", afterId);
+		command.Parameters.AddWithValue("$limit", limit);
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<MemoryItem> list = [];
+		while (reader.Read())
+		{
+			list.Add(ReadRow(reader));
+		}
+		return (IReadOnlyList<MemoryItem>)list;
+	});
+
+	/// <summary>
 	/// 按关键词搜索记忆
 	/// </summary>
 	public IReadOnlyList<MemoryItem> Search(string keyword, int limit = 20) => _database.Locked(connection =>
@@ -191,12 +246,18 @@ public sealed class MemoryStore(NoriDatabase database)
 	});
 
 	/// <summary>
-	/// 全表读取记忆 (语义检索用, 不截断: 截断会静默丢掉更早的记忆)
+	/// 读取有限的语义候选集, 避免查询规模随记忆总量无界增长.
 	/// </summary>
-	private IReadOnlyList<MemoryItem> GetAllUnbounded() => _database.Locked(connection =>
+	private IReadOnlyList<MemoryItem> GetSemanticCandidates() => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at FROM memories";
+		command.CommandText = """
+			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at
+			FROM memories
+			ORDER BY importance DESC, id DESC
+			LIMIT $limit
+			""";
+		command.Parameters.AddWithValue("$limit", _semanticCandidateLimit);
 		using SqliteDataReader reader = command.ExecuteReader();
 		List<MemoryItem> list = [];
 		while (reader.Read())
@@ -214,10 +275,10 @@ public sealed class MemoryStore(NoriDatabase database)
 		int limit = 10,
 		double minSimilarity = 0.25)
 	{
-		IReadOnlyList<MemoryItem> all = GetAllUnbounded();
+		IReadOnlyList<MemoryItem> candidates = GetSemanticCandidates();
 		List<MemorySearchResult> results = [];
 
-		foreach (MemoryItem item in all)
+		foreach (MemoryItem item in candidates)
 		{
 			float[]? vec = VectorOf(item);
 			if (vec == null || vec.Length != queryVector.Length) continue;
@@ -272,28 +333,45 @@ public sealed class MemoryStore(NoriDatabase database)
 	}
 
 	/// <summary>
-	/// 更新记忆内容与重要性
+	/// 更新记忆内容与重要性.
+	/// 文本变化且没有新向量时会清空旧 embedding; 成功更新后总会逐出内存缓存.
 	/// </summary>
-	public bool Update(long id, string content, double? importance = null, string? tags = null) => _database.Locked(connection =>
+	public bool Update(
+		long id,
+		string content,
+		double? importance = null,
+		string? tags = null,
+		string? embedding = null)
 	{
-		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = """
-			UPDATE memories
-			SET content = $content,
-			    importance = COALESCE($importance, importance),
-			    tags = COALESCE($tags, tags),
-			    updated_at = $updated_at
-			WHERE id = $id
-			""";
-		command.Parameters.AddWithValue("$id", id);
-		command.Parameters.AddWithValue("$content", content);
-		command.Parameters.AddWithValue("$importance", (object?)importance ?? DBNull.Value);
-		command.Parameters.AddWithValue("$tags", (object?)tags ?? DBNull.Value);
-		command.Parameters.AddWithValue("$updated_at", now);
+		bool updated = _database.Locked(connection =>
+		{
+			string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = """
+				UPDATE memories
+				SET content = $content,
+				    importance = COALESCE($importance, importance),
+				    tags = COALESCE($tags, tags),
+				    embedding = CASE
+				        WHEN $embedding IS NOT NULL THEN $embedding
+				        WHEN content <> $content THEN NULL
+				        ELSE embedding
+				    END,
+				    updated_at = $updated_at
+				WHERE id = $id
+				""";
+			command.Parameters.AddWithValue("$id", id);
+			command.Parameters.AddWithValue("$content", content);
+			command.Parameters.AddWithValue("$importance", (object?)importance ?? DBNull.Value);
+			command.Parameters.AddWithValue("$tags", (object?)tags ?? DBNull.Value);
+			command.Parameters.AddWithValue("$embedding", (object?)embedding ?? DBNull.Value);
+			command.Parameters.AddWithValue("$updated_at", now);
 
-		return command.ExecuteNonQuery() > 0;
-	});
+			return command.ExecuteNonQuery() > 0;
+		});
+		if (updated) EvictVector(id);
+		return updated;
+	}
 
 	/// <summary>
 	/// 删除单条记忆

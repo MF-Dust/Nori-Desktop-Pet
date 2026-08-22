@@ -53,6 +53,13 @@ export class MemoryService {
 	}
 
 	/**
+	 * 读取一页尚未生成向量的记忆
+	 */
+	public async getUnembedded(limit = 100, afterId = 0): Promise<MemoryItem[]> {
+		return invoke<MemoryItem[]>("get_unembedded_memories", {limit, afterId})
+	}
+
+	/**
 	 * 按关键词搜索记忆
 	 */
 	public async search(keyword: string, limit = 20): Promise<MemoryItem[]> {
@@ -80,11 +87,15 @@ export class MemoryService {
 	 * 重新为所有未嵌入向量的记忆生成 Embedding
 	 */
 	public async reembedAll(): Promise<number> {
-		const ALL = await this.getAll(500)
+		let afterId = 0
 		let count = 0
 
-		for (const item of ALL) {
-			if (!item.embedding) {
+		while (true) {
+			const PAGE = await this.getUnembedded(100, afterId)
+			if (PAGE.length === 0) break
+
+			for (const item of PAGE) {
+				afterId = item.id
 				try {
 					const VEC = await embeddingService.embed(item.content)
 					if (VEC) {
@@ -107,7 +118,14 @@ export class MemoryService {
 	 * 更新记忆
 	 */
 	public async update(id: number, content: string, importance?: number, tags?: string): Promise<boolean> {
-		return invoke<boolean>("update_memory", {id, content, importance, tags})
+		let embedding: string | undefined
+		try {
+			const VEC = await embeddingService.embed(content)
+			if (VEC) embedding = JSON.stringify(VEC)
+		} catch (error) {
+			console.warn(`为记忆 #${id} 重新生成向量失败，将清除旧向量:`, error)
+		}
+		return invoke<boolean>("update_memory", {id, content, importance, tags, embedding})
 	}
 
 	/**
