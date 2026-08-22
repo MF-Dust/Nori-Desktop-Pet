@@ -21,6 +21,8 @@ public static class SettingsLocalization
 			["common.refresh"] = ("刷新", "Refresh"),
 			["common.loading"] = ("处理中…", "Working…"),
 			["common.error"] = ("操作失败", "Operation failed"),
+			["common.on"] = ("开", "On"),
+			["common.off"] = ("关", "Off"),
 			["common.none"] = ("暂无", "None"),
 			["common.all"] = ("全部", "All"),
 			["nav.ai"] = ("AI 大脑", "AI Brain"),
@@ -31,6 +33,9 @@ public static class SettingsLocalization
 			["nav.mcp"] = ("工具与 MCP", "Tools & MCP"),
 			["nav.general"] = ("系统常规", "General System"),
 			["nav.debug"] = ("调试诊断", "Debug & Diagnostics"),
+			["nav.group.companion"] = ("智能与陪伴", "Intelligence & Companion"),
+			["nav.group.extensions"] = ("扩展与工具", "Extensions & Tools"),
+			["nav.group.system"] = ("系统", "System"),
 			["ai.title"] = ("AI 大脑", "AI Brain"),
 			["ai.subtitle"] = ("连接 OpenAI、Anthropic、Google GenAI 或兼容接口", "Connect OpenAI, Anthropic, Google GenAI or compatible endpoints"),
 			["ai.provider"] = ("协议类型", "Provider"),
@@ -233,5 +238,5 @@ public static class SettingsLocalization
 	}
 
 	/// <summary>用于 Fluent 导航图标的主题色。</summary>
-	public static IBrush AccentBrush { get; } = new SolidColorBrush(Color.Parse("#7DE3FF"));
+	public static IBrush AccentBrush => SettingsTheme.Resource("AccentFillColorDefaultBrush", "#0078D4");
 }

@@ -2,8 +2,10 @@ using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Platform;
-using Avalonia.Themes.Fluent;
+using FluentAvalonia.Styling;
 using Avalonia.Threading;
 using Nori.Core.Assets;
 using Nori.Core.Chat;
@@ -27,7 +29,15 @@ public sealed class App : Application
 {
 	private AppServices? _services;
 
-	public override void Initialize() => Styles.Add(new FluentTheme());
+	public override void Initialize()
+	{
+		RequestedThemeVariant = ThemeVariant.Dark;
+		Styles.Add(new FluentAvaloniaTheme
+		{
+			CustomAccentColor = Color.Parse("DodgerBlue"),
+			PreferSystemTheme = false,
+		});
+	}
 
 	public override void OnFrameworkInitializationCompleted()
 	{

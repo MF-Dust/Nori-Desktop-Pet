@@ -1,9 +1,11 @@
 using System.ComponentModel;
 using Avalonia;
+using Avalonia.Animation;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using FluentAvalonia.UI.Controls;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Runtime;
 using Nori.Desktop.Windows;
@@ -19,7 +21,9 @@ public partial class SettingsWindow : Window
 {
 	private readonly AppServices _services;
 	private readonly SettingsWindowViewModel _viewModel;
+	private readonly Dictionary<string, FANavigationViewItem> _navigationItems = [];
 	private bool _isRefreshing;
+	private bool _suppressNavigation;
 
 	/// <summary>窗口调度使用的隐藏而非销毁语义。</summary>
 	public bool AllowClose { get; set; }
@@ -38,6 +42,7 @@ public partial class SettingsWindow : Window
 	public SettingsWindow(WindowDefinition definition, AppServices services)
 	{
 		_services = services;
+		_viewModel = new SettingsWindowViewModel(services.Runtime ?? throw new InvalidOperationException("应用运行时尚未就绪"));
 		Title = definition.Title;
 		Width = definition.Width;
 		Height = definition.Height;
@@ -46,7 +51,6 @@ public partial class SettingsWindow : Window
 		CanResize = definition.CanResize;
 		ShowInTaskbar = definition.ShowInTaskbar;
 		WindowStartupLocation = WindowStartupLocation.CenterScreen;
-		Background = new SolidColorBrush(Color.Parse("#081724"));
 		Icon = LoadIcon();
 		
 		if (OperatingSystem.IsWindows() && Environment.OSVersion.Version >= new Version(10, 0, 22000))
@@ -56,14 +60,13 @@ public partial class SettingsWindow : Window
 		}
 
 		InitializeComponent();
-		_viewModel = new SettingsWindowViewModel(services.Runtime ?? throw new InvalidOperationException("应用运行时尚未就绪"));
+		PageContent.PageTransition = new CrossFade(TimeSpan.FromMilliseconds(180));
 		DataContext = _viewModel;
-		NavigationList.ItemsSource = _viewModel.Navigation;
-		NavigationList.SelectedItem = _viewModel.SelectedItem;
 		_viewModel.PropertyChanged += ViewModelOnPropertyChanged;
 		_viewModel.NavigationChanged += RefreshNavigation;
 		Closed += OnClosed;
 		SettingsLocalization.Changed += OnLocalizationChanged;
+		RefreshNavigation();
 	}
 
 	/// <summary>窗口每次显示或重新激活时刷新当前页。</summary>
@@ -72,14 +75,23 @@ public partial class SettingsWindow : Window
 	private void OnClosed(object? sender, EventArgs e)
 	{
 		SettingsLocalization.Changed -= OnLocalizationChanged;
+		_viewModel.NavigationChanged -= RefreshNavigation;
 		_viewModel.FlushPending();
 	}
 
-	private async void NavigationList_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+	private async void NavigationView_OnItemInvoked(object? sender, FANavigationViewItemInvokedEventArgs e)
 	{
-		if (NavigationList.SelectedItem is not SettingsNavigationItem item) return;
-		_viewModel.SelectedItem = item;
-		await ShowPageAsync(item.Key);
+		if (_suppressNavigation) return;
+		if (GetNavigationItem(e) is not { } item) return;
+		try
+		{
+			_viewModel.SelectedItem = item;
+			await ShowPageAsync(item.Key);
+		}
+		catch (Exception exception)
+		{
+			_viewModel.ReportError(exception);
+		}
 	}
 
 	private void CloseButton_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Hide();
@@ -93,7 +105,7 @@ public partial class SettingsWindow : Window
 			_viewModel.ClearError();
 			UiSnapshot snapshot = await Task.Run(_viewModel.Operations.Snapshot);
 			SettingsLocalization.SetLanguage(snapshot.General.Language);
-			RefreshNavigation();
+			_viewModel.RebuildNavigation();
 			SettingsNavigationItem item = _viewModel.SelectedItem ?? _viewModel.Navigation[0];
 			await ShowPageAsync(item.Key);
 		}
@@ -110,25 +122,71 @@ public partial class SettingsWindow : Window
 	private async Task ShowPageAsync(string key)
 	{
 		if (_services.Runtime is null) return;
-		SettingsPageBase page = _viewModel.GetPage(key);
-		PageContent.Content = page;
-		PageTitle.Text = SettingsLocalization.Text(page.TitleKey);
-		PageSubtitle.Text = SettingsLocalization.Text(page.SubtitleKey);
-		await page.RefreshAsync();
+		try
+		{
+			SettingsPageBase page = _viewModel.GetPage(key);
+			PageContent.Content = page;
+			PageTitle.Text = SettingsLocalization.Text(page.TitleKey);
+			PageSubtitle.Text = SettingsLocalization.Text(page.SubtitleKey);
+			await page.RefreshAsync();
+		}
+		catch (Exception exception)
+		{
+			_viewModel.ReportError(exception);
+		}
 	}
 
 	private void RefreshNavigation()
 	{
-		NavigationList.ItemsSource = null;
-		NavigationList.ItemsSource = _viewModel.Navigation;
-		NavigationList.SelectedItem = _viewModel.SelectedItem;
-		WindowTitle.Text = SettingsLocalization.Text("window.title");
-		WindowSubtitle.Text = SettingsLocalization.Text("window.subtitle");
-		CloseButton.Content = SettingsLocalization.Text("common.close");
-		if (_viewModel.SelectedItem is { } item)
+		if (!Dispatcher.UIThread.CheckAccess())
 		{
-			PageTitle.Text = SettingsLocalization.Text(_viewModel.GetPage(item.Key).TitleKey);
-			PageSubtitle.Text = SettingsLocalization.Text(_viewModel.GetPage(item.Key).SubtitleKey);
+			Dispatcher.UIThread.Post(RefreshNavigation);
+			return;
+		}
+
+		_suppressNavigation = true;
+		try
+		{
+			_navigationItems.Clear();
+			NavigationView.MenuItems.Clear();
+			foreach (SettingsNavigationGroup group in _viewModel.Groups)
+			{
+				FANavigationViewItem groupItem = new()
+				{
+					Content = group.Title,
+					IconSource = group.IconSource,
+					IsExpanded = true,
+					SelectsOnInvoked = false,
+				};
+				foreach (SettingsNavigationItem item in group.Items)
+				{
+					FANavigationViewItem pageItem = new()
+					{
+						Content = item.Title,
+						Tag = item,
+						IconSource = item.IconSource,
+					};
+					groupItem.MenuItems.Add(pageItem);
+					_navigationItems[item.Key] = pageItem;
+				}
+				NavigationView.MenuItems.Add(groupItem);
+			}
+
+			if (_viewModel.SelectedItem is { } selected && _navigationItems.TryGetValue(selected.Key, out FANavigationViewItem? selectedItem))
+			{
+				NavigationView.SelectedItem = selectedItem;
+			}
+			WindowTitle.Text = SettingsLocalization.Text("window.title");
+			if (_viewModel.SelectedItem is { } selectedPage)
+			{
+				SettingsPageBase page = _viewModel.GetPage(selectedPage.Key);
+				PageTitle.Text = SettingsLocalization.Text(page.TitleKey);
+				PageSubtitle.Text = SettingsLocalization.Text(page.SubtitleKey);
+			}
+		}
+		finally
+		{
+			_suppressNavigation = false;
 		}
 	}
 
@@ -140,8 +198,7 @@ public partial class SettingsWindow : Window
 			return;
 		}
 		_viewModel.RebuildNavigation();
-		RefreshNavigation();
-		if (_viewModel.SelectedItem is { } item)
+		if (_viewModel.SelectedItem is { } item && PageContent.Content is SettingsPageBase)
 		{
 			PageContent.Content = null;
 			_viewModel.RecreatePage(item.Key);
@@ -156,6 +213,16 @@ public partial class SettingsWindow : Window
 			ErrorText.Text = _viewModel.ErrorMessage;
 			ErrorText.IsVisible = _viewModel.ErrorMessage.Length > 0;
 		}
+	}
+
+	private static SettingsNavigationItem? GetNavigationItem(FANavigationViewItemInvokedEventArgs args)
+	{
+		return args.InvokedItemContainer switch
+		{
+			FANavigationViewItem {Tag: SettingsNavigationItem item} => item,
+			_ when args.InvokedItem is SettingsNavigationItem item => item,
+			_ => null,
+		};
 	}
 
 	private static WindowIcon? LoadIcon()

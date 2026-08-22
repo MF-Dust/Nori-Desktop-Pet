@@ -1,111 +1,114 @@
 <Window x:Class="Nori.Desktop.Settings.SettingsWindow"
         xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:local="using:Nori.Desktop.Settings"
+        xmlns:fa="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
         Title="Nori 设置"
         Width="1100"
         Height="760"
         MinWidth="820"
         MinHeight="560">
 	<Window.Styles>
+		<Style Selector="Window">
+			<Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+			<Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+		</Style>
 		<Style Selector="TextBlock.page-title">
-			<Setter Property="FontSize" Value="26" />
-			<Setter Property="FontWeight" Value="SemiBold" />
-			<Setter Property="Foreground" Value="#E8F6FF" />
+			<Setter Property="FontSize" Value="20" />
+			<Setter Property="FontWeight" Value="Normal" />
+			<Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
 		</Style>
 		<Style Selector="TextBlock.page-subtitle">
 			<Setter Property="FontSize" Value="13" />
-			<Setter Property="Foreground" Value="#8CA6B8" />
+			<Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
 		</Style>
-		<Style Selector="ListBoxItem">
-			<Setter Property="Padding" Value="16,11" />
-			<Setter Property="Margin" Value="8,2" />
-			<Setter Property="Foreground" Value="#9BB1C1" />
-			<Setter Property="HorizontalContentAlignment" Value="Stretch" />
+		<Style Selector="fa|FANavigationView">
+			<Setter Property="Background" Value="{DynamicResource SolidBackgroundFillColorBaseBrush}" />
+			<Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
 		</Style>
-		<Style Selector="ListBoxItem:selected">
-			<Setter Property="Background" Value="#173A4C" />
-			<Setter Property="Foreground" Value="#7DE3FF" />
+		<Style Selector=":is(Button).light">
+			<Setter Property="Background" Value="Transparent" />
+			<Setter Property="BorderBrush" Value="Transparent" />
+			<Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
 		</Style>
-		<Style Selector="Button">
-			<Setter Property="Padding" Value="12,7" />
-			<Setter Property="Margin" Value="0,2" />
-			<Setter Property="Background" Value="#173A4C" />
-			<Setter Property="Foreground" Value="#D8F4FF" />
-			<Setter Property="BorderBrush" Value="#31566A" />
-			<Setter Property="BorderThickness" Value="1" />
+		<Style Selector=":is(Button).light:pointerover">
+			<Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
 		</Style>
-		<Style Selector="Button:pointerover">
-			<Setter Property="Background" Value="#20556A" />
-			<Setter Property="BorderBrush" Value="#7DE3FF" />
+		<Style Selector=":is(Button).light:pressed">
+			<Setter Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
 		</Style>
 		<Style Selector="Button.accent">
-			<Setter Property="Background" Value="#63D8C1" />
-			<Setter Property="Foreground" Value="#062029" />
-			<Setter Property="BorderBrush" Value="#7DE3FF" />
+			<Setter Property="Background" Value="{DynamicResource AccentButtonBackground}" />
+			<Setter Property="BorderBrush" Value="{DynamicResource AccentButtonBorderBrush}" />
+			<Setter Property="Foreground" Value="{DynamicResource AccentButtonForeground}" />
+		</Style>
+		<Style Selector="Button.accent:pointerover">
+			<Setter Property="Background" Value="{DynamicResource AccentButtonBackgroundPointerOver}" />
+			<Setter Property="BorderBrush" Value="{DynamicResource AccentButtonBorderBrushPointerOver}" />
+			<Setter Property="Foreground" Value="{DynamicResource AccentButtonForegroundPointerOver}" />
 		</Style>
 		<Style Selector="Button.danger">
-			<Setter Property="Background" Value="#522B38" />
-			<Setter Property="Foreground" Value="#FFB6BD" />
-			<Setter Property="BorderBrush" Value="#A85A68" />
+			<Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+			<Setter Property="BorderBrush" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+			<Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
 		</Style>
-		<Style Selector="TextBox">
-			<Setter Property="MinHeight" Value="34" />
-			<Setter Property="Padding" Value="10,7" />
-			<Setter Property="Background" Value="#102736" />
-			<Setter Property="Foreground" Value="#E8F6FF" />
-			<Setter Property="BorderBrush" Value="#31566A" />
-			<Setter Property="BorderThickness" Value="1" />
+		<Style Selector="Button.danger:pointerover">
+			<Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+			<Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
 		</Style>
-		<Style Selector="ComboBox">
-			<Setter Property="MinHeight" Value="34" />
-			<Setter Property="Padding" Value="8,4" />
-			<Setter Property="Background" Value="#102736" />
-			<Setter Property="Foreground" Value="#E8F6FF" />
-			<Setter Property="BorderBrush" Value="#31566A" />
+		<Style Selector=":is(Button), :is(TextBox), :is(ComboBox), :is(ToggleSwitch), :is(Slider)">
+			<Setter Property="Transitions">
+				<Transitions>
+					<BrushTransition Property="Background" Duration="0:0:0.1" />
+					<BrushTransition Property="BorderBrush" Duration="0:0:0.1" />
+					<BrushTransition Property="Foreground" Duration="0:0:0.1" />
+				</Transitions>
+			</Setter>
 		</Style>
-		<Style Selector="ToggleSwitch">
-			<Setter Property="Foreground" Value="#D8F4FF" />
+		<Style Selector="StackPanel.settings-container">
+			<Setter Property="Margin" Value="12,12,18,12" />
+			<Setter Property="MaxWidth" Value="960" />
+			<Setter Property="Spacing" Value="4" />
 		</Style>
-		<Style Selector="TabItem">
-			<Setter Property="Foreground" Value="#A9C0CE" />
+		<Style Selector="ScrollViewer#PageScroll">
+			<Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+			<Setter Property="VerticalScrollBarVisibility" Value="Auto" />
 		</Style>
 	</Window.Styles>
-	<Grid Background="#081724" RowDefinitions="Auto,*">
-		<Border Grid.Row="0" Padding="24,18,24,16" Background="#0B2030" BorderBrush="#19384A" BorderThickness="0,0,0,1">
-			<Grid ColumnDefinitions="*,Auto">
-				<StackPanel Spacing="3">
-					<TextBlock x:Name="WindowTitle" Text="Nori 设置" FontSize="20" FontWeight="SemiBold" Foreground="#E8F6FF" />
-					<TextBlock x:Name="WindowSubtitle" Text="管理 Nori 的 AI、语音、记忆与工具能力" Foreground="#8CA6B8" FontSize="12" />
-				</StackPanel>
-				<Button x:Name="CloseButton" Grid.Column="1" Content="关闭" Click="CloseButton_OnClick" VerticalAlignment="Center" />
-			</Grid>
-		</Border>
-		<Grid Grid.Row="1" ColumnDefinitions="228,*">
-			<Border Grid.Column="0" Background="#0A1D2B" BorderBrush="#19384A" BorderThickness="0,0,1,0" Padding="0,14">
-				<ListBox x:Name="NavigationList" Background="Transparent" BorderThickness="0" SelectionChanged="NavigationList_OnSelectionChanged">
-					<ListBox.ItemTemplate>
-						<DataTemplate x:DataType="local:SettingsNavigationItem">
-							<StackPanel Orientation="Horizontal" Spacing="10">
-								<TextBlock Text="{Binding Glyph}" FontSize="16" Foreground="{Binding AccentBrush}" Width="22" />
-								<TextBlock Text="{Binding Title}" VerticalAlignment="Center" FontSize="13" />
-							</StackPanel>
-						</DataTemplate>
-					</ListBox.ItemTemplate>
-				</ListBox>
-			</Border>
-			<Border Grid.Column="1" Padding="30,26,30,22" Background="#081724">
-				<Grid RowDefinitions="Auto,*">
-					<StackPanel x:Name="PageHeader" Spacing="4" Margin="0,0,0,22">
-						<TextBlock x:Name="PageTitle" Classes="page-title" />
-						<TextBlock x:Name="PageSubtitle" Classes="page-subtitle" TextWrapping="Wrap" />
-						<TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="#FF9BA7" FontSize="12" IsVisible="False" />
+	<Grid x:Name="RootGrid" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+		<Grid RowDefinitions="Auto,*">
+			<Border Grid.Row="0" Height="48" Margin="0,0,8,0" Background="Transparent">
+				<Grid VerticalAlignment="Center" ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+					<StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+						<fa:FASymbolIcon Symbol="Settings" FontSize="18" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+						<TextBlock x:Name="WindowTitle" Text="Nori 设置" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
 					</StackPanel>
-					<ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-						<ContentControl x:Name="PageContent" />
-					</ScrollViewer>
+					<StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+						<TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="{DynamicResource SystemFillColorCriticalBrush}" FontSize="12" MaxWidth="280" IsVisible="False" VerticalAlignment="Center" />
+						<Button x:Name="CloseButton" Classes="light" Click="CloseButton_OnClick" Padding="8" ToolTip.Tip="关闭设置窗口">
+							<fa:FASymbolIcon Symbol="Dismiss" FontSize="16" />
+						</Button>
+					</StackPanel>
 				</Grid>
 			</Border>
+			<fa:FANavigationView x:Name="NavigationView"
+					Grid.Row="1"
+					PaneDisplayMode="Auto"
+					IsSettingsVisible="False"
+					SelectionFollowsFocus="False"
+					OpenPaneLength="283"
+					ItemInvoked="NavigationView_OnItemInvoked">
+				<Grid RowDefinitions="Auto,*">
+					<Grid x:Name="PageHeader" Grid.Row="0" Margin="12,16,18,0" MaxWidth="960">
+						<StackPanel Spacing="4">
+							<TextBlock x:Name="PageTitle" Classes="page-title" />
+							<TextBlock x:Name="PageSubtitle" Classes="page-subtitle" TextWrapping="Wrap" />
+						</StackPanel>
+					</Grid>
+					<ScrollViewer x:Name="PageScroll" Grid.Row="1">
+						<TransitioningContentControl x:Name="PageContent" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top" />
+					</ScrollViewer>
+				</Grid>
+			</fa:FANavigationView>
 		</Grid>
 	</Grid>
 </Window>

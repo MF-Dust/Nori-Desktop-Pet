@@ -1,5 +1,5 @@
-using Avalonia.Controls;
 using CommunityToolkit.Mvvm.ComponentModel;
+using FluentAvalonia.UI.Controls;
 using Nori.Desktop.Runtime;
 
 namespace Nori.Desktop.Settings;
@@ -14,11 +14,14 @@ public sealed class SettingsWindowViewModel : ObservableObject
 	public SettingsWindowViewModel(AppRuntime runtime)
 	{
 		Operations = runtime.Settings;
-		Navigation = BuildNavigation();
+		Groups = BuildGroups();
+		Navigation = Groups.SelectMany(group => group.Items).ToArray();
 		_selectedItem = Navigation[0];
 	}
 
 	public SettingsOperations Operations { get; }
+
+	public IReadOnlyList<SettingsNavigationGroup> Groups { get; private set; }
 
 	public IReadOnlyList<SettingsNavigationItem> Navigation { get; private set; }
 
@@ -39,8 +42,10 @@ public sealed class SettingsWindowViewModel : ObservableObject
 	public void RebuildNavigation()
 	{
 		string? selectedKey = SelectedItem?.Key;
-		Navigation = BuildNavigation();
+		Groups = BuildGroups();
+		Navigation = Groups.SelectMany(group => group.Items).ToArray();
 		SelectedItem = Navigation.FirstOrDefault(item => item.Key == selectedKey) ?? Navigation[0];
+		OnPropertyChanged(nameof(Groups));
 		OnPropertyChanged(nameof(Navigation));
 		NavigationChanged?.Invoke();
 	}
@@ -83,15 +88,52 @@ public sealed class SettingsWindowViewModel : ObservableObject
 
 	public void ClearError() => ErrorMessage = "";
 
-	private static IReadOnlyList<SettingsNavigationItem> BuildNavigation() =>
-	[
-		new() {Key = "ai", Title = SettingsLocalization.Text("nav.ai"), Glyph = "◈"},
-		new() {Key = "voice", Title = SettingsLocalization.Text("nav.voice"), Glyph = "♫"},
-		new() {Key = "proactive", Title = SettingsLocalization.Text("nav.proactive"), Glyph = "✦"},
-		new() {Key = "memory", Title = SettingsLocalization.Text("nav.memory"), Glyph = "▣"},
-		new() {Key = "skills", Title = SettingsLocalization.Text("nav.skills"), Glyph = "✧"},
-		new() {Key = "mcp", Title = SettingsLocalization.Text("nav.mcp"), Glyph = "⌘"},
-		new() {Key = "general", Title = SettingsLocalization.Text("nav.general"), Glyph = "⚙"},
-		new() {Key = "debug", Title = SettingsLocalization.Text("nav.debug"), Glyph = "⌁"},
-	];
+	private static IReadOnlyList<SettingsNavigationGroup> BuildGroups()
+	{
+		SettingsNavigationItem Ai(string key, string titleKey, FASymbol symbol) => new()
+		{
+			Key = key,
+			Title = SettingsLocalization.Text(titleKey),
+			IconSource = new FASymbolIconSource {Symbol = symbol},
+		};
+
+		return
+		[
+			new SettingsNavigationGroup
+			{
+				Key = "companion",
+				Title = SettingsLocalization.Text("nav.group.companion"),
+				IconSource = new FASymbolIconSource {Symbol = FASymbol.People},
+				Items =
+				[
+					Ai("ai", "nav.ai", FASymbol.Message),
+					Ai("voice", "nav.voice", FASymbol.Audio),
+					Ai("proactive", "nav.proactive", FASymbol.Calendar),
+					Ai("memory", "nav.memory", FASymbol.Library),
+				],
+			},
+			new SettingsNavigationGroup
+			{
+				Key = "extensions",
+				Title = SettingsLocalization.Text("nav.group.extensions"),
+				IconSource = new FASymbolIconSource {Symbol = FASymbol.AllApps},
+				Items =
+				[
+					Ai("skills", "nav.skills", FASymbol.AllApps),
+					Ai("mcp", "nav.mcp", FASymbol.Code),
+				],
+			},
+			new SettingsNavigationGroup
+			{
+				Key = "system",
+				Title = SettingsLocalization.Text("nav.group.system"),
+				IconSource = new FASymbolIconSource {Symbol = FASymbol.Settings},
+				Items =
+				[
+					Ai("general", "nav.general", FASymbol.Settings),
+					Ai("debug", "nav.debug", FASymbol.Repair),
+				],
+			},
+		];
+	}
 }
