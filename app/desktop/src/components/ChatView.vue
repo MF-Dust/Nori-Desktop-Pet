@@ -25,13 +25,23 @@ const {bubbles, sending, executingTool, metrics, errorMsg} = CHAT
 const input = ref("")
 const listRef = ref<HTMLElement>()
 const DIALOG = useDialog()
+const copiedBubbleKey = ref<string | null>(null)
+const isScrolledUp = ref(false)
 
 // 活跃技能数与工具数 (来自快照)
 const activeSkillsCount = computed(() => RUNTIME.snapshot.value?.enabledSkillsCount ?? 0)
 const activeToolsCount = computed(() =>
 	(RUNTIME.snapshot.value?.tools ?? []).filter(tool => tool.enabled).length)
 
-// 助手回复按句切分成多个气泡 (像日常聊天, 不受模型换行影响)
+// 预设对话引导词 (Prompt Chips)
+const QUICK_PROMPTS = [
+	{icon: "sparkles", text: "你好呀，做个自我介绍吧！"},
+	{icon: "noriOS", text: "今天天气怎么样？适合摸鱼吗？"},
+	{icon: "play", text: "在桌面上做个可爱的动作~"},
+	{icon: "cpu", text: "你现在掌握了哪些技能和工具？"},
+] as const
+
+// 助手回复按句切分成多个气泡 (用户要求保留: 模拟对方一次连发多条消息的真实陪伴感)
 const splitSentences = (text: string): string[] => {
 	const LINES = text
 		.split(/\r?\n+/)
@@ -57,35 +67,57 @@ interface DisplayBubble {
 	key: string
 	role: string
 	content: string
+	isFirstInGroup?: boolean
 }
+
 const displayBubbles = computed<DisplayBubble[]>(() => {
 	const LIST: DisplayBubble[] = []
 	for (const msg of bubbles.value) {
 		if (msg.role === "assistant") {
-			splitSentences(msg.content).forEach((s, i) =>
-				LIST.push({key: `${msg.key}-${i}`, role: "assistant", content: s}),
+			const SLICES = splitSentences(msg.content)
+			SLICES.forEach((s, i) =>
+				LIST.push({
+					key: `${msg.key}-${i}`,
+					role: "assistant",
+					content: s,
+					isFirstInGroup: i === 0,
+				}),
 			)
 		} else {
-			LIST.push({key: msg.key, role: msg.role, content: msg.content})
+			LIST.push({key: msg.key, role: msg.role, content: msg.content, isFirstInGroup: true})
 		}
 	}
 	return LIST
 })
 
 // 滚动到底部
-const scrollToBottom = async () => {
+const scrollToBottom = async (smooth = true) => {
 	await nextTick()
-	listRef.value?.scrollTo({top: listRef.value.scrollHeight})
+	if (listRef.value) {
+		listRef.value.scrollTo({
+			top: listRef.value.scrollHeight,
+			behavior: smooth ? "smooth" : "auto",
+		})
+	}
+	isScrolledUp.value = false
 }
 
-// 流式输出期间每个 chunk 都 nextTick+scrollTo 太频, 合并到 ~100ms 一次
+// 监听列表滚动状态，超过阈值显示“回到底部”浮标
+const handleListScroll = () => {
+	if (!listRef.value) return
+	const {scrollTop, scrollHeight, clientHeight} = listRef.value
+	const DIST_FROM_BOTTOM = scrollHeight - scrollTop - clientHeight
+	isScrolledUp.value = DIST_FROM_BOTTOM > 120
+}
+
+// 流式输出期间合并滚动调度
 let scrollPending = false
 const scheduleScrollToBottom = () => {
-	if (scrollPending) return
+	if (scrollPending || isScrolledUp.value) return
 	scrollPending = true
 	setTimeout(() => {
 		scrollPending = false
-		void scrollToBottom()
+		void scrollToBottom(false)
 	}, 100)
 }
 
@@ -98,7 +130,7 @@ const tokensPerSecond = computed(() => {
 	return Math.round((metrics.value.completionTokens / (metrics.value.durationMs / 1000)) * 10) / 10
 })
 
-// 逐调用工具授权: 队列驱动, 每个请求单独弹窗; 关闭/拒绝/卸载都解析为拒绝
+// 逐调用工具授权
 const shownApprovalIds = new Set<string>()
 const activeApproval = computed<ApprovalRequestDto | null>(() => {
 	for (const pending of CHAT.pendingApprovals.value) {
@@ -107,7 +139,6 @@ const activeApproval = computed<ApprovalRequestDto | null>(() => {
 	return null
 })
 
-// 弹窗展示由 watcher 风格的轮询完成: activeApproval 变化时弹出
 let dialogShownFor: string | null = null
 const showApprovalDialogIfAny = () => {
 	const REQUEST = activeApproval.value
@@ -143,6 +174,19 @@ const loadOlderHistory = async () => {
 	}
 }
 
+// 复制单条消息内容
+const copyMessage = async (key: string, content: string) => {
+	try {
+		await RUNTIME.copyText(content)
+		copiedBubbleKey.value = key
+		setTimeout(() => {
+			if (copiedBubbleKey.value === key) copiedBubbleKey.value = null
+		}, 1500)
+	} catch (error) {
+		console.error("复制消息失败:", error)
+	}
+}
+
 let unlistenAgent: (() => void) | null = null
 
 onMounted(async () => {
@@ -150,7 +194,7 @@ onMounted(async () => {
 	unlistenAgent = await CHAT.connect()
 	if (RUNTIME.snapshot.value?.ai.configured) {
 		await CHAT.loadRecent()
-		await scrollToBottom()
+		await scrollToBottom(false)
 	}
 	showApprovalDialogIfAny()
 })
@@ -167,7 +211,21 @@ const send = async () => {
 	if (!TEXT || sending.value) return
 	input.value = ""
 	await CHAT.send(TEXT)
-	await scrollToBottom()
+	await scrollToBottom(true)
+}
+
+// 点击快速 Prompt 发送
+const sendQuickPrompt = (text: string) => {
+	input.value = text
+	void send()
+}
+
+// 键盘按键处理: Enter 发送, Shift+Enter 换行
+const handleKeyDown = (event: KeyboardEvent) => {
+	if (event.key === "Enter" && !event.shiftKey) {
+		event.preventDefault()
+		void send()
+	}
 }
 
 // 停止当前生成
@@ -180,7 +238,7 @@ const clearChatHistory = async () => {
 	await CHAT.clear()
 }
 
-// 语音输入控制 (后端 STT: 开始录音 / 停止并识别)
+// 语音输入控制
 const isRecording = ref(false)
 const toggleVoiceInput = async () => {
 	if (isRecording.value) {
@@ -205,7 +263,7 @@ const toggleVoiceInput = async () => {
 	}
 }
 
-// 订阅驱动滚动与授权弹窗
+// 轮询检查是否有授权弹窗
 const POLL = setInterval(() => {
 	showApprovalDialogIfAny()
 }, 200)
@@ -240,10 +298,19 @@ onBeforeUnmount(() => clearInterval(POLL))
 					</span>
 				</div>
 				<div class="header-right-ops">
-					<button class="btn-clear-chat" title="清空对话历史" @click="clearChatHistory">
-						<Icon name="close" :size="12"/>
-						<span>{{ I18N.clearHistory || '清空历史' }}</span>
-					</button>
+					<n-popconfirm
+						positive-text="确认清空"
+						negative-text="取消"
+						@positive-click="clearChatHistory"
+					>
+						<template #trigger>
+							<button class="btn-clear-chat" title="清空对话历史">
+								<Icon name="close" :size="12"/>
+								<span>{{ I18N.clearHistory || '清空历史' }}</span>
+							</button>
+						</template>
+						确定清空当前所有对话历史吗？
+					</n-popconfirm>
 				</div>
 			</div>
 
@@ -275,8 +342,8 @@ onBeforeUnmount(() => clearInterval(POLL))
 				</div>
 			</div>
 
-			<div ref="listRef" class="chat-list">
-				<!-- 更早的历史按需加载, 避免历史表增长后首屏全量拉取 -->
+			<div ref="listRef" class="chat-list" @scroll="handleListScroll">
+				<!-- 更早的历史按需加载 -->
 				<button
 					v-if="CHAT.hasMoreHistory.value"
 					class="btn-load-earlier"
@@ -285,14 +352,48 @@ onBeforeUnmount(() => clearInterval(POLL))
 					<Icon name="loading" class="btn-icon spin" :size="12"/>
 					<span>{{ I18N.loadEarlier }}</span>
 				</button>
+
+				<!-- 空历史时的快捷破冰卡片 -->
+				<div v-if="displayBubbles.length === 0" class="quick-prompts-container">
+					<div class="starter-hero">
+						<Icon name="sparkles" :size="28" class="starter-sparkle"/>
+						<h3 class="starter-title">和 Nori 开始对话吧</h3>
+						<p class="starter-desc">你可以随时向 Nori 提问、互动，或者点击下方的建议话题：</p>
+					</div>
+
+					<div class="starter-grid">
+						<button
+							v-for="(item, idx) in QUICK_PROMPTS"
+							:key="idx"
+							class="starter-chip"
+							@click="sendQuickPrompt(item.text)"
+						>
+							<Icon :name="item.icon as any" :size="14"/>
+							<span>{{ item.text }}</span>
+						</button>
+					</div>
+				</div>
+
+				<!-- 气泡消息列表 (支持助手连发多条气泡体验) -->
 				<div
 					v-for="bubble in displayBubbles"
 					:key="bubble.key"
 					class="chat-msg"
-					:class="bubble.role"
+					:class="[bubble.role, {'first-in-group': bubble.isFirstInGroup}]"
 				>
-					<div class="chat-bubble">
-						<span class="bubble-text">{{ bubble.content }}</span>
+					<div class="bubble-wrapper">
+						<div class="chat-bubble">
+							<span class="bubble-text">{{ bubble.content }}</span>
+						</div>
+
+						<button
+							class="bubble-copy-btn"
+							:class="{copied: copiedBubbleKey === bubble.key}"
+							:title="copiedBubbleKey === bubble.key ? '已复制' : '复制内容'"
+							@click="copyMessage(bubble.key, bubble.content)"
+						>
+							<Icon :name="copiedBubbleKey === bubble.key ? 'check' : 'copy'" :size="12"/>
+						</button>
 					</div>
 				</div>
 
@@ -303,8 +404,22 @@ onBeforeUnmount(() => clearInterval(POLL))
 				</div>
 			</div>
 
+			<!-- 浮动“回到底部”指示器 -->
+			<Transition name="fade-scale">
+				<button
+					v-if="isScrolledUp"
+					class="scroll-bottom-btn"
+					title="回到最新消息"
+					@click="scrollToBottom(true)"
+				>
+					<Icon name="arrow-down" :size="14"/>
+					<span>最新消息</span>
+				</button>
+			</Transition>
+
 			<p v-if="errorMsg" class="chat-error">{{ errorMsg }}</p>
 
+			<!-- 底部输入框区 (自适应多行，Enter发送，Shift+Enter换行) -->
 			<div class="chat-input-row">
 				<button
 					class="voice-btn"
@@ -315,14 +430,16 @@ onBeforeUnmount(() => clearInterval(POLL))
 				>
 					<Icon name="mic" class="btn-icon" :size="16"/>
 				</button>
-				<input
+
+				<textarea
 					v-model="input"
-					class="input"
-					type="text"
+					class="input chat-textarea"
+					rows="1"
 					:placeholder="I18N.inputPlaceholder"
 					spellcheck="false"
-					@keydown.enter="send"
+					@keydown="handleKeyDown"
 				/>
+
 				<button
 					v-if="sending"
 					class="send-btn stop-btn"
@@ -332,6 +449,7 @@ onBeforeUnmount(() => clearInterval(POLL))
 				>
 					<Icon name="close" class="btn-icon" :size="16"/>
 				</button>
+
 				<button
 					v-else
 					class="send-btn"
@@ -558,7 +676,8 @@ onBeforeUnmount(() => clearInterval(POLL))
 	padding: 1.6rem 2rem;
 	display: flex;
 	flex-direction: column;
-	gap: 1.2rem;
+	gap: 0.9rem;
+	position: relative;
 }
 
 .btn-load-earlier {
@@ -581,13 +700,85 @@ onBeforeUnmount(() => clearInterval(POLL))
 	}
 }
 
+// 空状态下的快捷破冰
+.quick-prompts-container {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 1.8rem;
+	padding: 3rem 1rem;
+	margin: auto 0;
+}
+
+.starter-hero {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.6rem;
+	text-align: center;
+
+	.starter-sparkle {
+		color: var(--nori-teal-bright);
+		filter: drop-shadow(0 0 1rem var(--glow-teal));
+	}
+
+	.starter-title {
+		font-size: 1.8rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.starter-desc {
+		font-size: 1.2rem;
+		color: var(--text-muted);
+	}
+}
+
+.starter-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 1rem;
+	max-width: 46rem;
+	width: 100%;
+}
+
+.starter-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.8rem;
+	padding: 0.9rem 1.2rem;
+	background: rgba(255, 255, 255, 0.03);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-md);
+	color: var(--text-body);
+	font-size: 1.2rem;
+	font-family: inherit;
+	cursor: pointer;
+	text-align: left;
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+	&:hover {
+		background: rgba(125, 227, 255, 0.08);
+		border-color: var(--nori-teal-soft);
+		color: var(--nori-teal-bright);
+		transform: translateY(-0.15rem);
+		box-shadow: 0 0.4rem 1.4rem var(--glow-teal-soft);
+	}
+}
+
+// 消息气泡项
 .chat-msg {
 	display: flex;
 	flex-direction: column;
 	max-width: 82%;
+	animation: bubble-fade-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&.user {
 		align-self: flex-end;
+		.bubble-wrapper {
+			justify-content: flex-end;
+		}
 		.chat-bubble {
 			background: linear-gradient(135deg, rgba(94, 234, 212, 0.22) 0%, rgba(125, 227, 255, 0.1) 100%);
 			border: 0.1rem solid rgba(125, 227, 255, 0.35);
@@ -606,15 +797,60 @@ onBeforeUnmount(() => clearInterval(POLL))
 			border-radius: 1.4rem 1.4rem 1.4rem 0.3rem;
 			box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.2);
 		}
+
+		&.first-in-group {
+			margin-top: 0.4rem;
+		}
+	}
+}
+
+.bubble-wrapper {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+
+	&:hover .bubble-copy-btn {
+		opacity: 1;
+		pointer-events: auto;
 	}
 }
 
 .chat-bubble {
-	padding: 1rem 1.4rem;
+	padding: 0.9rem 1.4rem;
 	font-size: 1.3rem;
 	line-height: 1.6;
 	word-break: break-word;
 	white-space: pre-wrap;
+	position: relative;
+}
+
+.bubble-copy-btn {
+	opacity: 0;
+	pointer-events: none;
+	width: 2.4rem;
+	height: 2.4rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: 50%;
+	background: rgba(8, 24, 40, 0.85);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.2s ease;
+	backdrop-filter: blur(0.6rem);
+
+	&:hover {
+		color: var(--nori-teal-bright);
+		border-color: var(--nori-teal-soft);
+	}
+
+	&.copied {
+		opacity: 1;
+		color: #20e090;
+		border-color: #20e090;
+	}
 }
 
 .tool-executing-hint {
@@ -635,6 +871,34 @@ onBeforeUnmount(() => clearInterval(POLL))
 	color: var(--nori-teal-bright);
 }
 
+// 浮动回到底部按钮
+.scroll-bottom-btn {
+	position: absolute;
+	bottom: 7.2rem;
+	right: 2.4rem;
+	z-index: 10;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.6rem 1.2rem;
+	border-radius: var(--radius-pill);
+	background: rgba(8, 26, 44, 0.92);
+	border: 0.1rem solid var(--nori-teal-soft);
+	color: var(--nori-teal-bright);
+	font-size: 1.15rem;
+	font-family: inherit;
+	font-weight: 500;
+	cursor: pointer;
+	box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.4), 0 0 1rem var(--glow-teal-soft);
+	backdrop-filter: blur(0.8rem);
+	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+	&:hover {
+		transform: translateY(-0.15rem);
+		box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.5), 0 0 1.4rem var(--glow-teal);
+	}
+}
+
 .chat-error {
 	padding: 0.6rem 1.6rem;
 	color: var(--danger);
@@ -648,9 +912,9 @@ onBeforeUnmount(() => clearInterval(POLL))
 // 输入框行
 .chat-input-row {
 	display: flex;
-	align-items: center;
+	align-items: flex-end;
 	gap: 0.8rem;
-	padding: 1.2rem 1.6rem;
+	padding: 1rem 1.6rem;
 	border-top: 0.1rem solid var(--line-subtle);
 	background: rgba(8, 22, 36, 0.7);
 	backdrop-filter: blur(1rem);
@@ -682,19 +946,23 @@ onBeforeUnmount(() => clearInterval(POLL))
 		color: #ff4b4b;
 		border-color: #ff4b4b;
 		background: rgba(255, 75, 75, 0.15);
-		animation: pulse 1.2s infinite;
+		animation: pulse-soft 1.2s infinite;
 	}
 }
 
-.input {
+.chat-textarea {
 	flex: 1;
-	height: 3.8rem;
-	padding: 0 1.4rem;
+	min-height: 3.8rem;
+	max-height: 10rem;
+	padding: 0.85rem 1.4rem;
 	border: 0.1rem solid var(--line-subtle);
 	border-radius: var(--radius-sm);
 	background: rgba(255, 255, 255, 0.04);
 	color: var(--text-primary);
 	font-size: 1.3rem;
+	font-family: inherit;
+	line-height: 1.5;
+	resize: none;
 	outline: none;
 	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
@@ -748,9 +1016,25 @@ onBeforeUnmount(() => clearInterval(POLL))
 	color: inherit;
 }
 
-@keyframes pulse {
-	0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.4); }
-	70% { box-shadow: 0 0 0 0.8rem rgba(255, 75, 75, 0); }
-	100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
+@keyframes bubble-fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(0.5rem) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+	transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-scale-enter-from,
+.fade-scale-leave-to {
+	opacity: 0;
+	transform: scale(0.9);
 }
 </style>
