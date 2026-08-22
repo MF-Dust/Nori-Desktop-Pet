@@ -49,15 +49,16 @@ public sealed class PetRuntime
 	private double _lastUpdateTime;
 	private double _lastTapTime;
 
-	/// <summary>
-	/// 待切换的模型 id
-	///
-	/// 模型的加载与销毁都要创建/释放 GL 纹理与着色器, 必须在 OpenGL 上下文 current 的时候做。
-	/// Avalonia 只在 OnOpenGlInit / OnOpenGlRender / OnOpenGlDeinit 里让上下文 current,
-	/// 直接从桥接线程或 Dispatcher 上调 LoadModel 会拿不到上下文并崩掉渲染线程,
-	/// 所以这里只登记请求, 真正的切换发生在下一帧的 RenderFrame 开头。
-	/// </summary>
-	private string? _pendingModelId;
+	// ---- 后台模型准备 (世代归属) ----
+	//
+	// 模型的加载与销毁都要创建/释放 GL 纹理与着色器, 必须在 OpenGL 上下文 current 的时候做。
+	// Avalonia 只在 OnOpenGlInit / OnOpenGlRender / OnOpenGlDeinit 里让上下文 current,
+	// 所以磁盘扫描/JSON 解析全部放到后台 Prepare 任务; RenderFrame 每帧只观察任务,
+	// 仅当"完成 + 未取消 + 世代仍匹配"时才在 GL 区做最小资源交换。
+	private readonly Lock _prepareGate = new();
+	private long _modelGeneration;
+	private CancellationTokenSource? _prepareCts;
+	private Task<PreparedModel?>? _prepareTask;
 
 	// 配置项
 	public float UserScale { get; set; } = 1.0f;
@@ -123,24 +124,26 @@ public sealed class PetRuntime
 		_app = app;
 		_gl = gl;
 		_services.Logger.Write(LogSource.Backend, "info", "Live2D OpenGL 初始化完成");
-		LoadInitialModel();
+		string savedModel = _services.Config.GetStringOr("selected_model", "arg-nori");
+		if (!string.IsNullOrWhiteSpace(savedModel)) _currentModelId = savedModel.Trim();
+		LoadConfigs();
+		RequestModelLoad(_currentModelId);
 	}
 
 	public void OnGlDeinit()
 	{
+		lock (_prepareGate)
+		{
+			_prepareCts?.Cancel();
+			_prepareCts?.Dispose();
+			_prepareCts = null;
+			_prepareTask = null;
+		}
 		// 同上: 释放交给 manager, PetGlControl 随后的 _lapp.Dispose() 会走到 ReleaseAllModel()
 		_currentModel = null;
 		_app?.Live2dManager.ReleaseAllModel();
 		_app = null;
 		_gl = null;
-	}
-
-	private void LoadInitialModel()
-	{
-		string savedModel = _services.Config.GetStringOr("selected_model", "arg-nori");
-		if (!string.IsNullOrWhiteSpace(savedModel)) _currentModelId = savedModel.Trim();
-		LoadConfigs();
-		LoadModel(_currentModelId);
 	}
 
 	public void LoadConfigs()
@@ -207,31 +210,90 @@ public sealed class PetRuntime
 	}
 
 	/// <summary>
-	/// 请求切换模型 (线程安全), 真正的加载在下一帧的 GL 回调里执行
+	/// 请求切换模型 (线程安全): 递增世代并在后台开始元数据准备.
+	///
+	/// 上一份准备任务的 CTS 立即取消; 渲染帧只消费完成且世代匹配的结果。
 	/// </summary>
 	public void RequestModelLoad(string modelId)
 	{
 		if (string.IsNullOrWhiteSpace(modelId)) return;
-		Interlocked.Exchange(ref _pendingModelId, modelId.Trim());
+		string trimmed = modelId.Trim();
+
+		lock (_prepareGate)
+		{
+			_modelGeneration++;
+			long generation = _modelGeneration;
+			_prepareCts?.Cancel();
+			_prepareCts?.Dispose();
+			CancellationTokenSource cts = new();
+			_prepareCts = cts;
+
+			string modelDir = _services.Resources.ResourceDir(ResourceType.Live2D, trimmed);
+			_prepareTask = Task.Run(async () =>
+			{
+				try
+				{
+					return await ModelPreparation.PrepareAsync(trimmed, modelDir, generation, cts.Token);
+				}
+				catch (OperationCanceledException)
+				{
+					return null;
+				}
+				catch (Exception exception)
+				{
+					// 准备失败不带入渲染线程, 保留当前工作模型继续渲染
+					try
+					{
+						_services.Logger.Write(LogSource.Backend, "error", $"后台准备 Live2D 模型失败 [{trimmed}]: {exception.Message}");
+					}
+					catch
+					{
+						// 日志失败保持静默
+					}
+					return null;
+				}
+			}, CancellationToken.None);
+		}
 	}
 
-	public bool LoadModel(string modelId)
+	/// <summary>
+	/// 在渲染帧观察准备任务; 只有已完成且世代仍匹配时才在 GL 区消费结果
+	/// </summary>
+	private void ConsumePreparedIfReady()
 	{
-		if (_app is null || _gl is null) return false;
-
-		string modelDir = _services.Resources.ResourceDir(ResourceType.Live2D, modelId);
-		if (!Directory.Exists(modelDir))
+		Task<PreparedModel?>? task;
+		long generation;
+		lock (_prepareGate)
 		{
-			_services.Logger.Write(LogSource.Backend, "warn", $"Live2D 模型目录不存在: {modelDir}");
-			return false;
+			task = _prepareTask;
+			generation = _modelGeneration;
+			if (task is not { IsCompletedSuccessfully: true }) return;
+			_prepareTask = null;
 		}
 
-		string[] model3Files = Directory.GetFiles(modelDir, "*.model3.json", SearchOption.TopDirectoryOnly);
-		if (model3Files.Length == 0)
+		PreparedModel? prepared;
+		try
 		{
-			_services.Logger.Write(LogSource.Backend, "warn", $"目录中未找到 *.model3.json: {modelDir}");
-			return false;
+			prepared = task.Result;
 		}
+		catch (Exception exception)
+		{
+			_services.Logger.Write(LogSource.Backend, "warn", $"读取 Live2D 准备结果失败: {exception.Message}");
+			return;
+		}
+
+		if (prepared is null || prepared.Generation != generation) return;
+		ApplyPreparedOnGlThread(prepared);
+	}
+
+	/// <summary>
+	/// GL 线程专属: 用已准备的元数据执行 SDK 资源交换、renderer 设置与表情提交
+	/// </summary>
+	private void ApplyPreparedOnGlThread(PreparedModel prepared)
+	{
+		if (_app is null || _gl is null || !Directory.Exists(prepared.ModelDir)) return;
+
+		bool firstLoadOfModel = !string.Equals(prepared.ModelId, _currentModelId, StringComparison.Ordinal);
 
 		try
 		{
@@ -241,10 +303,9 @@ public sealed class PetRuntime
 			_currentModel = null;
 			_app.Live2dManager.ReleaseAllModel();
 
-			string modelJsonName = Path.GetFileName(model3Files[0]);
-			_currentModel = _app.Live2dManager.LoadModel(modelDir, modelJsonName);
-			_currentModelId = modelId;
-			_currentModelDir = modelDir;
+			_currentModel = _app.Live2dManager.LoadModel(prepared.ModelDir, prepared.Model3FileName);
+			_currentModelId = prepared.ModelId;
+			_currentModelDir = prepared.ModelDir;
 
 			// 自定义值更新挂钩
 			_currentModel.CustomValueUpdate = true;
@@ -263,88 +324,20 @@ public sealed class PetRuntime
 				renderer.UseHighPrecisionMask = false;
 			}
 
-			// 解析动作组
-			ExtractMotionGroups(model3Files[0]);
+			// 提交预解析的动作组与表情定义 (同步, 无 I/O)
+			_motionGroups = [.. prepared.MotionGroups];
+			_expressionBehavior.ApplyPrepared(prepared, _currentModel.Model);
 
-			// 解析表情文件
-			ExtractExpressions(model3Files[0]);
+			// 显示参数随模型首次载入重新读取配置
+			if (firstLoadOfModel) LoadConfigs();
 
-			_services.Logger.Write(LogSource.Backend, "info", $"成功加载 Live2D 模型: {modelId}");
+			_services.Logger.Write(LogSource.Backend, "info", $"成功加载 Live2D 模型: {prepared.ModelId}");
 			ModelChanged?.Invoke();
-			return true;
 		}
-		catch (Exception ex)
+		catch (Exception exception)
 		{
-			_services.Logger.Write(LogSource.Backend, "error", $"加载 Live2D 模型失败 [{modelId}]: {ex}");
-			return false;
-		}
-	}
-
-	private void ExtractMotionGroups(string model3JsonPath)
-	{
-		_motionGroups = [];
-		try
-		{
-			string json = File.ReadAllText(model3JsonPath);
-			using var doc = JsonDocument.Parse(json);
-			if (doc.RootElement.TryGetProperty("FileReferences", out var fileRefs) &&
-			    fileRefs.TryGetProperty("Motions", out var motions))
-			{
-				foreach (var groupProp in motions.EnumerateObject())
-				{
-					List<string> names = [];
-					foreach (var item in groupProp.Value.EnumerateArray())
-					{
-						if (item.TryGetProperty("File", out var fileProp))
-						{
-							string file = fileProp.GetString() ?? "";
-							string name = Path.GetFileNameWithoutExtension(file).Replace(".motion3", "");
-							if (!string.IsNullOrEmpty(name)) names.Add(name);
-						}
-					}
-					if (names.Count > 0)
-					{
-						_motionGroups.Add(new MotionGroupInfo { Group = groupProp.Name, Names = names });
-					}
-				}
-			}
-		}
-		catch (Exception ex)
-		{
-			_services.Logger.Write(LogSource.Backend, "warn", $"解析动作组异常: {ex.Message}");
-		}
-	}
-
-	private void ExtractExpressions(string model3JsonPath)
-	{
-		List<(string Name, string File)> expRefs = [];
-		try
-		{
-			string json = File.ReadAllText(model3JsonPath);
-			using var doc = JsonDocument.Parse(json);
-			if (doc.RootElement.TryGetProperty("FileReferences", out var fileRefs) &&
-			    fileRefs.TryGetProperty("Expressions", out var expressions))
-			{
-				foreach (var item in expressions.EnumerateArray())
-				{
-					string name = item.GetProperty("Name").GetString() ?? "";
-					string file = item.GetProperty("File").GetString() ?? "";
-					if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(file))
-					{
-						expRefs.Add((name, file));
-					}
-				}
-			}
-
-			if (_currentModel != null)
-			{
-				// fire-and-forget: 异步失败只记日志, 不能拖到 GC 时变成无时间线的 UnobservedTaskException
-				CrashReporter.Forget(_expressionBehavior.InitializeAsync(_currentModelDir, expRefs, _currentModel.Model), "表情初始化");
-			}
-		}
-		catch (Exception ex)
-		{
-			_services.Logger.Write(LogSource.Backend, "warn", $"解析表情异常: {ex.Message}");
+			// 加载失败时不清空工作现场之外的状态; 下一帧继续用旧数据渲染
+			_services.Logger.Write(LogSource.Backend, "error", $"加载 Live2D 模型失败 [{prepared.ModelId}]: {exception.Message}");
 		}
 	}
 
@@ -404,13 +397,9 @@ public sealed class PetRuntime
 	{
 		if (_gl is null) return;
 
-		// 模型切换在这里落地: 此刻 OpenGL 上下文才是 current 的
-		if (Interlocked.Exchange(ref _pendingModelId, null) is { } pending)
-		{
-			_currentModelId = pending;
-			LoadConfigs();
-			LoadModel(pending);
-		}
+		// 此刻 OpenGL 上下文才是 current 的: 仅消费完成且世代匹配的准备结果,
+		// 未完成或失败时继续渲染现有模型
+		ConsumePreparedIfReady();
 
 		if (_currentModel is null) return;
 
@@ -581,6 +570,42 @@ public sealed class PetRuntime
 	public void TriggerBeat(double? timestamp = null)
 	{
 		if (BeatSyncEnabled) _beatSync.TriggerBeat(timestamp);
+	}
+
+	/// <summary>
+	/// 配置删除后的运行时复位: 让桌宠回到该 key 的内置默认值, 与 set/delete 的状态转换对称
+	/// </summary>
+	public void ApplyConfigDelete(string key)
+	{
+		switch (key)
+		{
+			case "selected_model":
+				if (ConfigStore.DefaultModel != _currentModelId) RequestModelLoad(ConfigStore.DefaultModel);
+				break;
+			case "l2d_opacity":
+				Opacity = 1.0f;
+				break;
+			case "l2d_max_fps":
+				MaxFps = 0;
+				break;
+			case "l2d_auto_blink": AutoBlinkEnabled = true; break;
+			case "l2d_eye_tracking": EyeTrackingEnabled = true; break;
+			case "l2d_idle_eye_animation": IdleEyeAnimationEnabled = true; break;
+			case "l2d_idle_animation": IdleAnimationEnabled = true; break;
+			case "l2d_expression_enabled": ExpressionEnabled = true; break;
+			case "l2d_shadow": ShadowEnabled = true; break;
+			case "l2d_lip_sync": LipSyncEnabled = true; break;
+			case "l2d_beat_sync": BeatSyncEnabled = false; break;
+			case "l2d_click_interaction": ClickInteraction = true; break;
+			default: break;
+		}
+
+		// 缩放按模型存储 (l2d_scale_<modelId>), 兼容旧的全局键
+		if (key == $"l2d_scale_{_currentModelId}" || key == "l2d_scale")
+		{
+			UserScale = 1.0f;
+			LayoutChanged?.Invoke();
+		}
 	}
 
 	/// <summary>

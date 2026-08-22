@@ -1,6 +1,5 @@
-using System.Text.Json;
-using Live2DCSharpSDK.App;
 using Live2DCSharpSDK.Framework.Model;
+using Nori.Desktop.Live2D;
 
 namespace Nori.Desktop.Live2D.Behaviors;
 
@@ -16,66 +15,35 @@ public sealed class ExpressionBehavior(ExpressionStore store) : IBehaviorPlugin
 	private readonly ExpressionStore _store = store;
 	private readonly HashSet<string> _activeLastFrame = [];
 
-	public async Task InitializeAsync(string modelHomeDir, IEnumerable<(string Name, string File)> expressionRefs, CubismModel model)
+	/// <summary>
+	/// 将后台准备好的表情定义同步应用到当前模型 (GL/渲染线程调用, 无 I/O)
+	///
+	/// entry 用当前 Cubism 模型的默认值建基线, 以新模型 ID 注册到共享 store。
+	/// 不再存在 fire-and-forget 异步写入, 旧模型的表情任务没有机会污染新模型状态。
+	/// </summary>
+	public void ApplyPrepared(PreparedModel prepared, CubismModel model)
 	{
-		_store.Dispose();
-		_activeLastFrame.Clear();
-
-		List<ExpressionGroupDefinition> groups = [];
 		Dictionary<string, ExpressionEntry> entryMap = new(StringComparer.OrdinalIgnoreCase);
-
-		foreach (var (name, file) in expressionRefs)
+		foreach (ExpressionGroupDefinition group in prepared.ExpressionGroups)
 		{
-			string filePath = Path.Combine(modelHomeDir, file);
-			if (!File.Exists(filePath)) continue;
-
-			try
+			foreach (ExpressionParameter parameter in group.Parameters)
 			{
-				string json = await File.ReadAllTextAsync(filePath);
-				var expFile = JsonSerializer.Deserialize<Exp3JsonFile>(json);
-				if (expFile?.Parameters == null) continue;
-
-				List<ExpressionParameter> groupParams = [];
-				foreach (var p in expFile.Parameters)
+				if (entryMap.ContainsKey(parameter.ParameterId)) continue;
+				float modelDefault = model.GetParameterDefaultValue(parameter.ParameterId);
+				entryMap[parameter.ParameterId] = new ExpressionEntry
 				{
-					if (string.IsNullOrEmpty(p.Id)) continue;
-					var blend = NormaliseBlend(p.Blend);
-					groupParams.Add(new ExpressionParameter
-					{
-						ParameterId = p.Id,
-						Blend = blend,
-						Value = p.Value,
-					});
-
-					if (!entryMap.ContainsKey(p.Id))
-					{
-						float modelDefault = model.GetParameterDefaultValue(p.Id);
-						entryMap[p.Id] = new ExpressionEntry
-						{
-							Name = p.Id,
-							ParameterId = p.Id,
-							Blend = blend,
-							CurrentValue = modelDefault,
-							DefaultValue = modelDefault,
-							ModelDefault = modelDefault,
-							TargetValue = p.Value,
-						};
-					}
-				}
-
-				groups.Add(new ExpressionGroupDefinition
-				{
-					Name = name,
-					Parameters = groupParams,
-				});
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"[Live2D] Failed to load exp file {file}: {ex.Message}");
+					Name = parameter.ParameterId,
+					ParameterId = parameter.ParameterId,
+					Blend = parameter.Blend,
+					CurrentValue = modelDefault,
+					DefaultValue = modelDefault,
+					ModelDefault = modelDefault,
+					TargetValue = parameter.Value,
+				};
 			}
 		}
 
-		_store.RegisterExpressions(_store.ModelId, groups, entryMap.Values);
+		_store.RegisterExpressions(prepared.ModelId, prepared.ExpressionGroups, entryMap.Values);
 	}
 
 	private static ExpressionBlendMode NormaliseBlend(string? raw) => raw?.ToLowerInvariant() switch
