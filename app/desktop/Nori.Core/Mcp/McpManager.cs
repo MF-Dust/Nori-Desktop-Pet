@@ -14,7 +14,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 	private readonly HttpClient _httpClient = httpClient;
 	private readonly ConfigStore _configStore = configStore;
-	private readonly ConcurrentDictionary<string, McpClient> _activeClients = new();
+	private readonly ConcurrentDictionary<string, OfficialMcpConnection> _activeClients = new();
 	private readonly ConcurrentDictionary<string, McpServerStatusInfo> _serverStatuses = new();
 	private readonly SemaphoreSlim _lock = new(1, 1);
 	private bool _disposed;
@@ -73,7 +73,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			SaveConfigs(configs);
 
 			// 若原先已在运行则先断开
-			if (_activeClients.TryRemove(config.Id, out McpClient? oldClient))
+			if (_activeClients.TryRemove(config.Id, out OfficialMcpConnection? oldClient))
 			{
 				await oldClient.DisposeAsync();
 			}
@@ -113,7 +113,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				SaveConfigs(configs);
 			}
 
-			if (_activeClients.TryRemove(serverId, out McpClient? client))
+			if (_activeClients.TryRemove(serverId, out OfficialMcpConnection? client))
 			{
 				await client.DisposeAsync();
 			}
@@ -157,7 +157,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		await _lock.WaitAsync();
 		try
 		{
-			if (_activeClients.TryRemove(serverId, out McpClient? client))
+			if (_activeClients.TryRemove(serverId, out OfficialMcpConnection? client))
 			{
 				await client.DisposeAsync();
 			}
@@ -209,7 +209,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task<McpToolResult> CallToolAsync(string serverId, string toolName, JsonObject? arguments, CancellationToken cancellationToken = default)
 	{
-		if (!_activeClients.TryGetValue(serverId, out McpClient? client) || !client.IsConnected)
+		if (!_activeClients.TryGetValue(serverId, out OfficialMcpConnection? client) || !client.IsConnected)
 		{
 			return new McpToolResult
 			{
@@ -237,11 +237,11 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task<McpServerStatusInfo> TestServerAsync(McpServerConfig config)
 	{
-		McpClient client = new(config, _httpClient);
+		OfficialMcpConnection? client = null;
 		try
 		{
 			using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
-			await client.InitializeAsync(cts.Token);
+			client = await OfficialMcpConnection.ConnectAsync(config, _httpClient, cts.Token);
 			IReadOnlyList<McpToolDefinition> tools = await client.ListToolsAsync(cts.Token);
 			IReadOnlyList<McpResourceDefinition> resources = await client.ListResourcesAsync(cts.Token);
 
@@ -266,7 +266,10 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		}
 		finally
 		{
-			await client.DisposeAsync();
+			if (client is not null)
+			{
+				await client.DisposeAsync();
+			}
 		}
 	}
 
@@ -309,7 +312,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		if (_disposed) return;
 		_disposed = true;
 
-		foreach ((string _, McpClient client) in _activeClients)
+		foreach ((string _, OfficialMcpConnection client) in _activeClients)
 		{
 			await client.DisposeAsync();
 		}
@@ -320,7 +323,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 	private async Task<McpServerStatusInfo> ConnectServerInternalAsync(McpServerConfig config)
 	{
-		if (_activeClients.TryRemove(config.Id, out McpClient? existing))
+		if (_activeClients.TryRemove(config.Id, out OfficialMcpConnection? existing))
 		{
 			await existing.DisposeAsync();
 		}
@@ -332,11 +335,11 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			Status = "connecting",
 		};
 
-		McpClient client = new(config, _httpClient);
+		OfficialMcpConnection? client = null;
 		try
 		{
 			using CancellationTokenSource cts = new(TimeSpan.FromSeconds(20));
-			await client.InitializeAsync(cts.Token);
+			client = await OfficialMcpConnection.ConnectAsync(config, _httpClient, cts.Token);
 			IReadOnlyList<McpToolDefinition> tools = await client.ListToolsAsync(cts.Token);
 			IReadOnlyList<McpResourceDefinition> resources = await client.ListResourcesAsync(cts.Token);
 
@@ -355,7 +358,10 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		}
 		catch (Exception exception)
 		{
-			await client.DisposeAsync();
+			if (client is not null)
+			{
+				await client.DisposeAsync();
+			}
 
 			McpServerStatusInfo errorStatus = new()
 			{

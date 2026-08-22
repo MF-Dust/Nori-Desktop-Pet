@@ -803,12 +803,13 @@ public sealed class BridgeCommands
 		string url = Str(args, "url");
 		Nori.Core.Network.UrlAccessPolicy.EnsurePublicHttp(new Uri(url));
 		using HttpResponseMessage response = await Nori.Core.Network.UrlAccessPolicy.GetWithSafeRedirectsAsync(
-			_services.Http, new Uri(url), allowPrivate: false);
+			_services.PublicHttp, new Uri(url), allowPrivate: false);
 		if (!response.IsSuccessStatusCode)
 		{
 			throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
 		}
-		string text = await response.Content.ReadAsStringAsync();
+		string text = await Nori.Core.Network.UrlAccessPolicy.ReadCappedTextAsync(
+			response.Content, Nori.Core.Network.UrlAccessPolicy.MaxResponseBytes);
 
 		List<object> results = [];
 		void SaveOne(McpServerConfig config) => results.Add(_services.Mcp.SaveServerAsync(config).GetAwaiter().GetResult());
