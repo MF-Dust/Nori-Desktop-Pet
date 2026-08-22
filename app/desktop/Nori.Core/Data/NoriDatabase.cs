@@ -12,7 +12,7 @@ namespace Nori.Core.Data;
 public sealed class NoriDatabase : IDisposable
 {
 	/// <summary>当前 memories 数据库结构版本</summary>
-	public const long DatabaseSchemaVersion = 2;
+	public const long DatabaseSchemaVersion = 3;
 
 	/// <summary>建表语句, 与 Rust 版 SCHEMA 完全一致</summary>
 	private const string Schema = """
@@ -39,7 +39,6 @@ public sealed class NoriDatabase : IDisposable
 		);
 		CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC, id DESC);
 		""";
-
 	private readonly SqliteConnection _connection;
 	private readonly Lock _gate = new();
 
@@ -129,6 +128,9 @@ public sealed class NoriDatabase : IDisposable
 					case 1:
 						ClearLegacyEmbeddings(connection, transaction);
 						break;
+					case 2:
+						CreateRemindersTable(connection, transaction);
+						break;
 					default:
 						throw new InvalidOperationException($"不支持的记忆数据库版本: {version}");
 				}
@@ -204,6 +206,27 @@ public sealed class NoriDatabase : IDisposable
 		using SqliteCommand command = connection.CreateCommand();
 		command.Transaction = transaction;
 		command.CommandText = "UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL;";
+		command.ExecuteNonQuery();
+	}
+
+	/// <summary>
+	/// v3: 新增可恢复的定时提醒表.
+	/// 幂等: 建表语句带 IF NOT EXISTS, 重复执行安全。
+	/// </summary>
+	private static void CreateRemindersTable(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = """
+			CREATE TABLE IF NOT EXISTS reminders (
+			    id          TEXT PRIMARY KEY,
+			    content     TEXT NOT NULL,
+			    trigger_at  INTEGER NOT NULL,
+			    repeat_daily INTEGER NOT NULL DEFAULT 0,
+			    created_at  TEXT NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON reminders(trigger_at ASC);
+			""";
 		command.ExecuteNonQuery();
 	}
 

@@ -1,0 +1,306 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Nori.Core.Configuration;
+using Nori.Core.Network;
+
+namespace Nori.Core.Skills;
+
+/// <summary>
+/// 技能管理器服务
+///
+/// 支持本地技能、市场安装、URL 网络安装 (SKILL.md / JSON) 与 Prompt 动态注入。
+/// 数据持久化沿用前端写入的 config 键 nori_skills (JSON 数组), 完全兼容既有数据。
+/// </summary>
+public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
+{
+	private const string ConfigKey = "nori_skills";
+
+	private static readonly JsonSerializerOptions JsonOptions = new()
+	{
+		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+	};
+
+	private readonly Lock _gate = new();
+	private Dictionary<string, SkillRecord> _skills = [];
+	private bool _initialized;
+
+	/// <summary>加载技能列表 (首次缺失时种子内置预设)</summary>
+	public void EnsureLoaded()
+	{
+		lock (_gate)
+		{
+			if (_initialized) return;
+			Dictionary<string, SkillRecord> loaded = [];
+
+			try
+			{
+				if (configStore.Get(ConfigKey) is ConfigValue.Json { Value: JsonNode node })
+				{
+					List<SkillRecord>? list = node.Deserialize<List<SkillRecord>>(JsonOptions);
+					foreach (SkillRecord skill in list ?? [])
+					{
+						if (!string.IsNullOrEmpty(skill.Id)) loaded[skill.Id] = skill;
+					}
+				}
+			}
+			catch (JsonException)
+			{
+				// 配置损坏时回退到内置预设, 不抛出避免阻断启动
+			}
+
+			if (loaded.Count == 0)
+			{
+				foreach (SkillRecord preset in SkillPresets.All.Where(p => p.Source == "builtin"))
+				{
+					loaded[preset.Id] = preset;
+				}
+			}
+
+			_skills = loaded;
+			_initialized = true;
+			SaveLocked();
+		}
+	}
+
+	/// <summary>获取所有已安装技能列表</summary>
+	public IReadOnlyList<SkillRecord> GetInstalled()
+	{
+		EnsureLoaded();
+		lock (_gate) return _skills.Values.ToList();
+	}
+
+	/// <summary>获取所有当前激活启用的技能列表</summary>
+	public IReadOnlyList<SkillRecord> GetEnabled() => GetInstalled().Where(skill => skill.Enabled).ToList();
+
+	/// <summary>获取技能市场目录</summary>
+	public static IReadOnlyList<SkillRecord> Marketplace() => SkillPresets.All;
+
+	/// <summary>切换技能启用状态</summary>
+	public bool Toggle(string id, bool enabled)
+	{
+		EnsureLoaded();
+		lock (_gate)
+		{
+			if (!_skills.TryGetValue(id, out SkillRecord? skill)) return false;
+			skill.Enabled = enabled;
+			SaveLocked();
+			return true;
+		}
+	}
+
+	/// <summary>从市场安装技能</summary>
+	public SkillRecord InstallFromMarketplace(string skillId)
+	{
+		EnsureLoaded();
+		SkillRecord? target = SkillPresets.Find(skillId)
+			?? throw new InvalidOperationException($"未在市场中找到技能 ID: {skillId}");
+
+		SkillRecord installed = target with { Enabled = true, InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+		Upsert(installed);
+		return installed;
+	}
+
+	/// <summary>创建或保存自定义技能</summary>
+	public SkillRecord SaveCustom(SkillRecord skill)
+	{
+		EnsureLoaded();
+		long existingAt;
+		lock (_gate) existingAt = _skills.TryGetValue(skill.Id, out SkillRecord? old) ? old.InstalledAt : 0;
+		SkillRecord complete = skill with { InstalledAt = existingAt != 0 ? existingAt : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+		Upsert(complete);
+		return complete;
+	}
+
+	/// <summary>卸载删除技能</summary>
+	public bool Uninstall(string id)
+	{
+		EnsureLoaded();
+		lock (_gate)
+		{
+			bool removed = _skills.Remove(id);
+			if (removed) SaveLocked();
+			return removed;
+		}
+	}
+
+	/// <summary>导出技能为 JSON 字符串</summary>
+	public string Export(string id)
+	{
+		EnsureLoaded();
+		lock (_gate)
+		{
+			if (!_skills.TryGetValue(id, out SkillRecord? skill)) throw new InvalidOperationException("技能不存在");
+			return JsonSerializer.Serialize(skill, JsonOptions);
+		}
+	}
+
+	/// <summary>导入 JSON 技能</summary>
+	public SkillRecord ImportJson(string json)
+	{
+		EnsureLoaded();
+		SkillRecord data = JsonSerializer.Deserialize<SkillRecord>(json, JsonOptions)
+			?? throw new InvalidOperationException("技能 JSON 解析失败");
+		if (string.IsNullOrEmpty(data.Name) || string.IsNullOrEmpty(data.Instructions))
+		{
+			throw new InvalidOperationException("技能 JSON 缺少必要的 name 或 instructions 字段");
+		}
+		SkillRecord skill = data with
+		{
+			Id = string.IsNullOrEmpty(data.Id) ? $"custom_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" : data.Id,
+			Source = "custom",
+			InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+			Enabled = true,
+		};
+		Upsert(skill);
+		return skill;
+	}
+
+	/// <summary>
+	/// 从远程网络 URL 安装技能 (支持 JSON 规范与 SKILL.md Markdown 规范)
+	/// </summary>
+	public async Task<SkillRecord> InstallFromUrlAsync(string url, CancellationToken cancellationToken = default)
+	{
+		EnsureLoaded();
+		Uri uri = new(url);
+		Nori.Core.Network.UrlAccessPolicy.EnsurePublicHttp(uri);
+
+		using HttpResponseMessage response = await Nori.Core.Network.UrlAccessPolicy.GetWithSafeRedirectsAsync(
+			httpClient, uri, allowPrivate: false, cancellationToken: cancellationToken);
+		if (!response.IsSuccessStatusCode)
+		{
+			throw new HttpRequestException($"下载技能失败: HTTP {(int)response.StatusCode}");
+		}
+		await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+		string text = await ReadCappedAsync(stream, UrlAccessPolicy.MaxResponseBytes, cancellationToken);
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			throw new InvalidOperationException("远程技能文件内容为空");
+		}
+
+		SkillRecord skill = text.TrimStart().StartsWith("---") ? ParseSkillMarkdown(text, url) : ParseSkillJson(text, url);
+		Upsert(skill with { Enabled = true });
+		return skill;
+	}
+
+	private static async Task<string> ReadCappedAsync(Stream stream, long cap, CancellationToken ct)
+	{
+		using StreamReader reader = new(stream);
+		char[] buffer = new char[64 * 1024];
+		System.Text.StringBuilder builder = new();
+		while (true)
+		{
+			int read = await reader.ReadBlockAsync(buffer, ct);
+			if (read <= 0) break;
+			builder.Append(buffer, 0, read);
+			if (builder.Length > cap)
+			{
+				throw new InvalidOperationException($"远程文件超过大小上限 ({cap / 1024 / 1024} MB)");
+			}
+		}
+		return builder.ToString();
+	}
+
+	private SkillRecord ParseSkillJson(string text, string url)
+	{
+		SkillRecord manifest = JsonSerializer.Deserialize<SkillRecord>(text, JsonOptions)
+			?? throw new InvalidOperationException("解析远程技能格式失败: 不是合法的 JSON 技能清单");
+		return manifest with
+		{
+			Id = string.IsNullOrEmpty(manifest.Id) ? $"skill_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" : manifest.Id,
+			Name = string.IsNullOrEmpty(manifest.Name) ? "未命名网络技能" : manifest.Name,
+			Description = string.IsNullOrEmpty(manifest.Description) ? "从网络导入的技能" : manifest.Description,
+			Author = string.IsNullOrEmpty(manifest.Author) ? "Online Author" : manifest.Author,
+			Version = string.IsNullOrEmpty(manifest.Version) ? "1.0.0" : manifest.Version,
+			Category = string.IsNullOrEmpty(manifest.Category) ? "productivity" : manifest.Category,
+			Source = "url",
+			Url = url,
+		};
+	}
+
+	/// <summary>解析 SKILL.md (YAML Frontmatter + Markdown Instructions)</summary>
+	private static SkillRecord ParseSkillMarkdown(string content, string url)
+	{
+		Match match = Regex.Match(content.TrimStart(), @"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", RegexOptions.Singleline);
+		if (!match.Success)
+		{
+			throw new InvalidOperationException("SKILL.md 格式错误：缺少完整的 YAML frontmatter 头部分隔符 ---");
+		}
+
+		Dictionary<string, string> meta = new(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in match.Groups[1].Value.Split('\n'))
+		{
+			int colon = line.IndexOf(':');
+			if (colon <= 0) continue;
+			string key = line[..colon].Trim();
+			string value = line[(colon + 1)..].Trim().Trim('"', '\'');
+			if (key.Length > 0) meta[key] = value;
+		}
+
+		string body = match.Groups[2].Value.Trim();
+		string id = meta.TryGetValue("name", out string? name) && !string.IsNullOrEmpty(name)
+			? Regex.Replace(name.ToLowerInvariant(), @"[^a-z0-9_-]+", "-")
+			: $"skill_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+
+		meta.TryGetValue("tags", out string? tagsRaw);
+		IReadOnlyList<string> tags = string.IsNullOrWhiteSpace(tagsRaw)
+			? ["Skill"]
+			: tagsRaw.Split(',').Select(tag => tag.Trim()).Where(tag => tag.Length > 0).ToList();
+
+		return new SkillRecord
+		{
+			Id = id,
+			Name = meta.GetValueOrDefault("name", "未命名技能"),
+			Description = meta.GetValueOrDefault("description", "从 SKILL.md 安装的技能"),
+			Author = meta.GetValueOrDefault("author", "Online Creator"),
+			Version = meta.GetValueOrDefault("version", "1.0.0"),
+			Icon = "sparkles",
+			Tags = tags,
+			Category = "productivity",
+			Instructions = body,
+			Enabled = true,
+			Source = "url",
+			InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+			Url = url,
+		};
+	}
+
+	/// <summary>
+	/// 构建注入系统提示词的技能指令集
+	/// </summary>
+	public string BuildSkillsPrompt()
+	{
+		IReadOnlyList<SkillRecord> active = GetEnabled().Where(skill => skill.Enabled).ToList();
+		if (active.Count == 0) return "";
+
+		List<string> lines = ["【已激活技能与扩展指令 (Active Skills)】："];
+		for (int i = 0; i < active.Count; i++)
+		{
+			SkillRecord skill = active[i];
+			lines.Add($"\n=== 技能 {i + 1}：{skill.Name} (v{skill.Version}) ===");
+			if (!string.IsNullOrEmpty(skill.Description)) lines.Add($"简介: {skill.Description}");
+			lines.Add(skill.Instructions);
+		}
+		return string.Join("\n", lines);
+	}
+
+	private void Upsert(SkillRecord skill)
+	{
+		lock (_gate)
+		{
+			_skills[skill.Id] = skill;
+			SaveLocked();
+		}
+	}
+
+	/// <summary>持久化已安装技能列表 (调用方需持有 _gate)</summary>
+	private void SaveLocked()
+	{
+		string json = JsonSerializer.Serialize(_skills.Values.ToList(), JsonOptions);
+		JsonNode? node = JsonNode.Parse(json);
+		if (node is not null)
+		{
+			configStore.Set(ConfigKey, new ConfigValue.Json(node));
+		}
+	}
+}
