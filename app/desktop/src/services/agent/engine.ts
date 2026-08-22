@@ -1,14 +1,16 @@
 import {invoke} from "../host/invoke"
-import {listen, type UnlistenFn} from "../host/event"
+import {listen} from "../host/event"
 import {petLive2DController} from "../live2d"
-import type {AgentProtocolItem, AgentState, AgentTextMessage, AgentToolCall, EmotionType} from "./protocol"
+import type {AgentProtocolItem, AgentState, AgentTextMessage, AgentToolCall, EmotionType, ToolRequestApproval} from "./protocol"
 import {StreamingJsonParser} from "./jsonParser"
 import {buildAgentSystemPrompt, type PromptBuildOptions} from "./promptBuilder"
 import {toolManager} from "./tools"
+import {AgentRunSession} from "./AgentRunSession"
 import {mcpService} from "../mcp"
 import {memoryService} from "../memory"
 import {emotionManager} from "../emotion"
 import {ttsService} from "../tts"
+import {readBooleanConfig, readStringConfig} from "../config"
 
 /**
  * 历史消息格式
@@ -42,6 +44,8 @@ export interface AgentRunCallbacks {
 	onUsage?: (usage: LlmUsageMetrics) => void
 	onComplete?: (finalMessage: AgentTextMessage) => void
 	onError?: (error: Error) => void
+	/** 逐调用工具授权; confirm/dangerous 工具执行前必须经用户批准 */
+	requestToolApproval?: ToolRequestApproval
 }
 
 /**
@@ -50,10 +54,9 @@ export interface AgentRunCallbacks {
 export class AgentEngine {
 	private state: AgentState = "idle"
 	private maxToolIterations = 5
-	private unlistenChunk: UnlistenFn | null = null
-	private unlistenUsage: UnlistenFn | null = null
 	private mcpSynced = false
-	private isAborted = false
+	/** 当前活动会话; 旧会话只能清理自己, 不能改写全局状态 */
+	private activeSession: AgentRunSession | null = null
 	public lastUsage: LlmUsageMetrics | null = null
 
 	/**
@@ -64,26 +67,27 @@ export class AgentEngine {
 	}
 
 	/**
-	 * 中止当前 Agent 生成回路
+	 * 中止当前 Agent 会话: 先取消本地信号/监听/朗读, 再 best-effort 取消宿主操作
 	 */
 	public abort(): void {
-		this.isAborted = true
-		if (this.unlistenChunk) {
-			this.unlistenChunk()
-			this.unlistenChunk = null
-		}
-		if (this.unlistenUsage) {
-			this.unlistenUsage()
-			this.unlistenUsage = null
-		}
+		const SESSION = this.activeSession
+		if (!SESSION || SESSION.isCancelled) return
+		SESSION.cancel()
 		ttsService.stop()
-		this.state = "idle"
+		if (this.activeSession === SESSION) {
+			this.state = "idle"
+		}
+		// best-effort: 宿主端聊天流/MCP 调用同步取消
+		void invoke("cancel_agent_session", {sessionId: SESSION.id}).catch(() => {
+			/* 宿主不可用时忽略, 本地监听已清理 */
+		})
 	}
 
 	/**
-	 * 设置状态并通知
+	 * 仅允许仍处活动状态的会话改写全局状态
 	 */
-	private setState(state: AgentState, callbacks?: AgentRunCallbacks): void {
+	private setState(state: AgentState, session: AgentRunSession | null, callbacks?: AgentRunCallbacks): void {
+		if (session && this.activeSession !== session) return
 		this.state = state
 		if (callbacks?.onStateChange) {
 			callbacks.onStateChange(state)
@@ -99,8 +103,9 @@ export class AgentEngine {
 		options: PromptBuildOptions = {},
 		callbacks?: AgentRunCallbacks
 	): Promise<AgentTextMessage> {
-		this.isAborted = false
-		this.setState("thinking", callbacks)
+		const SESSION = new AgentRunSession()
+		this.activeSession = SESSION
+		this.setState("thinking", SESSION, callbacks)
 
 		// 首次运行异步同步一次已连接的 MCP 工具
 		if (!this.mcpSynced) {
@@ -115,16 +120,16 @@ export class AgentEngine {
 
 		try {
 			while (iterations < this.maxToolIterations) {
-				if (this.isAborted) break
+				if (SESSION.isCancelled) break
 				iterations++
 
 				// 1. 读取 AI 与用户自定义人设配置
 				const [PROVIDER, BASE_URL, API_KEY, MODEL, USER_PERSONA] = await Promise.all([
-					invoke<string | null>("get_config", {key: "llm_provider"}),
-					invoke<string | null>("get_config", {key: "llm_api_base"}),
-					invoke<string | null>("get_config", {key: "llm_api_key"}),
-					invoke<string | null>("get_config", {key: "llm_model"}),
-					invoke<string | null>("get_config", {key: "nori_user_persona"}),
+					readStringConfig("llm_provider", "openai"),
+					readStringConfig("llm_api_base", ""),
+					readStringConfig("llm_api_key", ""),
+					readStringConfig("llm_model", ""),
+					readStringConfig("nori_user_persona", ""),
 				])
 
 				if (!BASE_URL || !API_KEY || !MODEL) {
@@ -150,25 +155,17 @@ export class AgentEngine {
 					? WORKING_HISTORY.slice(-MAX_CONTEXT_ROUNDS)
 					: WORKING_HISTORY
 
-				// 3. 准备流式接收
+				// 3. 准备流式接收: 监听归本 session 所有, 迭代结束只清理本轮自己的监听
 				const STREAM_ID = `agent-${Date.now()}-${iterations}`
+				SESSION.currentStreamId = STREAM_ID
 				const PARSER = new StreamingJsonParser()
 				let rawResponseText = ""
 
-				if (this.unlistenChunk) {
-					this.unlistenChunk()
-					this.unlistenChunk = null
-				}
-				if (this.unlistenUsage) {
-					this.unlistenUsage()
-					this.unlistenUsage = null
-				}
-
-				this.unlistenChunk = await listen("nori:chat-chunk", (event) => {
-					if (this.isAborted) return
+				const unlistenChunk = SESSION.addListener(await listen("nori:chat-chunk", (event) => {
+					if (SESSION.isCancelled) return
 					const PAYLOAD = event.payload as {streamId: string; chunk: string}
 					if (PAYLOAD.streamId === STREAM_ID && PAYLOAD.chunk) {
-						this.setState("streaming", callbacks)
+						this.setState("streaming", SESSION, callbacks)
 						const ITEMS = PARSER.push(PAYLOAD.chunk)
 						for (const item of ITEMS) {
 							if (item.type === "message" && item.text) {
@@ -176,10 +173,10 @@ export class AgentEngine {
 							}
 						}
 					}
-				})
+				}))
 
-				this.unlistenUsage = await listen("nori:chat-usage", (event) => {
-					if (this.isAborted) return
+				const unlistenUsage = SESSION.addListener(await listen("nori:chat-usage", (event) => {
+					if (SESSION.isCancelled) return
 					const PAYLOAD = event.payload as {streamId: string} & LlmUsageMetrics
 					if (PAYLOAD.streamId === STREAM_ID) {
 						const USAGE: LlmUsageMetrics = {
@@ -196,9 +193,9 @@ export class AgentEngine {
 							callbacks.onUsage(USAGE)
 						}
 					}
-				})
+				}))
 
-				// 4. 调用后端大模型
+				// 4. 调用后端大模型, 携带 session ID 以便宿主登记可取消操作
 				try {
 					rawResponseText = await invoke<string>("chat_completion_stream", {
 						provider: PROVIDER || "openai",
@@ -210,20 +207,15 @@ export class AgentEngine {
 							...TRUNCATED_HISTORY,
 						],
 						streamId: STREAM_ID,
+						sessionId: SESSION.id,
 						persist: false,
 					})
 				} finally {
-					if (this.unlistenChunk) {
-						this.unlistenChunk()
-						this.unlistenChunk = null
-					}
-					if (this.unlistenUsage) {
-						this.unlistenUsage()
-						this.unlistenUsage = null
-					}
+					unlistenChunk()
+					unlistenUsage()
 				}
 
-				if (this.isAborted) break
+				if (SESSION.isCancelled) break
 
 				// 5. 解析全部返回对象
 				const ITEMS: AgentProtocolItem[] = StreamingJsonParser.parseComplete(rawResponseText)
@@ -240,7 +232,7 @@ export class AgentEngine {
 					if (item.type === "tool_call") {
 						hasToolCall = true
 						const TOOL_CALL = item as AgentToolCall
-						this.setState("tool_executing", callbacks)
+						this.setState("tool_executing", SESSION, callbacks)
 						if (callbacks?.onToolExecuting) {
 							callbacks.onToolExecuting(TOOL_CALL.name, TOOL_CALL.arguments)
 						}
@@ -266,7 +258,7 @@ export class AgentEngine {
 							})}`,
 						})
 
-						this.setState("thinking", callbacks)
+						this.setState("thinking", SESSION, callbacks)
 					}
 				}
 
@@ -276,39 +268,50 @@ export class AgentEngine {
 				}
 			}
 
-			if (this.isAborted) {
-				this.setState("idle", callbacks)
+			if (SESSION.isCancelled) {
+				this.setState("idle", SESSION, callbacks)
 				return finalMessage
 			}
 
-			this.setState("idle", callbacks)
+			this.setState("idle", SESSION, callbacks)
 			if (callbacks?.onComplete) {
 				callbacks.onComplete(finalMessage)
 			}
 
-			// 自动朗读回复 (朗读期间进入 speaking 状态)
-			if (finalMessage.text) {
+			// 自动朗读回复 (朗读期间进入 speaking 状态); 中止后不再开始新的朗读
+			if (finalMessage.text && !SESSION.isCancelled) {
 				try {
-					const AUTO_TTS = await invoke<string | null>("get_config", {key: "tts_auto_play"})
-					if (AUTO_TTS === "true" || AUTO_TTS === "1") {
-						this.setState("speaking", callbacks)
+					const AUTO_TTS = await readBooleanConfig("tts_auto_play", false)
+					if (AUTO_TTS && !SESSION.isCancelled) {
+						this.setState("speaking", SESSION, callbacks)
 						await ttsService.speak(finalMessage.text)
-						this.setState("idle", callbacks)
+						this.setState("idle", SESSION, callbacks)
 					}
 				} catch {
-					this.setState("idle", callbacks)
+					this.setState("idle", SESSION, callbacks)
 					/* 忽略自动朗读异常 */
 				}
 			}
 
 			return finalMessage
 		} catch (error) {
-			this.setState("error", callbacks)
+			// 宿主取消/本地中止造成的错误视为正常取消, 不进入用户可见错误状态
+			if (SESSION.isCancelled) {
+				this.setState("idle", SESSION, callbacks)
+				return finalMessage
+			}
+			this.setState("error", SESSION, callbacks)
 			const ERR = error instanceof Error ? error : new Error(String(error))
 			if (callbacks?.onError) {
 				callbacks.onError(ERR)
 			}
 			throw ERR
+		} finally {
+			// 会话收尾只清理自己的监听; 新会话已接管时不再改写 activeSession
+			SESSION.unlistenAll()
+			if (this.activeSession === SESSION) {
+				this.activeSession = null
+			}
 		}
 	}
 

@@ -3,7 +3,7 @@ import {petLive2DController} from "../../live2d"
 import {emotionManager} from "../../emotion"
 import {proactiveService} from "../../proactive"
 import {memoryService} from "../../memory"
-import type {EmotionType} from "../protocol"
+import type {EmotionType, ToolApprovalRequest, ToolApprovalDecision} from "../protocol"
 
 /**
  * 工具权限级别
@@ -30,6 +30,18 @@ export interface ToolParameterSchema {
 }
 
 /**
+ * 工具执行上下文 (随单次调用透传)
+ */
+export interface ToolExecutionContext {
+	/** 所属 Agent session ID, MCP 工具据此向宿主登记取消 */
+	sessionId?: string
+	/** 会话取消信号 */
+	signal?: AbortSignal
+	/** 逐调用授权回调; confirm/dangerous 工具缺少该回调时 fail-closed 拒绝执行 */
+	requestToolApproval?: (request: ToolApprovalRequest) => Promise<ToolApprovalDecision>
+}
+
+/**
  * Agent 工具接口
  */
 export interface AgentTool {
@@ -39,7 +51,7 @@ export interface AgentTool {
 	permissionLevel: ToolPermissionLevel
 	category?: ToolCategory
 	enabled?: boolean
-	execute: (args: Record<string, unknown>) => Promise<unknown> | unknown
+	execute: (args: Record<string, unknown>, context?: ToolExecutionContext) => Promise<unknown> | unknown
 }
 
 /**
@@ -108,8 +120,15 @@ export class ToolManager {
 
 	/**
 	 * 执行工具调用
+	 *
+	 * safe 工具直接运行; confirm/dangerous 工具必须经逐调用授权,
+	 * 授权回调缺失、会话取消或用户拒绝时一律 fail-closed 返回可序列化错误.
 	 */
-	public async execute(name: string, args: Record<string, unknown>): Promise<{result?: unknown; error?: string}> {
+	public async execute(
+		name: string,
+		args: Record<string, unknown>,
+		context?: ToolExecutionContext
+	): Promise<{result?: unknown; error?: string}> {
 		const TOOL = this.tools.get(name)
 		if (!TOOL) {
 			return {error: `未找到工具: ${name}`}
@@ -119,9 +138,41 @@ export class ToolManager {
 			return {error: `工具 ${name} 已被禁用`}
 		}
 
+		if (TOOL.permissionLevel !== "safe") {
+			const APPROVAL = context?.requestToolApproval
+			if (!APPROVAL) {
+				return {error: `工具 ${name} 标记为 ${TOOL.permissionLevel === "dangerous" ? "危险" : "需确认"}，但当前没有可用的用户授权通道，已拒绝执行`}
+			}
+			if (context?.signal?.aborted) {
+				return {error: `会话已取消，工具 ${name} 不再执行`}
+			}
+
+			let decision: ToolApprovalDecision
+			try {
+				decision = await APPROVAL({
+					toolName: name,
+					arguments: args,
+					description: TOOL.description,
+					permissionLevel: TOOL.permissionLevel === "dangerous" ? "dangerous" : "confirm",
+					category: TOOL.category,
+				})
+			} catch {
+				// 授权通道异常同样视为拒绝, 绝不默认放行
+				return {error: `工具 ${name} 的授权请求失败，已拒绝执行`}
+			}
+
+			if (decision !== "approved") {
+				void invoke("write_log", {level: "info", message: `用户拒绝执行工具 [${name}]`})
+				return {error: `用户拒绝执行工具: ${name}`}
+			}
+			if (context?.signal?.aborted) {
+				return {error: `等待授权期间会话已取消，工具 ${name} 不再执行`}
+			}
+		}
+
 		try {
 			const START = Date.now()
-			const RESULT = await TOOL.execute(args)
+			const RESULT = await TOOL.execute(args, context)
 			const DURATION = Date.now() - START
 			void invoke("write_log", {level: "info", message: `执行工具 [${name}] 完成，耗时: ${DURATION}ms`})
 			return {result: RESULT}

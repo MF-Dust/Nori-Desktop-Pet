@@ -68,6 +68,27 @@ export type AgentProtocolItem =
 	| AgentSystemEvent
 
 /**
+ * 工具授权请求 (逐次授权 UI 展示用)
+ */
+export interface ToolApprovalRequest {
+	toolName: string
+	arguments: Record<string, unknown>
+	description?: string
+	permissionLevel: "confirm" | "dangerous"
+	category?: string
+}
+
+/**
+ * 授权决定
+ */
+export type ToolApprovalDecision = "approved" | "denied"
+
+/**
+ * 逐调用工具授权回调
+ */
+export type ToolRequestApproval = (request: ToolApprovalRequest) => Promise<ToolApprovalDecision>
+
+/**
  * Agent 运行状态
  */
-export type AgentState = "idle" | "thinking" | "streaming" | "tool_executing" | "speaking" | "error"
+export type AgentState = "idle" | "thinking" | "streaming" | "tool_executing" | "waiting_approval" | "speaking" | "error"

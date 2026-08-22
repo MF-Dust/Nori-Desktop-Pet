@@ -235,12 +235,15 @@ export class McpService {
 
 	/**
 	 * 调用 MCP 工具
+	 *
+	 * 带 sessionId 时宿主会登记可取消操作, cancel_agent_session 可中止本次调用
 	 */
-	public async callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
+	public async callTool(serverId: string, toolName: string, args: Record<string, unknown>, sessionId?: string): Promise<McpToolResult> {
 		return invoke<McpToolResult>("mcp_call_tool", {
 			serverId,
 			toolName,
 			arguments: args,
+			sessionId,
 		})
 	}
 
@@ -273,10 +276,11 @@ export class McpService {
 							properties: {},
 							required: [],
 						},
-						permissionLevel: "safe",
+						// 未分类的动态外部工具默认需要逐次用户确认, 防止模型直接触发副作用
+						permissionLevel: "confirm",
 						category: "mcp",
-						execute: async (toolArgs) => {
-							const RES = await this.callTool(server.serverId, mcpTool.name, toolArgs)
+						execute: async (toolArgs, context) => {
+							const RES = await this.callTool(server.serverId, mcpTool.name, toolArgs, context?.sessionId)
 							if (RES.isError) {
 								throw new Error(RES.content.map(c => c.text).filter(Boolean).join("\n") || "MCP 工具执行失败")
 							}

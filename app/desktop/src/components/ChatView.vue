@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
+import {computed, h, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
+import {useDialog} from "naive-ui"
 import {invoke} from "../services/host/invoke"
-import {listen, type UnlistenFn} from "../services/host/event"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
 import {agentEngine, type LlmUsageMetrics} from "../services/agent/engine"
-import type {AgentState, AgentTextMessage} from "../services/agent/protocol"
+import type {AgentState, AgentTextMessage, ToolApprovalDecision, ToolApprovalRequest} from "../services/agent/protocol"
 import {StreamingJsonParser} from "../services/agent/jsonParser"
 import type {PersistedChatMessage} from "../services/history"
 import {skillService} from "../services/skills"
@@ -40,6 +40,7 @@ const listRef = ref<HTMLElement>()
 // Agent 状态与执行中的工具
 const agentState = ref<AgentState>("idle")
 const executingTool = ref<string>("")
+const DIALOG = useDialog()
 
 // 上下文用量与缓存命中指标
 const metrics = ref<LlmUsageMetrics | null>(null)
@@ -128,8 +129,37 @@ const tokensPerSecond = computed(() => {
 	return Math.round((metrics.value.completionTokens / (metrics.value.durationMs / 1000)) * 10) / 10
 })
 
-let unlistenChatChunk: UnlistenFn | null = null
-let currentStreamId = ""
+// 逐调用工具授权: 每个请求单独弹窗; 关闭/拒绝/卸载都解析为拒绝
+const PENDING_APPROVALS = new Set<(decision: ToolApprovalDecision) => void>()
+const showToolApprovalDialog = (request: ToolApprovalRequest): Promise<ToolApprovalDecision> =>
+	new Promise((resolve) => {
+		let settled = false
+		const SETTLE = (decision: ToolApprovalDecision) => {
+			if (settled) return
+			settled = true
+			PENDING_APPROVALS.delete(SETTLE)
+			resolve(decision)
+		}
+		PENDING_APPROVALS.add(SETTLE)
+		DIALOG.warning({
+			title: I18N.value.approvalTitle,
+			content: () => h("div", [
+				h("p", {style: "margin:0 0 0.8rem;font-size:1.3rem;color:#8bd8ff"},
+					`${request.toolName}${request.description ? ` — ${request.description}` : ""}`),
+				h("pre", {
+					style: "margin:0;max-height:16rem;overflow:auto;background:rgba(255,255,255,0.05);"
+						+ "padding:1rem;border-radius:0.6rem;font-size:1.2rem;line-height:1.5;white-space:pre-wrap",
+				}, JSON.stringify(request.arguments ?? {}, null, 2)),
+			]),
+			positiveText: I18N.value.approve,
+			negativeText: I18N.value.deny,
+			closable: true,
+			onPositiveClick: () => SETTLE("approved"),
+			onNegativeClick: () => SETTLE("denied"),
+			onClose: () => SETTLE("denied"),
+			onMaskClick: () => SETTLE("denied"),
+		})
+	})
 
 // 历史分页: 历史表随使用无限增长, 首屏只拉最新一页, 更早的按需加载
 const HISTORY_PAGE = 50
@@ -204,21 +234,11 @@ onMounted(async () => {
 	} catch (error) {
 		console.error("加载聊天历史失败:", error)
 	}
-
-	unlistenChatChunk = await listen("nori:chat-chunk", (event) => {
-		const payload = event.payload as {streamId: string; chunk: string; done?: boolean}
-		if (payload.streamId === currentStreamId && payload.chunk) {
-			const lastMsg = messages.value[messages.value.length - 1]
-			if (lastMsg && lastMsg.role === "assistant") {
-				lastMsg.content += payload.chunk
-				scheduleScrollToBottom()
-			}
-		}
-	})
 })
 
 onBeforeUnmount(() => {
-	if (unlistenChatChunk) unlistenChatChunk()
+	// 组件卸载时所有待决授权一律解析为拒绝, 不让 Promise 无限悬挂
+	for (const SETTLE of [...PENDING_APPROVALS]) SETTLE("denied")
 })
 
 // 发送消息
@@ -263,6 +283,7 @@ const send = async () => {
 						scheduleScrollToBottom()
 					}
 				},
+				requestToolApproval: showToolApprovalDialog,
 			}
 		)
 
@@ -301,6 +322,11 @@ const send = async () => {
 		agentState.value = "idle"
 		executingTool.value = ""
 	}
+}
+
+// 停止当前生成: 引擎取消本 session 并 best-effort 取消宿主流/MCP 操作
+const stopGeneration = () => {
+	agentEngine.abort()
 }
 
 // 清空当前对话历史
@@ -497,12 +523,21 @@ const toggleVoiceInput = async () => {
 					@keydown.enter="send"
 				/>
 				<button
+					v-if="sending"
+					class="send-btn stop-btn"
+					type="button"
+					:title="I18N.stopGeneration"
+					@click="stopGeneration"
+				>
+					<Icon name="close" class="btn-icon" :size="16"/>
+				</button>
+				<button
+					v-else
 					class="send-btn"
-					:disabled="sending || !input.trim()"
+					:disabled="!input.trim()"
 					@click="send"
 				>
-					<Icon v-if="sending" name="loading" class="btn-icon spin" :size="16"/>
-					<Icon v-else name="send" class="btn-icon" :size="16"/>
+					<Icon name="send" class="btn-icon" :size="16"/>
 				</button>
 			</div>
 		</template>
@@ -1016,6 +1051,11 @@ const toggleVoiceInput = async () => {
 		background: rgba(125, 227, 255, 0.06);
 		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
+}
+
+.send-btn.stop-btn {
+	background-image: linear-gradient(135deg, #ff6b6b 0%, var(--danger) 100%);
+	color: #fff;
 }
 
 .send-btn {
