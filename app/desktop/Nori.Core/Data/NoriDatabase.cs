@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 
 namespace Nori.Core.Data;
@@ -10,6 +11,9 @@ namespace Nori.Core.Data;
 /// </summary>
 public sealed class NoriDatabase : IDisposable
 {
+	/// <summary>当前 memories 数据库结构版本</summary>
+	public const long DatabaseSchemaVersion = 2;
+
 	/// <summary>建表语句, 与 Rust 版 SCHEMA 完全一致</summary>
 	private const string Schema = """
 		CREATE TABLE IF NOT EXISTS config (
@@ -55,23 +59,21 @@ public sealed class NoriDatabase : IDisposable
 		}.ToString());
 		connection.Open();
 		NoriDatabase database = new(connection);
-		// WAL: 写不阻塞读, 拖拽落盘这类高频小写不会让界面卡在 fsync 上
-		database.Execute("PRAGMA journal_mode=WAL;");
-		// 多线程争用单连接时等锁而不是立刻抛 "database is locked"
-		database.Execute("PRAGMA busy_timeout=5000;");
-		database.Execute(Schema);
-
-		// 检查并自动升级旧版数据库缺失的 embedding 列
 		try
 		{
-			database.Execute("ALTER TABLE memories ADD COLUMN embedding TEXT;");
+			// WAL: 写不阻塞读, 拖拽落盘这类高频小写不会让界面卡在 fsync 上
+			database.Execute("PRAGMA journal_mode=WAL;");
+			// 多线程争用单连接时等锁而不是立刻抛 "database is locked"
+			database.Execute("PRAGMA busy_timeout=5000;");
+			database.Execute(Schema);
+			database.MigrateSchema();
+			return database;
 		}
 		catch
 		{
-			/* 若已存在该列则忽略异常 */
+			database.Dispose();
+			throw;
 		}
-
-		return database;
 	}
 
 	/// <summary>
@@ -99,6 +101,111 @@ public sealed class NoriDatabase : IDisposable
 		command.CommandText = sql;
 		command.ExecuteNonQuery();
 	});
+
+	/// <summary>
+	/// 按 user_version 逐级迁移 memories 数据库结构.
+	/// 每一级都在同一个事务中提交; 任何磁盘、锁、语法或损坏错误都会向上传播.
+	/// </summary>
+	private void MigrateSchema() => Locked(connection =>
+	{
+		long current = ReadUserVersion(connection);
+		if (current > DatabaseSchemaVersion)
+		{
+			throw new InvalidOperationException($"记忆数据库版本 {current} 高于当前应用支持版本 {DatabaseSchemaVersion}, 请升级应用");
+		}
+		if (current == DatabaseSchemaVersion) return;
+
+		using SqliteTransaction transaction = connection.BeginTransaction();
+		try
+		{
+			long version = current;
+			while (version < DatabaseSchemaVersion)
+			{
+				switch (version)
+				{
+					case 0:
+						EnsureEmbeddingColumn(connection, transaction);
+						break;
+					case 1:
+						ClearLegacyEmbeddings(connection, transaction);
+						break;
+					default:
+						throw new InvalidOperationException($"不支持的记忆数据库版本: {version}");
+				}
+
+				version++;
+				SetUserVersion(connection, transaction, version);
+			}
+			transaction.Commit();
+		}
+		catch
+		{
+			try
+			{
+				transaction.Rollback();
+			}
+			catch
+			{
+				// 保留原始迁移异常, 回滚失败不会掩盖真正原因.
+			}
+			throw;
+		}
+	});
+
+	/// <summary>读取 SQLite 的独立结构版本</summary>
+	private static long ReadUserVersion(SqliteConnection connection)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "PRAGMA user_version;";
+		return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+	}
+
+	/// <summary>写入 SQLite 的独立结构版本</summary>
+	private static void SetUserVersion(SqliteConnection connection, SqliteTransaction transaction, long version)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = $"PRAGMA user_version = {version};";
+		command.ExecuteNonQuery();
+	}
+
+	/// <summary>
+	/// 仅在元数据确认缺列时补 embedding.
+	/// 不通过捕获 ALTER 异常判断“列已存在”, 避免吞掉损坏/权限/磁盘错误.
+	/// </summary>
+	private static void EnsureEmbeddingColumn(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		bool hasEmbedding = false;
+		using (SqliteCommand command = connection.CreateCommand())
+		{
+			command.Transaction = transaction;
+			command.CommandText = "PRAGMA table_info(memories);";
+			using SqliteDataReader reader = command.ExecuteReader();
+			while (reader.Read())
+			{
+				if (reader.GetString(1).Equals("embedding", StringComparison.OrdinalIgnoreCase))
+				{
+					hasEmbedding = true;
+					break;
+				}
+			}
+		}
+
+		if (hasEmbedding) return;
+		using SqliteCommand alter = connection.CreateCommand();
+		alter.Transaction = transaction;
+		alter.CommandText = "ALTER TABLE memories ADD COLUMN embedding TEXT;";
+		alter.ExecuteNonQuery();
+	}
+
+	/// <summary>一次性失效历史向量, 迁移本身不访问外部 embedding 服务.</summary>
+	private static void ClearLegacyEmbeddings(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = "UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL;";
+		command.ExecuteNonQuery();
+	}
 
 	public void Dispose()
 	{

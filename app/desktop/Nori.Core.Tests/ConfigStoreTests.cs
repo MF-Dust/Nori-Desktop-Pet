@@ -106,6 +106,72 @@ public class ConfigStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void v1迁移会回填并删除旧语言键()
+	{
+		string path = Path.Combine(Path.GetTempPath(), $"nori-language-migration-{Guid.NewGuid():N}.db");
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			database.Locked(connection =>
+			{
+				using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+				command.CommandText = "INSERT INTO config (key, value) VALUES ('config_schema_version', '1'), ('app_language', 'en-US')";
+				command.ExecuteNonQuery();
+			});
+
+			ConfigStore config = new(database);
+			config.EnsureSchemaVersion();
+
+			Assert.Equal("en-US", config.GetStringOr(ConfigStore.KeyLanguage, ""));
+			Assert.False(config.Exists(ConfigStore.LegacyKeyLanguage));
+			Assert.Equal(ConfigStore.ConfigSchemaVersion, Assert.IsType<ConfigValue.Integer>(config.Get(ConfigStore.KeyConfigSchemaVersion)).Value);
+		}
+		finally
+		{
+			TryDeleteDatabase(path);
+		}
+	}
+
+	[Fact]
+	public void v1迁移保留已存在的规范语言键()
+	{
+		string path = Path.Combine(Path.GetTempPath(), $"nori-language-precedence-{Guid.NewGuid():N}.db");
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			database.Locked(connection =>
+			{
+				using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+				command.CommandText = "INSERT INTO config (key, value) VALUES ('config_schema_version', '1'), ('language', 'zh-CN'), ('app_language', 'en-US')";
+				command.ExecuteNonQuery();
+			});
+
+			ConfigStore config = new(database);
+			config.EnsureSchemaVersion();
+
+			Assert.Equal("zh-CN", config.GetStringOr(ConfigStore.KeyLanguage, ""));
+			Assert.False(config.Exists(ConfigStore.LegacyKeyLanguage));
+		}
+		finally
+		{
+			TryDeleteDatabase(path);
+		}
+	}
+
+	private static void TryDeleteDatabase(string path)
+	{
+		try
+		{
+			File.Delete(path);
+			File.Delete($"{path}-wal");
+			File.Delete($"{path}-shm");
+		}
+		catch (IOException)
+		{
+		}
+	}
+
+	[Fact]
 	public void 敏感APIKey自动加解密透明存取()
 	{
 		const string plainKey = "sk-test-secret-key-123456789";

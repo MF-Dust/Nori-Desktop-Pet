@@ -31,6 +31,9 @@ public sealed class ConfigStore(NoriDatabase database)
 	/// <summary>配置键: 界面语言</summary>
 	public const string KeyLanguage = "language";
 
+	/// <summary>配置键: 旧版界面语言 (仅用于 v1 → v2 迁移)</summary>
+	public const string LegacyKeyLanguage = "app_language";
+
 	/// <summary>配置键: 桌宠模型</summary>
 	public const string KeySelectedModel = "selected_model";
 
@@ -47,7 +50,10 @@ public sealed class ConfigStore(NoriDatabase database)
 	public const string KeyAudioVolume = "audio_volume";
 
 	/// <summary>当前配置结构版本</summary>
-	public const long ConfigSchemaVersion = 1;
+	public const long ConfigSchemaVersion = 2;
+
+	/// <summary>没有版本记录的旧数据库所使用的最后旧版本</summary>
+	private const long LegacyConfigSchemaVersion = 1;
 
 	/// <summary>默认桌宠模型</summary>
 	public const string DefaultModel = "arg-nori";
@@ -183,28 +189,33 @@ public sealed class ConfigStore(NoriDatabase database)
 	public string GetStringOr(string key, string fallback) => ConfigValue.AsStringOr(Get(key), fallback);
 
 	/// <summary>
-	/// 初始化默认配置: 只补缺失项, 不覆盖用户已有配置
+	/// 初始化默认配置: 只补缺失项, 不覆盖用户已有配置.
+	/// 先完成版本迁移, 再插入 language 默认值, 这样旧 app_language 不会被系统语言默认值抢先覆盖.
 	/// </summary>
-	public void InitDefaults(string appVersion) => _database.Locked(connection =>
+	public void InitDefaults(string appVersion)
 	{
-		(string Key, ConfigValue Value)[] defaults =
-		[
-			(KeyConfigSchemaVersion, new ConfigValue.Integer(ConfigSchemaVersion)),
-			(KeyAppVersion, new ConfigValue.Text(appVersion)),
-			(KeyInstalledAt, new ConfigValue.Text(Now())),
-			(KeyLanguage, new ConfigValue.Text(SystemLanguage())),
-			(KeySelectedModel, new ConfigValue.Text(DefaultModel)),
-			(KeyFirstRunCompleted, new ConfigValue.Boolean(false)),
-		];
-		foreach ((string key, ConfigValue value) in defaults)
+		EnsureSchemaVersion();
+		_database.Locked(connection =>
 		{
-			using SqliteCommand command = connection.CreateCommand();
-			command.CommandText = "INSERT OR IGNORE INTO config (key, value) VALUES ($key, $value)";
-			command.Parameters.AddWithValue("$key", key);
-			command.Parameters.AddWithValue("$value", value.ToStorage());
-			command.ExecuteNonQuery();
-		}
-	});
+			(string Key, ConfigValue Value)[] defaults =
+			[
+				(KeyConfigSchemaVersion, new ConfigValue.Integer(ConfigSchemaVersion)),
+				(KeyAppVersion, new ConfigValue.Text(appVersion)),
+				(KeyInstalledAt, new ConfigValue.Text(Now())),
+				(KeyLanguage, new ConfigValue.Text(SystemLanguage())),
+				(KeySelectedModel, new ConfigValue.Text(DefaultModel)),
+				(KeyFirstRunCompleted, new ConfigValue.Boolean(false)),
+			];
+			foreach ((string key, ConfigValue value) in defaults)
+			{
+				using SqliteCommand command = connection.CreateCommand();
+				command.CommandText = "INSERT OR IGNORE INTO config (key, value) VALUES ($key, $value)";
+				command.Parameters.AddWithValue("$key", key);
+				command.Parameters.AddWithValue("$value", value.ToStorage());
+				command.ExecuteNonQuery();
+			}
+		});
+	}
 
 	/// <summary>
 	/// 检查配置结构版本
@@ -222,32 +233,89 @@ public sealed class ConfigStore(NoriDatabase database)
 	}
 
 	/// <summary>
-	/// 数据库结构迁移: 未来的 v1 → v2 等在这里逐级处理
+	/// 数据库结构迁移: v1 → v2 规范化 language 并清理旧键.
+	/// 迁移与版本号写入在同一个 SQLite 事务中完成.
 	/// </summary>
-	private void MigrateSchema(long from, long to)
+	private void MigrateSchema(long from, long to) => _database.Locked(connection =>
 	{
-		long version = from;
-		while (version < to)
+		using SqliteTransaction transaction = connection.BeginTransaction();
+		try
 		{
-			switch (version)
+			long version = from;
+			while (version < to)
 			{
-				case 1:
-					// 当前没有 v2, 暂时不执行实际迁移
-					break;
-				default:
-					throw new InvalidOperationException($"不支持的配置数据库版本: {version}");
+				switch (version)
+				{
+					case LegacyConfigSchemaVersion:
+						MigrateLanguage(connection, transaction);
+						break;
+					default:
+						throw new InvalidOperationException($"不支持的配置数据库版本: {version}");
+				}
+				version++;
+				SetSchemaVersion(connection, transaction, version);
 			}
-			version++;
+			transaction.Commit();
 		}
-		Set(KeyConfigSchemaVersion, new ConfigValue.Integer(to));
+		catch
+		{
+			try
+			{
+				transaction.Rollback();
+			}
+			catch
+			{
+				// 保留原始迁移异常.
+			}
+			throw;
+		}
+	});
+
+	/// <summary>规范化语言键: language 已存在时优先保留, 否则回填 app_language.</summary>
+	private static void MigrateLanguage(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		using SqliteCommand copy = connection.CreateCommand();
+		copy.Transaction = transaction;
+		copy.CommandText = """
+			INSERT INTO config (key, value)
+			SELECT $language, legacy.value
+			FROM config AS legacy
+			WHERE legacy.key = $legacy
+				AND NOT EXISTS (SELECT 1 FROM config WHERE key = $language);
+			""";
+		copy.Parameters.AddWithValue("$language", KeyLanguage);
+		copy.Parameters.AddWithValue("$legacy", LegacyKeyLanguage);
+		copy.ExecuteNonQuery();
+
+		using SqliteCommand delete = connection.CreateCommand();
+		delete.Transaction = transaction;
+		delete.CommandText = "DELETE FROM config WHERE key = $legacy";
+		delete.Parameters.AddWithValue("$legacy", LegacyKeyLanguage);
+		delete.ExecuteNonQuery();
+	}
+
+	/// <summary>在迁移事务中写入配置版本.</summary>
+	private static void SetSchemaVersion(SqliteConnection connection, SqliteTransaction transaction, long version)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = """
+			INSERT INTO config (key, value) VALUES ($key, $value)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+			""";
+		command.Parameters.AddWithValue("$key", KeyConfigSchemaVersion);
+		command.Parameters.AddWithValue("$value", version.ToString(CultureInfo.InvariantCulture));
+		command.ExecuteNonQuery();
 	}
 
 	/// <summary>
-	/// 读取配置结构版本, 缺失或类型异常时按当前版本处理
+	/// 读取配置结构版本. 没有版本记录的数据库按 v1 处理, 以便执行遗留键迁移.
 	/// </summary>
 	private long ReadSchemaVersion() => Get(KeyConfigSchemaVersion) switch
 	{
+		null => LegacyConfigSchemaVersion,
 		ConfigValue.Integer integer => integer.Value,
+		ConfigValue.Boolean boolean => boolean.Value ? 1 : 0,
 		ConfigValue.Text text when long.TryParse(text.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed) => parsed,
 		_ => ConfigSchemaVersion,
 	};
