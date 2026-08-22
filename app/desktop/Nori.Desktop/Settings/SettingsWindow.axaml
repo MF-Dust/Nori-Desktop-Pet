@@ -1,0 +1,111 @@
+<Window x:Class="Nori.Desktop.Settings.SettingsWindow"
+        xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Nori.Desktop.Settings"
+        Title="Nori 设置"
+        Width="1100"
+        Height="760"
+        MinWidth="820"
+        MinHeight="560">
+	<Window.Styles>
+		<Style Selector="TextBlock.page-title">
+			<Setter Property="FontSize" Value="26" />
+			<Setter Property="FontWeight" Value="SemiBold" />
+			<Setter Property="Foreground" Value="#E8F6FF" />
+		</Style>
+		<Style Selector="TextBlock.page-subtitle">
+			<Setter Property="FontSize" Value="13" />
+			<Setter Property="Foreground" Value="#8CA6B8" />
+		</Style>
+		<Style Selector="ListBoxItem">
+			<Setter Property="Padding" Value="16,11" />
+			<Setter Property="Margin" Value="8,2" />
+			<Setter Property="Foreground" Value="#9BB1C1" />
+			<Setter Property="HorizontalContentAlignment" Value="Stretch" />
+		</Style>
+		<Style Selector="ListBoxItem:selected">
+			<Setter Property="Background" Value="#173A4C" />
+			<Setter Property="Foreground" Value="#7DE3FF" />
+		</Style>
+		<Style Selector="Button">
+			<Setter Property="Padding" Value="12,7" />
+			<Setter Property="Margin" Value="0,2" />
+			<Setter Property="Background" Value="#173A4C" />
+			<Setter Property="Foreground" Value="#D8F4FF" />
+			<Setter Property="BorderBrush" Value="#31566A" />
+			<Setter Property="BorderThickness" Value="1" />
+		</Style>
+		<Style Selector="Button:pointerover">
+			<Setter Property="Background" Value="#20556A" />
+			<Setter Property="BorderBrush" Value="#7DE3FF" />
+		</Style>
+		<Style Selector="Button.accent">
+			<Setter Property="Background" Value="#63D8C1" />
+			<Setter Property="Foreground" Value="#062029" />
+			<Setter Property="BorderBrush" Value="#7DE3FF" />
+		</Style>
+		<Style Selector="Button.danger">
+			<Setter Property="Background" Value="#522B38" />
+			<Setter Property="Foreground" Value="#FFB6BD" />
+			<Setter Property="BorderBrush" Value="#A85A68" />
+		</Style>
+		<Style Selector="TextBox">
+			<Setter Property="MinHeight" Value="34" />
+			<Setter Property="Padding" Value="10,7" />
+			<Setter Property="Background" Value="#102736" />
+			<Setter Property="Foreground" Value="#E8F6FF" />
+			<Setter Property="BorderBrush" Value="#31566A" />
+			<Setter Property="BorderThickness" Value="1" />
+		</Style>
+		<Style Selector="ComboBox">
+			<Setter Property="MinHeight" Value="34" />
+			<Setter Property="Padding" Value="8,4" />
+			<Setter Property="Background" Value="#102736" />
+			<Setter Property="Foreground" Value="#E8F6FF" />
+			<Setter Property="BorderBrush" Value="#31566A" />
+		</Style>
+		<Style Selector="ToggleSwitch">
+			<Setter Property="Foreground" Value="#D8F4FF" />
+		</Style>
+		<Style Selector="TabItem">
+			<Setter Property="Foreground" Value="#A9C0CE" />
+		</Style>
+	</Window.Styles>
+	<Grid Background="#081724" RowDefinitions="Auto,*">
+		<Border Grid.Row="0" Padding="24,18,24,16" Background="#0B2030" BorderBrush="#19384A" BorderThickness="0,0,0,1">
+			<Grid ColumnDefinitions="*,Auto">
+				<StackPanel Spacing="3">
+					<TextBlock x:Name="WindowTitle" Text="Nori 设置" FontSize="20" FontWeight="SemiBold" Foreground="#E8F6FF" />
+					<TextBlock x:Name="WindowSubtitle" Text="管理 Nori 的 AI、语音、记忆与工具能力" Foreground="#8CA6B8" FontSize="12" />
+				</StackPanel>
+				<Button x:Name="CloseButton" Grid.Column="1" Content="关闭" Click="CloseButton_OnClick" VerticalAlignment="Center" />
+			</Grid>
+		</Border>
+		<Grid Grid.Row="1" ColumnDefinitions="228,*">
+			<Border Grid.Column="0" Background="#0A1D2B" BorderBrush="#19384A" BorderThickness="0,0,1,0" Padding="0,14">
+				<ListBox x:Name="NavigationList" Background="Transparent" BorderThickness="0" SelectionChanged="NavigationList_OnSelectionChanged">
+					<ListBox.ItemTemplate>
+						<DataTemplate x:DataType="local:SettingsNavigationItem">
+							<StackPanel Orientation="Horizontal" Spacing="10">
+								<TextBlock Text="{Binding Glyph}" FontSize="16" Foreground="{Binding AccentBrush}" Width="22" />
+								<TextBlock Text="{Binding Title}" VerticalAlignment="Center" FontSize="13" />
+							</StackPanel>
+						</DataTemplate>
+					</ListBox.ItemTemplate>
+				</ListBox>
+			</Border>
+			<Border Grid.Column="1" Padding="30,26,30,22" Background="#081724">
+				<Grid RowDefinitions="Auto,*">
+					<StackPanel x:Name="PageHeader" Spacing="4" Margin="0,0,0,22">
+						<TextBlock x:Name="PageTitle" Classes="page-title" />
+						<TextBlock x:Name="PageSubtitle" Classes="page-subtitle" TextWrapping="Wrap" />
+						<TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="#FF9BA7" FontSize="12" IsVisible="False" />
+					</StackPanel>
+					<ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+						<ContentControl x:Name="PageContent" />
+					</ScrollViewer>
+				</Grid>
+			</Border>
+		</Grid>
+	</Grid>
+</Window>

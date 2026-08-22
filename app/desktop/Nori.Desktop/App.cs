@@ -156,14 +156,14 @@ public sealed class App : Application
 		await Dispatcher.UIThread.InvokeAsync(() =>
 		{
 			services.Windows = new WindowManager(assets, desktop);
+
+			// 先装配运行时，再创建原生设置窗口；设置窗口只在显示时读取 runtime，
+			// PetWindow 仍会在 CreateAll 中回填 PetRuntime。
+			Runtime.AppRuntime runtime = new(services);
+			services.Runtime = runtime;
 			services.Commands = new BridgeCommands(services);
 			NoriBridge bridge = new(services);
 			services.Windows.CreateAll(bridge, services);
-
-			// 业务运行时 (Agent/技能/情绪/提醒/语音): 桌宠窗口就绪后启动,
-			// 桥接命令通过 services.Runtime 访问
-			Runtime.AppRuntime runtime = new(services);
-			services.Runtime = runtime;
 			runtime.Start();
 
 			TrayMenu.Install(this, services);

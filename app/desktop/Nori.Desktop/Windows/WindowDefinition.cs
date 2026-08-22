@@ -39,9 +39,9 @@ public sealed record WindowDefinition
 	public bool ShowInTaskbar { get; init; } = true;
 
 	/// <summary>
-	/// 四个窗口的完整定义
+	/// 窗口的完整定义。
 	///
-	/// 全部无边框 + 透明 + 启动隐藏, 由窗口调度决定谁先显示
+	/// WebView 与桌宠窗口保持原有透明无边框行为；原生设置窗口使用标准标题栏。
 	/// </summary>
 	public static IReadOnlyList<WindowDefinition> All { get; } =
 	[
@@ -73,6 +73,16 @@ public sealed record WindowDefinition
 		},
 		new()
 		{
+			Label = WindowLabels.Settings,
+			Title = "Nori 设置",
+			Width = 1100,
+			Height = 760,
+			MinWidth = 820,
+			MinHeight = 560,
+			CanResize = true,
+		},
+		new()
+		{
 			Label = WindowLabels.Pet,
 			Title = "Nori",
 			Width = 400,
@@ -97,6 +107,9 @@ public static class WindowLabels
 
 	/// <summary>主界面</summary>
 	public const string Main = "main";
+
+	/// <summary>原生设置窗口 (不经过 WebView)</summary>
+	public const string Settings = "settings";
 
 	/// <summary>桌宠</summary>
 	public const string Pet = "pet";

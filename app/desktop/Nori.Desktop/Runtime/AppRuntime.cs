@@ -55,6 +55,9 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	public VoiceService Voice { get; }
 
+	/// <summary>原生设置窗口使用的业务操作边界</summary>
+	public SettingsOperations Settings { get; }
+
 	public AgentEngine Engine { get; }
 
 	/// <summary>当前快照版本号 (每次状态变更递增)</summary>
@@ -81,6 +84,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		Voice = new VoiceService(services.Http, config, playback, () =>
 			OperatingSystem.IsWindows() && !VoiceRetired() ? new NativeMicrophoneRecorder() : null);
 
+		Settings = new SettingsOperations(this);
 		Tools = BuildToolRegistry(playback is not null);
 		Engine = new AgentEngine(
 			services.Http,
@@ -507,7 +511,10 @@ public sealed class AppRuntime : IAsyncDisposable
 	}
 
 	/// <summary>构建脱敏 UI 状态快照</summary>
-	public object BuildSnapshot(IBridgeSource source)
+	public UiSnapshot BuildSnapshot(IBridgeSource source) => BuildSnapshot();
+
+	/// <summary>构建脱敏 UI 状态快照 (供原生界面直接使用)</summary>
+	public UiSnapshot BuildSnapshot()
 	{
 		ConfigStore config = Services.Config;
 		string provider = config.GetStringOr("llm_provider", "openai");
@@ -515,105 +522,101 @@ public sealed class AppRuntime : IAsyncDisposable
 		string model = config.GetStringOr("llm_model", "");
 		string persona = config.GetStringOr("nori_user_persona", "");
 		bool hasApiKey = config.GetStringOr("llm_api_key", "").Length > 0;
-
-		var models = ModelCatalogIds().Select(id => new
-		{
-			id,
-			installed = IsModelInstalled(id),
-		});
-
 		string selectedModel = config.GetStringOr("selected_model", ConfigStore.DefaultModel);
 
-		return new
+		return new UiSnapshot
 		{
-			version = SnapshotVersion,
-			app = new {appVersion = config.GetStringOr("app_version", "0.1.0"), platform = "windows"},
-			general = new
+			Version = SnapshotVersion,
+			App = new AppSnapshot
 			{
-				language = config.GetStringOr("language", "zh-CN"),
-				petAutoSummon = ParseBoolFlag(config.GetStringOr("pet_auto_summon", "true")) ?? true,
+				AppVersion = config.GetStringOr("app_version", "0.1.0"),
+				Platform = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux",
 			},
-			ai = new
+			General = new GeneralSnapshot
 			{
-				configured = baseUrl.Length > 0 && hasApiKey && model.Length > 0,
-				provider,
-				baseUrl,
-				model,
-				persona,
-				hasApiKey,
+				Language = config.GetStringOr("language", "zh-CN"),
+				PetAutoSummon = ParseBoolFlag(config.GetStringOr("pet_auto_summon", "true")) ?? true,
 			},
-			models = new
+			Ai = new AiSnapshot
 			{
-				selected = selectedModel,
-				items = models,
-				scale = ReadFloat(config, $"l2d_scale_{selectedModel}") ?? ReadFloat(config, "l2d_scale") ?? 1.0,
-				expressions = ModelExpressions(selectedModel),
+				Configured = baseUrl.Length > 0 && hasApiKey && model.Length > 0,
+				Provider = provider,
+				BaseUrl = baseUrl,
+				Model = model,
+				Persona = persona,
+				HasApiKey = hasApiKey,
 			},
-			behaviors = new
+			Models = new ModelsSnapshot
 			{
-				clickInteraction = ParseBoolFlag(config.GetStringOr("l2d_click_interaction", "true")) ?? true,
-				autoBlink = ParseBoolFlag(config.GetStringOr("l2d_auto_blink", "true")) ?? true,
-				eyeTracking = ParseBoolFlag(config.GetStringOr("l2d_eye_tracking", "true")) ?? true,
-				idleEyeAnimation = ParseBoolFlag(config.GetStringOr("l2d_idle_eye_animation", "true")) ?? true,
-				idleAnimation = ParseBoolFlag(config.GetStringOr("l2d_idle_animation", "true")) ?? true,
-				expressionEnabled = ParseBoolFlag(config.GetStringOr("l2d_expression_enabled", "true")) ?? true,
-				lipSync = ParseBoolFlag(config.GetStringOr("l2d_lip_sync", "true")) ?? true,
-				shadow = ParseBoolFlag(config.GetStringOr("l2d_shadow", "true")) ?? true,
-				beatSync = ParseBoolFlag(config.GetStringOr("l2d_beat_sync", "")) ?? false,
-				renderScale = ReadFloat(config, "l2d_render_scale") ?? 2.0,
-				maxFps = (int)(ReadFloat(config, "l2d_max_fps") ?? 0),
+				Selected = selectedModel,
+				Items = ModelCatalogIds().Select(id => new ModelSnapshot {Id = id, Installed = IsModelInstalled(id)}).ToArray(),
+				Scale = ReadFloat(config, $"l2d_scale_{selectedModel}") ?? ReadFloat(config, "l2d_scale") ?? 1.0,
+				Expressions = ModelExpressions(selectedModel),
 			},
-			voice = new
+			Behaviors = new BehaviorsSnapshot
 			{
-				volume = Voice.GetVolume(),
-				ttsProvider = Voice.ResolveProviderName(),
-				ttsBaseUrl = config.GetStringOr("tts_base_url", ""),
-				hasTtsApiKey = config.GetStringOr("tts_api_key", "").Length > 0,
-				ttsVoice = config.GetStringOr("tts_voice", ""),
-				ttsSpeed = ReadFloat(config, "tts_speed") ?? 1.0,
-				ttsAutoPlay = ParseBoolFlag(config.GetStringOr("tts_auto_play", "true")) ?? true,
-				gptsovitsBaseUrl = config.GetStringOr("gptsovits_base_url", "http://127.0.0.1:9880"),
-				gptsovitsRefAudio = config.GetStringOr("gptsovits_ref_audio", ""),
-				gptsovitsPromptText = config.GetStringOr("gptsovits_prompt_text", ""),
-				gptsovitsPromptLang = config.GetStringOr("gptsovits_prompt_lang", "zh"),
-				sttProvider = config.GetStringOr("stt_provider", "whisper"),
-				sttBaseUrl = config.GetStringOr("stt_base_url", ""),
-				hasSttApiKey = config.GetStringOr("stt_api_key", "").Length > 0,
-				noticePending = config.GetStringOr("voice_notice_pending", "") == "1",
-				speaking = Voice.IsSpeaking,
+				ClickInteraction = ParseBoolFlag(config.GetStringOr("l2d_click_interaction", "true")) ?? true,
+				AutoBlink = ParseBoolFlag(config.GetStringOr("l2d_auto_blink", "true")) ?? true,
+				EyeTracking = ParseBoolFlag(config.GetStringOr("l2d_eye_tracking", "true")) ?? true,
+				IdleEyeAnimation = ParseBoolFlag(config.GetStringOr("l2d_idle_eye_animation", "true")) ?? true,
+				IdleAnimation = ParseBoolFlag(config.GetStringOr("l2d_idle_animation", "true")) ?? true,
+				ExpressionEnabled = ParseBoolFlag(config.GetStringOr("l2d_expression_enabled", "true")) ?? true,
+				LipSync = ParseBoolFlag(config.GetStringOr("l2d_lip_sync", "true")) ?? true,
+				Shadow = ParseBoolFlag(config.GetStringOr("l2d_shadow", "true")) ?? true,
+				BeatSync = ParseBoolFlag(config.GetStringOr("l2d_beat_sync", "")) ?? false,
+				RenderScale = ReadFloat(config, "l2d_render_scale") ?? 2.0,
+				MaxFps = (int)(ReadFloat(config, "l2d_max_fps") ?? 0),
 			},
-			embedding = new
+			Voice = new VoiceSnapshot
 			{
-				model = config.GetStringOr("embedding_model", "BAAI/bge-m3"),
-				baseUrl = config.GetStringOr("embedding_api_base", ""),
-				dimensions = config.GetStringOr("embedding_dimensions", ""),
-				hasApiKey = config.GetStringOr("embedding_api_key", "").Length > 0,
+				Volume = Voice.GetVolume(),
+				TtsProvider = Voice.ResolveProviderName(),
+				TtsBaseUrl = config.GetStringOr("tts_base_url", ""),
+				HasTtsApiKey = config.GetStringOr("tts_api_key", "").Length > 0,
+				TtsVoice = config.GetStringOr("tts_voice", ""),
+				TtsSpeed = ReadFloat(config, "tts_speed") ?? 1.0,
+				TtsAutoPlay = ParseBoolFlag(config.GetStringOr("tts_auto_play", "true")) ?? true,
+				GptsovitsBaseUrl = config.GetStringOr("gptsovits_base_url", "http://127.0.0.1:9880"),
+				GptsovitsRefAudio = config.GetStringOr("gptsovits_ref_audio", ""),
+				GptsovitsPromptText = config.GetStringOr("gptsovits_prompt_text", ""),
+				GptsovitsPromptLang = config.GetStringOr("gptsovits_prompt_lang", "zh"),
+				SttProvider = config.GetStringOr("stt_provider", "whisper"),
+				SttBaseUrl = config.GetStringOr("stt_base_url", ""),
+				HasSttApiKey = config.GetStringOr("stt_api_key", "").Length > 0,
+				NoticePending = config.GetStringOr("voice_notice_pending", "") == "1",
+				Speaking = Voice.IsSpeaking,
 			},
-			proactive = new
+			Embedding = new EmbeddingSnapshot
 			{
-				idleEnabled = ParseBoolFlag(config.GetStringOr("proactive_idle_enabled", "true")) ?? true,
-				idleMinutes = (int)(ReadFloat(config, "proactive_idle_minutes") ?? ProactiveScheduler.DefaultIdleMinutes),
-				dailyGreeting = ParseBoolFlag(config.GetStringOr("proactive_daily_greeting", "true")) ?? true,
-				reminders = Proactive.ListReminders().Select(item => new
+				Model = config.GetStringOr("embedding_model", "BAAI/bge-m3"),
+				BaseUrl = config.GetStringOr("embedding_api_base", ""),
+				Dimensions = config.GetStringOr("embedding_dimensions", ""),
+				HasApiKey = config.GetStringOr("embedding_api_key", "").Length > 0,
+			},
+			Proactive = new ProactiveSnapshot
+			{
+				IdleEnabled = ParseBoolFlag(config.GetStringOr("proactive_idle_enabled", "true")) ?? true,
+				IdleMinutes = (int)(ReadFloat(config, "proactive_idle_minutes") ?? ProactiveScheduler.DefaultIdleMinutes),
+				DailyGreeting = ParseBoolFlag(config.GetStringOr("proactive_daily_greeting", "true")) ?? true,
+				Reminders = Proactive.ListReminders().Select(item => new ReminderSnapshot
 				{
-					id = item.Id, content = item.Content, triggerTime = item.TriggerAt,
-				}),
+					Id = item.Id, Content = item.Content, TriggerTime = item.TriggerAt,
+				}).ToArray(),
 			},
-			skills = Skills.GetInstalled().Select(skill => new
+			Skills = Skills.GetInstalled().Select(skill => new SkillSnapshot
 			{
-				id = skill.Id, name = skill.Name, description = skill.Description, author = skill.Author,
-				version = skill.Version, icon = skill.Icon, tags = skill.Tags, category = skill.Category,
-				instructions = "", // 详情按需 skills_export 获取, 避免快照膨胀
-				enabled = skill.Enabled, source = skill.Source,
-			}),
-			enabledSkillsCount = Skills.GetEnabled().Count,
-			tools = Tools.List().Select(tool => new
+				Id = skill.Id, Name = skill.Name, Description = skill.Description, Author = skill.Author,
+				Version = skill.Version, Icon = skill.Icon, Tags = skill.Tags, Category = skill.Category,
+				Instructions = "", Enabled = skill.Enabled, Source = skill.Source,
+			}).ToArray(),
+			EnabledSkillsCount = Skills.GetEnabled().Count,
+			Tools = Tools.List().Select(tool => new ToolSnapshot
 			{
-				name = tool.Name, description = tool.Description,
-				permissionLevel = tool.PermissionLevel, category = tool.Category, enabled = tool.Enabled,
-			}),
-			mcpServersCount = McpServerCount(),
-			emotion = new {type = Emotion.CurrentType},
+				Name = tool.Name, Description = tool.Description, PermissionLevel = tool.PermissionLevel,
+				Category = tool.Category, Enabled = tool.Enabled,
+			}).ToArray(),
+			McpServersCount = McpServerCount(),
+			Emotion = new EmotionSnapshot {Type = Emotion.CurrentType},
 		};
 	}
 

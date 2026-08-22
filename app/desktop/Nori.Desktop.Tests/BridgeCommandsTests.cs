@@ -33,6 +33,7 @@ public class BridgeCommandsTests : IDisposable
 	private sealed class FakeWindowManager : IWindowManager
 	{
 		public List<(string Name, object? Payload)> Broadcasts { get; } = [];
+		public List<string> Shown { get; } = [];
 
 		public Window? Get(string? label) => null;
 		public NoriWindow? GetNoriWindow(string? label) => null;
@@ -41,9 +42,7 @@ public class BridgeCommandsTests : IDisposable
 		public void CreateAll(NoriBridge bridge, AppServices services)
 		{
 		}
-		public void Show(string label)
-		{
-		}
+		public void Show(string label) => Shown.Add(label);
 
 		public void Hide(string label)
 		{
@@ -130,8 +129,37 @@ public class BridgeCommandsTests : IDisposable
 		object? snapshot = await commands.InvokeAsync(new FakeBridgeSource("init"), "ui_get_snapshot", Args(new { }));
 		string json = JsonSerializer.Serialize(snapshot);
 
+		Assert.IsType<UiSnapshot>(snapshot);
 		Assert.Contains("\"hasApiKey\":true", json, StringComparison.Ordinal);
 		Assert.DoesNotContain("sk-super-secret", json, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void 原生设置操作保持敏感配置脱敏并支持清除()
+	{
+		_runtime.Settings.UpdateAi(new AiSettingsPatch
+		{
+			BaseUrl = "https://api.example.com/v1",
+			ApiKey = "sk-native",
+			Model = "gpt-native",
+		});
+		UiSnapshot snapshot = _runtime.Settings.Snapshot();
+		Assert.True(snapshot.Ai.HasApiKey);
+		Assert.DoesNotContain("sk-native", JsonSerializer.Serialize(snapshot));
+
+		_runtime.Settings.UpdateAi(new AiSettingsPatch {ApiKey = ""});
+		Assert.False(_config.Exists("llm_api_key"));
+	}
+
+	[Fact]
+	public async Task settings_open仅允许main并显示原生窗口()
+	{
+		BridgeCommands commands = CreateCommands();
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource("init"), "settings_open", Args(new { })));
+
+		await commands.InvokeAsync(new FakeBridgeSource("main"), "settings_open", Args(new { }));
+		Assert.Contains(WindowLabels.Settings, _windows.Shown);
 	}
 
 	// ---- 来源授权 ----

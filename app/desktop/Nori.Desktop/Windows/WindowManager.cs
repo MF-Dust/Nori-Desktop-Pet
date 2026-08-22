@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Nori.Core.Assets;
 using Nori.Desktop.Bridge;
+using Nori.Desktop.Settings;
 
 namespace Nori.Desktop.Windows;
 
@@ -36,6 +37,18 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 				};
 				_windows[definition.Label] = petWindow;
 				_petWindow = petWindow;
+			}
+			else if (definition.Label == WindowLabels.Settings)
+			{
+				SettingsWindow settingsWindow = new(definition, services);
+				settingsWindow.Closing += (_, args) =>
+				{
+					if (settingsWindow.AllowClose) return;
+					settingsWindow.FlushPending();
+					args.Cancel = true;
+					settingsWindow.Hide();
+				};
+				_windows[definition.Label] = settingsWindow;
 			}
 			else
 			{
@@ -84,6 +97,10 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 			pet.Topmost = true;
 			pet.ApplyWindowSize();
 		}
+		else if (window is SettingsWindow settings)
+		{
+			settings.RefreshOnShow();
+		}
 	}
 
 	/// <summary>
@@ -100,6 +117,7 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		_windows.Remove(label);
 		if (window is NoriWindow nw) nw.AllowClose = true;
 		else if (window is PetWindow pw) pw.AllowClose = true;
+		else if (window is SettingsWindow sw) sw.AllowClose = true;
 		window.Close();
 	}
 
