@@ -13,11 +13,12 @@ Two independent deliverables, no shared build:
 
 ## Commands
 
-Desktop app — run from `app/desktop/`. **Use pnpm**: `pnpm-workspace.yaml` declares `patchedDependencies`, so npm/yarn installs silently produce an unpatched Live2D library.
+Desktop app — run from `app/desktop/`. **Use pnpm**: the project is managed with pnpm, and `node_modules` layout assumptions in scripts assume it.
 
 ```bash
-pnpm install          # also runs postinstall → scripts/patch-live2d.mjs
+pnpm install          # 安装前端依赖
 pnpm build            # vue-tsc --noEmit && vite build  ← the frontend gate
+pnpm test             # vitest run  ← 前端纯函数/服务回归
 dotnet build          # builds Nori.Core + Nori.Desktop + tests  ← the backend gate
 dotnet test           # xUnit; pure-function coverage
 ./publish.bat         # framework-dependent publish (no bundled runtime) for win-x64
