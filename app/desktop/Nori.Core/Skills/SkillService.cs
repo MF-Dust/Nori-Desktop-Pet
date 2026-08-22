@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Nori.Core.Configuration;
 using Nori.Core.Network;
+using YamlDotNet.Serialization;
 
 namespace Nori.Core.Skills;
 
@@ -171,8 +172,7 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		{
 			throw new HttpRequestException($"下载技能失败: HTTP {(int)response.StatusCode}");
 		}
-		await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-		string text = await ReadCappedAsync(stream, UrlAccessPolicy.MaxResponseBytes, cancellationToken);
+		string text = await UrlAccessPolicy.ReadCappedTextAsync(response.Content, UrlAccessPolicy.MaxResponseBytes, cancellationToken);
 		if (string.IsNullOrWhiteSpace(text))
 		{
 			throw new InvalidOperationException("远程技能文件内容为空");
@@ -181,24 +181,6 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		SkillRecord skill = text.TrimStart().StartsWith("---") ? ParseSkillMarkdown(text, url) : ParseSkillJson(text, url);
 		Upsert(skill with { Enabled = true });
 		return skill;
-	}
-
-	private static async Task<string> ReadCappedAsync(Stream stream, long cap, CancellationToken ct)
-	{
-		using StreamReader reader = new(stream);
-		char[] buffer = new char[64 * 1024];
-		System.Text.StringBuilder builder = new();
-		while (true)
-		{
-			int read = await reader.ReadBlockAsync(buffer, ct);
-			if (read <= 0) break;
-			builder.Append(buffer, 0, read);
-			if (builder.Length > cap)
-			{
-				throw new InvalidOperationException($"远程文件超过大小上限 ({cap / 1024 / 1024} MB)");
-			}
-		}
-		return builder.ToString();
 	}
 
 	private SkillRecord ParseSkillJson(string text, string url)
@@ -219,25 +201,42 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 	}
 
 	/// <summary>解析 SKILL.md (YAML Frontmatter + Markdown Instructions)</summary>
-	private static SkillRecord ParseSkillMarkdown(string content, string url)
+	public static SkillRecord ParseSkillMarkdown(string content, string url)
 	{
-		Match match = Regex.Match(content.TrimStart(), @"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", RegexOptions.Singleline);
+		Match match = Regex.Match(content.TrimStart(), @"^---\r?\n(?<front>.*?)\r?\n---(?:\r?\n|$)(?<body>.*)$", RegexOptions.Singleline);
 		if (!match.Success)
 		{
 			throw new InvalidOperationException("SKILL.md 格式错误：缺少完整的 YAML frontmatter 头部分隔符 ---");
 		}
 
-		Dictionary<string, string> meta = new(StringComparer.OrdinalIgnoreCase);
-		foreach (string line in match.Groups[1].Value.Split('\n'))
+		Dictionary<string, string> meta;
+		try
 		{
-			int colon = line.IndexOf(':');
-			if (colon <= 0) continue;
-			string key = line[..colon].Trim();
-			string value = line[(colon + 1)..].Trim().Trim('"', '\'');
-			if (key.Length > 0) meta[key] = value;
+			Dictionary<string, object?> parsed = new DeserializerBuilder()
+				.IgnoreUnmatchedProperties()
+				.Build()
+				.Deserialize<Dictionary<string, object?>>(match.Groups["front"].Value) ?? [];
+			meta = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			foreach ((string key, object? value) in parsed)
+			{
+				if (value is null) continue;
+				if (value is IEnumerable<object> sequence)
+				{
+					meta[key] = string.Join(",", sequence.Select(item => item?.ToString()).Where(item => !string.IsNullOrWhiteSpace(item)));
+				}
+				else
+				{
+					meta[key] = value.ToString() ?? "";
+				}
+			}
+		}
+		catch (YamlDotNet.Core.YamlException)
+		{
+			// 保持旧版对简单 frontmatter 的容错：YAML 不完整时按首个冒号切分。
+			meta = ParseLegacyFrontmatter(match.Groups["front"].Value);
 		}
 
-		string body = match.Groups[2].Value.Trim();
+		string body = match.Groups["body"].Value.Trim();
 		string id = meta.TryGetValue("name", out string? name) && !string.IsNullOrEmpty(name)
 			? Regex.Replace(name.ToLowerInvariant(), @"[^a-z0-9_-]+", "-")
 			: $"skill_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
@@ -263,6 +262,20 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 			InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
 			Url = url,
 		};
+	}
+
+	private static Dictionary<string, string> ParseLegacyFrontmatter(string frontmatter)
+	{
+		Dictionary<string, string> meta = new(StringComparer.OrdinalIgnoreCase);
+		foreach (string line in frontmatter.Split('\n'))
+		{
+			int colon = line.IndexOf(':');
+			if (colon <= 0) continue;
+			string key = line[..colon].Trim();
+			string value = line[(colon + 1)..].Trim().Trim('"', '\'');
+			if (key.Length > 0) meta[key] = value;
+		}
+		return meta;
 	}
 
 	/// <summary>
