@@ -8,17 +8,14 @@ namespace Nori.Core.Memory;
 /// 记忆服务
 ///
 /// 在 MemoryStore 之上补齐前端原有职责:
-/// - 写入/更新时自动计算向量嵌入 (带 LRU 查询缓存)
+/// - 写入/更新时自动计算向量嵌入 (缓存由 IEmbeddingGenerator 中间件负责)
 /// - 混合语义检索与 Prompt 注入用相关记忆提取
 /// - 全量向量重建循环
 /// </summary>
 public sealed class MemoryService(MemoryStore store, IEmbeddingAdapter embedding, ConfigStore config)
 {
-	/// <summary>查询向量 LRU 缓存容量</summary>
+	/// <summary>旧版查询缓存容量常量，保留以兼容调用方；实际容量由适配器缓存控制。</summary>
 	public const int MaxCacheSize = 250;
-
-	private readonly object _gate = new();
-	private readonly Dictionary<string, float[]> _cache = [];
 
 	/// <summary>
 	/// 解析 Embedding 接入配置 (显式传入优先, 否则读配置; 缺省回退 llm 配置)
@@ -41,22 +38,11 @@ public sealed class MemoryService(MemoryStore store, IEmbeddingAdapter embedding
 		return (baseUrl, apiKey, model, dimensions);
 	}
 
-	/// <summary>获取文本的向量嵌入 (带 LRU 内存缓存); 失败返回 null</summary>
+	/// <summary>获取文本的向量嵌入; 失败返回 null。</summary>
 	public async Task<float[]?> EmbedAsync(string text)
 	{
 		string trimmed = text.Trim();
 		if (trimmed.Length == 0) return null;
-
-		lock (_gate)
-		{
-			if (_cache.TryGetValue(trimmed, out float[]? cached))
-			{
-				// 刷新 LRU 访问热度
-				_cache.Remove(trimmed);
-				_cache[trimmed] = cached;
-				return cached;
-			}
-		}
 
 		try
 		{
@@ -64,16 +50,6 @@ public sealed class MemoryService(MemoryStore store, IEmbeddingAdapter embedding
 			float[] vector = await embedding.GetEmbeddingAsync(baseUrl, apiKey, model, trimmed, dimensions);
 			if (vector.Length == 0) return null;
 
-			lock (_gate)
-			{
-				if (_cache.Count >= MaxCacheSize)
-				{
-					// 淘汰最早未使用的缓存项
-					string? oldest = _cache.Keys.FirstOrDefault();
-					if (oldest is not null) _cache.Remove(oldest);
-				}
-				_cache[trimmed] = vector;
-			}
 			return vector;
 		}
 		catch
@@ -83,10 +59,7 @@ public sealed class MemoryService(MemoryStore store, IEmbeddingAdapter embedding
 	}
 
 	/// <summary>清空向量缓存</summary>
-	public void ClearCache()
-	{
-		lock (_gate) _cache.Clear();
-	}
+	public void ClearCache() => embedding.ClearCache();
 
 	/// <summary>添加一条新记忆 (自动计算向量嵌入)</summary>
 	public async Task<MemoryItem> AddAsync(string content, string type = "general", double importance = 0.5, string? tags = null, string source = "chat")

@@ -1,15 +1,28 @@
-using System.Net.Http.Headers;
+using System.ClientModel;
+using System.ClientModel.Primitives;
+using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
+using OpenAI;
+using OpenAI.Embeddings;
+using AiEmbeddingGenerationOptions = Microsoft.Extensions.AI.EmbeddingGenerationOptions;
 
 namespace Nori.Core.Embedding;
 
 /// <summary>
-/// OpenAI 兼容规范 Embedding 适配器 (支持 BGE-M3 / OpenAI / SiliconFlow / Ollama / LocalAI 等)
+/// OpenAI 规范 Embedding 适配器。
+/// 使用官方 EmbeddingClient + IEmbeddingGenerator，并在进程内用 8 MiB 分布式缓存包装。
 /// </summary>
 public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAdapter
 {
+	private const long CacheSizeLimit = 8 * 1024 * 1024;
 	private readonly HttpClient _httpClient = httpClient;
+	private readonly Lock _gate = new();
+	private GeneratorState? _state;
+	private long _cacheEpoch;
 
 	public async Task<float[]> GetEmbeddingAsync(
 		string baseUrl,
@@ -20,10 +33,7 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 		CancellationToken cancellationToken = default)
 	{
 		IReadOnlyList<float[]> results = await GetEmbeddingsAsync(baseUrl, apiKey, model, [input], dimensions, cancellationToken);
-		if (results.Count == 0)
-		{
-			throw new InvalidOperationException("Embedding 服务未返回任何向量数据。");
-		}
+		if (results.Count == 0) throw new InvalidOperationException("Embedding 服务未返回任何向量数据。");
 		return results[0];
 	}
 
@@ -35,68 +45,80 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 		int? dimensions = null,
 		CancellationToken cancellationToken = default)
 	{
-		string normalizedBase = baseUrl.Trim().TrimEnd('/');
-		string endpoint = normalizedBase.EndsWith("/embeddings", StringComparison.OrdinalIgnoreCase)
-			? normalizedBase
-			: $"{normalizedBase}/embeddings";
+		if (inputs.Count == 0) return [];
+		string normalizedBase = NormalizeBaseUrl(baseUrl);
+		string normalizedModel = string.IsNullOrWhiteSpace(model) ? "BAAI/bge-m3" : model.Trim();
+		string fingerprint = Fingerprint(normalizedBase, apiKey, normalizedModel, dimensions);
+		IEmbeddingGenerator<string, Embedding<float>> generator = GetGenerator(
+			normalizedBase, apiKey, normalizedModel, dimensions, fingerprint);
 
-		using HttpRequestMessage request = new(HttpMethod.Post, endpoint);
-		if (!string.IsNullOrWhiteSpace(apiKey))
+		AiEmbeddingGenerationOptions options = new()
 		{
-			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
-		}
-
-		// OpenAI 兼容接口的可选参数: 指定后服务端按该维数截断/补齐输出向量
-		// (text-embedding-3-small/large 等支持; 不支持的端点会报错, 由调用方决定是否设置)
-		Dictionary<string, object> payload = new()
-		{
-			["input"] = inputs.Count == 1 ? inputs[0] : inputs,
-			["model"] = string.IsNullOrWhiteSpace(model) ? "BAAI/bge-m3" : model.Trim(),
+			ModelId = normalizedModel,
+			Dimensions = dimensions,
 		};
-		if (dimensions is > 0)
-		{
-			payload["dimensions"] = dimensions.Value;
-		}
-
-		request.Content = new StringContent(
-			JsonSerializer.Serialize(payload),
-			Encoding.UTF8,
-			"application/json");
-
-		using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken);
-		string body = await response.Content.ReadAsStringAsync(cancellationToken);
-
-		if (!response.IsSuccessStatusCode)
-		{
-			throw new HttpRequestException($"Embedding 请求失败 ({response.StatusCode}): {body}");
-		}
-
-		using JsonDocument doc = JsonDocument.Parse(body);
-		if (!doc.RootElement.TryGetProperty("data", out JsonElement dataElement) ||
-		    dataElement.ValueKind != JsonValueKind.Array)
-		{
-			throw new JsonException($"Embedding 响应格式不正确，缺少 data 数组: {body}");
-		}
-
-		List<(int index, float[] vector)> list = [];
-		foreach (JsonElement item in dataElement.EnumerateArray())
-		{
-			int index = item.TryGetProperty("index", out JsonElement idxElem) ? idxElem.GetInt32() : list.Count;
-			if (item.TryGetProperty("embedding", out JsonElement embElem) && embElem.ValueKind == JsonValueKind.Array)
-			{
-				int len = embElem.GetArrayLength();
-				float[] vec = new float[len];
-				int i = 0;
-				foreach (JsonElement val in embElem.EnumerateArray())
-				{
-					vec[i++] = (float)val.GetDouble();
-				}
-				list.Add((index, vec));
-			}
-		}
-
-		// 按 index 排序确保输入与输出对应
-		list.Sort((a, b) => a.index.CompareTo(b.index));
-		return list.ConvertAll(x => x.vector);
+		GeneratedEmbeddings<Embedding<float>> generated = await generator.GenerateAsync(inputs, options, cancellationToken);
+		return generated.Select(embedding => embedding.Vector.ToArray()).ToList();
 	}
+
+	/// <summary>使内存分布式缓存失效；旧条目保留到进程结束但不会再次命中。</summary>
+	public void ClearCache()
+	{
+		lock (_gate)
+		{
+			_cacheEpoch++;
+			_state = null;
+		}
+	}
+
+	private IEmbeddingGenerator<string, Embedding<float>> GetGenerator(
+		string baseUrl,
+		string apiKey,
+		string model,
+		int? dimensions,
+		string fingerprint)
+	{
+		lock (_gate)
+		{
+			if (_state is {Fingerprint: var current} && current == fingerprint) return _state.Generator;
+
+			OpenAIClientOptions options = new()
+			{
+				Endpoint = new Uri($"{baseUrl}/"),
+				Transport = new HttpClientPipelineTransport(_httpClient),
+			};
+			EmbeddingClient client = new(model, new ApiKeyCredential(apiKey ?? ""), options);
+			IEmbeddingGenerator<string, Embedding<float>> inner = client.AsIEmbeddingGenerator(dimensions);
+			MemoryDistributedCache cache = new(Options.Create(new MemoryDistributedCacheOptions {SizeLimit = CacheSizeLimit}));
+			DistributedCachingEmbeddingGenerator<string, Embedding<float>> cached =
+				new(inner, cache)
+				{
+					CacheKeyAdditionalValues = [fingerprint, _cacheEpoch],
+				};
+			_state = new GeneratorState(fingerprint, cached);
+			return cached;
+		}
+	}
+
+	private static string NormalizeBaseUrl(string baseUrl)
+	{
+		string normalized = baseUrl.Trim().TrimEnd('/');
+		if (normalized.EndsWith("/embeddings", StringComparison.OrdinalIgnoreCase))
+		{
+			normalized = normalized[..^"/embeddings".Length];
+		}
+		if (!Uri.TryCreate(normalized, UriKind.Absolute, out Uri? uri) || uri.Scheme is not ("http" or "https"))
+		{
+			throw new InvalidOperationException("Embedding API Base URL 必须是绝对 HTTP(S) 地址");
+		}
+		return normalized;
+	}
+
+	private static string Fingerprint(string baseUrl, string apiKey, string model, int? dimensions)
+	{
+		string input = $"{baseUrl}\n{apiKey}\n{model}\n{dimensions?.ToString() ?? ""}";
+		return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
+	}
+
+	private sealed record GeneratorState(string Fingerprint, IEmbeddingGenerator<string, Embedding<float>> Generator);
 }

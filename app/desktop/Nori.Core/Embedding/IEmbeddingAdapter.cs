@@ -26,4 +26,9 @@ public interface IEmbeddingAdapter
 		IReadOnlyList<string> inputs,
 		int? dimensions = null,
 		CancellationToken cancellationToken = default);
+
+	/// <summary>清空适配器内部缓存；不带缓存的替身可保持默认空实现。</summary>
+	void ClearCache()
+	{
+	}
 }
