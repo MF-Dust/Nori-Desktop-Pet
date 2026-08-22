@@ -72,29 +72,14 @@ jobs:
           path: app/desktop/dist/
           retention-days: 7
 
-  # ---------- 平台矩阵 ----------
-  native:
-    name: Native (${{ matrix.rid }})
+  # ---------- Windows ----------
+  build-windows:
+    name: Native (win-x64)
     needs: frontend
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows
-            os: windows-latest
-            rid: win-x64
-          - platform: linux
-            os: ubuntu-latest
-            rid: linux-x64
-          - platform: macos
-            os: macos-latest
-            rid: osx-x64
-          - platform: macos
-            os: macos-latest
-            rid: osx-arm64
-    if: ${{ inputs.platform == 'all' || inputs.platform == matrix.platform }}
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
+    runs-on: windows-latest
     env:
+      RID: win-x64
       SELF_CONTAINED_ARGS: --self-contained false
     steps:
       - name: Resolve self-contained flag
@@ -117,6 +102,117 @@ jobs:
           path: app/desktop/dist
 
       # 参数与 publish.bat 保持一致; 单文件/ReadyToRun 关闭, 不生成 pdb
+      - name: Publish (${{ env.RID }})
+        working-directory: app/desktop
+        run: >
+          dotnet publish Nori.Desktop/Nori.Desktop.csproj
+          -c Release
+          -r ${{ env.RID }}
+          ${{ env.SELF_CONTAINED_ARGS }}
+          -p:PublishSingleFile=false
+          -p:PublishReadyToRun=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o bin/publish/${{ env.RID }}
+
+      - name: Remove pdb files
+        working-directory: app/desktop/bin/publish/${{ env.RID }}
+        shell: bash
+        run: find . -name "*.pdb" -delete
+
+      - name: Upload artifact (${{ env.RID }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-${{ env.RID }}
+          path: app/desktop/bin/publish/${{ env.RID }}/
+          retention-days: 14
+
+  # ---------- Linux ----------
+  build-linux:
+    name: Native (linux-x64)
+    needs: frontend
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'linux' }}
+    runs-on: ubuntu-latest
+    env:
+      RID: linux-x64
+      SELF_CONTAINED_ARGS: --self-contained false
+    steps:
+      - name: Resolve self-contained flag
+        if: ${{ inputs.self_contained }}
+        shell: bash
+        run: echo "SELF_CONTAINED_ARGS=--self-contained true" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: app/desktop/dist
+
+      - name: Publish (${{ env.RID }})
+        working-directory: app/desktop
+        run: >
+          dotnet publish Nori.Desktop/Nori.Desktop.csproj
+          -c Release
+          -r ${{ env.RID }}
+          ${{ env.SELF_CONTAINED_ARGS }}
+          -p:PublishSingleFile=false
+          -p:PublishReadyToRun=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o bin/publish/${{ env.RID }}
+
+      - name: Remove pdb files
+        working-directory: app/desktop/bin/publish/${{ env.RID }}
+        shell: bash
+        run: find . -name "*.pdb" -delete
+
+      - name: Upload artifact (${{ env.RID }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-${{ env.RID }}
+          path: app/desktop/bin/publish/${{ env.RID }}/
+          retention-days: 14
+
+  # ---------- macOS (x64 + Apple Silicon 双架构) ----------
+  build-macos:
+    name: Native (${{ matrix.rid }})
+    needs: frontend
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [osx-x64, osx-arm64]
+    env:
+      SELF_CONTAINED_ARGS: --self-contained false
+    steps:
+      - name: Resolve self-contained flag
+        if: ${{ inputs.self_contained }}
+        shell: bash
+        run: echo "SELF_CONTAINED_ARGS=--self-contained true" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: app/desktop/dist
+
       - name: Publish (${{ matrix.rid }})
         working-directory: app/desktop
         run: >
@@ -132,6 +228,7 @@ jobs:
 
       - name: Remove pdb files
         working-directory: app/desktop/bin/publish/${{ matrix.rid }}
+        shell: bash
         run: find . -name "*.pdb" -delete
 
       - name: Upload artifact (${{ matrix.rid }})
