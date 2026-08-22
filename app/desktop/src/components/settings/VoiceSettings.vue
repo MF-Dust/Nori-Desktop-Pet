@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue"
 import {invoke} from "../../services/host/invoke"
+import {readBooleanConfig, readNumberConfig, readStringConfig} from "../../services/config"
 import {audioService} from "../../services/audio"
 import {ttsService} from "../../services/tts"
 import Icon from "../Icon.vue"
@@ -47,32 +48,29 @@ onMounted(async () => {
 			SAVED_STT_URL,
 			SAVED_STT_KEY,
 		] = await Promise.all([
-			invoke<string | null>("get_config", {key: "audio_volume"}),
-			invoke<string | null>("get_config", {key: "tts_provider"}),
-			invoke<string | null>("get_config", {key: "tts_base_url"}),
-			invoke<string | null>("get_config", {key: "tts_api_key"}),
-			invoke<string | null>("get_config", {key: "tts_voice"}),
-			invoke<string | null>("get_config", {key: "tts_speed"}),
-			invoke<string | null>("get_config", {key: "tts_auto_play"}),
-			invoke<string | null>("get_config", {key: "gptsovits_base_url"}),
-			invoke<string | null>("get_config", {key: "gptsovits_ref_audio"}),
-			invoke<string | null>("get_config", {key: "gptsovits_prompt_text"}),
-			invoke<string | null>("get_config", {key: "gptsovits_prompt_lang"}),
-			invoke<string | null>("get_config", {key: "stt_provider"}),
-			invoke<string | null>("get_config", {key: "stt_base_url"}),
-			invoke<string | null>("get_config", {key: "stt_api_key"}),
+			readNumberConfig("audio_volume", audioService.getVolume()),
+			readStringConfig("tts_provider", "web_speech"),
+			readStringConfig("tts_base_url", ""),
+			readStringConfig("tts_api_key", ""),
+			readStringConfig("tts_voice", "nova"),
+			readNumberConfig("tts_speed", 1.0),
+			readBooleanConfig("tts_auto_play", true),
+			readStringConfig("gptsovits_base_url", "http://127.0.0.1:9880"),
+			readStringConfig("gptsovits_ref_audio", ""),
+			readStringConfig("gptsovits_prompt_text", ""),
+			readStringConfig("gptsovits_prompt_lang", "zh"),
+			readStringConfig("stt_provider", "web_speech"),
+			readStringConfig("stt_base_url", ""),
+			readStringConfig("stt_api_key", ""),
 		])
 
-		if (SAVED_VOL !== null) {
-			const NUM = parseFloat(SAVED_VOL)
-			if (!Number.isNaN(NUM)) volume.value = Math.round(NUM * 100)
-		}
+		volume.value = Math.round(SAVED_VOL * 100)
 		if (SAVED_TTS_P) ttsProvider.value = SAVED_TTS_P as any
 		if (SAVED_TTS_URL) ttsBaseUrl.value = SAVED_TTS_URL
 		if (SAVED_TTS_KEY) ttsApiKey.value = SAVED_TTS_KEY
 		if (SAVED_TTS_VOICE) ttsVoice.value = SAVED_TTS_VOICE
-		if (SAVED_TTS_SPEED) ttsSpeed.value = parseFloat(SAVED_TTS_SPEED) || 1.0
-		if (SAVED_TTS_AUTO !== null) ttsAutoPlay.value = SAVED_TTS_AUTO === "true" || SAVED_TTS_AUTO === "1"
+		ttsSpeed.value = SAVED_TTS_SPEED
+		ttsAutoPlay.value = SAVED_TTS_AUTO
 		if (SAVED_SOVITS_URL) gptsovitsBaseUrl.value = SAVED_SOVITS_URL
 		if (SAVED_SOVITS_REF) gptsovitsRefAudio.value = SAVED_SOVITS_REF
 		if (SAVED_SOVITS_TXT) gptsovitsPromptText.value = SAVED_SOVITS_TXT
@@ -92,7 +90,7 @@ const onVolumeChange = () => {
 }
 
 // 保存配置项辅助
-const saveConfig = (key: string, value: string) => {
+const saveConfig = (key: string, value: string | number | boolean) => {
 	void invoke("set_config", {key, value})
 }
 
@@ -277,7 +275,7 @@ const testVoice = async () => {
 								:step="0.1"
 								:format-tooltip="(v: number) => `${v}x`"
 								class="speed-slider"
-								@update:value="(v: number) => saveConfig('tts_speed', String(v))"
+								@update:value="(v: number) => saveConfig('tts_speed', v)"
 							/>
 						</div>
 					</div>
@@ -289,7 +287,7 @@ const testVoice = async () => {
 						</div>
 						<n-switch
 							v-model:value="ttsAutoPlay"
-							@update:value="(v: boolean) => saveConfig('tts_auto_play', String(v))"
+							@update:value="(v: boolean) => saveConfig('tts_auto_play', v)"
 						/>
 					</div>
 

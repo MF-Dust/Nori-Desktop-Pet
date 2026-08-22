@@ -1,5 +1,6 @@
 import {createI18n} from "vue-i18n"
 import {invoke} from "../../services/host/invoke"
+import {LANGUAGE_CONFIG_KEY, readStringConfig} from "../config"
 import useLanguages from "./useLanguages.ts"
 
 /**
@@ -38,22 +39,14 @@ export const i18n = createI18n({
 	messages: {}
 })
 
-// 配置键名
-const CONFIG_KEY = "language"
-
 const useLanguage = {
 	useLang: {} as ReturnType<typeof useLanguages>,
 	/**
 	 * 获取当前语言
 	 */
 	async getLanguage(): Promise<LanguageType> {
-		try {
-			const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
-			if (typeof SAVED === "string" && SAVED) return SAVED
-		} catch (error) {
-			console.error("读取语言配置失败:", error)
-		}
-		return getSystemLanguage()
+		const SAVED = await readStringConfig(LANGUAGE_CONFIG_KEY, "")
+		return SAVED || getSystemLanguage()
 	},
 	/**
 	 * 初始化：加载当前语言包
@@ -67,7 +60,7 @@ const useLanguage = {
 	 */
 	async setLanguage(lang: LanguageType): Promise<void> {
 		try {
-			await invoke("set_config", {key: CONFIG_KEY, value: lang})
+			await invoke("set_config", {key: LANGUAGE_CONFIG_KEY, value: lang})
 			await invoke("write_log", {level: "info", message: `切换语言: ${lang}`})
 		} catch (error) {
 			console.error("保存语言配置失败:", error)

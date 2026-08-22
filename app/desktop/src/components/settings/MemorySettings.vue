@@ -2,6 +2,7 @@
 import {onMounted, ref} from "vue"
 import {memoryService, type MemoryItem} from "../../services/memory"
 import {invoke} from "../../services/host/invoke"
+import {readStringConfig} from "../../services/config"
 import Icon from "../Icon.vue"
 
 const memories = ref<MemoryItem[]>([])
@@ -41,16 +42,15 @@ const loadMemories = async () => {
 onMounted(async () => {
 	try {
 		const [SAVED_MODEL, SAVED_BASE, SAVED_KEY, SAVED_DIMS] = await Promise.all([
-			invoke<string | null>("get_config", {key: "embedding_model"}),
-			invoke<string | null>("get_config", {key: "embedding_api_base"}),
-			invoke<string | null>("get_config", {key: "embedding_api_key"}),
-			// ConfigValue 读取时会重新推断类型, 存的数字串会以 number 回来, 统一转字符串
-			invoke<string | number | null>("get_config", {key: "embedding_dimensions"}),
+			readStringConfig("embedding_model", embeddingModel.value),
+			readStringConfig("embedding_api_base", ""),
+			readStringConfig("embedding_api_key", ""),
+			readStringConfig("embedding_dimensions", ""),
 		])
 		if (SAVED_MODEL) embeddingModel.value = SAVED_MODEL
 		if (SAVED_BASE) embeddingBaseUrl.value = SAVED_BASE
 		if (SAVED_KEY) embeddingApiKey.value = SAVED_KEY
-		if (SAVED_DIMS != null && SAVED_DIMS !== "") embeddingDimensions.value = String(SAVED_DIMS)
+		if (SAVED_DIMS) embeddingDimensions.value = SAVED_DIMS
 	} catch (error) {
 		console.error("加载 Embedding 配置失败:", error)
 	}

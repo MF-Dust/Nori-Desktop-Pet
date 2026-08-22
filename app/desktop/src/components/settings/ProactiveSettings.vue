@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import {onMounted, ref} from "vue"
+import {computed, onMounted, ref} from "vue"
 import {invoke} from "../../services/host/invoke"
+import {readBooleanConfig, readNumberConfig} from "../../services/config"
+import {i18n} from "../../services/i18n"
+import useLanguages from "../../services/i18n/useLanguages"
 import {proactiveService, type ReminderItem} from "../../services/proactive"
 import Icon from "../Icon.vue"
 
@@ -17,6 +20,14 @@ const reminders = ref<ReminderItem[]>([])
 // 新建提醒输入
 const newReminderText = ref("")
 const newReminderMinutes = ref(15)
+const TEXT = computed(() => useLanguages().views.main.proactive)
+const REMINDER_OPTIONS = computed(() => [
+	{label: `5 ${TEXT.value.minutesLater}`, value: 5},
+	{label: `15 ${TEXT.value.minutesLater}`, value: 15},
+	{label: `30 ${TEXT.value.minutesLater}`, value: 30},
+	{label: `1 ${TEXT.value.hourLater}`, value: 60},
+	{label: `2 ${TEXT.value.hoursLater}`, value: 120},
+])
 
 // 刷新提醒列表
 const refreshReminders = () => {
@@ -26,20 +37,20 @@ const refreshReminders = () => {
 onMounted(async () => {
 	try {
 		const [SAVED_IDLE, SAVED_MIN, SAVED_DAILY] = await Promise.all([
-			invoke<string | null>("get_config", {key: "proactive_idle_enabled"}),
-			invoke<string | null>("get_config", {key: "proactive_idle_minutes"}),
-			invoke<string | null>("get_config", {key: "proactive_daily_greeting"}),
+			readBooleanConfig("proactive_idle_enabled", true),
+			readNumberConfig("proactive_idle_minutes", 15),
+			readBooleanConfig("proactive_daily_greeting", true),
 		])
-		if (SAVED_IDLE !== null) idleEnabled.value = SAVED_IDLE === "true" || SAVED_IDLE === "1"
-		if (SAVED_MIN) idleMinutes.value = parseInt(SAVED_MIN, 10) || 15
-		if (SAVED_DAILY !== null) dailyGreeting.value = SAVED_DAILY === "true" || SAVED_DAILY === "1"
+		idleEnabled.value = SAVED_IDLE
+		idleMinutes.value = SAVED_MIN
+		dailyGreeting.value = SAVED_DAILY
 	} catch (error) {
 		console.error("读取主动交互配置失败:", error)
 	}
 	refreshReminders()
 })
 
-const saveConfig = (key: string, value: string) => {
+const saveConfig = (key: string, value: string | number | boolean) => {
 	void invoke("set_config", {key, value})
 }
 
@@ -61,8 +72,8 @@ const cancelReminder = (id: string) => {
 <template>
 	<div class="proactive-settings">
 		<header class="section-header">
-			<h2 class="title glow-teal">主动交互与日常关怀</h2>
-			<p class="subtitle">配置桌宠在挂机、特定时段以及定时日程下的主动陪伴与提醒行为</p>
+			<h2 class="title glow-teal">{{ TEXT.title }}</h2>
+			<p class="subtitle">{{ TEXT.subtitle }}</p>
 		</header>
 
 		<div class="settings-content">
@@ -70,22 +81,22 @@ const cancelReminder = (id: string) => {
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="sparkles" :size="18" class="card-icon"/>
-					<span class="card-title">挂机主动关怀</span>
+					<span class="card-title">{{ TEXT.idle.title }}</span>
 				</div>
 				<div class="card-body">
 					<div class="switch-row">
 						<div>
-							<span class="switch-title">无操作挂机互动</span>
-							<p class="switch-desc">长时间无鼠标或键盘操作时，Nori 会主动向主人表达关怀、伸懒腰或做出小动作</p>
+							<span class="switch-title">{{ TEXT.idle.enabled }}</span>
+							<p class="switch-desc">{{ TEXT.idle.enabledDesc }}</p>
 						</div>
 						<n-switch
 							v-model:value="idleEnabled"
-							@update:value="(val: boolean) => saveConfig('proactive_idle_enabled', String(val))"
+							@update:value="(val: boolean) => saveConfig('proactive_idle_enabled', val)"
 						/>
 					</div>
 
 					<div v-if="idleEnabled" class="form-item">
-						<label class="label">挂机触发间隔</label>
+						<label class="label">{{ TEXT.idle.interval }}</label>
 						<div class="radio-group">
 							<label
 								v-for="min in [5, 15, 30, 60]"
@@ -97,9 +108,9 @@ const cancelReminder = (id: string) => {
 									v-model="idleMinutes"
 									type="radio"
 									:value="min"
-									@change="saveConfig('proactive_idle_minutes', String(min))"
+									@change="saveConfig('proactive_idle_minutes', min)"
 								/>
-								{{ min }} 分钟
+								{{ min }} {{ TEXT.minutes }}
 							</label>
 						</div>
 					</div>
@@ -110,17 +121,17 @@ const cancelReminder = (id: string) => {
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="noriOS" :size="18" class="card-icon"/>
-					<span class="card-title">日常时钟问候</span>
+					<span class="card-title">{{ TEXT.daily.title }}</span>
 				</div>
 				<div class="card-body">
 					<div class="switch-row">
 						<div>
-							<span class="switch-title">定点生活问候</span>
-							<p class="switch-desc">在早晨（8:30）、午餐（12:00）和深夜（23:00）主动向主人问安与提醒休息</p>
+							<span class="switch-title">{{ TEXT.daily.enabled }}</span>
+							<p class="switch-desc">{{ TEXT.daily.enabledDesc }}</p>
 						</div>
 						<n-switch
 							v-model:value="dailyGreeting"
-							@update:value="(val: boolean) => saveConfig('proactive_daily_greeting', String(val))"
+							@update:value="(val: boolean) => saveConfig('proactive_daily_greeting', val)"
 						/>
 					</div>
 				</div>
@@ -130,35 +141,29 @@ const cancelReminder = (id: string) => {
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="info" :size="18" class="card-icon"/>
-					<span class="card-title">定时提醒任务</span>
+					<span class="card-title">{{ TEXT.reminders.title }}</span>
 				</div>
 				<div class="card-body">
 					<div class="add-reminder-row">
 						<input
 							v-model="newReminderText"
 							class="input flex-1"
-							placeholder="例如: 喝杯水 / 站起来走走 / 准备开会..."
+							:placeholder="TEXT.reminders.placeholder"
 							@keydown.enter="createReminder"
 						/>
 						<n-select
 							v-model:value="newReminderMinutes"
-							:options="[
-								{label: '5 分钟后', value: 5},
-								{label: '15 分钟后', value: 15},
-								{label: '30 分钟后', value: 30},
-								{label: '1 小时后', value: 60},
-								{label: '2 小时后', value: 120}
-							]"
+							:options="REMINDER_OPTIONS"
 							style="width: 14rem;"
 						/>
 						<n-button type="primary" :disabled="!newReminderText.trim()" @click="createReminder">
-							添加提醒
+							{{ TEXT.reminders.add }}
 						</n-button>
 					</div>
 
 					<div class="reminder-list">
 						<div v-if="reminders.length === 0" class="empty-hint">
-							暂无排队中的提醒事项（您也可以在聊天中让 Nori 帮您设置提醒哦）
+							{{ TEXT.reminders.empty }}
 						</div>
 						<div
 							v-for="item in reminders"
@@ -168,10 +173,10 @@ const cancelReminder = (id: string) => {
 							<div class="reminder-info">
 								<span class="reminder-text">{{ item.content }}</span>
 								<span class="reminder-time">
-									预计触发: {{ new Date(item.triggerTime).toLocaleTimeString("zh-CN") }}
+									{{ TEXT.reminders.trigger }}: {{ new Date(item.triggerTime).toLocaleTimeString(i18n.global.locale.value) }}
 								</span>
 							</div>
-							<button class="btn-del" title="取消此提醒" @click="cancelReminder(item.id)">
+							<button class="btn-del" :title="TEXT.reminders.cancel" @click="cancelReminder(item.id)">
 								<Icon name="close" :size="14"/>
 							</button>
 						</div>

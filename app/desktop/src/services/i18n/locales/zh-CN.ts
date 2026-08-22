@@ -153,6 +153,10 @@ export default {
 				sending: "发送中...",
 				failed: "请求失败",
 				loadEarlier: "加载更早的消息",
+				stopGeneration: "停止生成",
+				approvalTitle: "工具执行确认",
+				approve: "允许执行",
+				deny: "拒绝",
 			},
 			model: {
 				title: "模型管理",
@@ -262,6 +266,53 @@ export default {
 				mcp: "工具与 MCP",
 				general: "系统常规",
 				debug: "调试",
+			},
+			general: {
+				title: "系统与常规设置",
+				subtitle: "管理界面显示语言、启动偏好与客户端基础信息",
+				language: {
+					title: "显示语言 (Language)",
+					chinese: "简体中文",
+					english: "English (US)",
+				},
+				startup: {
+					title: "启动与运行行为",
+					autoSummon: "启动时自动唤出桌宠",
+					autoSummonDesc: "软件启动完成后自动在桌面上显示 Nori 桌宠窗口",
+				},
+				about: {
+					title: "应用与环境信息",
+					version: "客户端版本",
+					license: "开源协议",
+					renderer: "渲染引擎",
+				},
+			},
+			proactive: {
+				title: "主动交互与日常关怀",
+				subtitle: "配置桌宠在挂机、特定时段以及定时日程下的主动陪伴与提醒行为",
+				minutes: "分钟",
+				minutesLater: "分钟后",
+				hourLater: "小时后",
+				hoursLater: "小时后",
+				idle: {
+					title: "挂机主动关怀",
+					enabled: "无操作挂机互动",
+					enabledDesc: "长时间无鼠标或键盘操作时，Nori 会主动向主人表达关怀、伸懒腰或做出小动作",
+					interval: "挂机触发间隔",
+				},
+				daily: {
+					title: "日常时钟问候",
+					enabled: "定点生活问候",
+					enabledDesc: "在早晨（8:30）、午餐（12:00）和深夜（23:00）主动向主人问安与提醒休息",
+				},
+				reminders: {
+					title: "定时提醒任务",
+					placeholder: "例如: 喝杯水 / 站起来走走 / 准备开会...",
+					add: "添加提醒",
+					empty: "暂无排队中的提醒事项（您也可以在聊天中让 Nori 帮您设置提醒哦）",
+					trigger: "预计触发",
+					cancel: "取消此提醒",
+				},
 			},
 		}
 	}

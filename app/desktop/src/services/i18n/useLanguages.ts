@@ -157,6 +157,10 @@ export default () => {
 					sending: t("views.main.chat.sending"),
 					failed: t("views.main.chat.failed"),
 					loadEarlier: t("views.main.chat.loadEarlier"),
+					stopGeneration: t("views.main.chat.stopGeneration"),
+					approvalTitle: t("views.main.chat.approvalTitle"),
+					approve: t("views.main.chat.approve"),
+					deny: t("views.main.chat.deny"),
 				},
 				model: {
 					title: t("views.main.model.title"),
@@ -266,6 +270,53 @@ export default () => {
 					mcp: t("views.main.settingsTabs.mcp"),
 					general: t("views.main.settingsTabs.general"),
 					debug: t("views.main.settingsTabs.debug"),
+				},
+				general: {
+					title: t("views.main.general.title"),
+					subtitle: t("views.main.general.subtitle"),
+					language: {
+						title: t("views.main.general.language.title"),
+						chinese: t("views.main.general.language.chinese"),
+						english: t("views.main.general.language.english"),
+					},
+					startup: {
+						title: t("views.main.general.startup.title"),
+						autoSummon: t("views.main.general.startup.autoSummon"),
+						autoSummonDesc: t("views.main.general.startup.autoSummonDesc"),
+					},
+					about: {
+						title: t("views.main.general.about.title"),
+						version: t("views.main.general.about.version"),
+						license: t("views.main.general.about.license"),
+						renderer: t("views.main.general.about.renderer"),
+					},
+				},
+				proactive: {
+					title: t("views.main.proactive.title"),
+					subtitle: t("views.main.proactive.subtitle"),
+					minutes: t("views.main.proactive.minutes"),
+					minutesLater: t("views.main.proactive.minutesLater"),
+					hourLater: t("views.main.proactive.hourLater"),
+					hoursLater: t("views.main.proactive.hoursLater"),
+					idle: {
+						title: t("views.main.proactive.idle.title"),
+						enabled: t("views.main.proactive.idle.enabled"),
+						enabledDesc: t("views.main.proactive.idle.enabledDesc"),
+						interval: t("views.main.proactive.idle.interval"),
+					},
+					daily: {
+						title: t("views.main.proactive.daily.title"),
+						enabled: t("views.main.proactive.daily.enabled"),
+						enabledDesc: t("views.main.proactive.daily.enabledDesc"),
+					},
+					reminders: {
+						title: t("views.main.proactive.reminders.title"),
+						placeholder: t("views.main.proactive.reminders.placeholder"),
+						add: t("views.main.proactive.reminders.add"),
+						empty: t("views.main.proactive.reminders.empty"),
+						trigger: t("views.main.proactive.reminders.trigger"),
+						cancel: t("views.main.proactive.reminders.cancel"),
+					},
 				},
 			}
 		}

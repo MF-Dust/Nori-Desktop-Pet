@@ -1,23 +1,26 @@
 <script setup lang="ts">
-import {onMounted, ref} from "vue"
+import {computed, onMounted, ref} from "vue"
 import {invoke} from "../../services/host/invoke"
-import {i18n} from "../../services/i18n"
+import {LANGUAGE_CONFIG_KEY, readBooleanConfig, readStringConfig} from "../../services/config"
+import useLanguage from "../../services/i18n"
+import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
 
 const currentLang = ref("zh-CN")
 const autoSummon = ref(true)
 const appVersion = ref("0.1.0")
+const TEXT = computed(() => useLanguages().views.main.general)
 
 onMounted(async () => {
 	try {
 		const [SAVED_LANG, SAVED_SUMMON, SAVED_VER] = await Promise.all([
-			invoke<string | null>("get_config", {key: "app_language"}),
-			invoke<string | null>("get_config", {key: "pet_auto_summon"}),
-			invoke<string | null>("get_config", {key: "app_version"}),
+			readStringConfig(LANGUAGE_CONFIG_KEY, currentLang.value),
+			readBooleanConfig("pet_auto_summon", true),
+			readStringConfig("app_version", appVersion.value),
 		])
-		if (SAVED_LANG) currentLang.value = SAVED_LANG
-		if (SAVED_SUMMON !== null) autoSummon.value = SAVED_SUMMON === "true" || SAVED_SUMMON === "1"
-		if (SAVED_VER) appVersion.value = SAVED_VER
+		currentLang.value = SAVED_LANG
+		autoSummon.value = SAVED_SUMMON
+		appVersion.value = SAVED_VER
 	} catch (error) {
 		console.error("读取常规设置失败:", error)
 	}
@@ -25,11 +28,10 @@ onMounted(async () => {
 
 const onLanguageChange = (lang: string) => {
 	currentLang.value = lang
-	i18n.global.locale.value = lang as any
-	void invoke("set_config", {key: "app_language", value: lang})
+	void useLanguage.setLanguage(lang)
 }
 
-const saveConfig = (key: string, value: string) => {
+const saveConfig = (key: string, value: string | boolean) => {
 	void invoke("set_config", {key, value})
 }
 </script>
@@ -37,8 +39,8 @@ const saveConfig = (key: string, value: string) => {
 <template>
 	<div class="general-settings">
 		<header class="section-header">
-			<h2 class="title glow-teal">系统与常规设置</h2>
-			<p class="subtitle">管理界面显示语言、启动偏好与客户端基础信息</p>
+			<h2 class="title glow-teal">{{ TEXT.title }}</h2>
+			<p class="subtitle">{{ TEXT.subtitle }}</p>
 		</header>
 
 		<div class="settings-content">
@@ -46,7 +48,7 @@ const saveConfig = (key: string, value: string) => {
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="noriOS" :size="18" class="card-icon"/>
-					<span class="card-title">显示语言 (Language)</span>
+					<span class="card-title">{{ TEXT.language.title }}</span>
 				</div>
 				<div class="card-body">
 					<div class="radio-group">
@@ -57,7 +59,7 @@ const saveConfig = (key: string, value: string) => {
 								value="zh-CN"
 								@change="onLanguageChange('zh-CN')"
 							/>
-							🇨🇳 简体中文 (Chinese)
+							🇨🇳 {{ TEXT.language.chinese }}
 						</label>
 						<label class="radio-chip" :class="{active: currentLang === 'en-US'}">
 							<input
@@ -66,7 +68,7 @@ const saveConfig = (key: string, value: string) => {
 								value="en-US"
 								@change="onLanguageChange('en-US')"
 							/>
-							🇺🇸 English (US)
+							🇺🇸 {{ TEXT.language.english }}
 						</label>
 					</div>
 				</div>
@@ -76,17 +78,17 @@ const saveConfig = (key: string, value: string) => {
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="settings" :size="18" class="card-icon"/>
-					<span class="card-title">启动与运行行为</span>
+					<span class="card-title">{{ TEXT.startup.title }}</span>
 				</div>
 				<div class="card-body">
 					<div class="switch-row">
 						<div>
-							<span class="switch-title">启动时自动唤出桌宠</span>
-							<p class="switch-desc">软件启动完成后自动在桌面上显示 Nori 桌宠窗口</p>
+							<span class="switch-title">{{ TEXT.startup.autoSummon }}</span>
+							<p class="switch-desc">{{ TEXT.startup.autoSummonDesc }}</p>
 						</div>
 						<n-switch
 							v-model:value="autoSummon"
-							@update:value="(val: boolean) => saveConfig('pet_auto_summon', String(val))"
+							@update:value="(val: boolean) => saveConfig('pet_auto_summon', val)"
 						/>
 					</div>
 				</div>
@@ -96,19 +98,19 @@ const saveConfig = (key: string, value: string) => {
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="info" :size="18" class="card-icon"/>
-					<span class="card-title">应用与环境信息</span>
+					<span class="card-title">{{ TEXT.about.title }}</span>
 				</div>
 				<div class="card-body">
 					<div class="info-row">
-						<span class="info-label">客户端版本</span>
+						<span class="info-label">{{ TEXT.about.version }}</span>
 						<span class="info-val">v{{ appVersion }}</span>
 					</div>
 					<div class="info-row">
-						<span class="info-label">开源协议</span>
+						<span class="info-label">{{ TEXT.about.license }}</span>
 						<span class="info-val">GPL-3.0 License</span>
 					</div>
 					<div class="info-row">
-						<span class="info-label">渲染引擎</span>
+						<span class="info-label">{{ TEXT.about.renderer }}</span>
 						<span class="info-val">Avalonia UI + Microsoft WebView2</span>
 					</div>
 				</div>
