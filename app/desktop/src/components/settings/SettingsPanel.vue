@@ -18,32 +18,59 @@ const I18N = computed(() => useLanguages().views.main.settingsTabs)
 
 const currentTab = ref<SettingsTabKey>("ai")
 
-const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(() => [
-	{key: "ai", label: I18N.value.ai, icon: "sparkles"},
-	{key: "voice", label: I18N.value.voice, icon: "volume"},
-	{key: "proactive", label: I18N.value.proactive, icon: "noriOS"},
-	{key: "memory", label: I18N.value.memory, icon: "package"},
-	{key: "skills", label: I18N.value.skills, icon: "sparkles"},
-	{key: "mcp", label: I18N.value.mcp, icon: "plug"},
-	{key: "general", label: I18N.value.general, icon: "settings"},
-	{key: "debug", label: I18N.value.debug, icon: "terminal"},
+interface TabGroup {
+	title: string
+	tabs: {key: SettingsTabKey; label: string; icon: IconName}[]
+}
+
+const TAB_GROUPS = computed<TabGroup[]>(() => [
+	{
+		title: "智能核心",
+		tabs: [
+			{key: "ai", label: I18N.value.ai, icon: "cpu"},
+			{key: "memory", label: I18N.value.memory, icon: "package"},
+		],
+	},
+	{
+		title: "感知交互",
+		tabs: [
+			{key: "voice", label: I18N.value.voice, icon: "volume"},
+			{key: "proactive", label: I18N.value.proactive, icon: "sparkles"},
+		],
+	},
+	{
+		title: "能力扩展",
+		tabs: [
+			{key: "skills", label: I18N.value.skills, icon: "sparkles"},
+			{key: "mcp", label: I18N.value.mcp, icon: "plug"},
+		],
+	},
+	{
+		title: "系统与诊断",
+		tabs: [
+			{key: "general", label: I18N.value.general, icon: "settings"},
+			{key: "debug", label: I18N.value.debug, icon: "terminal"},
+		],
+	},
 ])
 </script>
 
 <template>
 	<div class="settings-panel">
-		<!-- 顶部子标签切换栏 -->
+		<!-- 顶部子标签切换栏 (分组分段式设计) -->
 		<nav class="settings-nav">
-			<button
-				v-for="tab in TABS"
-				:key="tab.key"
-				class="tab-btn"
-				:class="{active: currentTab === tab.key}"
-				@click="currentTab = tab.key"
-			>
-				<Icon :name="tab.icon" :size="14"/>
-				<span>{{ tab.label }}</span>
-			</button>
+			<div v-for="group in TAB_GROUPS" :key="group.title" class="nav-group">
+				<button
+					v-for="tab in group.tabs"
+					:key="tab.key"
+					class="tab-btn"
+					:class="{active: currentTab === tab.key}"
+					@click="currentTab = tab.key"
+				>
+					<Icon :name="tab.icon" :size="13"/>
+					<span>{{ tab.label }}</span>
+				</button>
+			</div>
 		</nav>
 
 		<!-- 设置主视图区 -->
@@ -79,7 +106,8 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 
 .settings-nav {
 	display: flex;
-	gap: 0.6rem;
+	align-items: center;
+	gap: 0.8rem;
 	padding: 0.8rem 1.4rem;
 	border-bottom: 0.1rem solid var(--line-subtle);
 	background: rgba(8, 22, 36, 0.6);
@@ -88,16 +116,26 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 	overflow-x: auto;
 }
 
+.nav-group {
+	display: inline-flex;
+	align-items: center;
+	background: rgba(0, 0, 0, 0.25);
+	border: 0.1rem solid var(--line-subtle);
+	border-radius: var(--radius-pill);
+	padding: 0.25rem 0.3rem;
+	gap: 0.2rem;
+}
+
 .tab-btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 0.6rem;
-	padding: 0.65rem 1.3rem;
-	border: 0.1rem solid transparent;
-	border-radius: var(--radius-sm);
+	gap: 0.5rem;
+	padding: 0.45rem 1rem;
+	border: none;
+	border-radius: var(--radius-pill);
 	background: transparent;
 	color: var(--text-muted);
-	font-size: 1.2rem;
+	font-size: 1.15rem;
 	font-family: inherit;
 	font-weight: 500;
 	cursor: pointer;
@@ -106,14 +144,13 @@ const TABS = computed<{key: SettingsTabKey; label: string; icon: IconName}[]>(()
 
 	&:hover {
 		color: var(--text-primary);
-		background: rgba(125, 227, 255, 0.06);
+		background: rgba(125, 227, 255, 0.08);
 	}
 
 	&.active {
-		color: var(--nori-teal-bright);
-		background: rgba(125, 227, 255, 0.12);
-		border-color: rgba(125, 227, 255, 0.2);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
+		color: #03101c;
+		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
+		box-shadow: 0 0.2rem 1rem var(--glow-teal-soft);
 		font-weight: 600;
 	}
 }
