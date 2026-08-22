@@ -118,11 +118,6 @@ export const RUNTIME = {
 	// 设置
 	// ------------------------------------------------------------------
 
-	/** 打开原生 Avalonia 设置窗口 */
-	openSettings(): Promise<void> {
-		return invoke<void>("settings_open")
-	},
-
 	updateAi(patch: Partial<{provider: string; baseUrl: string; apiKey: string; model: string; persona: string}>): Promise<void> {
 		return invoke<void>("settings_update_ai", patch)
 	},

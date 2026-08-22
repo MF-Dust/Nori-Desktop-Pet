@@ -31,13 +31,6 @@ public static class TrayMenu
 			services.Windows.TogglePet();
 		};
 
-		NativeMenuItem openSettings = new("打开设置");
-		openSettings.Click += (_, _) =>
-		{
-			services.Logger.Write(LogSource.Backend, "info", "托盘菜单：打开设置");
-			services.Windows.Show(WindowLabels.Settings);
-		};
-
 		NativeMenuItem quit = new("退出应用");
 		quit.Click += (_, _) =>
 		{
@@ -49,7 +42,7 @@ public static class TrayMenu
 		{
 			Icon = LoadIcon(),
 			ToolTipText = "Nori Desktop Pet - 点击打开主界面",
-			Menu = [openMain, togglePet, openSettings, quit],
+			Menu = [openMain, togglePet, quit],
 		};
 		// 左键点击直接开主界面, 不弹菜单
 		tray.Clicked += (_, _) => ShowMain(services);

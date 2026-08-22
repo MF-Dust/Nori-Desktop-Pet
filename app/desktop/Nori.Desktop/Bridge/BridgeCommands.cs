@@ -93,7 +93,11 @@ public sealed class BridgeCommands
 
 		// invoke("settings_ack_voice_notice")
 		"settings_ack_voice_notice" => RequireMain(source, () =>
-			Run(Runtime.Settings.AcknowledgeVoiceNotice)),
+			Run(() =>
+			{
+				UpdateConfigDirect("voice_notice_pending", "0");
+				Runtime.InvalidateSnapshot("voice");
+			})),
 
 		// ---- AI 设置 ----
 		// invoke("llm_fetch_models", {provider, baseUrl, apiKey})
@@ -101,27 +105,88 @@ public sealed class BridgeCommands
 
 		// invoke("settings_update_ai", {provider?, baseUrl?, apiKey?, model?, persona?})
 		"settings_update_ai" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
-			Run(() => Runtime.Settings.UpdateAi(args.Deserialize<AiSettingsPatch>(BridgeJson.Options) ?? new AiSettingsPatch()))),
+			Run(() =>
+			{
+				UpdateOptionalConfig(args, "provider", "llm_provider");
+				UpdateOptionalConfig(args, "baseUrl", "llm_api_base");
+				UpdateSecretConfig(args, "apiKey", "llm_api_key");
+				UpdateOptionalConfig(args, "model", "llm_model");
+				UpdateOptionalConfig(args, "persona", "nori_user_persona");
+				Runtime.InvalidateSnapshot("ai");
+			})),
 
 		// invoke("settings_update_voice", {...})
 		"settings_update_voice" => RequireMain(source, () =>
-			Run(() => Runtime.Settings.UpdateVoice(ParseVoiceSettingsPatch(args)))),
+			Run(() =>
+			{
+				UpdateOptionalConfig(args, "volume", "audio_volume");
+				UpdateOptionalConfig(args, "ttsProvider", "tts_provider");
+				UpdateOptionalConfig(args, "ttsBaseUrl", "tts_base_url");
+				UpdateSecretConfig(args, "ttsApiKey", "tts_api_key");
+				UpdateOptionalConfig(args, "ttsVoice", "tts_voice");
+				UpdateOptionalConfig(args, "ttsSpeed", "tts_speed");
+				UpdateBoolConfig(args, "ttsAutoPlay", "tts_auto_play");
+				UpdateOptionalConfig(args, "gptsovitsBaseUrl", "gptsovits_base_url");
+				UpdateOptionalConfig(args, "gptsovitsRefAudio", "gptsovits_ref_audio");
+				UpdateOptionalConfig(args, "gptsovitsPromptText", "gptsovits_prompt_text");
+				UpdateOptionalConfig(args, "gptsovitsPromptLang", "gptsovits_prompt_lang");
+				UpdateOptionalConfig(args, "sttProvider", "stt_provider");
+				UpdateOptionalConfig(args, "sttBaseUrl", "stt_base_url");
+				UpdateSecretConfig(args, "sttApiKey", "stt_api_key");
+				if (_services.Runtime?.Voice is not null)
+				{
+					string raw = _services.Config.GetStringOr("audio_volume", "1");
+					if (double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double vol))
+					{
+						_services.Runtime.Voice.SetVolume(vol);
+					}
+				}
+				Runtime.InvalidateSnapshot("voice");
+			})),
 
 		// invoke("settings_update_general", {language?, petAutoSummon?})
 		"settings_update_general" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
-			Run(() => Runtime.Settings.UpdateGeneral(args.Deserialize<GeneralSettingsPatch>(BridgeJson.Options) ?? new GeneralSettingsPatch()))),
+			Run(() =>
+			{
+				UpdateOptionalConfig(args, "language", ConfigStore.KeyLanguage);
+				UpdateBoolConfig(args, "petAutoSummon", "pet_auto_summon");
+				Runtime.InvalidateSnapshot("general");
+			})),
 
 		// invoke("settings_update_proactive", {idleEnabled?, idleMinutes?, dailyGreeting?})
 		"settings_update_proactive" => RequireMain(source, () =>
-			Run(() => Runtime.Settings.UpdateProactive(args.Deserialize<ProactiveSettingsPatch>(BridgeJson.Options) ?? new ProactiveSettingsPatch()))),
+			Run(() =>
+			{
+				UpdateBoolConfig(args, "idleEnabled", "proactive_idle_enabled");
+				UpdateNumberConfig(args, "idleMinutes", "proactive_idle_minutes");
+				UpdateBoolConfig(args, "dailyGreeting", "proactive_daily_greeting");
+				Runtime.InvalidateSnapshot("proactive");
+			})),
 
 		// invoke("settings_update_embedding", {model?, baseUrl?, apiKey?, dimensions?})
 		"settings_update_embedding" => RequireMain(source, () =>
-			Run(() => Runtime.Settings.UpdateEmbedding(args.Deserialize<EmbeddingSettingsPatch>(BridgeJson.Options) ?? new EmbeddingSettingsPatch()))),
+			Run(() =>
+			{
+				UpdateOptionalConfig(args, "model", "embedding_model");
+				UpdateOptionalConfig(args, "baseUrl", "embedding_api_base");
+				UpdateSecretConfig(args, "apiKey", "embedding_api_key");
+				UpdateOptionalConfig(args, "dimensions", "embedding_dimensions");
+				Runtime.InvalidateSnapshot("embedding");
+			})),
 
 		// invoke("tools_set_enabled", {name: "getTime", enabled: false})
 		"tools_set_enabled" => RequireMain(source, () =>
-			Run(() => Runtime.Settings.ToggleTool(Str(args, "name"), OptionalBool(args, "enabled") ?? true))),
+			Run(() =>
+			{
+				string name = Str(args, "name");
+				bool enabled = OptionalBool(args, "enabled") ?? true;
+				if (!Runtime.Tools.SetEnabled(name, enabled))
+				{
+					throw new InvalidOperationException($"未找到工具: {name}");
+				}
+				PersistDisabledTools();
+				Runtime.InvalidateSnapshot("tools");
+			})),
 
 		// ---- 模型 ----
 		// invoke("model_list")
@@ -223,7 +288,14 @@ public sealed class BridgeCommands
 
 		// invoke("skills_toggle", {id, enabled})
 		"skills_toggle" => RequireMain(source, () =>
-			Run(() => Runtime.Settings.ToggleSkill(Str(args, "id"), OptionalBool(args, "enabled") ?? true))),
+			Run(() =>
+			{
+				if (!SkillsToggle(Str(args, "id"), OptionalBool(args, "enabled") ?? true))
+				{
+					throw new InvalidOperationException($"未找到技能: {Str(args, "id")}");
+				}
+				Runtime.InvalidateSnapshot("skills");
+			})),
 
 		// invoke("skills_install_url", {url})
 		"skills_install_url" => await SkillsInstallUrlAsync(source, args),
@@ -233,10 +305,14 @@ public sealed class BridgeCommands
 
 		// invoke("skills_uninstall", {id})
 		"skills_uninstall" => RequireMain(source, () =>
-			Run(() => Runtime.Settings.UninstallSkill(Str(args, "id")))),
+			Run(() =>
+			{
+				Runtime.Skills.Uninstall(Str(args, "id"));
+				Runtime.InvalidateSnapshot("skills");
+			})),
 
 		// invoke("skills_export", {id}) → JSON 字符串
-		"skills_export" => RequireMain(source, () => Runtime.Settings.ExportSkill(Str(args, "id"))),
+		"skills_export" => RequireMain(source, () => Runtime.Skills.Export(Str(args, "id"))),
 
 		// invoke("skills_import_json", {json})
 		"skills_import_json" => await SkillsImportJsonAsync(source, args),
@@ -266,11 +342,21 @@ public sealed class BridgeCommands
 
 		// ---- 定时提醒 ----
 		// invoke("reminder_add", {content, delayMinutes})
-		"reminder_add" => RequireMain(source, () => Runtime.Settings.AddReminder(
-			Str(args, "content"), OptionalDouble(args, "delayMinutes") ?? 15)),
+		"reminder_add" => RequireMain(source, () =>
+		{
+			Nori.Core.Proactive.ReminderItem item = Runtime.Proactive.AddReminder(
+				Str(args, "content"), OptionalDouble(args, "delayMinutes") ?? 15);
+			Runtime.InvalidateSnapshot("proactive");
+			return item;
+		}),
 
 		// invoke("reminder_cancel", {id})
-		"reminder_cancel" => RequireMain(source, () => Runtime.Settings.CancelReminder(Str(args, "id"))),
+		"reminder_cancel" => RequireMain(source, () =>
+		{
+			bool cancelled = Runtime.Proactive.CancelReminder(Str(args, "id"));
+			Runtime.InvalidateSnapshot("proactive");
+			return cancelled;
+		}),
 
 		// ---- 语音 ----
 		// invoke("tts_test", {text?})
@@ -299,8 +385,6 @@ public sealed class BridgeCommands
 		"pet_get_state" => RequireMain(source, GetPetState),
 
 		// ---- 窗口 ----
-		// invoke("settings_open")
-		"settings_open" => await OpenSettingsAsync(source),
 		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
 		"window_hide" => await OnUi(() => Run(() => _services.Windows.Hide(Str(args, "label")))),
 		"window_close" => await OnUi(() => Run(() => _services.Windows.Close(OptionalLabel(args) ?? source.Label))),
@@ -321,13 +405,18 @@ public sealed class BridgeCommands
 		"clipboard_write_text" => await WriteClipboardAsync(source, Str(args, "text")),
 
 		// ---- 调试 ----
-		"get_recent_logs" => RequireMain(source, () => Runtime.Settings.RecentLogs()),
-		"clear_recent_logs" => RequireMain(source, () => Run(Runtime.Settings.ClearRecentLogs)),
-		"get_diagnostic_info" => RequireMain(source, Runtime.Settings.DiagnosticInfo),
-		"open_log_folder" => RequireMain(source, () => Run(Runtime.Settings.OpenLogFolder)),
-		"run_gc_collect" => RequireMain(source, () => new {released_bytes = Runtime.Settings.CollectGarbage()}),
-		"debug_crash_test" => RequireMain(source, () => Run(() => Runtime.Settings.TriggerCrashTest(Str(args, "mode")))),
-
+		"get_recent_logs" => RequireMain(source, () => _services.Logger.RecentLogs().Select(entry => new
+		{
+			time = entry.Time,
+			level = entry.Level,
+			source = entry.Source == LogSource.Frontend ? "frontend" : "backend",
+			message = entry.Message,
+		}).ToArray()),
+		"clear_recent_logs" => RequireMain(source, () => Run(_services.Logger.ClearRecentLogs)),
+		"get_diagnostic_info" => RequireMain(source, DiagnosticInfo.Build),
+		"open_log_folder" => RequireMain(source, () => Run(OpenLogFolder)),
+		"run_gc_collect" => RequireMain(source, RunGcCollect),
+		"debug_crash_test" => RequireMain(source, () => Run(() => DebugCrashTest(Str(args, "mode")))),
 
 		_ => throw new InvalidOperationException($"未知的命令: {cmd}"),
 	};
@@ -383,7 +472,9 @@ public sealed class BridgeCommands
 	private async Task<object?> SkillsInstallUrlAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.InstallSkillFromUrlAsync(Str(args, "url"));
+		object skill = await Runtime.Skills.InstallFromUrlAsync(Str(args, "url"));
+		Runtime.InvalidateSnapshot("skills");
+		return skill;
 	}
 
 	private async Task<object?> SkillsSaveCustomAsync(IBridgeSource source, JsonElement args)
@@ -391,7 +482,9 @@ public sealed class BridgeCommands
 		RequireMainVoid(source);
 		SkillRecord skill = args.GetProperty("skill").Deserialize<SkillRecord>(BridgeJson.Options)
 			?? throw new InvalidOperationException("技能数据不能为空");
-		return Runtime.Settings.SaveSkill(skill);
+		object saved = Runtime.Skills.SaveCustom(skill);
+		Runtime.InvalidateSnapshot("skills");
+		return saved;
 	}
 
 	private async Task<object?> SkillsImportJsonAsync(IBridgeSource source, JsonElement args)
@@ -405,7 +498,10 @@ public sealed class BridgeCommands
 	private async Task<object?> McpGetServersAsync(IBridgeSource source)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.GetMcpServersAsync();
+		IReadOnlyList<McpServerStatusInfo> servers = await _services.Mcp.GetServersAsync();
+		await Runtime.RefreshMcpToolsAsync();
+		Runtime.InvalidateSnapshot("mcp", "tools");
+		return servers;
 	}
 
 	private async Task<object?> McpListToolsAsync(IBridgeSource source)
@@ -437,7 +533,8 @@ public sealed class BridgeCommands
 	private async Task<object?> TtsTestAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		await Runtime.Settings.TestVoiceAsync(OptionalStr(args, "text"));
+		string text = OptionalStr(args, "text") is {Length: > 0} custom ? custom : "主人好呀！我是 Nori，这是一条声音播放测试~";
+		await Runtime.Voice.SpeakAsync(text);
 		return null;
 	}
 
@@ -677,8 +774,10 @@ public sealed class BridgeCommands
 	private async Task<object?> FetchModelsWithSourceCheckAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () => (object?)true);
-		return await Runtime.Settings.FetchModelsAsync(
-			OptionalStr(args, "provider"), Str(args, "baseUrl"), OptionalStr(args, "apiKey"));
+		string apiKey = OptionalStr(args, "apiKey") ?? "";
+		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
+		return await _services.Llm.FetchModelsAsync(
+			OptionalStr(args, "provider"), Str(args, "baseUrl"), apiKey);
 	}
 
 	private object SkillServiceMarketplace() => Nori.Core.Skills.SkillPresets.All.Select(skill => new
@@ -701,8 +800,51 @@ public sealed class BridgeCommands
 	private async Task<object?> McpImportUrlAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		await Runtime.Settings.ImportMcpUrlAsync(Str(args, "url"));
-		return null;
+		string url = Str(args, "url");
+		Nori.Core.Network.UrlAccessPolicy.EnsurePublicHttp(new Uri(url));
+		using HttpResponseMessage response = await Nori.Core.Network.UrlAccessPolicy.GetWithSafeRedirectsAsync(
+			_services.Http, new Uri(url), allowPrivate: false);
+		if (!response.IsSuccessStatusCode)
+		{
+			throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
+		}
+		string text = await response.Content.ReadAsStringAsync();
+
+		List<object> results = [];
+		void SaveOne(McpServerConfig config) => results.Add(_services.Mcp.SaveServerAsync(config).GetAwaiter().GetResult());
+
+		try
+		{
+			using JsonDocument document = JsonDocument.Parse(text);
+			JsonElement root = document.RootElement.Clone();
+
+			if (root.TryGetProperty("mcpServers", out JsonElement serversElem) && serversElem.ValueKind == JsonValueKind.Object)
+			{
+				foreach (JsonProperty server in serversElem.EnumerateObject())
+				{
+					SaveOne(BuildImportedConfig(server.Name, server.Value));
+				}
+			}
+			else if (root.ValueKind == JsonValueKind.Array)
+			{
+				foreach (JsonElement item in root.EnumerateArray())
+				{
+					SaveOne(BuildImportedConfig(OptionalGetString(item, "name") ?? "导入的 MCP 服务", item));
+				}
+			}
+			else
+			{
+				SaveOne(BuildImportedConfig(
+					OptionalGetString(root, "name") ?? OptionalGetString(root, "id") ?? "导入的 MCP 服务", root));
+			}
+		}
+		catch (JsonException exception)
+		{
+			throw new InvalidOperationException($"未识别的 MCP 配置文件结构: {exception.Message}");
+		}
+
+		InvalidateMcpSnapshot();
+		return results;
 	}
 
 	private static string? OptionalGetString(JsonElement element, string name) =>
@@ -738,31 +880,35 @@ public sealed class BridgeCommands
 	private async Task<object?> McpSaveServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.SaveMcpServerAsync(ParseMcpConfig(args));
+		object result = await _services.Mcp.SaveServerAsync(ParseMcpConfig(args));
+		InvalidateMcpSnapshot();
+		return result;
 	}
 
 	private async Task<object?> McpDeleteServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.DeleteMcpServerAsync(Str(args, "id"));
+		bool deleted = await _services.Mcp.DeleteServerAsync(Str(args, "id"));
+		InvalidateMcpSnapshot();
+		return deleted;
 	}
 
 	private async Task<object?> McpConnectServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.ConnectMcpServerAsync(Str(args, "id"));
+		return await _services.Mcp.ConnectServerAsync(Str(args, "id"));
 	}
 
 	private async Task<object?> McpDisconnectServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.DisconnectMcpServerAsync(Str(args, "id"));
+		return await _services.Mcp.DisconnectServerAsync(Str(args, "id"));
 	}
 
 	private async Task<object?> McpTestServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Settings.TestMcpServerAsync(ParseMcpConfig(args));
+		return await _services.Mcp.TestServerAsync(ParseMcpConfig(args));
 	}
 
 	private async Task<object?> McpCallToolAsync(IBridgeSource source, JsonElement args)
@@ -918,12 +1064,6 @@ public sealed class BridgeCommands
 		return null;
 	}
 
-	private async Task<object?> OpenSettingsAsync(IBridgeSource source)
-	{
-		RequireMainVoid(source);
-		return await OnUi(() => Run(() => _services.Windows.Show(WindowLabels.Settings)));
-	}
-
 	private static async Task<object?> WriteClipboardAsync(IBridgeSource source, string text)
 	{
 		Avalonia.Input.Platform.IClipboard clipboard = await OnUi(() => TopLevel.GetTopLevel(source.Self)?.Clipboard)
@@ -1031,35 +1171,6 @@ public sealed class BridgeCommands
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
 			? value.GetInt32()
 			: null;
-
-	private static VoiceSettingsPatch ParseVoiceSettingsPatch(JsonElement args)
-	{
-		return new VoiceSettingsPatch
-		{
-			Volume = OptionalNumberLike(args, "volume"),
-			TtsProvider = OptionalStr(args, "ttsProvider"),
-			TtsBaseUrl = OptionalStr(args, "ttsBaseUrl"),
-			TtsApiKey = OptionalStr(args, "ttsApiKey"),
-			TtsVoice = OptionalStr(args, "ttsVoice"),
-			TtsSpeed = OptionalNumberLike(args, "ttsSpeed"),
-			TtsAutoPlay = OptionalBool(args, "ttsAutoPlay"),
-			GptsovitsBaseUrl = OptionalStr(args, "gptsovitsBaseUrl"),
-			GptsovitsRefAudio = OptionalStr(args, "gptsovitsRefAudio"),
-			GptsovitsPromptText = OptionalStr(args, "gptsovitsPromptText"),
-			GptsovitsPromptLang = OptionalStr(args, "gptsovitsPromptLang"),
-			SttProvider = OptionalStr(args, "sttProvider"),
-			SttBaseUrl = OptionalStr(args, "sttBaseUrl"),
-			SttApiKey = OptionalStr(args, "sttApiKey"),
-		};
-	}
-
-	private static double? OptionalNumberLike(JsonElement args, string name)
-	{
-		if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(name, out JsonElement value)) return null;
-		if (value.ValueKind == JsonValueKind.Number) return value.GetDouble();
-		if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsed)) return parsed;
-		return null;
-	}
 
 	private static McpServerConfig ParseMcpConfig(JsonElement args)
 	{

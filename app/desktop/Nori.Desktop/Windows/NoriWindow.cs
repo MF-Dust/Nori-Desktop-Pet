@@ -13,9 +13,8 @@ namespace Nori.Desktop.Windows;
 /// <summary>
 /// 承载前端页面的窗口
 ///
-/// 三个 WebView 窗口共用这一个类, 差异全部来自 WindowDefinition. 每个窗口内含一个
+/// 四个窗口共用这一个类, 差异全部来自 WindowDefinition. 每个窗口内含一个
 /// NativeWebView, 加载同一份 Vue bundle, 靠 URL 上的 ?window=&lt;label&gt; 决定显示哪个页面.
-/// 原生设置窗口不经过此类。
 /// </summary>
 public sealed class NoriWindow : Window, IBridgeSource
 {

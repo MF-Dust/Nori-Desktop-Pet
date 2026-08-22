@@ -10,6 +10,7 @@ import {getWindowByLabel} from "../services/host/window"
 import {MODEL_LIST} from "../services/live2d/models"
 
 const HomePanel = defineAsyncComponent(() => import("../components/home/HomePanel.vue"))
+const SettingsPanel = defineAsyncComponent(() => import("../components/settings/SettingsPanel.vue"))
 const ModelManagement = defineAsyncComponent(() => import("../components/settings/ModelManagement.vue"))
 const ChatView = defineAsyncComponent(() => import("../components/ChatView.vue"))
 
@@ -30,19 +31,6 @@ const NAV_ITEMS = computed<{key: NavKey; label: string; icon: IconName; badge?: 
 
 const activeNav = ref<NavKey>("home")
 const currentNav = computed(() => NAV_ITEMS.value.find((item) => item.key === activeNav.value))
-
-// 设置迁移为独立 Avalonia 窗口, 主窗口继续保留聊天/主页/模型管理三类 Vue 内容。
-const openNativeSettings = () => {
-	void RUNTIME.openSettings().catch(error => console.error("打开原生设置失败:", error))
-}
-
-const selectNav = (key: NavKey) => {
-	if (key === "settings") {
-		openNativeSettings()
-		return
-	}
-	activeNav.value = key
-}
 
 // 窗口操作: 最小化主窗口 / 退出应用
 const minimizeMain = async () => {
@@ -114,7 +102,7 @@ onMounted(async () => {
 						:key="item.key"
 						class="nav-item"
 						:class="{active: item.key === activeNav}"
-						@click="selectNav(item.key)"
+						@click="activeNav = item.key"
 					>
 						<span class="active-glow-bar"/>
 						<div class="nav-icon-wrap">
@@ -133,14 +121,17 @@ onMounted(async () => {
 						v-if="activeNav === 'home'"
 						:pet-visible="petVisible"
 						@toggle-pet="togglePet"
-						@navigate="selectNav"
+						@navigate="(tab) => activeNav = tab"
 					/>
 
 					<!-- 对话 -->
-					<ChatView v-else-if="activeNav === 'talk'" @go-settings="openNativeSettings"/>
+					<ChatView v-else-if="activeNav === 'talk'" @go-settings="activeNav = 'settings'"/>
 
 					<!-- 模型管理 -->
 					<ModelManagement v-else-if="activeNav === 'model'"/>
+
+					<!-- 全功能设置面板 -->
+					<SettingsPanel v-else-if="activeNav === 'settings'"/>
 
 					<!-- 声明 -->
 					<section v-else-if="activeNav === 'about'" class="about-panel">
