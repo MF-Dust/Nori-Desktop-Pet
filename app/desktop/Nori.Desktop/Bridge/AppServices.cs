@@ -45,13 +45,16 @@ public sealed class AppServices : IAsyncDisposable
 	public required Nori.Core.Mcp.McpManager Mcp { get; init; }
 
 	/// <summary>回环资源服务</summary>
-	public required AssetServer Assets { get; init; }
+	public AssetServer? Assets { get; init; }
 
-	/// <summary>HTTP 客户端 (全应用共用一个)</summary>
-	public required HttpClient Http { get; init; }
+	/// <summary>HTTP 客户端 (全应用共用一个, 测试可在装配后替换)</summary>
+	public HttpClient Http { get; set; } = null!;
+
+	/// <summary>Agent 聊天/MCP 操作取消注册表</summary>
+	public required Bridge.AgentOperationRegistry AgentOperations { get; init; }
 
 	/// <summary>窗口调度, 窗口建好后回填</summary>
-	public WindowManager Windows { get; set; } = null!;
+	public IWindowManager Windows { get; set; } = null!;
 
 	/// <summary>桥接命令, 服务装配完成后回填</summary>
 	public BridgeCommands Commands { get; set; } = null!;
@@ -62,7 +65,7 @@ public sealed class AppServices : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		await Mcp.DisposeAsync();
-		await Assets.DisposeAsync();
+		if (Assets is not null) await Assets.DisposeAsync();
 		Http.Dispose();
 		Database.Dispose();
 	}

@@ -11,7 +11,7 @@ namespace Nori.Desktop.Windows;
 /// 承接原来 Rust 侧 lib.rs setup / tray.rs 与前端 services/window/index.ts 的窗口调度职责.
 /// 包含三个 WebView2 窗口 (first-run, init, main) 与一个原生 OpenGL 桌宠窗口 (pet)。
 /// </summary>
-public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleApplicationLifetime lifetime)
+public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleApplicationLifetime lifetime) : IWindowManager
 {
 	private readonly AssetServer _assetServer = assetServer;
 	private readonly IClassicDesktopStyleApplicationLifetime _lifetime = lifetime;

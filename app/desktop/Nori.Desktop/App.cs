@@ -142,6 +142,7 @@ public sealed class App : Application
 			Mcp = mcp,
 			Assets = assets,
 			Http = http,
+			AgentOperations = new Bridge.AgentOperationRegistry(),
 		};
 		_services = services;
 

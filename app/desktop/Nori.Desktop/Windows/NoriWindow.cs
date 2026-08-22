@@ -16,10 +16,13 @@ namespace Nori.Desktop.Windows;
 /// 四个窗口共用这一个类, 差异全部来自 WindowDefinition. 每个窗口内含一个
 /// NativeWebView, 加载同一份 Vue bundle, 靠 URL 上的 ?window=&lt;label&gt; 决定显示哪个页面.
 /// </summary>
-public sealed class NoriWindow : Window
+public sealed class NoriWindow : Window, IBridgeSource
 {
 	/// <summary>窗口标签</summary>
 	public string Label { get; }
+
+	/// <summary>底层 Avalonia 窗口 (即自身)</summary>
+	public Window? Self => this;
 
 	/// <summary>
 	/// 是否允许真正关闭

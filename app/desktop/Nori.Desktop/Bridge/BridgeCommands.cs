@@ -25,14 +25,28 @@ namespace Nori.Desktop.Bridge;
 /// 外加窗口操作与两个插件 (opener / clipboard) 的替代实现.
 /// 命令名保持 snake_case 且动词开头, 与前端 invoke("xxx") 完全一致.
 /// </summary>
-public sealed class BridgeCommands(AppServices services)
+public sealed class BridgeCommands
 {
-	private readonly AppServices _services = services;
+	private readonly AppServices _services;
+
+	/// <summary>UI 线程调度入口, 测试可注入同步实现</summary>
+	private readonly Action<Action> _postUi;
+
+	public BridgeCommands(AppServices services) : this(services, null)
+	{
+	}
+
+	/// <summary>测试可注入 UI 调度入口的构造函数</summary>
+	public BridgeCommands(AppServices services, Action<Action>? postUi)
+	{
+		_services = services;
+		_postUi = postUi ?? (action => Dispatcher.UIThread.Post(action));
+	}
 
 	/// <summary>
 	/// 分发一次命令调用
 	/// </summary>
-	public async Task<object?> InvokeAsync(NoriWindow source, string cmd, JsonElement args) => cmd switch
+	public async Task<object?> InvokeAsync(IBridgeSource source, string cmd, JsonElement args) => cmd switch
 	{
 		// ---- 应用 ----
 		// invoke("exit_app")
@@ -59,7 +73,7 @@ public sealed class BridgeCommands(AppServices services)
 		"set_config" => SetConfig(Str(args, "key"), args.GetProperty("value")),
 
 		// invoke("delete_config", {key: "xxx"})
-		"delete_config" => _services.Config.Delete(Str(args, "key")),
+		"delete_config" => DeleteConfig(Str(args, "key")),
 
 		// invoke("has_config", {key: "xxx"})
 		"has_config" => _services.Config.Exists(Str(args, "key")),
@@ -88,7 +102,7 @@ public sealed class BridgeCommands(AppServices services)
 		// invoke("chat_completion", {provider?, baseUrl, apiKey, model, messages})
 		"chat_completion" => await ChatCompletionAsync(args),
 
-		// invoke("chat_completion_stream", {provider?, baseUrl, apiKey, model, messages, streamId?})
+		// invoke("chat_completion_stream", {provider?, baseUrl, apiKey, model, messages, streamId?, sessionId?})
 		"chat_completion_stream" => await ChatCompletionStreamAsync(source, args),
 
 		// invoke("fetch_llm_models", {provider?, baseUrl, apiKey})
@@ -107,6 +121,8 @@ public sealed class BridgeCommands(AppServices services)
 			OptionalStr(args, "embedding")),
 		// invoke("get_all_memories", {limit?})
 		"get_all_memories" => _services.Memory.GetAll(OptionalInt(args, "limit") ?? 100),
+		// invoke("get_unembedded_memories", {limit?, afterId?})
+		"get_unembedded_memories" => _services.Memory.GetUnembedded(OptionalInt(args, "limit") ?? 100, (long)(OptionalDouble(args, "afterId") ?? 0)),
 		// invoke("search_memories", {keyword, limit?})
 		"search_memories" => _services.Memory.Search(Str(args, "keyword"), OptionalInt(args, "limit") ?? 20),
 		// invoke("search_memories_semantic", {vector, limit?, minSimilarity?})
@@ -121,12 +137,13 @@ public sealed class BridgeCommands(AppServices services)
 			OptionalInt(args, "limit") ?? 10),
 		// invoke("update_memory_embedding", {id, embedding})
 		"update_memory_embedding" => _services.Memory.UpdateEmbedding((long)Num(args, "id"), Str(args, "embedding")),
-		// invoke("update_memory", {id, content, importance?, tags?})
+		// invoke("update_memory", {id, content, importance?, tags?, embedding?})
 		"update_memory" => _services.Memory.Update(
 			(long)Num(args, "id"),
 			Str(args, "content"),
 			OptionalDouble(args, "importance"),
-			OptionalStr(args, "tags")),
+			OptionalStr(args, "tags"),
+			OptionalStr(args, "embedding")),
 		// invoke("delete_memory", {id})
 		"delete_memory" => _services.Memory.Delete((long)Num(args, "id")),
 		// invoke("clear_memories")
@@ -151,8 +168,10 @@ public sealed class BridgeCommands(AppServices services)
 		"mcp_disconnect_server" => await _services.Mcp.DisconnectServerAsync(Str(args, "id")),
 		// invoke("mcp_list_tools")
 		"mcp_list_tools" => await _services.Mcp.GetAllToolsAsync(),
-		// invoke("mcp_call_tool", {serverId, toolName, arguments})
-		"mcp_call_tool" => await CallMcpToolAsync(args),
+		// invoke("mcp_call_tool", {serverId, toolName, arguments, sessionId?})
+		"mcp_call_tool" => await CallMcpToolAsync(source, args),
+		// invoke("cancel_agent_session", {sessionId: "..."})
+		"cancel_agent_session" => CancelAgentSession(source, Str(args, "sessionId")),
 		// invoke("mcp_test_server", {id, name, transport, command?, args?, env?, url?})
 		"mcp_test_server" => await _services.Mcp.TestServerAsync(ParseMcpConfig(args)),
 
@@ -236,7 +255,7 @@ public sealed class BridgeCommands(AppServices services)
 	/// <summary>
 	/// 首次启动完成: 只允许可见的 first-run 窗口调用
 	/// </summary>
-	private async Task<object?> CompleteFirstRunAsync(NoriWindow source)
+	private async Task<object?> CompleteFirstRunAsync(IBridgeSource source)
 	{
 		if (source.Label != WindowLabels.FirstRun)
 		{
@@ -320,9 +339,26 @@ public sealed class BridgeCommands(AppServices services)
 		_services.Config.Set(key, value);
 		string storage = value.ToStorage();
 		_services.PetRuntime?.ApplyConfig(key, storage);
-		Dispatcher.UIThread.Post(() => _services.Windows.Broadcast("nori:config-changed", new {key, value = storage}));
+		PostBroadcast("nori:config-changed", new {key, value = storage});
 		return null;
 	}
+
+	/// <summary>
+	/// 删除配置: 与 set_config 对称的状态转换.
+	/// 删除成功后让桌宠运行时复位该 key 的默认值, 并广播带删除语义的变更事件;
+	/// 未删除任何记录时不伪造状态变化.
+	/// </summary>
+	private object? DeleteConfig(string key)
+	{
+		bool deleted = _services.Config.Delete(key);
+		if (!deleted) return false;
+		_services.PetRuntime?.ApplyConfigDelete(key);
+		PostBroadcast("nori:config-changed", new {key, deleted = true});
+		return true;
+	}
+
+	/// <summary>切到 UI 线程后向所有 WebView 窗口广播事件</summary>
+	private void PostBroadcast(string name, object payload) => _postUi(() => _services.Windows.Broadcast(name, payload));
 
 	/// <summary>
 	/// 一次对话, 动作标记剥离后广播给桌宠播放
@@ -350,40 +386,68 @@ public sealed class BridgeCommands(AppServices services)
 	/// LLM 高速输出时每个 chunk 都走一次 UI Post + 序列化 + InvokeScript,
 	/// 开销全花在小信封上, 这里用 ChunkBatcher 按 ~33ms 合帧。
 	/// </summary>
-	private async Task<object?> ChatCompletionStreamAsync(NoriWindow source, JsonElement args)
+	private async Task<object?> ChatCompletionStreamAsync(IBridgeSource source, JsonElement args)
 	{
 		ChatMessageInput[] messages = args.GetProperty("messages").Deserialize<ChatMessageInput[]>(BridgeJson.Options) ?? [];
 		string streamId = OptionalStr(args, "streamId") ?? Guid.NewGuid().ToString("N");
 		ChunkBatcher batcher = new(source, streamId);
-		string final = await _services.Chat.StreamAsync(
-			OptionalStr(args, "provider"),
-			Str(args, "baseUrl"),
-			Str(args, "apiKey"),
-			Str(args, "model"),
-			messages,
-			batcher.Append,
-			motion => Dispatcher.UIThread.Post(() =>
+		CancellationTokenSource? registered = null;
+		try
+		{
+			// 带 sessionId 的调用登记到宿主取消注册表, cancel_agent_session 可随时取消本次流
+			string? sessionId = OptionalStr(args, "sessionId");
+			CancellationToken cancelToken = CancellationToken.None;
+			if (!string.IsNullOrEmpty(sessionId))
 			{
-				_services.PetRuntime?.PlayMotionByName(motion);
-				_services.Windows.Broadcast("nori:play-motion", new {name = motion});
-			}),
-			usage => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-usage", new
-			{
-				streamId,
-				promptTokens = usage.PromptTokens,
-				completionTokens = usage.CompletionTokens,
-				totalTokens = usage.TotalTokens,
-				cachedTokens = usage.CachedTokens,
-				cacheHitRate = usage.CacheHitRate,
-				durationMs = usage.DurationMs,
-				model = usage.Model,
-			})),
-			OptionalBool(args, "persist") ?? true);
+				registered = _services.AgentOperations.Register(source.Label, sessionId, CancellationToken.None);
+				cancelToken = registered.Token;
+			}
 
-		// 流结束: 残余缓冲必须在 invoke 返回前发出, 否则前端会丢尾巴。
-		// PostResult 也走 UI 线程 FIFO 队列, 这里的先发保证 chunk 先于 resolve 到达页面。
-		batcher.FlushNow();
-		return final;
+			string final = await _services.Chat.StreamAsync(
+				OptionalStr(args, "provider"),
+				Str(args, "baseUrl"),
+				Str(args, "apiKey"),
+				Str(args, "model"),
+				messages,
+				batcher.Append,
+				motion => Dispatcher.UIThread.Post(() =>
+				{
+					_services.PetRuntime?.PlayMotionByName(motion);
+					_services.Windows.Broadcast("nori:play-motion", new {name = motion});
+				}),
+				usage => Dispatcher.UIThread.Post(() => source.PostEvent("nori:chat-usage", new
+				{
+					streamId,
+					promptTokens = usage.PromptTokens,
+					completionTokens = usage.CompletionTokens,
+					totalTokens = usage.TotalTokens,
+					cachedTokens = usage.CachedTokens,
+					cacheHitRate = usage.CacheHitRate,
+					durationMs = usage.DurationMs,
+					model = usage.Model,
+				})),
+				OptionalBool(args, "persist") ?? true,
+				cancelToken);
+
+			// 流结束: 残余缓冲必须在 invoke 返回前发出, 否则前端会丢尾巴。
+			// PostResult 也走 UI 线程 FIFO 队列, 这里的先发保证 chunk 先于 resolve 到达页面。
+			batcher.FlushNow();
+			return final;
+		}
+		catch (Exception exception) when (registered is {IsCancellationRequested: true})
+		{
+			// 宿主取消时底层适配器会把 TaskCanceledException 包装成 ChatException;
+			// 这里还原为可识别的取消异常, 前端据此把该次失败视为正常中止而不是报错
+			throw new OperationCanceledException("agent session 已取消", exception);
+		}
+		finally
+		{
+			// 完成/异常/取消三种路径都必须解除登记, 避免泄漏 CTS
+			if (registered is not null)
+			{
+				_services.AgentOperations.Complete(source.Label, OptionalStr(args, "sessionId")!, registered);
+			}
+		}
 	}
 
 	/// <summary>
@@ -392,7 +456,7 @@ public sealed class BridgeCommands(AppServices services)
 	/// 把到达的 chunk 攒进缓冲, 首个 chunk 到达后排一次 UI 线程刷新,
 	/// 刷新时把期间积压的一并带走; 流结束时 FlushNow 保证不丢尾。
 	/// </summary>
-	private sealed class ChunkBatcher(NoriWindow source, string streamId)
+	private sealed class ChunkBatcher(IBridgeSource source, string streamId)
 	{
 		private readonly object _gate = new();
 		private readonly System.Text.StringBuilder _buffer = new();
@@ -504,9 +568,9 @@ public sealed class BridgeCommands(AppServices services)
 	/// <summary>
 	/// 写入剪贴板
 	/// </summary>
-	private static async Task<object?> WriteClipboardAsync(NoriWindow source, string text)
+	private static async Task<object?> WriteClipboardAsync(IBridgeSource source, string text)
 	{
-		IClipboard clipboard = await OnUi(() => TopLevel.GetTopLevel(source)?.Clipboard)
+		IClipboard clipboard = await OnUi(() => TopLevel.GetTopLevel(source.Self)?.Clipboard)
 			?? throw new InvalidOperationException("剪贴板不可用");
 		await clipboard.SetTextAsync(text);
 		return null;
@@ -515,14 +579,15 @@ public sealed class BridgeCommands(AppServices services)
 	/// <summary>
 	/// 从本地 ZIP 文件或目录导入资源
 	/// </summary>
-	private async Task<object?> ImportLocalResourceAsync(NoriWindow source, JsonElement args)
+	private async Task<object?> ImportLocalResourceAsync(IBridgeSource source, JsonElement args)
 	{
 		string? filePath = OptionalStr(args, "filePath");
 		if (string.IsNullOrWhiteSpace(filePath))
 		{
+			 Avalonia.Controls.Window? self = source.Self ?? throw new InvalidOperationException("来源窗口不可用");
 			filePath = await Dispatcher.UIThread.InvokeAsync(async () =>
 			{
-				var files = await source.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+				var files = await self.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
 				{
 					Title = "选择 Live2D 资源文件 (.zip)",
 					AllowMultiple = false,
@@ -558,8 +623,9 @@ public sealed class BridgeCommands(AppServices services)
 	/// {label: "pet"} 会取不到而静默回退到调用方窗口, 让 window_is_visible 之类的命令
 	/// 报告主窗口的状态 (主界面的唤出按钮因此永远以为桌宠已显示).
 	/// </summary>
-	private Window Target(NoriWindow source, JsonElement args) =>
-		_services.Windows.Get(OptionalLabel(args)) ?? source;
+	private Window Target(IBridgeSource source, JsonElement args) =>
+		_services.Windows.Get(OptionalLabel(args)) ?? source.Self
+		?? throw new InvalidOperationException("目标窗口不存在");
 
 	/// <summary>
 	/// 窗口原生句柄 (拖动用), 取不到返回 0
@@ -667,7 +733,7 @@ public sealed class BridgeCommands(AppServices services)
 		return config ?? throw new InvalidOperationException("无法解析 MCP 服务器配置");
 	}
 
-	private async Task<object?> CallMcpToolAsync(JsonElement args)
+	private async Task<object?> CallMcpToolAsync(IBridgeSource source, JsonElement args)
 	{
 		string serverId = Str(args, "serverId");
 		string toolName = Str(args, "toolName");
@@ -676,15 +742,40 @@ public sealed class BridgeCommands(AppServices services)
 		{
 			toolArgs = JsonNode.Parse(argElem.GetRawText()) as JsonObject;
 		}
-		return await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs);
+
+		// 与聊天流一致: 带 sessionId 的 MCP 调用可被 cancel_agent_session 取消
+		string? sessionId = OptionalStr(args, "sessionId");
+		if (string.IsNullOrEmpty(sessionId))
+		{
+			return await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs);
+		}
+
+		CancellationTokenSource registered = _services.AgentOperations.Register(source.Label, sessionId, CancellationToken.None);
+		try
+		{
+			return await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs, registered.Token);
+		}
+		finally
+		{
+			_services.AgentOperations.Complete(source.Label, sessionId, registered);
+		}
 	}
+
+	/// <summary>
+	/// 取消本来源窗口登记的活动 Agent 操作 (聊天流 / MCP 调用)
+	/// </summary>
+	private object CancelAgentSession(IBridgeSource source, string sessionId) =>
+		_services.AgentOperations.TryCancel(source.Label, sessionId);
 
 	private async Task<object?> SearchAnySearchAsync(JsonElement args)
 	{
 		string query = Str(args, "query");
 		string tag = OptionalStr(args, "tag") ?? "general";
-		string baseUrl = OptionalStr(args, "endpoint") ?? _services.Config.Get("anysearch_api_base")?.ToStorage() ?? "https://api.anysearch.com/v1/search";
-		string? apiKey = OptionalStr(args, "apiKey") ?? _services.Config.Get("anysearch_api_key")?.ToStorage();
+		// 端点/凭据绑定由策略决定: 存储密钥只允许发往官方端点, 自定义端点必须显式携带 key
+		Core.Network.AnySearchRequest request = Core.Network.AnySearchRequestPolicy.Resolve(
+			OptionalStr(args, "endpoint") ?? _services.Config.Get("anysearch_api_base")?.ToStorage(),
+			OptionalStr(args, "apiKey"),
+			_services.Config.Get("anysearch_api_key")?.ToStorage());
 
 		JsonObject payload = new()
 		{
@@ -697,14 +788,14 @@ public sealed class BridgeCommands(AppServices services)
 			payload["params"] = JsonNode.Parse(paramsElem.GetRawText());
 		}
 
-		using HttpRequestMessage req = new(HttpMethod.Post, baseUrl)
+		using HttpRequestMessage req = new(HttpMethod.Post, request.Endpoint)
 		{
 			Content = new StringContent(payload.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
 		};
 
-		if (!string.IsNullOrEmpty(apiKey))
+		if (!string.IsNullOrEmpty(request.ApiKey))
 		{
-			req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+			req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", request.ApiKey);
 		}
 
 		using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
