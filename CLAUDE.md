@@ -36,10 +36,11 @@ pnpm dev                                      # vite only; must be running for N
 
 ## Architecture
 
-### Four windows, three WebView2 + one native OpenGL
+### Five windows, three WebView2 + native OpenGL + native settings
 
-`Nori.Desktop/Windows/WindowDefinition.cs` declares four windows — `first-run`, `init`, `main`, `pet` — all created hidden, borderless (`WindowDecorations.None`) and transparent.
-- Three windows (`first-run`, `init`, `main`) are `NoriWindow` hosting `NativeWebView` and loading the Vue bundle.
+`Nori.Desktop/Windows/WindowDefinition.cs` declares five windows — `first-run`, `init`, `main`, `settings`, `pet`.
+- Three windows (`first-run`, `init`, `main`) are `NoriWindow` hosting `NativeWebView` and loading the Vue bundle; they remain hidden, borderless and transparent.
+- The settings window (`settings`) is a standard native Avalonia `SettingsWindow`, with the Nori deep-sea Fluent visual language and direct typed runtime operations. It is not a Vue route or WebView label.
 - The desktop pet (`pet`) is a native Avalonia `PetWindow` hosting `PetGlControl` (OpenGL via `Live2DCSharpSDK`), bypassing WebView2 airspace and window-region clipping issues completely.
 
 1. `App.cs` reads `first_run_completed` from SQLite and shows `first-run` or `init`.
@@ -51,7 +52,7 @@ pnpm dev                                      # vite only; must be running for N
 
 First-run flow: wizard in `first-run` → `complete_first_run` (C#) marks the DB, closes `first-run`, shows `init`, broadcasts `nori:init-start` → `InitView` checks the local Live2D model → `showWindow("main")`, then closes `init`. Normal launch shows `init` directly. Because `init` starts hidden on the first-run path, `InitView` checks `isVisible()` and otherwise *waits* for `nori:init-start`.
 
-The tray (`Tray/TrayMenu.cs`) is the only always-available entry point: left-click opens `main`, menu toggles `pet`. Closing a window only hides it (`NoriWindow.AllowClose` / `PetWindow.AllowClose` gates real disposal); `ShutdownMode.OnExplicitShutdown` keeps the process alive.
+The tray (`Tray/TrayMenu.cs`) is the only always-available entry point: left-click opens `main`, menu opens `settings` or toggles `pet`. Closing a window only hides it (`NoriWindow.AllowClose` / `SettingsWindow.AllowClose` / `PetWindow.AllowClose` gates real disposal); `ShutdownMode.OnExplicitShutdown` keeps the process alive.
 
 ### The bridge (replaces Tauri IPC)
 
