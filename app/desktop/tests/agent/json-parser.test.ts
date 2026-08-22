@@ -69,4 +69,52 @@ describe("StreamingJsonParser 流式协议解析", () => {
 		expect(results).toHaveLength(1)
 		expect(results[0]).toMatchObject({type: "message", text: "ok"})
 	})
+
+	it("逐字符小 chunk 的对象只产出一次且结果正确", () => {
+		const parser = new StreamingJsonParser()
+		const FULL = "{\"type\": \"message\", \"text\": \"你好呀主人！\", \"emotion\": \"happy\", \"action\": \"smile\"}"
+
+		let collected: ReturnType<StreamingJsonParser["push"]> = []
+		for (const CH of FULL) {
+			collected = collected.concat(parser.push(CH))
+		}
+		expect(collected).toHaveLength(1)
+		expect(collected[0]).toMatchObject({type: "message", text: "你好呀主人！", emotion: "happy", action: "smile"})
+	})
+
+	it("转义引号跨 chunk 时字符串状态保持正确", () => {
+		const parser = new StreamingJsonParser()
+		const CHUNK1 = '{"type": "tool_call", "name": "run", "arguments": {"cmd": "echo \\"hello'
+		const CHUNK2 = ' world\\""}}'
+		expect(parser.push(CHUNK1)).toHaveLength(0)
+		const RESULTS = parser.push(CHUNK2)
+		expect(RESULTS).toHaveLength(1)
+		expect((RESULTS[0] as {arguments?: Record<string, unknown>}).arguments).toEqual({cmd: 'echo "hello world"'})
+	})
+
+	it("连续对象在同一调用内全部输出", () => {
+		const parser = new StreamingJsonParser()
+		const RESULTS = parser.push(
+			"{\"type\": \"message\", \"text\": \"a\"}{\"type\": \"event\", \"name\": \"e1\"}" +
+			"{\"type\": \"tool_call\", \"id\": \"c9\", \"name\": \"t\", \"arguments\": {}}"
+		)
+		expect(RESULTS.map((item) => item.type)).toEqual(["message", "event", "tool_call"])
+	})
+
+	it("非法平衡对象后仍能继续解析后续对象", () => {
+		const parser = new StreamingJsonParser()
+		const FIRST = parser.push("{oops: 1}")
+		expect(FIRST).toHaveLength(0)
+		const SECOND = parser.push("{\"type\": \"message\", \"text\": \"ok\"}")
+		expect(SECOND).toHaveLength(1)
+		const FLUSHED = parser.flush()
+		// 与旧实现一致: 后续成功解析会连同之前的非法平衡段一起消费
+		expect(FLUSHED).toHaveLength(0)
+	})
+
+	it("超限的未闭合 payload 抛出可处理错误", () => {
+		const parser = new StreamingJsonParser(32)
+		parser.push("{\"type\": \"message\", \"text\": \"")
+		expect(() => parser.push("x".repeat(64))).toThrowError(/上限/)
+	})
 })

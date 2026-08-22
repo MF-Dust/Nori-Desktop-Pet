@@ -3,17 +3,44 @@ import type {AgentProtocolItem, AgentTextMessage} from "./protocol"
 /**
  * 流式 JSON / Markdown 解析器
  *
- * 处理 LLM 输出的 ```json 代码块包裹、分段 JSON 对象以及普通文本兜底
+ * 处理 LLM 输出的 ```json 代码块包裹、分段 JSON 对象以及普通文本兜底。
+ *
+ * 扫描状态 (游标、括号深度、字符串/转义态) 在多次 push 之间保持,
+ * 每个 chunk 只扫描新增文本, 未闭合对象不会被反复从头扫描;
+ * 单个未闭合 payload 超过上限时抛出可处理错误而不是无限占用内存。
  */
 export class StreamingJsonParser {
+	/** 默认的未完成缓冲区上限 (字符数) */
+	public static readonly DEFAULT_MAX_PENDING_BUFFER = 1_000_000
+
 	private buffer = ""
+	/** 下一次扫描的起点: 已确认为垃圾前缀或已消费的部分不再重复扫描 */
+	private scanIndex = 0
+	private jsonStartIndex = -1
+	private braceDepth = 0
+	private inString = false
+	private isEscaped = false
+
+	/** 单个未闭合 payload 的上限, 测试可用小值覆盖 */
+	public constructor(private readonly maxPendingBuffer: number = StreamingJsonParser.DEFAULT_MAX_PENDING_BUFFER) {
+		if (maxPendingBuffer <= 0) throw new RangeError("maxPendingBuffer 必须为正数")
+	}
 
 	/**
 	 * 追加流式文本分片并尝试解析出完整的 Agent 协议对象
 	 */
 	public push(chunk: string): AgentProtocolItem[] {
 		this.buffer += chunk
-		return this.extractAvailableObjects()
+		const RESULTS = this.extractAvailableObjects()
+		// 上限针对“未完成”的输入: 未闭合对象从起点计, 普通垃圾前缀按全量计
+		const PENDING_SIZE = this.hasOpenObject()
+			? this.buffer.length - Math.max(this.jsonStartIndex, 0)
+			: this.buffer.length
+		if (PENDING_SIZE > this.maxPendingBuffer) {
+			this.reset()
+			throw new Error(`流式解析缓冲区超过上限 (${this.maxPendingBuffer} 字符)，已终止当前输入`)
+		}
+		return RESULTS
 	}
 
 	/**
@@ -55,68 +82,82 @@ export class StreamingJsonParser {
 	 */
 	public reset(): void {
 		this.buffer = ""
+		this.scanIndex = 0
+		this.jsonStartIndex = -1
+		this.braceDepth = 0
+		this.inString = false
+		this.isEscaped = false
+	}
+
+	/** 是否存在尚未闭合的对象 (用于超限判定) */
+	private hasOpenObject(): boolean {
+		return this.jsonStartIndex !== -1 || this.braceDepth > 0
 	}
 
 	/**
-	 * 从当前缓冲区中提取所有闭合的 JSON 对象
+	 * 从上次扫描位置继续提取所有闭合的 JSON 对象.
+	 *
+	 * 只扫描新增区间; 提取完整对象后消费已确认前缀并按需复位状态,
+	 * 同一调用内可以连续输出多个对象。
 	 */
 	private extractAvailableObjects(): AgentProtocolItem[] {
 		const RESULTS: AgentProtocolItem[] = []
-		let i = 0
-		let braceDepth = 0
-		let inString = false
-		let isEscaped = false
-		let jsonStartIndex = -1
+		let i = this.scanIndex
 
 		while (i < this.buffer.length) {
 			const CHAR = this.buffer[i]
 
-			if (inString) {
-				if (isEscaped) {
-					isEscaped = false
+			if (this.inString) {
+				if (this.isEscaped) {
+					this.isEscaped = false
 				} else if (CHAR === "\\") {
-					isEscaped = true
+					this.isEscaped = true
 				} else if (CHAR === "\"") {
-					inString = false
+					this.inString = false
 				}
 				i++
 				continue
 			}
 
 			if (CHAR === "\"") {
-				inString = true
+				this.inString = true
 				i++
 				continue
 			}
 
 			if (CHAR === "{") {
-				if (braceDepth === 0) {
-					jsonStartIndex = i
+				if (this.braceDepth === 0) {
+					this.jsonStartIndex = i
 				}
-				braceDepth++
+				this.braceDepth++
 			} else if (CHAR === "}") {
-				braceDepth--
-				if (braceDepth === 0 && jsonStartIndex !== -1) {
-					const JSON_STR = this.buffer.substring(jsonStartIndex, i + 1)
+				this.braceDepth--
+				if (this.braceDepth === 0 && this.jsonStartIndex !== -1) {
+					const JSON_STR = this.buffer.substring(this.jsonStartIndex, i + 1)
 					const PARSED = this.tryParseObject(JSON_STR)
 					if (PARSED) {
 						RESULTS.push(PARSED)
-						// 消费掉已解析部分
+						// 消费掉已解析部分与之前的垃圾前缀
 						this.buffer = this.buffer.substring(i + 1)
-						i = -1 // 下一轮循环从 0 开始
-						braceDepth = 0
-						jsonStartIndex = -1
+						i = -1
+						this.scanIndex = 0
 					}
-				} else if (braceDepth < 0) {
-					// 括号失配纠正
-					braceDepth = 0
-					jsonStartIndex = -1
+					// 解析失败时保留原文交给 flush 兜底, 只复位状态继续扫描;
+					// 该区间位于 scanIndex 之前, 后续 push 不会重复扫描
+					this.braceDepth = 0
+					this.jsonStartIndex = -1
+				} else if (this.braceDepth < 0) {
+					// 括号失配纠正: 该字符视为普通文本
+					this.braceDepth = 0
+					this.jsonStartIndex = -1
 				}
 			}
 
 			i++
 		}
 
+		// 记录已扫描到的位置: 未闭合对象的中间部分在后续 push 中不会重扫
+		this.scanIndex = i
 		return RESULTS
 	}
 
