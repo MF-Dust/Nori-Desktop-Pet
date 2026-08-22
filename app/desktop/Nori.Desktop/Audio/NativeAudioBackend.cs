@@ -21,7 +21,7 @@ public sealed class NativeAudioPlayback : Nori.Core.Voice.IAudioPlayback
 	private WaveOutEvent? _output;
 	private CancellationTokenSource? _playCts;
 	private bool _playing;
-	private long _lastMouthSampleAt;
+	private double _deviceVolume = 1.0;
 
 	/// <inheritdoc />
 	public bool IsPlaying => Volatile.Read(ref _playing);
@@ -40,79 +40,97 @@ public sealed class NativeAudioPlayback : Nori.Core.Voice.IAudioPlayback
 
 		Stop();
 		CancellationTokenSource playCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		_playCts = playCts;
-		Volatile.Write(ref _playing, true);
+		lock (_gate)
+		{
+			_playCts = playCts;
+			_playing = true;
+		}
 		PlayingChanged?.Invoke(true);
 
 		return Task.Run(async () =>
 		{
 			string tempPath = Path.Combine(Path.GetTempPath(), $"nori-tts-{Guid.NewGuid():N}.audio");
+			WaveOutEvent? output = null;
 			try
 			{
 				await File.WriteAllBytesAsync(tempPath, data, CancellationToken.None);
 				using WaveStream reader = new MediaFoundationReader(tempPath);
 				ISampleProvider samples = reader.ToSampleProvider();
-				CustomMetering meter = new(samples, OnLevel);
-				using WaveOutEvent output = new();
-				_output = output;
-				output.Init(meter.ToWaveProvider());
-				output.Play();
-				while (output.PlaybackState == PlaybackState.Playing && !playCts.Token.IsCancellationRequested)
+				MeteringSampleProvider meter = new(samples, ComputeSamplesPerNotification(
+					samples.WaveFormat.SampleRate, MouthSampleIntervalMs));
+				meter.StreamVolume += (_, args) =>
 				{
-					Thread.Sleep(40);
+					float level = args.MaxSampleValues.Length == 0 ? 0 : args.MaxSampleValues.Max();
+					OnLevel(level);
+				};
+				output = new WaveOutEvent();
+				output.Init(meter.ToWaveProvider());
+				lock (_gate)
+				{
+					_output = output;
+					output.Volume = (float)Math.Clamp(_deviceVolume, 0, 1);
 				}
-				output.Stop();
+				TaskCompletionSource<bool> stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+				output.PlaybackStopped += (_, _) => stopped.TrySetResult(true);
+				using CancellationTokenRegistration registration = playCts.Token.Register(() =>
+				{
+					try { output.Stop(); } catch { /* 设备已停止时忽略 */ }
+				});
+				output.Play();
+				await stopped.Task.ConfigureAwait(false);
 			}
 			finally
 			{
 				try { File.Delete(tempPath); } catch { /* 临时文件清理失败忽略 */ }
-				lock (_gate) _output = null;
-				Volatile.Write(ref _playing, false);
-				VolumeSampled?.Invoke(0);
-				PlayingChanged?.Invoke(false);
+				bool current;
+				lock (_gate)
+				{
+					current = ReferenceEquals(_playCts, playCts);
+					if (current)
+					{
+						_output = null;
+						_playCts = null;
+						_playing = false;
+					}
+				}
+				if (current)
+				{
+					VolumeSampled?.Invoke(0);
+					PlayingChanged?.Invoke(false);
+				}
+				output?.Dispose();
+				playCts.Dispose();
 			}
 		}, CancellationToken.None);
 	}
 
 	private void OnLevel(float level)
 	{
-		long now = Environment.TickCount64;
-		if (now - Interlocked.Read(ref _lastMouthSampleAt) < MouthSampleIntervalMs) return;
-		Interlocked.Exchange(ref _lastMouthSampleAt, now);
-
 		double value = Math.Clamp(Math.Abs(level), 0, 1);
-		if (!_playing) return;
+		if (!Volatile.Read(ref _playing)) return;
 		VolumeSampled?.Invoke(value);
 	}
 
 	/// <summary>
-	/// 自带 RMS/峰值计量的采样提供器
-	/// (不依赖 MeteringSampleProvider 的事件签名, 版本兼容性更好)
+	/// 计算口型采样窗口所需的采样数 (按帧率，不乘声道数)。
 	/// </summary>
-	private sealed class CustomMetering(ISampleProvider source, Action<float> onLevel) : ISampleProvider
-	{
-		public WaveFormat WaveFormat => source.WaveFormat;
-
-		public int Read(float[] buffer, int offset, int count)
-		{
-			int read = source.Read(buffer, offset, count);
-			float max = 0;
-			for (int index = offset; index < offset + read; index++)
-			{
-				float abs = MathF.Abs(buffer[index]);
-				if (abs > max) max = abs;
-			}
-			if (read > 0) onLevel(max);
-			return read;
-		}
-	}
+	public static int ComputeSamplesPerNotification(int sampleRate, int intervalMs) =>
+		Math.Max(1, (int)Math.Round(sampleRate * intervalMs / 1000.0));
 
 	/// <inheritdoc />
 	public void Stop()
 	{
+		WaveOutEvent? output;
+		CancellationTokenSource? cts;
+		lock (_gate)
+		{
+			output = _output;
+			cts = _playCts;
+		}
 		try
 		{
-			_playCts?.Cancel();
+			cts?.Cancel();
+			output?.Stop();
 		}
 		catch
 		{
@@ -126,12 +144,16 @@ public sealed class NativeAudioPlayback : Nori.Core.Voice.IAudioPlayback
 	public void SetDeviceVolume(double volume)
 	{
 		WaveOutEvent? output;
-		lock (_gate) output = _output;
+		lock (_gate)
+		{
+			_deviceVolume = Math.Clamp(volume, 0, 1);
+			output = _output;
+		}
 		if (output is not null)
 		{
 			try
 			{
-				output.Volume = Math.Clamp((float)volume, 0f, 1f);
+				output.Volume = (float)_deviceVolume;
 			}
 			catch
 			{
@@ -158,7 +180,9 @@ public sealed class NativeAudioPlayback : Nori.Core.Voice.IAudioPlayback
 		{
 			// 设备已被系统回收时忽略
 		}
-		_playCts?.Dispose();
+		CancellationTokenSource? cts;
+		lock (_gate) cts = _playCts;
+		cts?.Dispose();
 	}
 }
 

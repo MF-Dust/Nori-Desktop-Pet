@@ -1,11 +1,13 @@
 using System.Globalization;
+using System.Text;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
 using Nori.Core.Data;
 
 namespace Nori.Core.Logging;
 
-/// <summary>
-/// 日志来源类型
-/// </summary>
+/// <summary>日志来源类型。</summary>
 public enum LogSource
 {
 	/// <summary>前端调用 write_log 写入</summary>
@@ -16,37 +18,57 @@ public enum LogSource
 }
 
 /// <summary>
-/// 文件日志
-///
-/// 对应 Rust 版 log.rs: 按来源与日期分文件, 启动时清理过期日志.
-/// Rust 每次写入都重新 open+append, 这里加锁避免多线程并发写坏同一个文件.
+/// 文件日志。
+/// NLog 负责按来源/日期滚动写盘，结构化 Queue 保留给调试页读取的最近 500 条。
 /// </summary>
 public sealed class FileLogger
 {
-	/// <summary>日志保留天数</summary>
 	private const int RetentionDays = 7;
-
-	/// <summary>内存缓冲上限 (调试页日志查看器用, 对应 ClassIsland AppLogService 的环形队列)</summary>
 	private const int MaxMemoryEntries = 500;
 
 	private readonly string _directory;
+	private readonly LogLevel _minimumLevel;
 	private readonly Lock _gate = new();
-
-	// 内存环形缓冲: 供调试页 get_recent_logs 读取, 与文件写入共用一把锁保证顺序一致
 	private readonly Queue<LogEntry> _memory = new();
+	private readonly LogFactory _factory;
+	private readonly Logger _backend;
+	private readonly Logger _frontend;
+	private readonly MemoryTarget _recentTarget;
 
-	// 常驻写入器: 每条日志都重新开关一次文件在高频路径 (Cubism 告警 / 前端 write_log)
-	// 上是纯开销, 改为按来源各持一个追加写入器, 跨天时滚动重建
-	private StreamWriter? _backendWriter;
-	private StreamWriter? _frontendWriter;
-	private string _backendFileDate = "";
-	private string _frontendFileDate = "";
+	public FileLogger(string? directory = null)
+		: this(directory, "trace")
+	{
+	}
 
-	public FileLogger(string? directory = null) => _directory = directory ?? AppPaths.LogDir;
+	/// <summary>创建带最低级别过滤的日志写入器。</summary>
+	public FileLogger(string? directory, string minimumLevel)
+	{
+		_directory = directory ?? AppPaths.LogDir;
+		_minimumLevel = ParseLevel(minimumLevel, LogLevel.Trace);
+		Directory.CreateDirectory(_directory);
 
-	/// <summary>
-	/// 初始化: 创建日志目录并清理过期日志. 单个文件删除失败不影响启动.
-	/// </summary>
+		_factory = new LogFactory();
+		LoggingConfiguration configuration = new(_factory);
+		FileTarget backendTarget = CreateTarget("backend");
+		FileTarget frontendTarget = CreateTarget("frontend");
+		_recentTarget = new MemoryTarget
+		{
+			Layout = "${message}",
+			MaxLogsCount = MaxMemoryEntries,
+		};
+		configuration.AddTarget("backend", backendTarget);
+		configuration.AddTarget("frontend", frontendTarget);
+		configuration.AddTarget("recent", _recentTarget);
+		configuration.AddRule(new LoggingRule("backend", _minimumLevel, LogLevel.Fatal, backendTarget));
+		configuration.AddRule(new LoggingRule("frontend", _minimumLevel, LogLevel.Fatal, frontendTarget));
+		configuration.AddRule(new LoggingRule("backend", _minimumLevel, LogLevel.Fatal, _recentTarget));
+		configuration.AddRule(new LoggingRule("frontend", _minimumLevel, LogLevel.Fatal, _recentTarget));
+		_factory.Configuration = configuration;
+		_backend = _factory.GetLogger("backend");
+		_frontend = _factory.GetLogger("frontend");
+	}
+
+	/// <summary>初始化日志目录并清理超过 7 天的日志。</summary>
 	public void Initialize()
 	{
 		Directory.CreateDirectory(_directory);
@@ -55,7 +77,6 @@ public sealed class FileLogger
 		{
 			try
 			{
-				// 修改时间在未来的文件不删除, 与 Rust 版一致
 				if (File.GetLastWriteTimeUtc(path) < cutoff) File.Delete(path);
 			}
 			catch (IOException)
@@ -67,88 +88,73 @@ public sealed class FileLogger
 		}
 	}
 
-	/// <summary>
-	/// 写入一行日志
-	/// </summary>
+	/// <summary>写入一行日志。</summary>
 	public void Write(LogSource source, string level, string message)
 	{
-		// 先入内存缓冲再写文件: 文件系统失败时调试页仍能看到这条日志
-		LogEntry entry = LogEntry.Create(source, level, message);
-		string line = $"[{entry.Time}] [{level}] {message}";
-		try
-		{
-			lock (_gate)
-			{
-				_memory.Enqueue(entry);
-				while (_memory.Count > MaxMemoryEntries) _memory.Dequeue();
-				StreamWriter writer = GetWriter(source);
-				writer.WriteLine(line);
-				writer.Flush();
-			}
-		}
-		catch (IOException)
-		{
-			// 日志写入失败不能拖垮应用
-		}
-		catch (UnauthorizedAccessException)
-		{
-		}
-	}
+		// Unknown levels from the bridge are deliberately normalized to Info;
+		// an invalid threshold still defaults to Trace so logging is not silently
+		// disabled by a malformed setting.
+		LogLevel normalized = ParseLevel(level, LogLevel.Info);
+		if (normalized.Ordinal < _minimumLevel.Ordinal) return;
 
-	/// <summary>
-	/// 读取内存缓冲快照 (时间升序), 快照与源隔离, 后续写入不影响已取回的列表
-	/// </summary>
-	public IReadOnlyList<LogEntry> RecentLogs()
-	{
+		LogEntry entry = LogEntry.Create(source, normalized.Name.ToLowerInvariant(), message);
 		lock (_gate)
 		{
-			return _memory.ToArray();
+			_memory.Enqueue(entry);
+			while (_memory.Count > MaxMemoryEntries) _memory.Dequeue();
+
+			LogEventInfo eventInfo = new(normalized, source == LogSource.Backend ? _backend.Name : _frontend.Name, message);
+			eventInfo.Properties["nori-time"] = entry.Time;
+			eventInfo.Properties["nori-level"] = entry.Level;
+			try
+			{
+				(source == LogSource.Backend ? _backend : _frontend).Log(eventInfo);
+			}
+			catch (IOException)
+			{
+				// 日志写入失败不能拖垮应用
+			}
+			catch (UnauthorizedAccessException)
+			{
+			}
 		}
 	}
 
-	/// <summary>
-	/// 清空内存缓冲 (只影响调试页查看器, 不动磁盘文件)
-	/// </summary>
+	/// <summary>读取内存缓冲快照。</summary>
+	public IReadOnlyList<LogEntry> RecentLogs()
+	{
+		lock (_gate) return _memory.ToArray();
+	}
+
+	/// <summary>清空内存缓冲 (不动磁盘文件)。</summary>
 	public void ClearRecentLogs()
 	{
 		lock (_gate)
 		{
 			_memory.Clear();
+			_recentTarget.Logs.Clear();
 		}
 	}
 
-	/// <summary>
-	/// 取指定来源的常驻写入器, 跨天时滚动到新文件
-	/// </summary>
-	private StreamWriter GetWriter(LogSource source)
+	private FileTarget CreateTarget(string source) => new()
 	{
-		string today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-		if (source == LogSource.Frontend)
-		{
-			if (_frontendWriter is null || _frontendFileDate != today)
-			{
-				_frontendWriter?.Dispose();
-				_frontendWriter = CreateWriter("frontend", today);
-				_frontendFileDate = today;
-			}
-			return _frontendWriter;
-		}
+		FileName = Path.Combine(_directory, $"{source}_${{shortdate}}.log"),
+		Layout = "[${event-properties:item=nori-time}] [${event-properties:item=nori-level}] ${message}",
+		KeepFileOpen = true,
+		CreateDirs = true,
+		AutoFlush = true,
+		MaxArchiveDays = RetentionDays,
+		Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+	};
 
-		if (_backendWriter is null || _backendFileDate != today)
-		{
-			_backendWriter?.Dispose();
-			_backendWriter = CreateWriter("backend", today);
-			_backendFileDate = today;
-		}
-		return _backendWriter;
-	}
-
-	/// <summary>
-	/// 创建今天的日志写入器, 形如 backend_2026-01-01.log
-	/// </summary>
-	private StreamWriter CreateWriter(string prefix, string today)
+	private static LogLevel ParseLevel(string? raw, LogLevel unknownLevel) => raw?.Trim().ToLowerInvariant() switch
 	{
-		Directory.CreateDirectory(_directory);
-		return new StreamWriter(Path.Combine(_directory, $"{prefix}_{today}.log"), append: true);
-	}
+		"trace" => LogLevel.Trace,
+		"debug" => LogLevel.Debug,
+		"info" or "information" => LogLevel.Info,
+		"warn" or "warning" => LogLevel.Warn,
+		"error" => LogLevel.Error,
+		"fatal" => LogLevel.Fatal,
+		_ => unknownLevel,
+	};
 }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using Cronos;
 using Nori.Core.Configuration;
 using Nori.Core.Logging;
 using Nori.Core.Tools;
@@ -29,8 +30,12 @@ public sealed class ProactiveScheduler : IDisposable
 	private readonly Lock _gate = new();
 	private System.Threading.Timer? _tickTimer;
 
-	/// <summary>当天已触发的问候 (日期-槽位)</summary>
-	private readonly HashSet<string> _firedDailyGreetings = [];
+	private readonly GreetingSlot[] _greetingSlots =
+	[
+		new("30 8 * * *", "早安主人！新的一天也要元气满满哦~", "wave", "Smile"),
+		new("0 12 * * *", "到午饭时间啦！不要饿肚子，去吃点好吃的吧~", "smile", "Smile"),
+		new("0 23 * * *", "夜深了，工作再忙也要注意身体，早点休息吧主人~", "think", "Sleepy"),
+	];
 	/// <summary>上次挂机触发时间戳, 防止频繁刷屏</summary>
 	private long _lastIdleFiredAt;
 
@@ -94,10 +99,21 @@ public sealed class ProactiveScheduler : IDisposable
 
 	private void Tick()
 	{
-		long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		long nowMs = now.ToUnixTimeMilliseconds();
 		FireDueReminders(nowMs);
-		CheckDailyGreetings();
+		CheckDailyGreetings(now);
 		CheckIdle();
+	}
+
+	/// <summary>供测试按指定 UTC 时间推进一次调度。</summary>
+	public void TickForTests(DateTime? nowUtc = null)
+	{
+		DateTimeOffset now = nowUtc is { } value
+			? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc))
+			: DateTimeOffset.UtcNow;
+		FireDueReminders(now.ToUnixTimeMilliseconds());
+		CheckDailyGreetings(now);
 	}
 
 	private void FireDueReminders(long nowMs)
@@ -117,39 +133,23 @@ public sealed class ProactiveScheduler : IDisposable
 		}
 	}
 
-	private void CheckDailyGreetings()
+	private void CheckDailyGreetings(DateTimeOffset nowUtc)
 	{
 		bool enabled = ParseBool(_config.GetStringOr("proactive_daily_greeting", "true")) ?? true;
 		if (!enabled) return;
 
-		DateTime now = DateTime.Now;
-		string dateKey = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-		int hour = now.Hour;
-		int minute = now.Minute;
-
-		void FireOnce(string slot, string text, string motion, string expression)
+		DateTimeOffset localNow = TimeZoneInfo.ConvertTime(nowUtc, TimeZoneInfo.Local);
+		foreach (GreetingSlot slot in _greetingSlots)
 		{
+			DateTimeOffset from = localNow.AddMinutes(-15).AddTicks(-1);
+			DateTimeOffset? occurrence = slot.Schedule.GetNextOccurrence(from, TimeZoneInfo.Local);
+			if (occurrence is null || occurrence > localNow || localNow - occurrence > TimeSpan.FromMinutes(15)) continue;
 			lock (_gate)
 			{
-				if (!_firedDailyGreetings.Add($"{dateKey}-{slot}")) return;
+				if (slot.LastFired == occurrence) continue;
+				slot.LastFired = occurrence;
 			}
-			Message?.Invoke(new ProactiveMessage(text, motion, expression));
-		}
-
-		// 8:30 晨间问候
-		if (hour == 8 && minute >= 30)
-		{
-			FireOnce("morning", "早安主人！新的一天也要元气满满哦~", "wave", "Smile");
-		}
-		// 12:00 午餐提醒
-		else if (hour == 12 && minute <= 15)
-		{
-			FireOnce("lunch", "到午饭时间啦！不要饿肚子，去吃点好吃的吧~", "smile", "Smile");
-		}
-		// 23:00 晚安提醒
-		else if (hour == 23 && minute is >= 0 and <= 15)
-		{
-			FireOnce("night", "夜深了，工作再忙也要注意身体，早点休息吧主人~", "think", "Sleepy");
+			Message?.Invoke(new ProactiveMessage(slot.Text, slot.Motion, slot.Expression));
 		}
 	}
 
@@ -201,6 +201,23 @@ public sealed class ProactiveScheduler : IDisposable
 			_tickTimer = null;
 		}
 		timer?.Dispose();
+	}
+
+	private sealed class GreetingSlot
+	{
+		public GreetingSlot(string expression, string text, string motion, string face)
+		{
+			Schedule = CronExpression.Parse(expression, CronFormat.Standard);
+			Text = text;
+			Motion = motion;
+			Expression = face;
+		}
+
+		public CronExpression Schedule { get; }
+		public string Text { get; }
+		public string Motion { get; }
+		public string Expression { get; }
+		public DateTimeOffset? LastFired { get; set; }
 	}
 }
 

@@ -1,16 +1,16 @@
+using System.Net;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 
 namespace Nori.Core.Assets;
 
-/// <summary>
-/// 资源服务配置
-/// </summary>
+/// <summary>资源服务配置</summary>
 public sealed record AssetServerOptions
 {
 	/// <summary>前端 bundle 目录 (生产模式下的 dist)</summary>
@@ -19,9 +19,7 @@ public sealed record AssetServerOptions
 	/// <summary>资源目录 (data/resources)</summary>
 	public required string ResourcesRoot { get; init; }
 
-	/// <summary>
-	/// 开发模式: 固定端口且不加随机前缀, 让 vite 能把 /nori-assets 代理过来
-	/// </summary>
+	/// <summary>开发模式: 固定端口且不加随机前缀, 让 vite 能把 /nori-assets 代理过来</summary>
 	public bool DevMode { get; init; }
 
 	/// <summary>开发模式下的固定端口</summary>
@@ -29,32 +27,20 @@ public sealed record AssetServerOptions
 }
 
 /// <summary>
-/// 本机回环资源服务
-///
-/// 取代 Tauri 的 nori-asset:// 自定义协议. Avalonia 的 WebResourceRequested 只读,
-/// 无法回写响应, 因此改用只绑回环地址的 Kestrel, 把 asset.rs 的安全逻辑原样搬过来.
-///
-/// 生产: 随机端口 + 随机路径前缀, 前端与资源同源, 免掉跨域与 CSP 的麻烦
-/// 开发: 固定端口且无前缀, 前端仍由 vite 提供, /nori-assets 由 vite 代理到这里
+/// 本机回环资源服务。静态文件中间件负责缓存/ETag，安全中间件负责路径与符号链接边界。
 /// </summary>
 public sealed class AssetServer : IAsyncDisposable
 {
-	/// <summary>应用路径段</summary>
 	private const string AppSegment = "app";
-
-	/// <summary>资源路径段, 与前端 assetUrl() 保持一致</summary>
 	private const string AssetSegment = "nori-assets";
 
 	private readonly WebApplication _app;
 	private readonly AssetServerOptions _options;
 
-	/// <summary>随机路径前缀, 开发模式下为空</summary>
 	public string Prefix { get; }
 
-	/// <summary>服务根地址, 形如 http://127.0.0.1:51234</summary>
 	public string Origin { get; }
 
-	/// <summary>前端入口地址 (不含 window 查询参数)</summary>
 	public string AppUrl => _options.DevMode ? "http://localhost:1420/index.html" : $"{Origin}{Prefix}/{AppSegment}/index.html";
 
 	private AssetServer(WebApplication app, AssetServerOptions options, string prefix, string origin)
@@ -65,101 +51,142 @@ public sealed class AssetServer : IAsyncDisposable
 		Origin = origin;
 	}
 
-	/// <summary>
-	/// 启动服务, 返回可用的实例
-	/// </summary>
+	/// <summary>启动服务, 返回可用的实例。</summary>
 	public static async Task<AssetServer> StartAsync(AssetServerOptions options, CancellationToken cancellationToken = default)
 	{
 		string prefix = options.DevMode ? string.Empty : "/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-
 		WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
 		builder.Logging.ClearProviders();
 		builder.WebHost.ConfigureKestrel(kestrel =>
 		{
-			// 只绑 IPv4 回环: 不接受来自局域网的连接.
-			// 注意不能用 ListenLocalhost(0), Kestrel 不允许 localhost 配动态端口
-			kestrel.Listen(System.Net.IPAddress.Loopback, options.DevMode ? options.DevPort : 0);
+			kestrel.Listen(IPAddress.Loopback, options.DevMode ? options.DevPort : 0);
 			kestrel.AddServerHeader = false;
 		});
 
 		WebApplication app = builder.Build();
+		PhysicalFileProvider appProvider = new(options.AppRoot);
+		PhysicalFileProvider resourceProvider = new(options.ResourcesRoot, Microsoft.Extensions.FileProviders.Physical.ExclusionFilters.None);
+		PathString appPath = new($"{prefix}/{AppSegment}");
+		PathString resourcePath = new($"{prefix}/{AssetSegment}");
 
+		// 主机过滤拒绝未知 Host，并返回旧回环服务约定的 403，避免泄露框架诊断正文。
+		HashSet<string> allowedHosts = new(StringComparer.OrdinalIgnoreCase)
+		{
+			"127.0.0.1", "localhost", "[::1]", "::1",
+		};
 		app.Use(async (context, next) =>
 		{
-			// Host 头必须是回环地址, 挡掉 DNS rebinding
-			string host = context.Request.Host.Host;
-			if (host is not ("127.0.0.1" or "localhost" or "[::1]" or "::1"))
+			if (!allowedHosts.Contains(context.Request.Host.Host))
 			{
 				context.Response.StatusCode = StatusCodes.Status403Forbidden;
 				return;
 			}
 			await next();
 		});
+		app.UseDefaultFiles(new DefaultFilesOptions
+		{
+			FileProvider = appProvider,
+			RequestPath = appPath,
+			DefaultFileNames = ["index.html"],
+		});
+		app.Use(async (context, next) =>
+		{
+			string requestPath = context.Request.Path.Value ?? "";
+			string appPathValue = appPath.Value ?? string.Empty;
+			string resourcePathValue = resourcePath.Value ?? string.Empty;
+			string? rootPath = IsPathUnder(requestPath, appPathValue)
+				? appPathValue
+				: IsPathUnder(requestPath, resourcePathValue) ? resourcePathValue : null;
+			if (rootPath is null)
+			{
+				await next();
+				return;
+			}
 
-		app.MapGet($"{prefix}/{AppSegment}/{{**path}}", (HttpContext context, string? path) =>
-			Serve(context, options.AppRoot, string.IsNullOrEmpty(path) ? "index.html" : path, cache: false));
+			string relative = requestPath[rootPath.Length..].TrimStart('/');
+			string? decoded = AssetPath.PercentDecode(relative);
+			string root = rootPath == appPathValue ? options.AppRoot : options.ResourcesRoot;
+			string? resolved = decoded is not null && AssetPath.IsSafeRelativePath(decoded)
+				? AssetPath.Resolve(root, decoded)
+				: null;
+			if (resolved is null)
+			{
+				await Fail(context);
+				return;
+			}
 
-		app.MapGet($"{prefix}/{AssetSegment}/{{**path}}", (HttpContext context, string? path) =>
-			Serve(context, options.ResourcesRoot, path ?? string.Empty, cache: true));
+			string normalized = Path.GetRelativePath(root, resolved).Replace(Path.DirectorySeparatorChar, '/');
+			context.Request.Path = new PathString($"{rootPath}/{normalized}");
+			await next();
+		});
+
+		FileExtensionContentTypeProvider contentTypes = new();
+		contentTypes.Mappings[".moc3"] = "application/octet-stream";
+		contentTypes.Mappings[".motion3"] = "application/json; charset=utf-8";
+		contentTypes.Mappings[".physics3"] = "application/json; charset=utf-8";
+		contentTypes.Mappings[".exp3"] = "application/json; charset=utf-8";
+		app.UseStaticFiles(new StaticFileOptions
+		{
+			FileProvider = appProvider,
+			RequestPath = appPath,
+			ContentTypeProvider = contentTypes,
+			OnPrepareResponse = context =>
+			{
+				context.Context.Response.Headers.CacheControl = "no-cache";
+				context.Context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+				if (string.Equals(Path.GetExtension(context.File.Name), ".html", StringComparison.OrdinalIgnoreCase))
+				{
+					context.Context.Response.ContentType = "text/html; charset=utf-8";
+				}
+			},
+		});
+		app.UseStaticFiles(new StaticFileOptions
+		{
+			FileProvider = resourceProvider,
+			RequestPath = resourcePath,
+			ServeUnknownFileTypes = true,
+			DefaultContentType = "application/octet-stream",
+			ContentTypeProvider = contentTypes,
+			OnPrepareResponse = context =>
+			{
+				context.Context.Response.Headers.CacheControl = "public, max-age=3600";
+				context.Context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+				if (string.Equals(Path.GetExtension(context.File.Name), ".json", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(Path.GetExtension(context.File.Name), ".motion3", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(Path.GetExtension(context.File.Name), ".physics3", StringComparison.OrdinalIgnoreCase) ||
+					string.Equals(Path.GetExtension(context.File.Name), ".exp3", StringComparison.OrdinalIgnoreCase))
+				{
+					context.Context.Response.ContentType = "application/json; charset=utf-8";
+				}
+			},
+		});
+		app.Run(async context =>
+		{
+			if (!context.Response.HasStarted)
+			{
+				await Fail(context);
+			}
+		});
 
 		await app.StartAsync(cancellationToken);
-
 		string origin = app.Urls.FirstOrDefault(url => url.StartsWith("http://", StringComparison.Ordinal))
 			?? throw new InvalidOperationException("资源服务未能绑定到回环地址");
-		// Kestrel 报的是 http://localhost:PORT, 统一成 127.0.0.1 避免 IPv6 解析差异
 		origin = origin.Replace("//localhost:", "//127.0.0.1:", StringComparison.Ordinal).TrimEnd('/');
-
 		return new AssetServer(app, options, prefix, origin);
 	}
 
-	/// <summary>
-	/// 解析并输出一个文件
-	/// </summary>
-	private static async Task Serve(HttpContext context, string root, string relative, bool cache)
+	private static async Task Fail(HttpContext context)
 	{
-		string? decoded = AssetPath.PercentDecode(relative);
-		if (decoded is null)
-		{
-			await Fail(context, StatusCodes.Status400BadRequest, "URL 路径编码非法");
-			return;
-		}
-		decoded = decoded.TrimStart('/');
-		if (decoded.Length == 0)
-		{
-			await Fail(context, StatusCodes.Status404NotFound, "空路径");
-			return;
-		}
-		if (!AssetPath.IsSafeRelativePath(decoded))
-		{
-			await Fail(context, StatusCodes.Status403Forbidden, "非法资源路径");
-			return;
-		}
-		string? file = AssetPath.Resolve(root, decoded);
-		if (file is null)
-		{
-			await Fail(context, StatusCodes.Status404NotFound, $"资源不存在: {decoded}");
-			return;
-		}
-		context.Response.ContentType = AssetPath.MimeFor(file);
-		context.Response.Headers["Access-Control-Allow-Origin"] = "*";
-		context.Response.Headers.CacheControl = cache ? "public, max-age=3600" : "no-cache";
-		await context.Response.SendFileAsync(file, context.RequestAborted);
-	}
-
-	/// <summary>
-	/// 输出纯文本错误
-	/// </summary>
-	private static async Task Fail(HttpContext context, int status, string message)
-	{
-		context.Response.StatusCode = status;
+		context.Response.StatusCode = StatusCodes.Status404NotFound;
 		context.Response.ContentType = "text/plain; charset=utf-8";
 		context.Response.Headers["Access-Control-Allow-Origin"] = "*";
-		await context.Response.WriteAsync(message, context.RequestAborted);
+		await context.Response.WriteAsync("资源不存在", context.RequestAborted);
 	}
 
-	/// <summary>
-	/// 拼出某个窗口的入口地址
-	/// </summary>
+	private static bool IsPathUnder(string path, string root) =>
+		root.Length > 0 && (path.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+			path.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase));
+
 	public string WindowUrl(string label) => $"{AppUrl}?window={Uri.EscapeDataString(label)}";
 
 	public async ValueTask DisposeAsync()
