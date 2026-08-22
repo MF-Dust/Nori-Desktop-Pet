@@ -290,6 +290,13 @@ export const icon = {
 			"M13 2 3 14h9l-1 8 10-12h-9l1-8z"
 		]
 	},
+	// 复制
+	copy: {
+		stroke: [
+			"M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Z",
+			"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+		]
+	},
 } satisfies Record<string, IconData>
 
 /**

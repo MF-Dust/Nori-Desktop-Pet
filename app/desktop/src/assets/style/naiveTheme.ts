@@ -102,6 +102,22 @@ export const naiveThemeOverrides: GlobalThemeOverrides = {
 	Popconfirm: {
 		borderRadius: "0.8rem",
 	},
+	Dialog: {
+		borderRadius: "1rem",
+		color: "rgba(8, 24, 40, 0.96)",
+		titleTextColor: "#ecf8ff",
+		contentTextColor: "#cfdde5",
+		boxShadow: "0 1.6rem 4rem rgba(0, 0, 0, 0.75), 0 0 2.4rem rgba(94, 234, 212, 0.15)",
+	},
+	Tabs: {
+		tabTextColorLine: "#7e94a3",
+		tabTextColorActiveLine: "#5eead4",
+		tabTextColorHoverLine: "#7de3ff",
+		barColor: "#5eead4",
+	},
+	Tag: {
+		borderRadius: "99.9rem",
+	},
 	Tooltip: {
 		borderRadius: "0.6rem",
 		color: "rgba(6, 20, 32, 0.95)",
