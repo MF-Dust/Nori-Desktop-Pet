@@ -24,6 +24,8 @@ const currentModel = computed(() => MODEL_LIST.find(model => model.id === select
 const aiConfigured = computed(() => SNAPSHOT.value?.ai.configured ?? false)
 const aiProvider = computed(() => SNAPSHOT.value?.ai.provider ?? "")
 const aiModel = computed(() => SNAPSHOT.value?.ai.model ?? "")
+const enabledSkillsCount = computed(() => SNAPSHOT.value?.enabledSkillsCount ?? 0)
+const enabledToolsCount = computed(() => (SNAPSHOT.value?.tools ?? []).filter(t => t.enabled).length)
 
 // ---- 快捷动作提示反馈 ----
 const motionFeedback = ref(false)
@@ -118,7 +120,7 @@ onMounted(() => {
 <template>
 	<div class="home-panel">
 		<!-- 顶部 Hero 卡片: 桌宠形象与状态控制 -->
-		<section class="hero-card">
+		<section class="hero-card glass-panel">
 			<div class="hero-left">
 				<div class="avatar-wrap" :class="{active: props.petVisible}">
 					<img :src="currentModel.thumb" :alt="currentModel.name" class="pet-thumb"/>
@@ -137,6 +139,18 @@ onMounted(() => {
 					<p class="pet-desc">
 						{{ props.petVisible ? I18N.petStatusDescOnline : I18N.petStatusDescOffline }}
 					</p>
+
+					<!-- 快速状态标签栏 -->
+					<div class="quick-status-row">
+						<span class="quick-badge" :class="{ok: aiConfigured}">
+							<Icon name="cpu" :size="12"/>
+							<span>{{ aiConfigured ? (aiModel || 'AI 已就绪') : '未连接 AI' }}</span>
+						</span>
+						<span class="quick-badge">
+							<Icon name="sparkles" :size="12"/>
+							<span>{{ enabledSkillsCount }} 技能 / {{ enabledToolsCount }} 工具</span>
+						</span>
+					</div>
 				</div>
 			</div>
 
@@ -165,7 +179,7 @@ onMounted(() => {
 		<!-- 中部磁贴导航网格 -->
 		<section class="nav-grid">
 			<!-- AI 对话卡片 -->
-			<div class="grid-card chat-card" @click="emit('navigate', 'talk')">
+			<div class="grid-card chat-card glass-panel" @click="emit('navigate', 'talk')">
 				<div class="card-glow-backdrop"></div>
 				<div class="card-icon-wrap icon-chat">
 					<Icon name="send" :size="22"/>
@@ -176,7 +190,7 @@ onMounted(() => {
 					<div class="card-status">
 						<span class="status-pill" :class="{ok: aiConfigured}">
 							<span class="pill-dot"/>
-							{{ aiConfigured ? (aiModel ? `已连接: ${aiModel}` : I18N.cards.chat.statusConfigured) : I18N.cards.chat.statusNotConfigured }}
+							{{ aiConfigured ? (aiModel ? `已接入: ${aiModel}` : I18N.cards.chat.statusConfigured) : I18N.cards.chat.statusNotConfigured }}
 						</span>
 					</div>
 				</div>
@@ -187,7 +201,7 @@ onMounted(() => {
 			</div>
 
 			<!-- 模型换装卡片 -->
-			<div class="grid-card model-card" @click="emit('navigate', 'model')">
+			<div class="grid-card model-card glass-panel" @click="emit('navigate', 'model')">
 				<div class="card-glow-backdrop"></div>
 				<div class="card-icon-wrap icon-model">
 					<Icon name="package" :size="22"/>
@@ -209,7 +223,7 @@ onMounted(() => {
 			</div>
 
 			<!-- AI 大脑配置卡片 -->
-			<div class="grid-card ai-card" @click="emit('navigate', 'settings')">
+			<div class="grid-card ai-card glass-panel" @click="emit('navigate', 'settings')">
 				<div class="card-glow-backdrop"></div>
 				<div class="card-icon-wrap icon-ai">
 					<Icon name="cpu" :size="22"/>
@@ -423,6 +437,32 @@ onMounted(() => {
 .pet-desc {
 	font-size: 1.25rem;
 	color: var(--text-faint);
+}
+
+.quick-status-row {
+	display: flex;
+	align-items: center;
+	gap: 0.8rem;
+	margin-top: 0.4rem;
+	flex-wrap: wrap;
+}
+
+.quick-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.25rem 0.8rem;
+	border-radius: var(--radius-pill);
+	background: rgba(255, 255, 255, 0.04);
+	border: 0.1rem solid var(--line-subtle);
+	font-size: 1.1rem;
+	color: var(--text-muted);
+
+	&.ok {
+		background: rgba(125, 227, 255, 0.08);
+		border-color: rgba(125, 227, 255, 0.25);
+		color: var(--nori-teal-bright);
+	}
 }
 
 .hero-actions {

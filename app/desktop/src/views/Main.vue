@@ -19,11 +19,13 @@ const I18N = computed(() => useLanguages().views.main)
 // ---- 侧边导航项 ----
 type NavKey = "home" | "talk" | "model" | "settings" | "about"
 
-const NAV_ITEMS = computed<{key: NavKey; label: string; icon: IconName}[]>(() => [
+const aiConfigured = computed(() => RUNTIME.snapshot.value?.ai.configured ?? false)
+
+const NAV_ITEMS = computed<{key: NavKey; label: string; icon: IconName; badge?: boolean}[]>(() => [
 	{key: "home", label: I18N.value.nav.home, icon: "noriOS"},
 	{key: "talk", label: I18N.value.nav.talk, icon: "send"},
 	{key: "model", label: I18N.value.nav.model, icon: "package"},
-	{key: "settings", label: I18N.value.nav.settings, icon: "settings"},
+	{key: "settings", label: I18N.value.nav.settings, icon: "settings", badge: !aiConfigured.value},
 	{key: "about", label: I18N.value.nav.about, icon: "info"},
 ])
 
@@ -107,6 +109,7 @@ onMounted(async () => {
 							<Icon :name="item.icon" :size="17"/>
 						</div>
 						<span class="nav-label">{{ item.label }}</span>
+						<span v-if="item.badge" class="nav-badge" title="未配置 AI API"/>
 					</button>
 				</div>
 			</aside>
@@ -132,7 +135,7 @@ onMounted(async () => {
 
 					<!-- 声明 -->
 					<section v-else-if="activeNav === 'about'" class="about-panel">
-						<div class="about-card">
+						<div class="about-card glass-panel">
 							<div class="about-icon-header">
 								<Icon name="sparkles" :size="32" class="about-sparkle"/>
 							</div>
@@ -153,7 +156,7 @@ onMounted(async () => {
 			<div class="footer-left">
 				<div class="pet-status-chip" :class="{online: petVisible}">
 					<span class="status-pulse-dot"/>
-					<span class="status-text">桌宠状态: {{ petVisible ? '桌面上已唤出' : '待命休眠中' }}</span>
+					<span class="status-text">桌宠状态: {{ petVisible ? '已在桌面就绪' : '待命休眠中' }}</span>
 					<span class="status-model-name">({{ selectedModelName }})</span>
 				</div>
 			</div>
@@ -316,6 +319,16 @@ onMounted(async () => {
 		.nav-icon-wrap {
 			color: var(--nori-teal-bright);
 		}
+	}
+
+	.nav-badge {
+		position: absolute;
+		right: 1rem;
+		width: 0.65rem;
+		height: 0.65rem;
+		border-radius: 50%;
+		background: var(--warning);
+		box-shadow: 0 0 0.8rem var(--warning);
 	}
 }
 
