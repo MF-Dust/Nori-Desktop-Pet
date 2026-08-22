@@ -28,7 +28,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Include="../Live2D/native/win-x64/Live2DCubismCore.dll" Link="Live2DCubismCore.dll" CopyToOutputDirectory="PreserveNewest"/>
+		<!-- Cubism Core 原生库: 按 RID 只打包当前目标平台的一份 -->
+		<None Include="../Live2D/native/win-x64/Live2DCubismCore.dll" Link="Live2DCubismCore.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == ''"/>
+		<None Include="../Live2D/native/linux-x64/libLive2DCubismCore.so" Link="libLive2DCubismCore.so" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'linux-x64'"/>
+		<None Include="../Live2D/native/macos/libLive2DCubismCore.dylib" Link="libLive2DCubismCore.dylib" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or '$(RuntimeIdentifier)' == 'osx-arm64'"/>
 	</ItemGroup>
 
 	<ItemGroup>
