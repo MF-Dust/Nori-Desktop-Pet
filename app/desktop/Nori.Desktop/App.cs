@@ -38,7 +38,11 @@ public sealed class App : Application
 			CrashReporter.Register(desktop); // UI 线程与任务级异常兜底
 			desktop.Exit += async (_, _) =>
 			{
-				if (_services is not null) await _services.DisposeAsync();
+				if (_services is not null)
+				{
+					if (_services.Runtime is not null) await _services.Runtime.DisposeAsync();
+					await _services.DisposeAsync();
+				}
 			};
 			_ = StartAsync(desktop);
 		}
@@ -155,6 +159,12 @@ public sealed class App : Application
 			services.Commands = new BridgeCommands(services);
 			NoriBridge bridge = new(services);
 			services.Windows.CreateAll(bridge, services);
+
+			// 业务运行时 (Agent/技能/情绪/提醒/语音): 桌宠窗口就绪后启动,
+			// 桥接命令通过 services.Runtime 访问
+			Runtime.AppRuntime runtime = new(services);
+			services.Runtime = runtime;
+			runtime.Start();
 
 			TrayMenu.Install(this, services);
 

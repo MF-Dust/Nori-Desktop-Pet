@@ -62,6 +62,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>原生 Live2D 桌宠运行时</summary>
 	public PetRuntime PetRuntime { get; set; } = null!;
 
+	/// <summary>应用业务运行时 (Agent/技能/情绪/提醒/语音), 窗口建好后回填</summary>
+	public Runtime.AppRuntime? Runtime { get; set; }
+
 	public async ValueTask DisposeAsync()
 	{
 		await Mcp.DisposeAsync();
