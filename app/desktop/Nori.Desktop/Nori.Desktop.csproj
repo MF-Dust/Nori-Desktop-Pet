@@ -13,6 +13,7 @@
 		<ApplicationManifest>app.manifest</ApplicationManifest>
 		<ApplicationIcon>Assets/icon.ico</ApplicationIcon>
 		<Version>0.1.0</Version>
+		<NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>

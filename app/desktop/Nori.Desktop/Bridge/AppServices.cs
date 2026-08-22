@@ -47,8 +47,17 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>回环资源服务</summary>
 	public AssetServer? Assets { get; init; }
 
-	/// <summary>HTTP 客户端 (全应用共用一个, 测试可在装配后替换)</summary>
+	/// <summary>本地/模型 HTTP 客户端 (测试可在装配后替换)</summary>
 	public HttpClient Http { get; set; } = null!;
+
+	private HttpClient? _publicHttp;
+
+	/// <summary>公网 HTTP 客户端; 未显式装配时回退到 Http 以兼容测试装配。</summary>
+	public HttpClient PublicHttp
+	{
+		get => _publicHttp ?? Http;
+		set => _publicHttp = value;
+	}
 
 	/// <summary>Agent 聊天/MCP 操作取消注册表</summary>
 	public required Bridge.AgentOperationRegistry AgentOperations { get; init; }
@@ -69,6 +78,7 @@ public sealed class AppServices : IAsyncDisposable
 	{
 		await Mcp.DisposeAsync();
 		if (Assets is not null) await Assets.DisposeAsync();
+		if (_publicHttp is not null && !ReferenceEquals(_publicHttp, Http)) _publicHttp.Dispose();
 		Http.Dispose();
 		Database.Dispose();
 	}

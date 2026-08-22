@@ -187,13 +187,15 @@ public static class BuiltinTools
 				string city = OptionalString(args, "city")
 					?? throw new InvalidOperationException("缺少参数: city");
 				CancellationToken ct = ctx.CancellationToken;
-				using HttpRequestMessage request = new(HttpMethod.Get, $"https://wttr.in/{Uri.EscapeDataString(city)}?format=j1");
-				using HttpResponseMessage response = await deps.Http.SendAsync(request, ct);
+				Uri weatherUri = new($"https://wttr.in/{Uri.EscapeDataString(city)}?format=j1");
+				using HttpResponseMessage response = await UrlAccessPolicy.GetWithSafeRedirectsAsync(
+					deps.Http, weatherUri, allowPrivate: false, cancellationToken: ct);
 				if (!response.IsSuccessStatusCode)
 				{
 					throw new InvalidOperationException($"天气查询失败: HTTP {(int)response.StatusCode}");
 				}
-				JsonNode? data = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
+				JsonNode? data = JsonNode.Parse(await UrlAccessPolicy.ReadCappedTextAsync(
+					response.Content, UrlAccessPolicy.MaxResponseBytes, ct));
 				JsonNode? current = data?["current_condition"]?[0];
 				if (current is null)
 				{
@@ -292,6 +294,8 @@ public static class BuiltinTools
 					OptionalString(args, "endpoint") ?? deps.Config.Get("anysearch_api_base")?.ToStorage(),
 					OptionalString(args, "apiKey"),
 					deps.Config.Get("anysearch_api_key")?.ToStorage());
+				UrlAccessPolicy.EnsurePublicHttp(resolved.Endpoint);
+				UrlAccessPolicy.EnsureDirectRoute(resolved.Endpoint);
 
 				JsonObject payload = new()
 				{
@@ -308,13 +312,29 @@ public static class BuiltinTools
 					httpRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", resolved.ApiKey);
 				}
 
-				using HttpResponseMessage response = await deps.Http.SendAsync(httpRequest, ct);
-				string body = await response.Content.ReadAsStringAsync(ct);
-				if (!response.IsSuccessStatusCode)
+				HttpResponseMessage response;
+				try
 				{
-					throw new HttpRequestException($"AnySearch API 返回 HTTP {(int)response.StatusCode}: {body}");
+					response = await deps.Http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
 				}
-				return JsonNode.Parse(body) ?? body;
+				catch (Microsoft.Security.AntiSSRF.AntiSSRFException exception)
+				{
+					throw UrlAccessPolicy.Translate(exception, resolved.Endpoint);
+				}
+				catch (HttpRequestException exception)
+				{
+					throw UrlAccessPolicy.Translate(exception, resolved.Endpoint);
+				}
+				using (response)
+				{
+					string body = await UrlAccessPolicy.ReadCappedTextAsync(
+						response.Content, UrlAccessPolicy.MaxResponseBytes, ct);
+					if (!response.IsSuccessStatusCode)
+					{
+						throw new HttpRequestException($"AnySearch API 返回 HTTP {(int)response.StatusCode}: {body}");
+					}
+					return JsonNode.Parse(body) ?? body;
+				}
 			});
 	}
 

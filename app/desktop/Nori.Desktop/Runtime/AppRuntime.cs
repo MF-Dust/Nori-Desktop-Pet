@@ -68,7 +68,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		ConfigStore config = services.Config;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config);
-		Skills = new SkillService(config, services.Http);
+		Skills = new SkillService(config, services.PublicHttp);
 		Emotion = new EmotionManager(config);
 
 		ReminderStore reminderStore = new(services.Database);
@@ -287,8 +287,8 @@ public sealed class AppRuntime : IAsyncDisposable
 			Pet = new PetActionsAdapter(() => Services.PetRuntime),
 			Clipboard = audioAvailable ? new AvaloniaClipboardOps(() => Services.Windows.Get(WindowLabels.Main)) : null,
 			SystemInfo = new DesktopSystemInfo(Services.Config),
-			Fetcher = new WebPageFetcher(Services.Http),
-			Http = Services.Http,
+			Fetcher = new WebPageFetcher(Services.PublicHttp),
+			Http = Services.PublicHttp,
 			Config = Services.Config,
 			OpenUrl = url => ShellOpen.OpenUrl(url),
 		});

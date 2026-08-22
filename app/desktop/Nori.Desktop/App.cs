@@ -10,6 +10,7 @@ using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
 using Nori.Core.Logging;
+using Nori.Core.Network;
 using Nori.Core.Resources;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Diagnostics;
@@ -104,21 +105,13 @@ public sealed class App : Application
 		}
 		logger.Write(LogSource.Backend, "info", $"数据库已打开: {AppPaths.DatabasePath}");
 
-		// 默认校验服务器证书。自签名/私有部署的大模型端点可通过 allow_insecure_tls 显式放开,
-		// 不能全局忽略: 这个 client 承载了 LLM/Embedding/MCP 全部出站 HTTPS,
-		// 关掉校验等于把 API Key 暴露给中间人。
+		// 默认校验服务器证书。自签名/私有部署的大模型端点可通过 allow_insecure_tls 显式放开。
 		bool insecureTls = ParseBoolFlag(config.GetStringOr("allow_insecure_tls", "")) ?? false;
-		HttpClientHandler httpHandler = new()
-		{
-			ServerCertificateCustomValidationCallback = insecureTls
-				? HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-				: null,
-		};
-		// 超时要大于聊天流式的 120s 上限, 否则 HttpClient 默认的 100s 会先一步捨断长回复
-		HttpClient http = new(httpHandler)
-		{
-			Timeout = TimeSpan.FromSeconds(ChatService.TimeoutSeconds + 10),
-		};
+		NoriHttpClients httpClients = NoriHttpClients.Create(
+			insecureTls,
+			TimeSpan.FromSeconds(ChatService.TimeoutSeconds + 10));
+		HttpClient http = httpClients.Local;
+		HttpClient publicHttp = httpClients.Public;
 		if (insecureTls)
 		{
 			logger.Write(LogSource.Backend, "warn", "已启用 allow_insecure_tls: 出站 HTTPS 不再校验服务器证书, 仅建议对本地/自签名端点使用");
@@ -146,6 +139,7 @@ public sealed class App : Application
 			Mcp = mcp,
 			Assets = assets,
 			Http = http,
+			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
 		};
 		_services = services;
