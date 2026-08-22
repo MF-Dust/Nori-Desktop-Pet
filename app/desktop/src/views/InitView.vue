@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 import {RUNTIME} from "../services/runtime"
+import {ShouldAutoSummonPet} from "../services/runtime/launch"
 import {listen, type UnlistenFn} from "../services/host/event"
 import {getCurrentWindow} from "../services/host/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
@@ -29,9 +30,11 @@ onBeforeUnmount(() => {
 const startInitFlow = async () => {
 	await RUNTIME.init()
 
-	// 初始化完成: 打开主窗口
+	// 初始化完成: 打开主窗口；沿用通用设置中的自动唤出语义。
+	const SHOULD_SUMMON = ShouldAutoSummonPet(RUNTIME.snapshot.value?.general.petAutoSummon)
 	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 	await showWindow("main")
+	if (SHOULD_SUMMON) await showWindow("pet")
 	await sleep(600)
 	await closeWindow("init")
 }

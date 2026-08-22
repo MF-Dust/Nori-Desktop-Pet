@@ -2,6 +2,7 @@ import {createApp} from "vue"
 import App from "./App.vue"
 import router from "./services/router"
 import useLanguage, {i18n} from "./services/i18n"
+import {listen} from "./services/host/event"
 import {installErrorHandlers} from "./services/error"
 import "./assets/style/theme.less"
 
@@ -15,6 +16,15 @@ try {
 	const {RUNTIME} = await import("./services/runtime")
 	await RUNTIME.init()
 	await useLanguage.init(RUNTIME.snapshot.value?.general.language)
+	let currentLanguage = RUNTIME.snapshot.value?.general.language ?? "zh-CN"
+	void listen<{version: number; topics: string[]}>("nori:state-changed", async () => {
+		await RUNTIME.refresh()
+		const nextLanguage = RUNTIME.snapshot.value?.general.language ?? "zh-CN"
+		if (nextLanguage !== currentLanguage) {
+			currentLanguage = nextLanguage
+			await useLanguage.setLanguage(nextLanguage)
+		}
+	})
 } catch {
 	// 非宿主环境 (纯 vite 调试) 回退系统语言
 	await useLanguage.init()
