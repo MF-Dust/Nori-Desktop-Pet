@@ -1,6 +1,4 @@
 import {createI18n} from "vue-i18n"
-import {invoke} from "../../services/host/invoke"
-import {LANGUAGE_CONFIG_KEY, readStringConfig} from "../config"
 import useLanguages from "./useLanguages.ts"
 
 /**
@@ -11,16 +9,10 @@ export type LanguageType = string
 const MESSAGES: Record<string, () => Promise<any>> = import.meta.glob("./locales/*.ts")
 
 /**
- * 获取系统语言, 映射到可用的 locale 文件名
+ * 获取系统语言, 映射到可用的 locale 文件名 (宿主不可用时回退浏览器语言)
  */
-const getSystemLanguage = async (): Promise<string> => {
-	let lang
-	try {
-		lang = await invoke<string>("get_system_language")
-	} catch (error) {
-		lang = navigator.language
-		console.error("获取系统语言失败:", error)
-	}
+const getSystemLanguage = (): string => {
+	let lang = navigator.language || "zh-CN"
 	const KEY = `./locales/${lang}.ts`
 	if (MESSAGES[KEY]) return lang
 	const PREFIX = lang.split("-")[0]
@@ -42,29 +34,16 @@ export const i18n = createI18n({
 const useLanguage = {
 	useLang: {} as ReturnType<typeof useLanguages>,
 	/**
-	 * 获取当前语言
+	 * 初始化: 优先使用后端快照中的持久化语言, 缺省回退系统语言
 	 */
-	async getLanguage(): Promise<LanguageType> {
-		const SAVED = await readStringConfig(LANGUAGE_CONFIG_KEY, "")
-		return SAVED || getSystemLanguage()
-	},
-	/**
-	 * 初始化：加载当前语言包
-	 */
-	async init(): Promise<void> {
-		const LANG = await this.getLanguage()
+	async init(savedLanguage?: string): Promise<void> {
+		const LANG = savedLanguage && MESSAGES[`./locales/${savedLanguage}.ts`] ? savedLanguage : getSystemLanguage()
 		await this.setLanguage(LANG)
 	},
 	/**
-	 * 设置当前语言
+	 * 切换当前语言包 (仅本地生效; 持久化由设置页经 runtime 提交后端)
 	 */
 	async setLanguage(lang: LanguageType): Promise<void> {
-		try {
-			await invoke("set_config", {key: LANGUAGE_CONFIG_KEY, value: lang})
-			await invoke("write_log", {level: "info", message: `切换语言: ${lang}`})
-		} catch (error) {
-			console.error("保存语言配置失败:", error)
-		}
 		if (!i18n.global.availableLocales.includes(lang)) {
 			const LOADER = this.getLoader(lang)
 			if (LOADER) {
@@ -78,15 +57,8 @@ const useLanguage = {
 	/**
 	 * 获取可用语言列表
 	 */
-	async getLanguages(): Promise<string[]> {
-		try {
-			const LANGUAGES = Object.keys(MESSAGES).map((key) => key.replace("./locales/", "").replace(".ts", ""))
-			await invoke("write_log", {level: "info", message: `可用语言列表: ${LANGUAGES}`})
-			return LANGUAGES
-		} catch (error) {
-			console.error("获取可用语言列表失败:", error)
-		}
-		return []
+	getLanguages(): string[] {
+		return Object.keys(MESSAGES).map((key) => key.replace("./locales/", "").replace(".ts", ""))
 	},
 	/**
 	 * 获取 loader

@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import {computed, ref} from "vue"
-import {onMounted} from "vue"
-import {invoke} from "../services/host/invoke"
+import {computed, ref, onMounted} from "vue"
 import useLanguages from "../services/i18n/useLanguages.ts"
-import {getInitConfig} from "../services/initConfig"
+import {RUNTIME} from "../services/runtime"
 import Icon from "../components/Icon.vue"
 import TitleBar from "../components/TitleBar.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
@@ -13,20 +11,19 @@ import Ready from "../components/firstRun/Ready.vue"
 
 const I18N = computed(() => useLanguages().views.firstRun)
 
-// 首次初始化配置
-const initConfig = ref<Awaited<ReturnType<typeof getInitConfig>>>(null)
+// 首次运行期间仅保存用于展示/日志的快照信息
+const appVersion = ref("0.1.0")
+const selectedModel = ref("arg-nori")
 
 // 步骤配置与名称
 const STEP_LABELS = ["欢迎", "语言", "形象", "就绪"]
 const STEPS_COUNT = STEP_LABELS.length
 
-// 组件挂载后拉取首次初始化配置 (语言/模型/版本/时间)
+// 组件挂载后拉取后端快照
 onMounted(async () => {
-	try {
-		initConfig.value = await getInitConfig()
-	} catch (error) {
-		console.error("加载初始化配置失败:", error)
-	}
+	await RUNTIME.init()
+	appVersion.value = RUNTIME.snapshot.value?.app.appVersion ?? appVersion.value
+	selectedModel.value = RUNTIME.snapshot.value?.models.selected ?? selectedModel.value
 })
 
 // 当前步骤索引
@@ -57,17 +54,14 @@ const prev = () => {
 
 // 关闭窗口
 const closeApp = () => {
-	invoke("exit_app")
+	void RUNTIME.exitApp()
 }
 
 // 完成初始化
 const finish = async () => {
 	try {
-		await invoke("complete_first_run")
-		// 记录初始化版本信息 (来自首次初始化配置快照)
-		const VERSION = initConfig.value?.appVersion ?? "unknown"
-		const MODEL = initConfig.value?.selectedModel ?? "unknown"
-		await invoke("write_log", {level: "info", message: `初始化完成 (v${VERSION}, model=${MODEL})`})
+		await RUNTIME.completeFirstRun()
+		await RUNTIME.writeLog("info", `初始化完成 (v${appVersion.value}, model=${selectedModel.value})`)
 	} catch (error) {
 		console.error("首次运行失败:", error)
 	}

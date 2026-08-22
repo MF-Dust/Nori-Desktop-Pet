@@ -10,7 +10,15 @@ const APP = createApp(App)
 // 尽早安装, 让初始化阶段的错误也能落日志
 installErrorHandlers(APP)
 
-await useLanguage.init()
+// 引导后端运行时 (拉取快照 + 订阅广播), 用持久化语言初始化 i18n
+try {
+	const {RUNTIME} = await import("./services/runtime")
+	await RUNTIME.init()
+	await useLanguage.init(RUNTIME.snapshot.value?.general.language)
+} catch {
+	// 非宿主环境 (纯 vite 调试) 回退系统语言
+	await useLanguage.init()
+}
 
 APP.use(router)
 APP.use(i18n)

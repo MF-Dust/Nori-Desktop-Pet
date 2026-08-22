@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from "vue"
+import {computed, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {l2dModelKey, readBehaviorConfig, readModelConfig, writeBehaviorConfig, type L2DBehaviorKey} from "../../services/live2d/config"
+import {RUNTIME} from "../../services/runtime"
 
 const props = withDefaults(defineProps<{
 	modelId?: string
@@ -11,7 +11,7 @@ const props = withDefaults(defineProps<{
 
 const I18N = computed(() => useLanguages().views.main.model.behavior)
 
-// ---- 状态 ----
+// ---- 状态来自后端快照 ----
 const autoBlink = ref(true)
 const eyeTracking = ref(true)
 const idleEyeAnimation = ref(true)
@@ -23,79 +23,78 @@ const shadow = ref(true)
 const beatSync = ref(false)
 const renderScale = ref(2)
 const maxFps = ref(0)
-
-// 模型缩放 (按模型存储)
 const modelScale = ref(1)
+const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
-// 防抖定时器
-const timers: Partial<Record<string, ReturnType<typeof setTimeout>>> = {}
-
-const debouncedWrite = (key: string, value: string | number | boolean) => {
-	if (timers[key]) clearTimeout(timers[key])
-	timers[key] = setTimeout(() => {
-		timers[key] = undefined
-		if (key.startsWith("l2d_scale")) {
-			void writeBehaviorConfig(key as any, String(value))
-			// 广播全局缩放键让桌宠窗口热更新
-			void writeBehaviorConfig("l2d_scale" as any, String(value))
-		} else {
-			void writeBehaviorConfig(key as L2DBehaviorKey, value)
-		}
-	}, 400)
+const saveBehavior = (key: string, value: boolean | number) => {
+	clearTimeout(timers.get(key))
+	timers.set(key, setTimeout(() => {
+		timers.delete(key)
+		void RUNTIME.setModelBehavior({[key]: value}).catch(error => console.error(`保存桌宠行为失败 (${key}):`, error))
+	}, 400))
 }
 
-const makeToggle = (key: L2DBehaviorKey, refVal: {value: boolean}) => computed({
-	get: () => refVal.value,
-	set: (v: boolean) => {
-		refVal.value = v
-		debouncedWrite(key, v)
+const makeToggle = (key: string, state: {value: boolean}) => computed({
+	get: () => state.value,
+	set: (value: boolean) => {
+		state.value = value
+		saveBehavior(key, value)
 	},
 })
 
-const autoBlinkToggle = makeToggle("l2d_auto_blink", autoBlink)
-const eyeTrackingToggle = makeToggle("l2d_eye_tracking", eyeTracking)
-const idleEyeToggle = makeToggle("l2d_idle_eye_animation", idleEyeAnimation)
-const idleAnimToggle = makeToggle("l2d_idle_animation", idleAnimation)
-const clickInteractionToggle = makeToggle("l2d_click_interaction", clickInteraction)
-const expressionEnabledToggle = makeToggle("l2d_expression_enabled", expressionEnabled)
-const lipSyncToggle = makeToggle("l2d_lip_sync", lipSync)
-const shadowToggle = makeToggle("l2d_shadow", shadow)
-const beatSyncToggle = makeToggle("l2d_beat_sync", beatSync)
+const autoBlinkToggle = makeToggle("autoBlink", autoBlink)
+const eyeTrackingToggle = makeToggle("eyeTracking", eyeTracking)
+const idleEyeToggle = makeToggle("idleEyeAnimation", idleEyeAnimation)
+const idleAnimToggle = makeToggle("idleAnimation", idleAnimation)
+const clickInteractionToggle = makeToggle("clickInteraction", clickInteraction)
+const expressionEnabledToggle = makeToggle("expressionEnabled", expressionEnabled)
+const lipSyncToggle = makeToggle("lipSync", lipSync)
+const shadowToggle = makeToggle("shadow", shadow)
+const beatSyncToggle = makeToggle("beatSync", beatSync)
 
 onMounted(async () => {
-	autoBlink.value = (await readBehaviorConfig("l2d_auto_blink")) === true
-	eyeTracking.value = (await readBehaviorConfig("l2d_eye_tracking")) !== false
-	idleEyeAnimation.value = (await readBehaviorConfig("l2d_idle_eye_animation")) !== false
-	idleAnimation.value = (await readBehaviorConfig("l2d_idle_animation")) !== false
-	clickInteraction.value = (await readBehaviorConfig("l2d_click_interaction")) !== false
-	expressionEnabled.value = (await readBehaviorConfig("l2d_expression_enabled")) !== false
-	lipSync.value = (await readBehaviorConfig("l2d_lip_sync")) !== false
-	shadow.value = (await readBehaviorConfig("l2d_shadow")) !== false
-	beatSync.value = (await readBehaviorConfig("l2d_beat_sync")) === true
-	renderScale.value = (await readBehaviorConfig("l2d_render_scale")) as number || 2
-	maxFps.value = (await readBehaviorConfig("l2d_max_fps")) as number || 0
+	await RUNTIME.init()
+	const BEHAVIOR = RUNTIME.snapshot.value?.behaviors
+	if (BEHAVIOR) {
+		autoBlink.value = BEHAVIOR.autoBlink
+		eyeTracking.value = BEHAVIOR.eyeTracking
+		idleEyeAnimation.value = BEHAVIOR.idleEyeAnimation
+		idleAnimation.value = BEHAVIOR.idleAnimation
+		clickInteraction.value = BEHAVIOR.clickInteraction
+		expressionEnabled.value = BEHAVIOR.expressionEnabled
+		lipSync.value = BEHAVIOR.lipSync
+		shadow.value = BEHAVIOR.shadow
+		beatSync.value = BEHAVIOR.beatSync
+		renderScale.value = BEHAVIOR.renderScale
+		maxFps.value = BEHAVIOR.maxFps
+	}
 	if (props.modelId) {
-		modelScale.value = await readModelConfig(props.modelId, "l2d_scale", (v) => {
-			if (typeof v === "number") return v
-			if (typeof v === "string") { const n = parseFloat(v); return Number.isNaN(n) ? null : n }
-			return null
-		}, 1) as number
+		try { modelScale.value = (await RUNTIME.modelMeta(props.modelId)).scale } catch (error) { console.error("读取模型缩放失败:", error) }
 	}
 })
 
-const onModelScaleUpdate = (val: number) => {
-	modelScale.value = val
-	debouncedWrite(l2dModelKey("l2d_scale", props.modelId), val)
+watch(() => props.modelId, async modelId => {
+	if (!modelId) return
+	try { modelScale.value = (await RUNTIME.modelMeta(modelId)).scale } catch (error) { console.error("读取模型缩放失败:", error) }
+})
+
+const onModelScaleUpdate = (value: number) => {
+	modelScale.value = value
+	clearTimeout(timers.get("modelScale"))
+	timers.set("modelScale", setTimeout(() => {
+		timers.delete("modelScale")
+		void RUNTIME.setModelDisplay(props.modelId, {scale: value}).catch(error => console.error("保存模型缩放失败:", error))
+	}, 400))
 }
 
-const onRenderScaleUpdate = (val: number) => {
-	renderScale.value = val
-	debouncedWrite("l2d_render_scale", val)
+const onRenderScaleUpdate = (value: number) => {
+	renderScale.value = value
+	saveBehavior("renderScale", value)
 }
 
-const onMaxFpsUpdate = (val: number) => {
-	maxFps.value = val
-	debouncedWrite("l2d_max_fps", val)
+const onMaxFpsUpdate = (value: number) => {
+	maxFps.value = value
+	saveBehavior("maxFps", value)
 }
 
 const fpsOptions = computed(() => [

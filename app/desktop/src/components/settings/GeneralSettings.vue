@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
-import {invoke} from "../../services/host/invoke"
-import {LANGUAGE_CONFIG_KEY, readBooleanConfig, readStringConfig} from "../../services/config"
+import {RUNTIME} from "../../services/runtime"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
@@ -11,28 +10,27 @@ const autoSummon = ref(true)
 const appVersion = ref("0.1.0")
 const TEXT = computed(() => useLanguages().views.main.general)
 
+let synced = false
 onMounted(async () => {
-	try {
-		const [SAVED_LANG, SAVED_SUMMON, SAVED_VER] = await Promise.all([
-			readStringConfig(LANGUAGE_CONFIG_KEY, currentLang.value),
-			readBooleanConfig("pet_auto_summon", true),
-			readStringConfig("app_version", appVersion.value),
-		])
-		currentLang.value = SAVED_LANG
-		autoSummon.value = SAVED_SUMMON
-		appVersion.value = SAVED_VER
-	} catch (error) {
-		console.error("读取常规设置失败:", error)
-	}
+	await RUNTIME.init()
+	const SNAPSHOT = RUNTIME.snapshot.value
+	if (!SNAPSHOT || synced) return
+	synced = true
+	currentLang.value = SNAPSHOT.general.language
+	autoSummon.value = SNAPSHOT.general.petAutoSummon
+	appVersion.value = SNAPSHOT.app.appVersion
 })
 
+// 切换语言: 本地立即生效, 持久化交给后端 (其他窗口经广播刷新)
 const onLanguageChange = (lang: string) => {
 	currentLang.value = lang
 	void useLanguage.setLanguage(lang)
+	void RUNTIME.updateGeneral({language: lang})
 }
 
-const saveConfig = (key: string, value: string | boolean) => {
-	void invoke("set_config", {key, value})
+const onAutoSummonChange = (val: boolean) => {
+	autoSummon.value = val
+	void RUNTIME.updateGeneral({petAutoSummon: val})
 }
 </script>
 
@@ -87,8 +85,8 @@ const saveConfig = (key: string, value: string | boolean) => {
 							<p class="switch-desc">{{ TEXT.startup.autoSummonDesc }}</p>
 						</div>
 						<n-switch
-							v-model:value="autoSummon"
-							@update:value="(val: boolean) => saveConfig('pet_auto_summon', val)"
+							:value="autoSummon"
+							@update:value="(val: boolean) => onAutoSummonChange(val)"
 						/>
 					</div>
 				</div>
@@ -244,49 +242,6 @@ const saveConfig = (key: string, value: string | boolean) => {
 	margin: 0.2rem 0 0;
 	font-size: 1.15rem;
 	color: var(--text-faint);
-}
-
-.toggle-switch {
-	position: relative;
-	width: 4.2rem;
-	height: 2.4rem;
-	cursor: pointer;
-
-	input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.toggle-slider {
-		position: absolute;
-		inset: 0;
-		background: rgba(255, 255, 255, 0.12);
-		border-radius: var(--radius-pill);
-		transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-		&::before {
-			position: absolute;
-			content: "";
-			height: 1.8rem;
-			width: 1.8rem;
-			left: 0.3rem;
-			bottom: 0.3rem;
-			background: white;
-			border-radius: 50%;
-			transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-		}
-	}
-
-	input:checked + .toggle-slider {
-		background: var(--nori-teal);
-		box-shadow: 0 0 1rem var(--glow-teal);
-	}
-
-	input:checked + .toggle-slider::before {
-		transform: translateX(1.8rem);
-		background: #03101c;
-	}
 }
 
 .info-row {

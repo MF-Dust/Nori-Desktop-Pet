@@ -1,169 +1,43 @@
-/**
- * 资产协议
- */
-import {invoke} from "../host/invoke"
 import {host} from "../host"
-import {
-	readBooleanConfig,
-	readNumberConfig,
-	readRawConfig,
-	readStringConfig,
-} from "../config"
-
-export {parseBoolean, parseNumber} from "../config"
 
 /**
- * 资产基址
- *
- * 宿主把前端与资源挂在同一个回环服务的同一前缀下, 因此这里是同源相对路径:
- * 生产 /<secret>/nori-assets/, 开发 /nori-assets/ (由 vite 代理到宿主)
+ * Live2D 预览资产适配器。
+ * 模型配置、行为状态和持久化全部由 C# runtime 提供；这里仅保留同源资产 URL 与纯渲染解析函数。
  */
 export const ASSET_BASE = host()?.assetBase ?? "/nori-assets/"
 
-/**
- * 资产 URL
- * @param relativePath
- */
-export const assetUrl = (relativePath: string): string => `${ASSET_BASE}${relativePath.replace(/^\/+/, "")}`
+export const assetUrl = (relativePath: string): string =>
+	`${ASSET_BASE}${relativePath.replace(/^\/+/, "")}`
 
-/**
- * 默认模型映射
- */
 export const defaultModels: Record<string, string> = {
 	"arg-nori": "ARGNori",
-	"nori": "Nori",
+	nori: "Nori",
 }
 
-/**
- * 解析模型文件基础路径
- */
 export const resolveModelFileBase = (directory: string): string => defaultModels[directory] ?? directory
 
-/**
- * 全局 Live2D 行为配置键
- */
-export const L2D_BEHAVIOR_KEYS = [
-	"l2d_click_interaction",
-	"l2d_auto_blink",
-	"l2d_eye_tracking",
-	"l2d_idle_eye_animation",
-	"l2d_idle_animation",
-	"l2d_expression_enabled",
-	"l2d_lip_sync",
-	"l2d_shadow",
-	"l2d_render_scale",
-	"l2d_max_fps",
-	"l2d_beat_sync",
-] as const
-
-/**
- * 全局 Live2D 行为配置键类型
- */
-export type L2DBehaviorKey = (typeof L2D_BEHAVIOR_KEYS)[number]
-
-/**
- * 全局 Live2D 行为配置默认值
- */
-export const L2D_BEHAVIOR_DEFAULTS: Record<L2DBehaviorKey, string | number | boolean> = {
-	l2d_click_interaction: true,
-	l2d_auto_blink: true,
-	l2d_eye_tracking: true,
-	l2d_idle_eye_animation: true,
-	l2d_idle_animation: true,
-	l2d_expression_enabled: true,
-	l2d_lip_sync: true,
-	l2d_shadow: true,
-	l2d_render_scale: 2,
-	l2d_max_fps: 0,
-	l2d_beat_sync: false,
+export const parseBoolean = (value: unknown): boolean | null => {
+	if (typeof value === "boolean") return value
+	if (typeof value !== "string") return null
+	if (value === "1" || value.toLowerCase() === "true") return true
+	if (value === "0" || value.toLowerCase() === "false") return false
+	return null
 }
 
-/**
- * 解析布尔配置值
- */
-/**
- * 读取全局 Live2D 行为配置
- */
-export const readBehaviorConfig = async (key: L2DBehaviorKey): Promise<typeof L2D_BEHAVIOR_DEFAULTS[L2DBehaviorKey]> => {
-	const DEFAULT = L2D_BEHAVIOR_DEFAULTS[key]
-	if (typeof DEFAULT === "boolean") return readBooleanConfig(key, DEFAULT)
-	if (typeof DEFAULT === "number") return readNumberConfig(key, DEFAULT)
-	return readStringConfig(key, String(DEFAULT))
+export const parseNumber = (value: unknown): number | null => {
+	if (typeof value === "number" && Number.isFinite(value)) return value
+	if (typeof value !== "string" || value.trim() === "") return null
+	const RESULT = Number(value)
+	return Number.isFinite(RESULT) ? RESULT : null
 }
 
-/**
- * 写入全局 Live2D 行为配置
- */
-export const writeBehaviorConfig = async (key: L2DBehaviorKey, value: string | number | boolean): Promise<void> => {
-	await invoke("set_config", {key, value: String(value)})
-}
-
-/**
- * 读取所有全局 Live2D 行为配置
- */
-export const readAllBehaviorConfigs = async (): Promise<Record<string, string | number | boolean>> => {
-	const result: Record<string, string | number | boolean> = {}
-	for (const key of L2D_BEHAVIOR_KEYS) {
-		result[key] = await readBehaviorConfig(key)
-	}
-	return result
-}
-
-/**
- * 桌宠显示调整配置键 (按模型存储)
- */
-export const L2D_CONFIG_KEYS = ["l2d_scale", "l2d_offset_x", "l2d_offset_y", "l2d_expression"] as const
-
-/**
- * 桌宠显示调整配置键类型
- */
-export type L2DConfigKey = (typeof L2D_CONFIG_KEYS)[number]
-
-/**
- * 按模型生成配置键 (无模型后缀时兼容旧版全局键)
- */
-export const l2dModelKey = (base: L2DConfigKey, modelId: string): string => `${base}_${modelId}`
-
-/**
- * 解析数字配置值
- */
-// parseNumber 通过上方的通用配置解析器导出, 保持既有 public API.
-
-/**
- * 解析表情列表配置值 (数组或 JSON 字符串)
- */
 export const parseExpressionList = (value: unknown): string[] => {
 	if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string")
-	if (typeof value === "string" && value !== "") {
-		try {
-			const PARSED = JSON.parse(value)
-			if (Array.isArray(PARSED)) return PARSED.filter((item): item is string => typeof item === "string")
-		} catch {
-			/* 非 JSON 字符串 */
-		}
+	if (typeof value !== "string" || value === "") return []
+	try {
+		const PARSED: unknown = JSON.parse(value)
+		return Array.isArray(PARSED) ? PARSED.filter((item): item is string => typeof item === "string") : []
+	} catch {
+		return []
 	}
-	return []
-}
-
-/**
- * 读取模型配置: 优先按模型键, 回退旧版全局键
- */
-export const readModelConfig = async <T>(
-	modelId: string,
-	base: L2DConfigKey,
-	parse: (value: unknown) => T | null,
-	fallback: T
-): Promise<T> => {
-	for (const KEY of [l2dModelKey(base, modelId), base]) {
-		try {
-			const VALUE = await readRawConfig(KEY)
-			if (VALUE != null) {
-				const PARSED = parse(VALUE)
-				if (PARSED != null) return PARSED
-			}
-		} catch {
-			/* 读取失败继续尝试 */
-		}
-	}
-	return fallback
 }

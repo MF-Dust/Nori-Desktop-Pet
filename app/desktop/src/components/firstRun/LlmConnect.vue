@@ -1,162 +1,93 @@
 <script setup lang="ts">
-import {ref, watch, onMounted, computed} from "vue"
+import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {invoke} from "../../services/host/invoke"
+import {RUNTIME} from "../../services/runtime"
 import Icon from "../../components/Icon.vue"
 
 const I18N = computed(() => useLanguages().components.firstRun.llmConnect)
-
-// 配置键名
-const KEY_PROVIDER = "llm_provider"
-const KEY_BASE = "llm_api_base"
-const KEY_APIKEY = "llm_api_key"
-const KEY_MODEL = "llm_model"
-
-// 默认 Base URL 表
-const DEFAULT_BASE_URLS: Record<string, string> = {
+type ProviderKey = "openai" | "openai_responses" | "anthropic" | "google"
+const PROVIDERS: ProviderKey[] = ["openai", "openai_responses", "anthropic", "google"]
+const DEFAULT_BASE: Record<ProviderKey, string> = {
 	openai: "https://api.openai.com/v1",
 	openai_responses: "https://api.openai.com/v1",
 	anthropic: "https://api.anthropic.com/v1",
 	google: "https://generativelanguage.googleapis.com/v1beta",
 }
-
-// 协议列表定义
-type ProviderKey = "openai" | "openai_responses" | "anthropic" | "google"
-const PROVIDER_OPTIONS: ProviderKey[] = ["openai", "openai_responses", "anthropic", "google"]
-
-// 协议类型
 const provider = ref<ProviderKey>("openai")
-
-// API 地址
 const baseUrl = ref("")
-
-// API Key
 const apiKey = ref("")
-
-// 是否正在请求模型列表
-const loading = ref(false)
-
-// 拉取到的模型 id 列表
+const hasApiKey = ref(false)
 const models = ref<string[]>([])
-
-// 选中的模型
 const selectedModel = ref("")
-
-// 拉取失败提示
+const loading = ref(false)
 const errorMsg = ref("")
 
-// API Key 占位符提示
-const apiKeyPlaceholder = computed(() => {
-	switch (provider.value) {
-		case "anthropic":
-			return "sk-ant-..."
-		case "google":
-			return "AIza..."
-		default:
-			return "sk-..."
-	}
-})
+const baseUrlPlaceholder = computed(() => DEFAULT_BASE[provider.value])
+const apiKeyPlaceholder = computed(() => hasApiKey.value ? "已保存 API Key；如需更换请重新输入" : "sk-...")
 
-// Base URL 占位符提示
-const baseUrlPlaceholder = computed(() => {
-	return DEFAULT_BASE_URLS[provider.value] || "https://api.openai.com/v1"
-})
-
-// 读取已保存的配置
 onMounted(async () => {
-	try {
-		const [SAVED_PROVIDER, BASE, KEY, MODEL] = await Promise.all([
-			invoke<string | null>("get_config", {key: KEY_PROVIDER}),
-			invoke<string | null>("get_config", {key: KEY_BASE}),
-			invoke<string | null>("get_config", {key: KEY_APIKEY}),
-			invoke<string | null>("get_config", {key: KEY_MODEL}),
-		])
-		if (SAVED_PROVIDER && PROVIDER_OPTIONS.includes(SAVED_PROVIDER as ProviderKey)) {
-			provider.value = SAVED_PROVIDER as ProviderKey
-		}
-		if (BASE) baseUrl.value = BASE
-		if (KEY) apiKey.value = KEY
-		if (MODEL) selectedModel.value = MODEL
-		if (BASE && KEY) await fetchModels()
-	} catch (error) {
-		console.error("读取 LLM 配置失败:", error)
-	}
+	await RUNTIME.init()
+	const AI = RUNTIME.snapshot.value?.ai
+	if (!AI) return
+	if (PROVIDERS.includes(AI.provider as ProviderKey)) provider.value = AI.provider as ProviderKey
+	baseUrl.value = AI.baseUrl
+	selectedModel.value = AI.model
+	if (AI.model) models.value = [AI.model]
+	hasApiKey.value = AI.hasApiKey
 })
 
-// 保存配置: 输入防抖 (每个 key 独立 timer, 避免互相 clear 导致写入丢失)
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
-const saveOnChange = (key: string, get: () => string) => {
-	clearTimeout(timers.get(key))
-	timers.set(key, setTimeout(() => {
-		timers.delete(key)
-		const VALUE = get()
-		if (!VALUE) return
-		try {
-			invoke("set_config", {key, value: VALUE})
-			if (key !== KEY_APIKEY) invoke("write_log", {level: "info", message: `保存配置键 ${key} 为: ${VALUE}`})
-		} catch (error) {
-			console.error("保存 LLM 配置失败:", error)
-		}
-	}, 400))
+const update = async (patch: Record<string, unknown>) => {
+	try {
+		await RUNTIME.updateAi(patch)
+	} catch (error) {
+		console.error("保存 LLM 配置失败:", error)
+	}
 }
 
-watch(baseUrl, v => saveOnChange(KEY_BASE, () => v))
-watch(apiKey, v => saveOnChange(KEY_APIKEY, () => v))
-
-// 切换 Provider
 const onProviderChange = () => {
-	const CURRENT_DEF = DEFAULT_BASE_URLS[provider.value]
-	const IS_ANY_DEFAULT = Object.values(DEFAULT_BASE_URLS).includes(baseUrl.value)
-	if (!baseUrl.value || IS_ANY_DEFAULT) {
-		baseUrl.value = CURRENT_DEF
-	}
+	if (!baseUrl.value || Object.values(DEFAULT_BASE).includes(baseUrl.value)) baseUrl.value = DEFAULT_BASE[provider.value]
 	models.value = []
 	selectedModel.value = ""
-	try {
-		invoke("set_config", {key: KEY_PROVIDER, value: provider.value})
-		invoke("write_log", {level: "info", message: `保存配置键 ${KEY_PROVIDER} 为: ${provider.value}`})
-	} catch (error) {
-		console.error("保存协议类型失败:", error)
-	}
+	void update({provider: provider.value, baseUrl: baseUrl.value, model: ""})
 }
 
-// 选中模型直接保存
-watch(selectedModel, value => {
-	if (!value) return
-	try {
-		invoke("set_config", {key: KEY_MODEL, value: value})
-		invoke("write_log", {level: "info", message: `保存配置键 ${KEY_MODEL} 为: ${value}`})
-	} catch (error) {
-		console.error("保存模型失败:", error)
+const onBaseBlur = () => void update({baseUrl: baseUrl.value.trim()})
+const onKeyBlur = () => {
+	const KEY = apiKey.value.trim()
+	apiKey.value = ""
+	if (KEY) {
+		hasApiKey.value = true
+		void update({apiKey: KEY})
 	}
-})
+}
+const onModelChange = () => void update({model: selectedModel.value})
 
-// 获取模型按钮
 const fetchModels = async () => {
 	errorMsg.value = ""
 	if (!baseUrl.value.trim()) {
 		errorMsg.value = I18N.value.error.apiBaseUrl
 		return
 	}
-	if (!apiKey.value.trim()) {
+	const KEY = apiKey.value.trim()
+	if (!KEY && !hasApiKey.value) {
 		errorMsg.value = I18N.value.error.apiKey
 		return
 	}
 	loading.value = true
 	try {
-		const result = await invoke<unknown>("fetch_llm_models", {
-			provider: provider.value,
-			baseUrl: baseUrl.value,
-			apiKey: apiKey.value,
-		})
-		models.value = Array.isArray(result) ? (result as string[]) : []
-		if (models.value.length === 0) {
-			errorMsg.value = I18N.value.modelEmpty
-		} else if (!models.value.includes(selectedModel.value)) {
+		models.value = await RUNTIME.fetchModels(provider.value, baseUrl.value, KEY)
+		if (KEY) {
+			apiKey.value = ""
+			hasApiKey.value = true
+			await update({apiKey: KEY})
+		}
+		if (models.value.length === 0) errorMsg.value = I18N.value.modelEmpty
+		else if (!models.value.includes(selectedModel.value)) {
 			selectedModel.value = models.value[0]
+			await update({model: selectedModel.value})
 		}
 	} catch (error) {
-		errorMsg.value = String(error)
+		errorMsg.value = error instanceof Error ? error.message : String(error)
 		console.error("获取模型失败:", error)
 	} finally {
 		loading.value = false
@@ -165,190 +96,32 @@ const fetchModels = async () => {
 </script>
 
 <template>
-	<section key="llm-connect" class="page page-llm">
-		<div class="llm-head">
-			<h2 class="llm-title glow-teal">{{ I18N.title }}</h2>
-			<p class="llm-sub">{{ I18N.sub }}</p>
-		</div>
-
-		<div class="llm-form">
-			<label class="field">
-				<span class="field-label">{{ I18N.provider }}</span>
-				<select v-model="provider" class="input select" @change="onProviderChange">
-					<option v-for="p in PROVIDER_OPTIONS" :key="p" :value="p">
-						{{ I18N.providers[p] }}
-					</option>
-				</select>
-			</label>
-
-			<label class="field">
-				<span class="field-label">{{ I18N.apiBaseUrl }}</span>
-				<input
-					v-model="baseUrl"
-					class="input"
-					type="text"
-					:placeholder="baseUrlPlaceholder"
-					spellcheck="false"
-				/>
-			</label>
-
-			<label class="field">
-				<span class="field-label">{{ I18N.apiKey }}</span>
-				<input
-					v-model="apiKey"
-					class="input"
-					type="password"
-					:placeholder="apiKeyPlaceholder"
-					spellcheck="false"
-					autocomplete="off"
-				/>
-			</label>
-
-			<div class="field">
-				<span class="field-label">{{ I18N.model }}</span>
-				<div class="model-row">
-					<select v-model="selectedModel" class="input select" :disabled="models.length === 0">
-						<option v-if="models.length === 0" value="" disabled>{{ I18N.modelEmpty }}</option>
-						<option v-for="m in models" :key="m" :value="m">{{ m }}</option>
-					</select>
-					<button class="btn fetch-btn" :disabled="loading" @click="fetchModels">
-						<Icon v-if="loading" name="loading" class="btn-icon spin"/>
-						{{ loading ? I18N.getting : I18N.getModel }}
-					</button>
-				</div>
-			</div>
-
+	<section class="page page-llm">
+		<div class="head"><h2 class="title glow-teal">{{ I18N.title }}</h2><p class="subtitle">{{ I18N.sub }}</p></div>
+		<div class="form">
+			<label class="field"><span>{{ I18N.provider }}</span><select v-model="provider" class="input" @change="onProviderChange"><option v-for="item in PROVIDERS" :key="item" :value="item">{{ I18N.providers[item] }}</option></select></label>
+			<label class="field"><span>{{ I18N.apiBaseUrl }}</span><input v-model="baseUrl" class="input" :placeholder="baseUrlPlaceholder" @blur="onBaseBlur"/></label>
+			<label class="field"><span>{{ I18N.apiKey }}{{ hasApiKey ? " (已加密保存)" : "" }}</span><input v-model="apiKey" class="input" type="password" :placeholder="apiKeyPlaceholder" autocomplete="off" @blur="onKeyBlur"/></label>
+			<div class="field"><span>{{ I18N.model }}</span><div class="model-row"><select v-model="selectedModel" class="input" :disabled="models.length === 0" @change="onModelChange"><option v-if="models.length === 0" value="" disabled>{{ I18N.modelEmpty }}</option><option v-for="model in models" :key="model" :value="model">{{ model }}</option></select><button class="fetch" :disabled="loading" @click="fetchModels"><Icon v-if="loading" name="loading" class="spin" :size="14"/>{{ loading ? I18N.getting : I18N.getModel }}</button></div></div>
 			<p v-if="errorMsg" class="error">{{ errorMsg }}</p>
 		</div>
 	</section>
 </template>
 
 <style scoped lang="less">
-.page {
-	width: 100%;
-	height: 100%;
-	padding: 0.6rem 5.6rem 0.8rem;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 2rem;
-}
-
-.llm-head {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 0.6rem;
-}
-
-.llm-title {
-	font-size: 2.4rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.llm-sub {
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.llm-form {
-	width: 100%;
-	max-width: 42rem;
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-}
-
-.field {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-}
-
-.field-label {
-	font-size: 1.2rem;
-	color: var(--text-muted);
-}
-
-.input {
-	padding: 0.9rem 1.2rem;
-	width: 100%;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-family: inherit;
-	outline: none;
-	transition: all 0.2s ease;
-
-	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
-	}
-}
-
-.input::placeholder {
-	color: var(--text-muted);
-	opacity: 0.6;
-}
-
-.select {
-	cursor: pointer;
-
-	option {
-		color: var(--text-primary);
-		background: var(--bg-deep);
-	}
-}
-
-.model-row {
-	display: flex;
-	gap: 1rem;
-	align-items: center;
-}
-
-.model-row .select {
-	flex: 1;
-}
-
-.fetch-btn {
-	padding: 0.9rem 1.8rem;
-	border: none;
-	border-radius: var(--radius-sm);
-	background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-	color: #05121a;
-	font-size: 1.3rem;
-	font-weight: 600;
-	font-family: inherit;
-	cursor: pointer;
-	transition: all 0.2s ease;
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	white-space: nowrap;
-	flex-shrink: 0;
-
-	&:hover:not(:disabled) {
-		box-shadow: 0 0 1.6rem var(--glow-teal-soft);
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-}
-
-.btn-icon {
-	width: 1.4rem;
-	height: 1.4rem;
-}
-
-.error {
-	font-size: 1.2rem;
-	color: var(--danger);
-	text-align: center;
-}
+.page { width: 100%; height: 100%; padding: 1rem 5.6rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2rem; }
+.head { display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
+.title { margin: 0; color: var(--text-primary); font-size: 2.4rem; }
+.subtitle { margin: 0; color: var(--text-faint); font-size: 1.2rem; }
+.form { width: 100%; max-width: 42rem; display: flex; flex-direction: column; gap: 1.3rem; }
+.field { display: flex; flex-direction: column; gap: 0.5rem; color: var(--text-muted); font-size: 1.2rem; }
+.input { width: 100%; box-sizing: border-box; padding: 0.85rem 1.1rem; border: 0.1rem solid var(--line-subtle); border-radius: var(--radius-sm); background: rgba(255,255,255,0.04); color: var(--text-primary); font: inherit; outline: none; }
+.input:focus { border-color: var(--nori-teal-soft); }
+.model-row { display: flex; align-items: center; gap: 0.8rem; }
+.model-row .input { flex: 1; }
+.fetch { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.85rem 1.2rem; border: none; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal)); color: #05121a; font: inherit; font-size: 1.2rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.fetch:disabled { opacity: 0.6; cursor: not-allowed; }
+.error { margin: 0; color: var(--danger); font-size: 1.2rem; text-align: center; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

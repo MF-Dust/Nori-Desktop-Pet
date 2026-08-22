@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import {onMounted, ref} from "vue"
-import {memoryService, type MemoryItem} from "../../services/memory"
-import {invoke} from "../../services/host/invoke"
-import {readStringConfig} from "../../services/config"
+import {RUNTIME, type MemoryItem} from "../../services/runtime"
 import Icon from "../Icon.vue"
 
 const memories = ref<MemoryItem[]>([])
 const searchKeyword = ref("")
 const loading = ref(false)
 
-// Embedding 配置
+// Embedding 配置 (秘密脱敏)
 const embeddingModel = ref("BAAI/bge-m3")
 const embeddingBaseUrl = ref("")
-const embeddingApiKey = ref("")
+const embeddingApiKeyInput = ref("")
 const embeddingDimensions = ref("")
+const hasEmbeddingApiKey = ref(false)
 const isReembedding = ref(false)
 const reembedMessage = ref("")
 
@@ -23,14 +22,16 @@ const newImportance = ref(0.8)
 const newTags = ref("")
 const adding = ref(false)
 
+let syncedEmbedding = false
+
 // 加载记忆列表
 const loadMemories = async () => {
 	loading.value = true
 	try {
 		if (searchKeyword.value.trim()) {
-			memories.value = await memoryService.searchHybrid(searchKeyword.value.trim(), 50)
+			memories.value = await RUNTIME.memorySearch(searchKeyword.value.trim(), 50)
 		} else {
-			memories.value = await memoryService.getAll(50)
+			memories.value = await RUNTIME.memoryList(50)
 		}
 	} catch (error) {
 		console.error("加载记忆列表失败:", error)
@@ -39,43 +40,47 @@ const loadMemories = async () => {
 	}
 }
 
+const syncEmbeddingFromSnapshot = () => {
+	const EMBEDDING = RUNTIME.snapshot.value?.embedding
+	if (!EMBEDDING || syncedEmbedding) return
+	syncedEmbedding = true
+	embeddingModel.value = EMBEDDING.model || embeddingModel.value
+	embeddingBaseUrl.value = EMBEDDING.baseUrl
+	embeddingDimensions.value = EMBEDDING.dimensions
+	hasEmbeddingApiKey.value = EMBEDDING.hasApiKey
+}
+
 onMounted(async () => {
-	try {
-		const [SAVED_MODEL, SAVED_BASE, SAVED_KEY, SAVED_DIMS] = await Promise.all([
-			readStringConfig("embedding_model", embeddingModel.value),
-			readStringConfig("embedding_api_base", ""),
-			readStringConfig("embedding_api_key", ""),
-			readStringConfig("embedding_dimensions", ""),
-		])
-		if (SAVED_MODEL) embeddingModel.value = SAVED_MODEL
-		if (SAVED_BASE) embeddingBaseUrl.value = SAVED_BASE
-		if (SAVED_KEY) embeddingApiKey.value = SAVED_KEY
-		if (SAVED_DIMS) embeddingDimensions.value = SAVED_DIMS
-	} catch (error) {
-		console.error("加载 Embedding 配置失败:", error)
-	}
-	void loadMemories()
+	await RUNTIME.init()
+	syncEmbeddingFromSnapshot()
+	await loadMemories()
 })
 
-const saveConfig = (key: string, value: string) => {
-	void invoke("set_config", {key, value})
+// 保存 Embedding 配置辅助: 每个 key 独立防抖 timer
+const timers = new Map<string, ReturnType<typeof setTimeout>>()
+const saveEmbeddingDebounced = (key: string, patch: () => Record<string, unknown>) => {
+	clearTimeout(timers.get(key))
+	timers.set(key, setTimeout(() => {
+		timers.delete(key)
+		void RUNTIME.updateEmbedding(patch()).catch(error => console.error(`保存 Embedding 配置失败 (${key}):`, error))
+	}, 400))
 }
 
 // 保存维数: 留空表示用模型默认; 非正整数一律回退为空
 const saveDimensions = () => {
 	const RAW = embeddingDimensions.value.trim()
 	if (RAW === "") {
-		saveConfig("embedding_dimensions", "")
+		saveEmbeddingDebounced("dims", () => ({dimensions: ""}))
 		return
 	}
 	const NUM = Number.parseInt(RAW, 10)
 	if (Number.isNaN(NUM) || NUM <= 0) {
 		embeddingDimensions.value = ""
-		saveConfig("embedding_dimensions", "")
+		saveEmbeddingDebounced("dims", () => ({dimensions: ""}))
 		return
 	}
 	embeddingDimensions.value = String(NUM)
-	saveConfig("embedding_dimensions", String(NUM))
+	saveEmbeddingDebounced("dims", () => ({dimensions: String(NUM)}))
 }
 
 // 重新计算向量嵌入
@@ -84,7 +89,7 @@ const reembedAll = async () => {
 	isReembedding.value = true
 	reembedMessage.value = "正在计算向量..."
 	try {
-		const COUNT = await memoryService.reembedAll()
+		const COUNT = await RUNTIME.memoryReembed()
 		reembedMessage.value = `成功为 ${COUNT} 条记忆生成了向量索引！`
 		await loadMemories()
 	} catch (error) {
@@ -100,9 +105,8 @@ const addMemory = async () => {
 	if (!newContent.value.trim()) return
 	adding.value = true
 	try {
-		await memoryService.add(
+		await RUNTIME.memoryAdd(
 			newContent.value.trim(),
-			"manual",
 			newImportance.value,
 			newTags.value.trim() || undefined
 		)
@@ -119,7 +123,7 @@ const addMemory = async () => {
 // 删除记忆
 const deleteMemory = async (id: number) => {
 	try {
-		await memoryService.delete(id)
+		await RUNTIME.memoryDelete(id)
 		await loadMemories()
 	} catch (error) {
 		console.error("删除记忆失败:", error)
@@ -129,7 +133,7 @@ const deleteMemory = async (id: number) => {
 // 清空记忆
 const clearAll = async () => {
 	try {
-		await memoryService.clear()
+		await RUNTIME.memoryClear()
 		await loadMemories()
 	} catch (error) {
 		console.error("清空记忆失败:", error)
@@ -166,8 +170,8 @@ const clearAll = async () => {
 							<input
 								v-model="embeddingModel"
 								class="input"
-								placeholder="BAAI/bge-m3, text-embedding-3-small, bge-large-zh-v1.5..."
-								@blur="saveConfig('embedding_model', embeddingModel)"
+								placeholder="BAAI/bge-m3, text-embedding-3-small..."
+								@blur="saveEmbeddingDebounced('model', () => ({model: embeddingModel.trim()}))"
 							/>
 						</div>
 						<div class="form-item flex-1">
@@ -176,20 +180,24 @@ const clearAll = async () => {
 								v-model="embeddingBaseUrl"
 								class="input"
 								placeholder="https://api.openai.com/v1"
-								@blur="saveConfig('embedding_api_base', embeddingBaseUrl)"
+								@blur="saveEmbeddingDebounced('base', () => ({baseUrl: embeddingBaseUrl.trim()}))"
 							/>
 						</div>
 					</div>
 
 					<div class="form-row">
 						<div class="form-item flex-1">
-							<label class="label">API Key (留空复用 AI 大脑配置)</label>
+							<label class="label">API Key {{ hasEmbeddingApiKey ? "(已加密保存)" : "" }} (留空复用 AI 大脑配置)</label>
 							<input
-								v-model="embeddingApiKey"
+								v-model="embeddingApiKeyInput"
 								type="password"
 								class="input"
 								placeholder="sk-..."
-								@blur="saveConfig('embedding_api_key', embeddingApiKey)"
+								@blur="() => {
+									const VALUE = embeddingApiKeyInput.trim()
+									embeddingApiKeyInput = ''
+									if (VALUE) saveEmbeddingDebounced('key', () => ({apiKey: VALUE}))
+								}"
 							/>
 						</div>
 						<div class="form-item dims-item">
@@ -205,7 +213,7 @@ const clearAll = async () => {
 						</div>
 					</div>
 
-					<p class="dims-hint">留空使用模型默认维数；仅部分模型支持自定义 (如 text-embedding-3-small/large)，修改后请点击右上角“重新计算记忆向量”，否则新旧向量维数不一致无法参与语义检索。</p>
+					<p class="dims-hint">留空使用模型默认维数；仅部分模型支持自定义，修改后请点击右上角“重新计算记忆向量”。</p>
 
 					<p v-if="reembedMessage" class="status-tip">{{ reembedMessage }}</p>
 				</div>
@@ -260,7 +268,7 @@ const clearAll = async () => {
 				</div>
 			</div>
 
-			<!-- 2. 记忆库列表与搜索 -->
+			<!-- 3. 记忆库列表与搜索 -->
 			<div class="setting-card flex-1-card">
 				<div class="card-header space-between">
 					<div class="header-left">
@@ -452,11 +460,9 @@ const clearAll = async () => {
 	font-family: inherit;
 	resize: vertical;
 	outline: none;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
 	&:focus {
 		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.06);
 		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
 	}
 }
@@ -477,12 +483,6 @@ const clearAll = async () => {
 	gap: 0.8rem;
 	font-size: 1.2rem;
 	color: var(--text-muted);
-}
-
-.range-slider {
-	height: 0.6rem;
-	accent-color: var(--nori-teal-bright);
-	cursor: pointer;
 }
 
 .form-row {
@@ -506,62 +506,6 @@ const clearAll = async () => {
 	margin: 0;
 	font-size: 1.2rem;
 	color: var(--nori-teal-bright);
-}
-
-.btn-secondary {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.75rem 1.6rem;
-	background: rgba(125, 227, 255, 0.08);
-	border: 0.1rem solid var(--nori-teal-soft);
-	border-radius: var(--radius-sm);
-	color: var(--nori-teal-bright);
-	font-size: 1.25rem;
-	font-family: inherit;
-	font-weight: 500;
-	cursor: pointer;
-	white-space: nowrap;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover:not(:disabled) {
-		background: rgba(125, 227, 255, 0.18);
-		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
-		transform: translateY(-0.1rem);
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-}
-
-.btn-primary {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.85rem 1.8rem;
-	border: none;
-	border-radius: var(--radius-sm);
-	background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-	color: #03101c;
-	font-weight: 600;
-	font-size: 1.3rem;
-	font-family: inherit;
-	cursor: pointer;
-	white-space: nowrap;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover:not(:disabled) {
-		box-shadow: 0 0.4rem 1.6rem var(--glow-teal-strong);
-		transform: translateY(-0.15rem);
-	}
-
-	&:disabled {
-		opacity: 0.5;
-		cursor: default;
-		filter: grayscale(0.5);
-	}
 }
 
 .btn-danger-text {

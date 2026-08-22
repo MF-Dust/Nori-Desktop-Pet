@@ -1,52 +1,35 @@
 <script setup lang="ts">
-import {computed, h, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
+import {computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useDialog} from "naive-ui"
-import {invoke} from "../services/host/invoke"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
-import {agentEngine, type LlmUsageMetrics} from "../services/agent/engine"
-import type {AgentState, AgentTextMessage, ToolApprovalDecision, ToolApprovalRequest} from "../services/agent/protocol"
-import {StreamingJsonParser} from "../services/agent/jsonParser"
-import type {PersistedChatMessage} from "../services/history"
-import {skillService} from "../services/skills"
-import {toolManager} from "../services/agent/tools"
+import {RUNTIME, type ApprovalRequestDto} from "../services/runtime"
+import {createChatStore} from "../services/runtime/chatStore"
 
 const I18N = computed(() => useLanguages().views.main.chat)
 
 // 事件: 前往设置
 const emit = defineEmits<{goSettings: []}>()
 
-// 配置键名
-const KEY_BASE = "llm_api_base"
-const KEY_APIKEY = "llm_api_key"
-const KEY_MODEL = "llm_model"
+// AI 是否已配置 (后端快照判定)
+const configured = computed(() => RUNTIME.snapshot.value?.ai.configured ?? false)
+const currentModel = computed(() => {
+	const MODEL = RUNTIME.snapshot.value?.ai.model
+	return MODEL && MODEL.length > 0 ? MODEL : "未知模型"
+})
 
-// AI 是否已配置 (地址 + Key + 模型齐全才算)
-const configured = ref(false)
-const currentModel = ref("")
+// 聊天状态机 (业务在后端, 这里只渲染投影)
+const CHAT = createChatStore()
+const {bubbles, sending, executingTool, metrics, errorMsg} = CHAT
 
-// 历史消息
-interface Message {
-	id: number
-	role: string
-	content: string
-}
-const messages = ref<Message[]>([])
 const input = ref("")
-const sending = ref(false)
-const errorMsg = ref("")
 const listRef = ref<HTMLElement>()
-
-// Agent 状态与执行中的工具
-const agentState = ref<AgentState>("idle")
-const executingTool = ref<string>("")
 const DIALOG = useDialog()
 
-// 上下文用量与缓存命中指标
-const metrics = ref<LlmUsageMetrics | null>(null)
-const showMetricsDetail = ref(false)
-const activeSkillsCount = ref(0)
-const activeToolsCount = ref(0)
+// 活跃技能数与工具数 (来自快照)
+const activeSkillsCount = computed(() => RUNTIME.snapshot.value?.enabledSkillsCount ?? 0)
+const activeToolsCount = computed(() =>
+	(RUNTIME.snapshot.value?.tools ?? []).filter(tool => tool.enabled).length)
 
 // 助手回复按句切分成多个气泡 (像日常聊天, 不受模型换行影响)
 const splitSentences = (text: string): string[] => {
@@ -70,20 +53,20 @@ const splitSentences = (text: string): string[] => {
 }
 
 // 展示列表: 助手一条回复 = 多个气泡
-interface Bubble {
+interface DisplayBubble {
 	key: string
 	role: string
 	content: string
 }
-const bubbles = computed<Bubble[]>(() => {
-	const LIST: Bubble[] = []
-	for (const msg of messages.value) {
+const displayBubbles = computed<DisplayBubble[]>(() => {
+	const LIST: DisplayBubble[] = []
+	for (const msg of bubbles.value) {
 		if (msg.role === "assistant") {
 			splitSentences(msg.content).forEach((s, i) =>
-				LIST.push({key: `${msg.id}-${i}`, role: "assistant", content: s}),
+				LIST.push({key: `${msg.key}-${i}`, role: "assistant", content: s}),
 			)
 		} else {
-			LIST.push({key: String(msg.id), role: msg.role, content: msg.content})
+			LIST.push({key: msg.key, role: msg.role, content: msg.content})
 		}
 	}
 	return LIST
@@ -95,8 +78,7 @@ const scrollToBottom = async () => {
 	listRef.value?.scrollTo({top: listRef.value.scrollHeight})
 }
 
-// 流式输出期间每个 chunk 都 nextTick+scrollTo 太频, 合并到 ~100ms 一次;
-// 用户发送/最终完成仍走即时 scrollToBottom
+// 流式输出期间每个 chunk 都 nextTick+scrollTo 太频, 合并到 ~100ms 一次
 let scrollPending = false
 const scheduleScrollToBottom = () => {
 	if (scrollPending) return
@@ -107,138 +89,76 @@ const scheduleScrollToBottom = () => {
 	}, 100)
 }
 
-// 读取字符串配置 (失败返回空串)
-const readConfig = async (key: string): Promise<string> => {
-	try {
-		return (await invoke<string | null>("get_config", {key})) ?? ""
-	} catch (error) {
-		console.error(`读取配置失败: ${key}`, error)
-		return ""
-	}
-}
+watch(bubbles, () => scheduleScrollToBottom(), {deep: true})
 
-// 格式化数字
-const formatNum = (n?: number) => {
-	if (typeof n !== "number") return "0"
-	return n.toLocaleString()
-}
-
-// 计算生成速度 (Tokens/秒)
+// 格式化数字与速度
+const formatNum = (n?: number) => (typeof n === "number" ? n.toLocaleString() : "0")
 const tokensPerSecond = computed(() => {
 	if (!metrics.value || metrics.value.durationMs <= 0 || metrics.value.completionTokens <= 0) return 0
 	return Math.round((metrics.value.completionTokens / (metrics.value.durationMs / 1000)) * 10) / 10
 })
 
-// 逐调用工具授权: 每个请求单独弹窗; 关闭/拒绝/卸载都解析为拒绝
-const PENDING_APPROVALS = new Set<(decision: ToolApprovalDecision) => void>()
-const showToolApprovalDialog = (request: ToolApprovalRequest): Promise<ToolApprovalDecision> =>
-	new Promise((resolve) => {
-		let settled = false
-		const SETTLE = (decision: ToolApprovalDecision) => {
-			if (settled) return
-			settled = true
-			PENDING_APPROVALS.delete(SETTLE)
-			resolve(decision)
-		}
-		PENDING_APPROVALS.add(SETTLE)
-		DIALOG.warning({
-			title: I18N.value.approvalTitle,
-			content: () => h("div", [
-				h("p", {style: "margin:0 0 0.8rem;font-size:1.3rem;color:#8bd8ff"},
-					`${request.toolName}${request.description ? ` — ${request.description}` : ""}`),
-				h("pre", {
-					style: "margin:0;max-height:16rem;overflow:auto;background:rgba(255,255,255,0.05);"
-						+ "padding:1rem;border-radius:0.6rem;font-size:1.2rem;line-height:1.5;white-space:pre-wrap",
-				}, JSON.stringify(request.arguments ?? {}, null, 2)),
-			]),
-			positiveText: I18N.value.approve,
-			negativeText: I18N.value.deny,
-			closable: true,
-			onPositiveClick: () => SETTLE("approved"),
-			onNegativeClick: () => SETTLE("denied"),
-			onClose: () => SETTLE("denied"),
-			onMaskClick: () => SETTLE("denied"),
-		})
-	})
-
-// 历史分页: 历史表随使用无限增长, 首屏只拉最新一页, 更早的按需加载
-const HISTORY_PAGE = 50
-const oldestLoadedId = ref(0)
-const hasMoreHistory = ref(false)
-const loadingMoreHistory = ref(false)
-
-// 过滤旧版本落库的工具调用 JSON 与系统反馈 (分页与首屏共用同一套规则)
-const normalizeHistoryPage = (list: Message[]): Message[] => {
-	const filtered: Message[] = []
-	for (const m of list) {
-		if (m.role === "assistant") {
-			const PARSED = StreamingJsonParser.parseComplete(m.content)
-			const MSG_OBJ = PARSED.find(p => p.type === "message") as AgentTextMessage | undefined
-			if (MSG_OBJ?.text) {
-				filtered.push({...m, content: MSG_OBJ.text})
-			}
-			continue
-		}
-		if (m.content.startsWith("【系统工具执行反馈 -")) {
-			continue
-		}
-		filtered.push(m)
+// 逐调用工具授权: 队列驱动, 每个请求单独弹窗; 关闭/拒绝/卸载都解析为拒绝
+const shownApprovalIds = new Set<string>()
+const activeApproval = computed<ApprovalRequestDto | null>(() => {
+	for (const pending of CHAT.pendingApprovals.value) {
+		if (!shownApprovalIds.has(pending.request.requestId)) return pending.request
 	}
-	return filtered
+	return null
+})
+
+// 弹窗展示由 watcher 风格的轮询完成: activeApproval 变化时弹出
+let dialogShownFor: string | null = null
+const showApprovalDialogIfAny = () => {
+	const REQUEST = activeApproval.value
+	if (!REQUEST || dialogShownFor === REQUEST.requestId) return
+	dialogShownFor = REQUEST.requestId
+	shownApprovalIds.add(REQUEST.requestId)
+	DIALOG.warning({
+		title: I18N.value.approvalTitle,
+		content: () => h("div", [
+			h("p", {style: "margin:0 0 0.8rem;font-size:1.3rem;color:#8bd8ff"},
+				`${REQUEST.toolName}${REQUEST.description ? ` — ${REQUEST.description}` : ""}`),
+			h("pre", {
+				style: "margin:0;max-height:16rem;overflow:auto;background:rgba(255,255,255,0.05);"
+					+ "padding:1rem;border-radius:0.6rem;font-size:1.2rem;line-height:1.5;white-space:pre-wrap",
+			}, JSON.stringify(REQUEST.arguments ?? {}, null, 2)),
+		]),
+		positiveText: I18N.value.approve,
+		negativeText: I18N.value.deny,
+		closable: true,
+		onPositiveClick: () => void CHAT.decideApproval(REQUEST.requestId, true),
+		onNegativeClick: () => void CHAT.decideApproval(REQUEST.requestId, false),
+		onClose: () => void CHAT.decideApproval(REQUEST.requestId, false),
+		onMaskClick: () => void CHAT.decideApproval(REQUEST.requestId, false),
+	})
 }
 
-// 向上翻页加载更早的消息, 加载后保持视口停留在原消息位置
+// 历史翻页
 const loadOlderHistory = async () => {
-	if (!hasMoreHistory.value || loadingMoreHistory.value) return
-	loadingMoreHistory.value = true
 	try {
-		const LIST_REF = listRef.value
-		const PREV_HEIGHT = LIST_REF?.scrollHeight ?? 0
-		const PAGE = await invoke<Message[]>("get_chat_history", {limit: HISTORY_PAGE, beforeId: oldestLoadedId.value})
-		if (PAGE.length > 0) {
-			oldestLoadedId.value = PAGE[0].id
-			messages.value = [...normalizeHistoryPage(PAGE), ...messages.value]
-		}
-		hasMoreHistory.value = PAGE.length >= HISTORY_PAGE
-		await nextTick()
-		if (LIST_REF) LIST_REF.scrollTop += LIST_REF.scrollHeight - PREV_HEIGHT
+		await CHAT.loadOlder()
 	} catch (error) {
 		console.error("加载更早的历史失败:", error)
-	} finally {
-		loadingMoreHistory.value = false
 	}
 }
 
+let unlistenAgent: (() => void) | null = null
+
 onMounted(async () => {
-	try {
-		const [BASE, KEY, MODEL] = await Promise.all([
-			readConfig(KEY_BASE),
-			readConfig(KEY_APIKEY),
-			readConfig(KEY_MODEL),
-		])
-		configured.value = !!(BASE && KEY && MODEL)
-		currentModel.value = MODEL || "未知模型"
-
-		if (configured.value) {
-			const historyList = await invoke<Message[]>("get_chat_history", {limit: HISTORY_PAGE})
-			messages.value = normalizeHistoryPage(historyList)
-			hasMoreHistory.value = historyList.length >= HISTORY_PAGE
-			oldestLoadedId.value = historyList.length > 0 ? historyList[0].id : 0
-			await scrollToBottom()
-		}
-
-		// 加载活跃技能数与工具数
-		const enabledSkills = await skillService.getEnabledSkills()
-		activeSkillsCount.value = enabledSkills.length
-		activeToolsCount.value = toolManager.list().filter(t => t.enabled !== false).length
-	} catch (error) {
-		console.error("加载聊天历史失败:", error)
+	await RUNTIME.init()
+	unlistenAgent = await CHAT.connect()
+	if (RUNTIME.snapshot.value?.ai.configured) {
+		await CHAT.loadRecent()
+		await scrollToBottom()
 	}
+	showApprovalDialogIfAny()
 })
 
 onBeforeUnmount(() => {
-	// 组件卸载时所有待决授权一律解析为拒绝, 不让 Promise 无限悬挂
-	for (const SETTLE of [...PENDING_APPROVALS]) SETTLE("denied")
+	CHAT.dispose()
+	unlistenAgent?.()
+	unlistenAgent = null
 })
 
 // 发送消息
@@ -246,121 +166,51 @@ const send = async () => {
 	const TEXT = input.value.trim()
 	if (!TEXT || sending.value) return
 	input.value = ""
-	errorMsg.value = ""
-	sending.value = true
-
-	// 乐观显示用户消息与助手空占位消息
-	messages.value.push({id: -Date.now(), role: "user", content: TEXT})
-	messages.value.push({id: -Date.now() - 1, role: "assistant", content: ""})
+	await CHAT.send(TEXT)
 	await scrollToBottom()
-
-	try {
-		const HISTORY = messages.value
-			.slice(0, -2)
-			.map(m => ({role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: m.content}))
-
-		const FINAL = await agentEngine.run(
-			TEXT,
-			HISTORY,
-			{},
-			{
-				onStateChange: (st) => {
-					agentState.value = st
-				},
-				onToolExecuting: (toolName) => {
-					executingTool.value = toolName
-				},
-				onToolExecuted: () => {
-					executingTool.value = ""
-				},
-				onUsage: (usage) => {
-					metrics.value = usage
-				},
-				onTextChunk: (chunk) => {
-					const lastMsg = messages.value[messages.value.length - 1]
-					if (lastMsg && lastMsg.role === "assistant") {
-						lastMsg.content += chunk
-						scheduleScrollToBottom()
-					}
-				},
-				requestToolApproval: showToolApprovalDialog,
-			}
-		)
-
-		const lastMsg = messages.value[messages.value.length - 1]
-		if (lastMsg && lastMsg.role === "assistant") {
-			lastMsg.content = FINAL.text || lastMsg.content
-		}
-
-		// 引擎内部可能经过多轮工具调用; 只把用户可见的最终一轮对话落库
-		const ASSISTANT_CONTENT = FINAL.text || lastMsg?.content || ""
-		if (ASSISTANT_CONTENT) {
-			try {
-				const SAVED_USER = await invoke<PersistedChatMessage>("save_chat_message", {role: "user", content: TEXT})
-				const SAVED_ASSISTANT = await invoke<PersistedChatMessage>("save_chat_message", {role: "assistant", content: ASSISTANT_CONTENT})
-				const USER_MSG = messages.value.find(m => m.role === "user" && m.content === TEXT && m.id < 0)
-				if (USER_MSG) USER_MSG.id = SAVED_USER.id
-				if (lastMsg && lastMsg.role === "assistant") {
-					lastMsg.id = SAVED_ASSISTANT.id
-				}
-			} catch (error) {
-				// 落库失败不阻断已完成的对话展示
-				console.error("保存聊天记录失败:", error)
-			}
-		}
-
-		await scrollToBottom()
-	} catch (error) {
-		errorMsg.value = String(error)
-		console.error("聊天请求失败:", error)
-		const lastMsg = messages.value[messages.value.length - 1]
-		if (lastMsg && lastMsg.role === "assistant" && !lastMsg.content) {
-			messages.value.pop()
-		}
-	} finally {
-		sending.value = false
-		agentState.value = "idle"
-		executingTool.value = ""
-	}
 }
 
-// 停止当前生成: 引擎取消本 session 并 best-effort 取消宿主流/MCP 操作
+// 停止当前生成
 const stopGeneration = () => {
-	agentEngine.abort()
+	void CHAT.abort()
 }
 
 // 清空当前对话历史
 const clearChatHistory = async () => {
-	try {
-		await invoke("clear_chat_history")
-		messages.value = []
-		metrics.value = null
-	} catch (error) {
-		console.error("清空历史记录失败:", error)
-	}
+	await CHAT.clear()
 }
 
-// 语音输入控制
+// 语音输入控制 (后端 STT: 开始录音 / 停止并识别)
 const isRecording = ref(false)
 const toggleVoiceInput = async () => {
-	const {sttService} = await import("../services/stt")
 	if (isRecording.value) {
 		isRecording.value = false
-		const text = await sttService.stopListening()
-		if (text) {
-			input.value = text
-			await send()
+		try {
+			const RESULT = await RUNTIME.sttStop()
+			if (RESULT.text) {
+				input.value = RESULT.text
+				await send()
+			}
+		} catch (error) {
+			console.error("语音识别失败:", error)
 		}
 	} else {
 		try {
-			await sttService.startListening()
+			await RUNTIME.sttStart()
 			isRecording.value = true
-		} catch (err) {
-			console.error("启动语音识别失败:", err)
+		} catch (error) {
+			console.error("启动录音失败:", error)
 			isRecording.value = false
 		}
 	}
 }
+
+// 订阅驱动滚动与授权弹窗
+const POLL = setInterval(() => {
+	showApprovalDialogIfAny()
+}, 200)
+
+onBeforeUnmount(() => clearInterval(POLL))
 </script>
 
 <template>
@@ -397,8 +247,8 @@ const toggleVoiceInput = async () => {
 				</div>
 			</div>
 
-			<!-- 性能指标与 Prompt Caching 指标栏 -->
-			<div class="chat-metrics-bar" @click="showMetricsDetail = !showMetricsDetail">
+			<!-- 性能指标与 Prompt Caching 指标条 -->
+			<div class="chat-metrics-bar">
 				<div class="metrics-left">
 					<div class="metric-item">
 						<span class="metric-label">上下文:</span>
@@ -422,70 +272,21 @@ const toggleVoiceInput = async () => {
 					<span class="metric-addons">
 						{{ activeSkillsCount }} 技能 / {{ activeToolsCount }} 工具
 					</span>
-					<Icon name="arrow-right" :size="12" class="info-icon" :class="{active: showMetricsDetail}"/>
-				</div>
-			</div>
-
-			<!-- 详细指标弹层 -->
-			<div v-if="showMetricsDetail" class="metrics-detail-box">
-				<div class="detail-header">
-					<div class="detail-title-wrap">
-						<Icon name="cpu" :size="14" class="text-teal"/>
-						<h4>Prompt 缓存与用量详情</h4>
-					</div>
-					<button class="btn-close-detail" @click.stop="showMetricsDetail = false">
-						<Icon name="close" :size="14"/>
-					</button>
-				</div>
-
-				<div class="detail-grid">
-					<div class="detail-cell">
-						<span class="cell-label">输入 Tokens (Prompt)</span>
-						<span class="cell-val">{{ metrics ? formatNum(metrics.promptTokens) : '0' }} Tokens</span>
-					</div>
-					<div class="detail-cell">
-						<span class="cell-label">回复输出 (Completion)</span>
-						<span class="cell-val">{{ metrics ? formatNum(metrics.completionTokens) : '0' }} Tokens</span>
-					</div>
-					<div class="detail-cell">
-						<span class="cell-label">Prompt 缓存读取 (Cached)</span>
-						<span class="cell-val text-teal">{{ metrics ? formatNum(metrics.cachedTokens) : '0' }} Tokens</span>
-					</div>
-					<div class="detail-cell">
-						<span class="cell-label">当前缓存命中率</span>
-						<span class="cell-val text-teal">{{ metrics ? metrics.cacheHitRate + '%' : '0.0%' }}</span>
-					</div>
-					<div class="detail-cell">
-						<span class="cell-label">生成耗时与速率</span>
-						<span class="cell-val">{{ metrics && metrics.durationMs > 0 ? (metrics.durationMs / 1000).toFixed(2) + 's (' + tokensPerSecond + ' t/s)' : '-' }}</span>
-					</div>
-					<div class="detail-cell">
-						<span class="cell-label">当前运行模型</span>
-						<span class="cell-val text-primary">{{ currentModel || '-' }}</span>
-					</div>
-				</div>
-
-				<div class="detail-tip-box">
-					<Icon name="info" :size="12" class="tip-icon"/>
-					<p class="detail-tip">
-						提示：当使用支持 Prompt Caching 的模型（如 DeepSeek, Claude 3.5, OpenAI 等）时，系统人设、长期记忆与工具清单会被自动缓存，大幅降低响应延迟与 API 计费。
-					</p>
 				</div>
 			</div>
 
 			<div ref="listRef" class="chat-list">
 				<!-- 更早的历史按需加载, 避免历史表增长后首屏全量拉取 -->
 				<button
-					v-if="hasMoreHistory"
+					v-if="CHAT.hasMoreHistory.value"
 					class="btn-load-earlier"
-					:disabled="loadingMoreHistory"
 					@click="loadOlderHistory"
 				>
-					<Icon v-if="loadingMoreHistory" name="loading" class="btn-icon spin" :size="12"/>
+					<Icon name="loading" class="btn-icon spin" :size="12"/>
 					<span>{{ I18N.loadEarlier }}</span>
 				</button>
 				<div
-					v-for="bubble in bubbles"
+					v-for="bubble in displayBubbles"
 					:key="bubble.key"
 					class="chat-msg"
 					:class="bubble.role"
@@ -696,15 +497,8 @@ const toggleVoiceInput = async () => {
 	border-bottom: 0.1rem solid var(--line-subtle);
 	font-size: 1.1rem;
 	color: var(--text-muted);
-	cursor: pointer;
 	user-select: none;
 	flex-shrink: 0;
-	transition: all 0.2s ease;
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.06);
-		color: var(--text-primary);
-	}
 }
 
 .metrics-left {
@@ -756,139 +550,6 @@ const toggleVoiceInput = async () => {
 	color: var(--text-faint);
 }
 
-.info-icon {
-	color: var(--text-faint);
-	transition: transform 0.2s ease;
-
-	&.active {
-		color: var(--nori-teal-bright);
-		transform: rotate(90deg);
-	}
-}
-
-// 指标详情弹窗
-.metrics-detail-box {
-	position: absolute;
-	top: 7.6rem;
-	left: 1.6rem;
-	right: 1.6rem;
-	background: rgba(6, 18, 30, 0.95);
-	border: 0.1rem solid var(--line-strong);
-	border-radius: var(--radius-md);
-	padding: 1.4rem 1.6rem;
-	z-index: 20;
-	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.75), 0 0 2rem var(--glow-teal-soft);
-	backdrop-filter: blur(1.4rem);
-	animation: slideDown 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-@keyframes slideDown {
-	from {
-		opacity: 0;
-		transform: translateY(-0.8rem);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-.detail-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin-bottom: 1rem;
-}
-
-.btn-close-detail {
-	background: transparent;
-	border: none;
-	color: var(--text-faint);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	padding: 0.2rem;
-	transition: color 0.15s ease;
-
-	&:hover {
-		color: var(--text-primary);
-	}
-}
-
-.detail-grid {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 0.8rem;
-	margin-bottom: 1rem;
-}
-
-.detail-cell {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-	padding: 0.7rem 0.9rem;
-	background: rgba(255, 255, 255, 0.03);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-}
-
-.cell-label {
-	font-size: 1.05rem;
-	color: var(--text-faint);
-}
-
-.cell-val {
-	font-size: 1.2rem;
-	font-family: monospace;
-	font-weight: 500;
-	color: var(--text-primary);
-
-	&.text-teal {
-		color: var(--nori-teal-bright);
-	}
-	&.text-primary {
-		color: var(--nori-teal-bright);
-	}
-}
-
-.detail-title-wrap {
-	display: flex;
-	align-items: center;
-	gap: 0.6rem;
-
-	h4 {
-		font-size: 1.3rem;
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.text-teal {
-		color: var(--nori-teal-bright);
-	}
-}
-
-.detail-tip-box {
-	display: flex;
-	align-items: flex-start;
-	gap: 0.6rem;
-	border-top: 0.1rem solid var(--line-subtle);
-	padding-top: 0.8rem;
-}
-
-.tip-icon {
-	color: var(--nori-teal-soft);
-	margin-top: 0.2rem;
-	flex-shrink: 0;
-}
-
-.detail-tip {
-	font-size: 1.1rem;
-	color: var(--text-muted);
-	line-height: 1.5;
-	margin: 0;
-}
-
 // 消息列表
 .chat-list {
 	flex: 1;
@@ -917,11 +578,6 @@ const toggleVoiceInput = async () => {
 	&:hover:not(:disabled) {
 		color: var(--text-primary);
 		border-color: var(--nori-teal-bright);
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: default;
 	}
 }
 

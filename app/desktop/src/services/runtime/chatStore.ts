@@ -1,0 +1,231 @@
+/**
+ * 聊天视图状态机
+ *
+ * 订阅后端 Agent 事件并维护气泡列表/状态/指标/待决授权队列。
+ * 业务真相在后端: 这里只做事件到 UI 投影的转换, 不落库、不解析历史。
+ */
+import {ref} from "vue"
+import {RUNTIME, type ApprovalRequestDto, type AgentEventPayload, type AgentState, type UsageMetrics} from "./index"
+
+/** 聊天气泡 */
+export interface ChatBubble {
+	key: string
+	role: "user" | "assistant"
+	content: string
+}
+
+/** 待决授权项 (队列驱动逐个弹窗) */
+export interface PendingApproval {
+	request: ApprovalRequestDto
+	resolve: (approved: boolean) => void
+}
+
+/**
+ * 创建聊天会话 store (每个 ChatView 实例独立)
+ */
+export function createChatStore() {
+	const bubbles = ref<ChatBubble[]>([])
+	const sending = ref(false)
+	const agentState = ref<AgentState>("idle")
+	const executingTool = ref("")
+	const metrics = ref<UsageMetrics | null>(null)
+	const errorMsg = ref("")
+	const pendingApprovals = ref<PendingApproval[]>([])
+	const hasMoreHistory = ref(false)
+
+	let activeSessionId: string | null = null
+	let oldestLoadedId = 0
+	let placeholderKey = ""
+	let unlisten: (() => void) | null = null
+
+	/** 首屏加载最近一页历史 (服务端已规范化) */
+	async function loadRecent(pageSize = 50): Promise<void> {
+		try {
+			const page = await RUNTIME.historyPage(pageSize)
+			bubbles.value = page.map((row) => ({key: String(row.id), role: row.role, content: row.content}))
+			hasMoreHistory.value = page.length >= pageSize
+			oldestLoadedId = page.length > 0 ? page[0].id : 0
+		} catch (error) {
+			console.error("加载聊天历史失败:", error)
+		}
+	}
+
+	/** 向上翻页加载更早的历史 */
+	async function loadOlder(pageSize = 50): Promise<ChatBubble[]> {
+		if (!hasMoreHistory.value || oldestLoadedId <= 0) return []
+		const page = await RUNTIME.historyPage(pageSize, oldestLoadedId)
+		if (page.length === 0) {
+			hasMoreHistory.value = false
+			return []
+		}
+		oldestLoadedId = page[0].id
+		hasMoreHistory.value = page.length >= pageSize
+		const older = page.map((row) => ({key: String(row.id), role: row.role, content: row.content}))
+		bubbles.value = [...older, ...bubbles.value]
+		return older
+	}
+
+	/** 发送一条用户消息 */
+	async function send(text: string): Promise<void> {
+		const trimmed = text.trim()
+		if (!trimmed || sending.value) return
+
+		errorMsg.value = ""
+		sending.value = true
+		placeholderKey = `pending-${Date.now()}`
+		bubbles.value.push({key: `user-${Date.now()}`, role: "user", content: trimmed})
+		bubbles.value.push({key: placeholderKey, role: "assistant", content: ""})
+
+		try {
+			activeSessionId = await RUNTIME.startChat(trimmed)
+		} catch (error) {
+			errorMsg.value = String(error)
+			removePlaceholderIfEmpty()
+			sending.value = false
+			activeSessionId = null
+		}
+	}
+
+	/** 中止当前会话 */
+	async function abort(): Promise<void> {
+		if (!activeSessionId) return
+		await RUNTIME.cancelChat(activeSessionId).catch(() => {})
+	}
+
+	/** 清空对话 */
+	async function clear(): Promise<void> {
+		await RUNTIME.clearChat().catch(() => {})
+		bubbles.value = []
+		metrics.value = null
+		oldestLoadedId = 0
+		hasMoreHistory.value = false
+	}
+
+	/** 对授权请求作出决定 */
+	async function decideApproval(requestId: string, approved: boolean): Promise<void> {
+		pendingApprovals.value = pendingApprovals.value.filter(item => item.request.requestId !== requestId)
+		await RUNTIME.respondApproval(requestId, approved).catch(() => {})
+	}
+
+	function removePlaceholderIfEmpty(): void {
+		const index = bubbles.value.findIndex(bubble => bubble.key === placeholderKey)
+		if (index >= 0 && bubbles.value[index].content === "") {
+			bubbles.value.splice(index, 1)
+		}
+	}
+
+	/** 处理一条后端 Agent 事件 */
+	function handleEvent(payload: AgentEventPayload): void {
+		switch (payload.type) {
+			case "chunk": {
+				if (payload.sessionId !== activeSessionId) return
+				const target = bubbles.value.find(bubble => bubble.key === placeholderKey)
+				if (target) target.content += payload.chunk
+				break
+			}
+			case "state": {
+				// speaking 状态事件可能不带 sessionId (自动朗读阶段), 归属于当前活动会话或直接展示
+				if (payload.sessionId != null && payload.sessionId !== activeSessionId) return
+				agentState.value = payload.state
+				break
+			}
+			case "tool-executing": {
+				if (payload.sessionId !== activeSessionId) return
+				executingTool.value = payload.toolName
+				break
+			}
+			case "tool-executed": {
+				if (payload.sessionId !== activeSessionId) return
+				executingTool.value = ""
+				break
+			}
+			case "usage": {
+				if (payload.sessionId !== activeSessionId) return
+				const {type: _type, sessionId: _sessionId, ...usage} = payload
+				metrics.value = usage
+				break
+			}
+			case "approval-request": {
+				if (payload.sessionId !== activeSessionId) return
+				pendingApprovals.value.push({
+					request: payload,
+					resolve: (approved) => void decideApproval(payload.requestId, approved),
+				})
+				agentState.value = "waiting_approval"
+				break
+			}
+			case "approval-result":
+				break
+			case "complete": {
+				if (payload.sessionId !== activeSessionId) return
+				const target = bubbles.value.find(bubble => bubble.key === placeholderKey)
+				if (target && payload.message.text) target.content = payload.message.text
+				finishTurn()
+				break
+			}
+			case "cancelled": {
+				if (payload.sessionId !== activeSessionId) return
+				finishTurn(true)
+				break
+			}
+			case "error": {
+				if (payload.sessionId !== activeSessionId) return
+				errorMsg.value = payload.error
+				finishTurn(true)
+				break
+			}
+		}
+	}
+
+	function finishTurn(cancelled = false): void {
+		removePlaceholderIfEmpty()
+		if (cancelled) agentState.value = "idle"
+		sending.value = false
+		executingTool.value = ""
+		activeSessionId = null
+	}
+
+	/** 订阅后端事件; 组件卸载时调用返回的清理函数 */
+	async function connect(): Promise<() => void> {
+		unlisten = await RUNTIME.onAgentEvent(handleEvent)
+		return () => {
+			unlisten?.()
+			unlisten = null
+		}
+	}
+
+	function dispose(): void {
+		if (activeSessionId) {
+			void RUNTIME.cancelChat(activeSessionId).catch(() => {})
+			activeSessionId = null
+		}
+		for (const pending of pendingApprovals.value) {
+			void RUNTIME.respondApproval(pending.request.requestId, false).catch(() => {})
+		}
+		pendingApprovals.value = []
+		unlisten?.()
+		unlisten = null
+	}
+
+	return {
+		bubbles,
+		sending,
+		agentState,
+		executingTool,
+		metrics,
+		errorMsg,
+		pendingApprovals,
+		hasMoreHistory,
+		loadRecent,
+		loadOlder,
+		send,
+		abort,
+		clear,
+		decideApproval,
+		handleEvent,
+		connect,
+		dispose,
+	}
+}
+
+export type ChatStore = ReturnType<typeof createChatStore>

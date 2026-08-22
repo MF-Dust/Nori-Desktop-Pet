@@ -1,26 +1,29 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
-import {invoke} from "../../services/host/invoke"
-import {readBooleanConfig, readNumberConfig} from "../../services/config"
+import {RUNTIME} from "../../services/runtime"
 import {i18n} from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
-import {proactiveService, type ReminderItem} from "../../services/proactive"
 import Icon from "../Icon.vue"
 
-// 挂机主动关怀开关
-const idleEnabled = ref(true)
+const TEXT = computed(() => useLanguages().views.main.proactive)
+
+// 主动交互配置 (快照为真相)
+const idleEnabled = computed(() => RUNTIME.snapshot.value?.proactive.idleEnabled ?? true)
+const dailyGreeting = computed(() => RUNTIME.snapshot.value?.proactive.dailyGreeting ?? true)
 const idleMinutes = ref(15)
+let syncedIdle = false
 
-// 日常时段问候开关
-const dailyGreeting = ref(true)
-
-// 当前排队提醒事项
-const reminders = ref<ReminderItem[]>([])
+// 提醒列表
+interface ReminderView {
+	id: string
+	content: string
+	triggerTime: number
+}
+const reminders = ref<ReminderView[]>([])
 
 // 新建提醒输入
 const newReminderText = ref("")
 const newReminderMinutes = ref(15)
-const TEXT = computed(() => useLanguages().views.main.proactive)
 const REMINDER_OPTIONS = computed(() => [
 	{label: `5 ${TEXT.value.minutesLater}`, value: 5},
 	{label: `15 ${TEXT.value.minutesLater}`, value: 15},
@@ -29,43 +32,35 @@ const REMINDER_OPTIONS = computed(() => [
 	{label: `2 ${TEXT.value.hoursLater}`, value: 120},
 ])
 
-// 刷新提醒列表
-const refreshReminders = () => {
-	reminders.value = proactiveService.listReminders()
+const syncReminders = () => {
+	const LIST = RUNTIME.snapshot.value?.proactive.reminders ?? []
+	reminders.value = LIST.map(item => ({id: item.id, content: item.content, triggerTime: item.triggerTime}))
+	if (!syncedIdle) {
+		syncedIdle = true
+		idleMinutes.value = RUNTIME.snapshot.value?.proactive.idleMinutes ?? 15
+	}
 }
 
 onMounted(async () => {
-	try {
-		const [SAVED_IDLE, SAVED_MIN, SAVED_DAILY] = await Promise.all([
-			readBooleanConfig("proactive_idle_enabled", true),
-			readNumberConfig("proactive_idle_minutes", 15),
-			readBooleanConfig("proactive_daily_greeting", true),
-		])
-		idleEnabled.value = SAVED_IDLE
-		idleMinutes.value = SAVED_MIN
-		dailyGreeting.value = SAVED_DAILY
-	} catch (error) {
-		console.error("读取主动交互配置失败:", error)
-	}
-	refreshReminders()
+	await RUNTIME.init()
+	syncReminders()
 })
 
-const saveConfig = (key: string, value: string | number | boolean) => {
-	void invoke("set_config", {key, value})
-}
-
 // 手动创建提醒
-const createReminder = () => {
+const createReminder = async () => {
 	if (!newReminderText.value.trim()) return
-	proactiveService.addReminder(newReminderText.value.trim(), newReminderMinutes.value)
+	await RUNTIME.reminderAdd(newReminderText.value.trim(), newReminderMinutes.value).catch(error =>
+		console.error("创建提醒失败:", error))
 	newReminderText.value = ""
-	refreshReminders()
+	await RUNTIME.refresh()
+	syncReminders()
 }
 
 // 取消提醒
-const cancelReminder = (id: string) => {
-	proactiveService.cancelReminder(id)
-	refreshReminders()
+const cancelReminder = async (id: string) => {
+	await RUNTIME.reminderCancel(id).catch(error => console.error("取消提醒失败:", error))
+	await RUNTIME.refresh()
+	syncReminders()
 }
 </script>
 
@@ -90,8 +85,8 @@ const cancelReminder = (id: string) => {
 							<p class="switch-desc">{{ TEXT.idle.enabledDesc }}</p>
 						</div>
 						<n-switch
-							v-model:value="idleEnabled"
-							@update:value="(val: boolean) => saveConfig('proactive_idle_enabled', val)"
+							:value="idleEnabled"
+							@update:value="(val: boolean) => RUNTIME.updateProactive({idleEnabled: val})"
 						/>
 					</div>
 
@@ -108,7 +103,7 @@ const cancelReminder = (id: string) => {
 									v-model="idleMinutes"
 									type="radio"
 									:value="min"
-									@change="saveConfig('proactive_idle_minutes', min)"
+									@change="RUNTIME.updateProactive({idleMinutes: min})"
 								/>
 								{{ min }} {{ TEXT.minutes }}
 							</label>
@@ -130,14 +125,14 @@ const cancelReminder = (id: string) => {
 							<p class="switch-desc">{{ TEXT.daily.enabledDesc }}</p>
 						</div>
 						<n-switch
-							v-model:value="dailyGreeting"
-							@update:value="(val: boolean) => saveConfig('proactive_daily_greeting', val)"
+							:value="dailyGreeting"
+							@update:value="(val: boolean) => RUNTIME.updateProactive({dailyGreeting: val})"
 						/>
 					</div>
 				</div>
 			</div>
 
-			<!-- 3. 定时提醒管理 -->
+			<!-- 3. 定时提醒管理 (持久化于后端 SQLite, 重启自动恢复) -->
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="info" :size="18" class="card-icon"/>
@@ -288,23 +283,6 @@ const cancelReminder = (id: string) => {
 	}
 }
 
-.select-box {
-	padding: 0.9rem 1.2rem;
-	background: #081a2e;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: 1.25rem;
-	font-family: inherit;
-	outline: none;
-	cursor: pointer;
-	transition: all 0.2s ease;
-
-	&:focus {
-		border-color: var(--nori-teal-soft);
-	}
-}
-
 .flex-1 {
 	flex: 1;
 }
@@ -363,49 +341,6 @@ const cancelReminder = (id: string) => {
 	margin: 0.2rem 0 0;
 	font-size: 1.15rem;
 	color: var(--text-faint);
-}
-
-.toggle-switch {
-	position: relative;
-	width: 4.2rem;
-	height: 2.4rem;
-	cursor: pointer;
-
-	input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.toggle-slider {
-		position: absolute;
-		inset: 0;
-		background: rgba(255, 255, 255, 0.12);
-		border-radius: var(--radius-pill);
-		transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-		&::before {
-			position: absolute;
-			content: "";
-			height: 1.8rem;
-			width: 1.8rem;
-			left: 0.3rem;
-			bottom: 0.3rem;
-			background: white;
-			border-radius: 50%;
-			transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-		}
-	}
-
-	input:checked + .toggle-slider {
-		background: var(--nori-teal);
-		box-shadow: 0 0 1rem var(--glow-teal);
-	}
-
-	input:checked + .toggle-slider::before {
-		transform: translateX(1.8rem);
-		background: #03101c;
-	}
 }
 
 .add-reminder-row {

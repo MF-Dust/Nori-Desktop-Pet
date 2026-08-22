@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {computed, ref} from "vue"
-import {invoke} from "../../services/host/invoke"
-import {openUrl, writeText} from "../../services/host/shell"
+import {RUNTIME} from "../../services/runtime"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
 import type {IconMode, IconName} from "../../services/icon"
@@ -64,24 +63,18 @@ const links = computed<Link[]>(() => [
 const handleLink = async (link: Link) => {
 	if (link.qq) {
 		try {
-			await writeText(link.qq)
+			await RUNTIME.copyText(link.qq)
 			copiedQq.value = true
 			if (copyTimer) clearTimeout(copyTimer)
 			copyTimer = setTimeout(() => {
 				copiedQq.value = false
 			}, 2500)
-			await invoke("write_log", {
-				level: "info",
-				message: `复制 QQ 群号 ${link.qq} 成功`
-			})
+			await RUNTIME.writeLog("info", `复制 QQ 群号 ${link.qq} 成功`)
 		} catch (error) {
-			await invoke("write_log", {
-				level: "error",
-				message: `复制 QQ 群号 ${link.qq} 失败`
-			})
+			await RUNTIME.writeLog("error", `复制 QQ 群号 ${link.qq} 失败`)
 		}
 	} else if (link.url) {
-		await openUrl(link.url)
+		await RUNTIME.openUrl(link.url)
 	}
 }
 </script>

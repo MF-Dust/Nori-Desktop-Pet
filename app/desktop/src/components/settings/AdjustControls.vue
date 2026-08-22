@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {assetUrl, resolveModelFileBase} from "../../services/live2d/config"
+import {RUNTIME} from "../../services/runtime"
 
 const props = withDefaults(defineProps<{
 	// 模型 id (资源名)
@@ -39,7 +39,6 @@ const onScaleInput = () => {
 // ---- 表情 ----
 interface ExpressionItem {
 	name: string
-	params: string[]
 }
 
 const expressions = ref<ExpressionItem[]>([])
@@ -68,35 +67,16 @@ const clearExpressions = () => {
 	emit("expressions", [])
 }
 
-// 读取 model3.json 中的表情列表与各表情参数
+// 模型元数据由后端读取, 前端只渲染名称
 const loadExpressions = async () => {
-	if (!props.expressionEnabled) return
+	if (!props.expressionEnabled) {
+		loading.value = false
+		return
+	}
 	try {
-		const URL = assetUrl(`live2d/${props.modelId}/${resolveModelFileBase(props.modelId)}.model3.json`)
-		const RESPONSE = await fetch(URL)
-		const JSON_DATA = await RESPONSE.json()
-		const LIST: {Name?: unknown; File?: unknown}[] = JSON_DATA?.FileReferences?.Expressions ?? []
-		const ITEMS = LIST.filter(
-			(item): item is {Name: string; File: string} =>
-				typeof item?.Name === "string" && item?.Name !== "" && typeof item?.File === "string"
-		)
-
-		const PARAMS = await Promise.all(
-			ITEMS.map(async (item) => {
-				try {
-					const FILE_RESPONSE = await fetch(assetUrl(`live2d/${props.modelId}/${item.File}`))
-					const FILE_JSON = await FILE_RESPONSE.json()
-					const PARAMS: {Id?: unknown}[] = FILE_JSON?.Parameters ?? []
-					return {
-						name: item.Name,
-						params: PARAMS.filter((param): param is {Id: string} => typeof param?.Id === "string").map((param) => param.Id),
-					}
-				} catch {
-					return {name: item.Name, params: []}
-				}
-			})
-		)
-		expressions.value = PARAMS
+		await RUNTIME.init()
+		const META = await RUNTIME.modelMeta(props.modelId)
+		expressions.value = META.expressions.map(name => ({name}))
 	} catch (error) {
 		console.error("读取表情列表失败:", error)
 	} finally {

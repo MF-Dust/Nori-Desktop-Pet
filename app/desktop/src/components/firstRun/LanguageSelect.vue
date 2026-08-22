@@ -3,6 +3,7 @@ import {computed, ref, onMounted} from "vue"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import type {LanguageType} from "../../services/i18n"
+import {RUNTIME} from "../../services/runtime"
 import zhCn from "../../assets/images/flags/cn.png"
 import enGb from "../../assets/images/flags/gb.png"
 import enUs from "../../assets/images/flags/us.png"
@@ -45,8 +46,9 @@ const current = ref<LanguageType>("zh-CN")
 // 加载语言列表和当前语言
 onMounted(async () => {
 	try {
-		languages.value = await language.getLanguages()
-		current.value = await language.getLanguage()
+		await RUNTIME.init()
+		languages.value = language.getLanguages()
+		current.value = RUNTIME.snapshot.value?.general.language ?? "zh-CN"
 	} catch (error) {
 		console.error("加载语言列表失败:", error)
 	}
@@ -57,6 +59,7 @@ const select = async (code: string) => {
 	current.value = code
 	try {
 		await language.setLanguage(code)
+		await RUNTIME.updateGeneral({language: code})
 	} catch (error) {
 		console.error("切换语言失败:", error)
 	}

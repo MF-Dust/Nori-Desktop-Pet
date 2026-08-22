@@ -1,18 +1,19 @@
 <script setup lang="ts">
-import {onMounted, ref} from "vue"
-import {invoke} from "../../services/host/invoke"
-import {readBooleanConfig, readNumberConfig, readStringConfig} from "../../services/config"
-import {audioService} from "../../services/audio"
-import {ttsService} from "../../services/tts"
+import {computed, onMounted, ref} from "vue"
+import {RUNTIME} from "../../services/runtime"
 import Icon from "../Icon.vue"
 
-// 全局音量 (0 ~ 100)
-const volume = ref(Math.round(audioService.getVolume() * 100))
+const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
+const VOICE = computed(() => SNAPSHOT.value?.voice)
 
-// TTS 配置
-const ttsProvider = ref<"web_speech" | "openai" | "custom" | "gpt_sovits" | "edge_tts">("web_speech")
+// 全局音量 (0 ~ 100)
+const volume = ref(100)
+
+// TTS 配置 (云端路径: openai / custom / gpt_sovits)
+type TtsProvider = "openai" | "custom" | "gpt_sovits"
+const ttsProvider = ref<TtsProvider>("openai")
 const ttsBaseUrl = ref("")
-const ttsApiKey = ref("")
+const ttsApiKeyInput = ref("")
 const ttsVoice = ref("nova")
 const ttsSpeed = ref(1.0)
 const ttsAutoPlay = ref(true)
@@ -24,85 +25,57 @@ const gptsovitsRefAudio = ref("")
 const gptsovitsPromptText = ref("")
 const gptsovitsPromptLang = ref("zh")
 
-// STT 配置
-const sttProvider = ref<"web_speech" | "whisper">("web_speech")
+// STT (仅 Whisper 云端识别)
 const sttBaseUrl = ref("")
-const sttApiKey = ref("")
+const sttApiKeyInput = ref("")
 
-// 初始加载配置
+let synced = false
 onMounted(async () => {
-	try {
-		const [
-			SAVED_VOL,
-			SAVED_TTS_P,
-			SAVED_TTS_URL,
-			SAVED_TTS_KEY,
-			SAVED_TTS_VOICE,
-			SAVED_TTS_SPEED,
-			SAVED_TTS_AUTO,
-			SAVED_SOVITS_URL,
-			SAVED_SOVITS_REF,
-			SAVED_SOVITS_TXT,
-			SAVED_SOVITS_LANG,
-			SAVED_STT_P,
-			SAVED_STT_URL,
-			SAVED_STT_KEY,
-		] = await Promise.all([
-			readNumberConfig("audio_volume", audioService.getVolume()),
-			readStringConfig("tts_provider", "web_speech"),
-			readStringConfig("tts_base_url", ""),
-			readStringConfig("tts_api_key", ""),
-			readStringConfig("tts_voice", "nova"),
-			readNumberConfig("tts_speed", 1.0),
-			readBooleanConfig("tts_auto_play", true),
-			readStringConfig("gptsovits_base_url", "http://127.0.0.1:9880"),
-			readStringConfig("gptsovits_ref_audio", ""),
-			readStringConfig("gptsovits_prompt_text", ""),
-			readStringConfig("gptsovits_prompt_lang", "zh"),
-			readStringConfig("stt_provider", "web_speech"),
-			readStringConfig("stt_base_url", ""),
-			readStringConfig("stt_api_key", ""),
-		])
-
-		volume.value = Math.round(SAVED_VOL * 100)
-		if (SAVED_TTS_P) ttsProvider.value = SAVED_TTS_P as any
-		if (SAVED_TTS_URL) ttsBaseUrl.value = SAVED_TTS_URL
-		if (SAVED_TTS_KEY) ttsApiKey.value = SAVED_TTS_KEY
-		if (SAVED_TTS_VOICE) ttsVoice.value = SAVED_TTS_VOICE
-		ttsSpeed.value = SAVED_TTS_SPEED
-		ttsAutoPlay.value = SAVED_TTS_AUTO
-		if (SAVED_SOVITS_URL) gptsovitsBaseUrl.value = SAVED_SOVITS_URL
-		if (SAVED_SOVITS_REF) gptsovitsRefAudio.value = SAVED_SOVITS_REF
-		if (SAVED_SOVITS_TXT) gptsovitsPromptText.value = SAVED_SOVITS_TXT
-		if (SAVED_SOVITS_LANG) gptsovitsPromptLang.value = SAVED_SOVITS_LANG
-		if (SAVED_STT_P) sttProvider.value = SAVED_STT_P as any
-		if (SAVED_STT_URL) sttBaseUrl.value = SAVED_STT_URL
-		if (SAVED_STT_KEY) sttApiKey.value = SAVED_STT_KEY
-	} catch (error) {
-		console.error("加载声音配置失败:", error)
-	}
+	await RUNTIME.init()
+	syncFromSnapshot()
 })
 
-// 音量修改
-const onVolumeChange = () => {
-	const VAL = volume.value / 100
-	audioService.setVolume(VAL)
+const syncFromSnapshot = () => {
+	const V = VOICE.value
+	if (!V || synced) return
+	synced = true
+	volume.value = Math.round(V.volume * 100)
+	if (["openai", "custom", "gpt_sovits"].includes(V.ttsProvider)) {
+		ttsProvider.value = V.ttsProvider as TtsProvider
+	}
+	ttsBaseUrl.value = V.ttsBaseUrl
+	ttsVoice.value = V.ttsVoice || "nova"
+	ttsSpeed.value = V.ttsSpeed
+	ttsAutoPlay.value = V.ttsAutoPlay
+	gptsovitsBaseUrl.value = V.gptsovitsBaseUrl
+	gptsovitsRefAudio.value = V.gptsovitsRefAudio
+	gptsovitsPromptText.value = V.gptsovitsPromptText
+	gptsovitsPromptLang.value = V.gptsovitsPromptLang
+	sttBaseUrl.value = V.sttBaseUrl
 }
 
-// 保存配置项辅助
-const saveConfig = (key: string, value: string | number | boolean) => {
-	void invoke("set_config", {key, value})
+// 保存辅助: 每个 key 独立防抖 timer
+const timers = new Map<string, ReturnType<typeof setTimeout>>()
+const saveDebounced = (key: string, value: () => Record<string, unknown>) => {
+	clearTimeout(timers.get(key))
+	timers.set(key, setTimeout(() => {
+		timers.delete(key)
+		void RUNTIME.updateVoice(value()).catch(error => console.error(`保存语音配置失败 (${key}):`, error))
+	}, 400))
 }
 
-// 试听语音
+// 音量修改 (立即提交, 滑块松手即生效)
+const onVolumeChange = (value: number) => {
+	volume.value = value
+	saveDebounced("volume", () => ({volume: String(value / 100)}))
+}
+
+// 试听当前音色 (合成与播放全部在后端)
 const testVoice = async () => {
 	if (isSpeakingTest.value) return
 	isSpeakingTest.value = true
 	try {
-		await ttsService.speak("主人好呀！我是 Nori，这是一条声音播放测试~", {
-			voice: ttsVoice.value,
-			speed: ttsSpeed.value,
-		})
+		await RUNTIME.ttsTest()
 	} catch (error) {
 		console.error("试听失败:", error)
 	} finally {
@@ -118,6 +91,20 @@ const testVoice = async () => {
 			<p class="subtitle">配置桌宠语音合成 (TTS)、语音识别 (STT) 与全局输出音量</p>
 		</header>
 
+		<!-- 旧浏览器语音配置一次性提示 -->
+		<div v-if="VOICE?.noticePending" class="notice-card">
+			<Icon name="alert" :size="16" class="notice-icon"/>
+			<div class="notice-body">
+				<p class="notice-title">检测到旧版浏览器语音配置</p>
+				<p class="notice-desc">
+					纯后端版本不再支持 Web Speech / 浏览器 Edge-TTS。请改用 OpenAI / 自定义 HTTP / GPT-SoVITS 云端语音；原配置已保留，不会被删除。
+				</p>
+			</div>
+			<n-button size="small" @click="RUNTIME.ackVoiceNotice()">
+				知道了
+			</n-button>
+		</div>
+
 		<div class="settings-content">
 			<!-- 1. 全局音量 -->
 			<div class="setting-card">
@@ -128,7 +115,7 @@ const testVoice = async () => {
 				<div class="card-body">
 					<div class="slider-row">
 						<n-slider
-							v-model:value="volume"
+							:value="volume"
 							:min="0"
 							:max="100"
 							:format-tooltip="(v: number) => `${v}%`"
@@ -150,40 +137,19 @@ const testVoice = async () => {
 					<div class="form-item">
 						<label class="label">服务提供商</label>
 						<div class="radio-group">
-							<label class="radio-chip" :class="{active: ttsProvider === 'web_speech'}">
-								<input
-									v-model="ttsProvider"
-									type="radio"
-									value="web_speech"
-									@change="saveConfig('tts_provider', 'web_speech')"
-								/>
-								浏览器内置 (Web Speech)
-							</label>
 							<label class="radio-chip" :class="{active: ttsProvider === 'openai'}">
-								<input
-									v-model="ttsProvider"
-									type="radio"
-									value="openai"
-									@change="saveConfig('tts_provider', 'openai')"
-								/>
+								<input v-model="ttsProvider" type="radio" value="openai"
+									@change="saveDebounced('ttsProvider', () => ({ttsProvider: 'openai'}))"/>
 								OpenAI / 兼容接口
 							</label>
 							<label class="radio-chip" :class="{active: ttsProvider === 'custom'}">
-								<input
-									v-model="ttsProvider"
-									type="radio"
-									value="custom"
-									@change="saveConfig('tts_provider', 'custom')"
-								/>
+								<input v-model="ttsProvider" type="radio" value="custom"
+									@change="saveDebounced('ttsProvider', () => ({ttsProvider: 'custom'}))"/>
 								自定义 HTTP 端点
 							</label>
 							<label class="radio-chip" :class="{active: ttsProvider === 'gpt_sovits'}">
-								<input
-									v-model="ttsProvider"
-									type="radio"
-									value="gpt_sovits"
-									@change="saveConfig('tts_provider', 'gpt_sovits')"
-								/>
+								<input v-model="ttsProvider" type="radio" value="gpt_sovits"
+									@change="saveDebounced('ttsProvider', () => ({ttsProvider: 'gpt_sovits'}))"/>
 								GPT-SoVITS API
 							</label>
 						</div>
@@ -196,18 +162,22 @@ const testVoice = async () => {
 								v-model="ttsBaseUrl"
 								class="input"
 								placeholder="https://api.openai.com/v1"
-								@blur="saveConfig('tts_base_url', ttsBaseUrl)"
+								@blur="saveDebounced('tts_base_url', () => ({ttsBaseUrl: ttsBaseUrl.trim()}))"
 							/>
 						</div>
 
 						<div class="form-item">
-							<label class="label">TTS API Key</label>
+							<label class="label">TTS API Key {{ VOICE?.hasTtsApiKey ? "(已加密保存)" : "" }}</label>
 							<input
-								v-model="ttsApiKey"
+								v-model="ttsApiKeyInput"
 								type="password"
 								class="input"
 								placeholder="sk-..."
-								@blur="saveConfig('tts_api_key', ttsApiKey)"
+								@blur="() => {
+									const VALUE = ttsApiKeyInput.trim()
+									ttsApiKeyInput = ''
+									if (VALUE) saveDebounced('tts_api_key', () => ({ttsApiKey: VALUE}))
+								}"
 							/>
 						</div>
 					</template>
@@ -219,7 +189,7 @@ const testVoice = async () => {
 								v-model="gptsovitsBaseUrl"
 								class="input"
 								placeholder="http://127.0.0.1:9880"
-								@blur="saveConfig('gptsovits_base_url', gptsovitsBaseUrl)"
+								@blur="saveDebounced('gptsovits_url', () => ({gptsovitsBaseUrl: gptsovitsBaseUrl.trim()}))"
 							/>
 						</div>
 
@@ -229,7 +199,7 @@ const testVoice = async () => {
 								v-model="gptsovitsRefAudio"
 								class="input"
 								placeholder="E:/GPT-SoVITS/reference.wav"
-								@blur="saveConfig('gptsovits_ref_audio', gptsovitsRefAudio)"
+								@blur="saveDebounced('gptsovits_ref', () => ({gptsovitsRefAudio: gptsovitsRefAudio.trim()}))"
 							/>
 						</div>
 
@@ -240,7 +210,7 @@ const testVoice = async () => {
 									v-model="gptsovitsPromptText"
 									class="input"
 									placeholder="参考音频中所说的文字内容"
-									@blur="saveConfig('gptsovits_prompt_text', gptsovitsPromptText)"
+									@blur="saveDebounced('gptsovits_text', () => ({gptsovitsPromptText: gptsovitsPromptText.trim()}))"
 								/>
 							</div>
 							<div class="form-item w-80">
@@ -249,7 +219,7 @@ const testVoice = async () => {
 									v-model="gptsovitsPromptLang"
 									class="input"
 									placeholder="zh / ja / en"
-									@blur="saveConfig('gptsovits_prompt_lang', gptsovitsPromptLang)"
+									@blur="saveDebounced('gptsovits_lang', () => ({gptsovitsPromptLang: gptsovitsPromptLang.trim()}))"
 								/>
 							</div>
 						</div>
@@ -262,20 +232,23 @@ const testVoice = async () => {
 								v-model="ttsVoice"
 								class="input"
 								placeholder="nova, alloy, shimmer..."
-								@blur="saveConfig('tts_voice', ttsVoice)"
+								@blur="saveDebounced('tts_voice', () => ({ttsVoice: ttsVoice.trim()}))"
 							/>
 						</div>
 
 						<div class="form-item flex-1">
 							<label class="label">语速: {{ ttsSpeed }}x</label>
 							<n-slider
-								v-model:value="ttsSpeed"
+								:value="ttsSpeed"
 								:min="0.5"
 								:max="2.0"
 								:step="0.1"
 								:format-tooltip="(v: number) => `${v}x`"
 								class="speed-slider"
-								@update:value="(v: number) => saveConfig('tts_speed', v)"
+								@update:value="(v: number) => {
+									ttsSpeed = v
+									saveDebounced('tts_speed', () => ({ttsSpeed: String(v)}))
+								}"
 							/>
 						</div>
 					</div>
@@ -286,8 +259,11 @@ const testVoice = async () => {
 							<p class="switch-desc">当桌宠生成回复消息时，自动进行语音朗读播放</p>
 						</div>
 						<n-switch
-							v-model:value="ttsAutoPlay"
-							@update:value="(v: boolean) => saveConfig('tts_auto_play', v)"
+							:value="ttsAutoPlay"
+							@update:value="(v: boolean) => {
+								ttsAutoPlay = v
+								saveDebounced('tts_auto_play', () => ({ttsAutoPlay: v}))
+							}"
 						/>
 					</div>
 
@@ -307,59 +283,41 @@ const testVoice = async () => {
 				</div>
 			</div>
 
-			<!-- 3. STT 语音识别 -->
+			<!-- 3. STT 语音识别 (Whisper 云端) -->
 			<div class="setting-card">
 				<div class="card-header">
 					<Icon name="mic" :size="18" class="card-icon"/>
-					<span class="card-title">STT 语音识别服务</span>
+					<span class="card-title">STT 语音识别服务 (Whisper)</span>
 				</div>
 				<div class="card-body">
+					<p class="hint-line">
+						录音在本地完成后上传至 OpenAI 兼容接口识别; 旧的浏览器听写已停用。
+					</p>
+
 					<div class="form-item">
-						<label class="label">识别方式</label>
-						<div class="radio-group">
-							<label class="radio-chip" :class="{active: sttProvider === 'web_speech'}">
-								<input
-									v-model="sttProvider"
-									type="radio"
-									value="web_speech"
-									@change="saveConfig('stt_provider', 'web_speech')"
-								/>
-								浏览器原生听写 (Web Speech)
-							</label>
-							<label class="radio-chip" :class="{active: sttProvider === 'whisper'}">
-								<input
-									v-model="sttProvider"
-									type="radio"
-									value="whisper"
-									@change="saveConfig('stt_provider', 'whisper')"
-								/>
-								OpenAI Whisper 录音识别
-							</label>
-						</div>
+						<label class="label">Whisper API 地址</label>
+						<input
+							v-model="sttBaseUrl"
+							class="input"
+							placeholder="https://api.openai.com/v1"
+							@blur="saveDebounced('stt_base_url', () => ({sttBaseUrl: sttBaseUrl.trim(), sttProvider: 'whisper'}))"
+						/>
 					</div>
 
-					<template v-if="sttProvider === 'whisper'">
-						<div class="form-item">
-							<label class="label">Whisper API 地址</label>
-							<input
-								v-model="sttBaseUrl"
-								class="input"
-								placeholder="https://api.openai.com/v1"
-								@blur="saveConfig('stt_base_url', sttBaseUrl)"
-							/>
-						</div>
-
-						<div class="form-item">
-							<label class="label">Whisper API Key</label>
-							<input
-								v-model="sttApiKey"
-								type="password"
-								class="input"
-								placeholder="sk-..."
-								@blur="saveConfig('stt_api_key', sttApiKey)"
-							/>
-						</div>
-					</template>
+					<div class="form-item">
+						<label class="label">Whisper API Key {{ VOICE?.hasSttApiKey ? "(已加密保存)" : "" }}</label>
+						<input
+							v-model="sttApiKeyInput"
+							type="password"
+							class="input"
+							placeholder="sk-..."
+							@blur="() => {
+								const VALUE = sttApiKeyInput.trim()
+								sttApiKeyInput = ''
+								if (VALUE) saveDebounced('stt_api_key', () => ({sttApiKey: VALUE}))
+							}"
+						/>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -394,6 +352,40 @@ const testVoice = async () => {
 	margin: 0;
 	font-size: 1.2rem;
 	color: var(--text-faint);
+}
+
+.notice-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 1rem;
+	padding: 1.2rem 1.6rem;
+	background: rgba(255, 180, 50, 0.08);
+	border: 0.1rem solid rgba(255, 180, 50, 0.35);
+	border-radius: var(--radius-md);
+}
+
+.notice-icon {
+	color: #ffb432;
+	margin-top: 0.2rem;
+	flex-shrink: 0;
+}
+
+.notice-body {
+	flex: 1;
+
+	.notice-title {
+		margin: 0 0 0.3rem;
+		font-size: 1.25rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.notice-desc {
+		margin: 0;
+		font-size: 1.15rem;
+		color: var(--text-muted);
+		line-height: 1.5;
+	}
 }
 
 .settings-content {
@@ -443,13 +435,6 @@ const testVoice = async () => {
 	gap: 1.4rem;
 }
 
-.range-slider {
-	flex: 1;
-	height: 0.6rem;
-	accent-color: var(--nori-teal-bright);
-	cursor: pointer;
-}
-
 .slider-value {
 	width: 4.8rem;
 	font-size: 1.2rem;
@@ -474,10 +459,22 @@ const testVoice = async () => {
 	flex: 1;
 }
 
+.w-80 {
+	width: 10rem;
+	flex-shrink: 0;
+}
+
 .label {
 	font-size: 1.2rem;
 	font-weight: 500;
 	color: var(--text-muted);
+}
+
+.hint-line {
+	margin: 0;
+	font-size: 1.15rem;
+	color: var(--text-faint);
+	line-height: 1.5;
 }
 
 .input {
@@ -556,75 +553,9 @@ const testVoice = async () => {
 	color: var(--text-faint);
 }
 
-.toggle-switch {
-	position: relative;
-	width: 4.2rem;
-	height: 2.4rem;
-	cursor: pointer;
-
-	input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.toggle-slider {
-		position: absolute;
-		inset: 0;
-		background: rgba(255, 255, 255, 0.12);
-		border-radius: var(--radius-pill);
-		transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-		&::before {
-			position: absolute;
-			content: "";
-			height: 1.8rem;
-			width: 1.8rem;
-			left: 0.3rem;
-			bottom: 0.3rem;
-			background: white;
-			border-radius: 50%;
-			transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-		}
-	}
-
-	input:checked + .toggle-slider {
-		background: var(--nori-teal);
-		box-shadow: 0 0 1rem var(--glow-teal);
-	}
-
-	input:checked + .toggle-slider::before {
-		transform: translateX(1.8rem);
-		background: #03101c;
-	}
-}
-
 .action-row {
 	display: flex;
 	gap: 0.8rem;
 	padding-top: 0.4rem;
-}
-
-.btn-secondary {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.75rem 1.6rem;
-	background: rgba(125, 227, 255, 0.08);
-	border: 0.1rem solid var(--nori-teal-soft);
-	border-radius: var(--radius-sm);
-	color: var(--nori-teal-bright);
-	cursor: pointer;
-	transition: all 0.2s ease;
-
-	&:hover:not(:disabled) {
-		background: rgba(125, 227, 255, 0.18);
-		box-shadow: 0 0 1rem var(--glow-teal-soft);
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
 }
 </style>

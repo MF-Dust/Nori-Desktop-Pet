@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {computed} from "vue"
-import {invoke} from "../services/host/invoke"
 import {icon, type IconName, type IconMode, type IconData} from "../services/icon"
 
 const props = withDefaults(defineProps<{
@@ -26,14 +25,7 @@ const renderMode = computed<IconMode>(() => {
 	if (DATA.stroke) return "stroke"
 	if (DATA.fill) return "fill"
 	if (DATA.duotone) 	return "duotone"
-	try {
-		invoke("write_log", {
-			level: "warn",
-			message: `图标 ${props.name} 不支持 ${props.mode} 模式`
-		})
-	} catch (error) {
-		console.error("写入日志失败:", error)
-	}
+	console.error(`图标 ${props.name} 不支持 ${props.mode} 模式`)
 	return "stroke"
 })
 

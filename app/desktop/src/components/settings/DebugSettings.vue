@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
-import {invoke} from "../../services/host/invoke"
-import {writeText} from "../../services/host/shell"
+import {RUNTIME} from "../../services/runtime"
 import Icon from "../Icon.vue"
 
 /**
@@ -40,7 +39,7 @@ const FILTERED_LOGS = computed(() =>
 
 const refreshLogs = async () => {
 	try {
-		logs.value = await invoke<LogItem[]>("get_recent_logs")
+		logs.value = await RUNTIME.getRecentLogs()
 	} catch (error) {
 		console.error("读取运行日志失败:", error)
 	}
@@ -48,7 +47,7 @@ const refreshLogs = async () => {
 
 const refreshDiagnostic = async () => {
 	try {
-		diagnostic.value = await invoke<Record<string, string>>("get_diagnostic_info")
+		diagnostic.value = await RUNTIME.getDiagnosticInfo()
 	} catch (error) {
 		console.error("读取诊断信息失败:", error)
 	}
@@ -61,7 +60,7 @@ onMounted(() => {
 
 const clearLogs = async () => {
 	try {
-		await invoke("clear_recent_logs")
+		await RUNTIME.clearRecentLogs()
 		await refreshLogs()
 	} catch (error) {
 		console.error("清空日志失败:", error)
@@ -86,7 +85,7 @@ const copyDiagnostic = async () => {
 
 const writeTextSafely = async (text: string, failurePrefix: string) => {
 	try {
-		await writeText(text)
+		await RUNTIME.copyText(text)
 	} catch (error) {
 		console.error(failurePrefix, error)
 	}
@@ -94,7 +93,7 @@ const writeTextSafely = async (text: string, failurePrefix: string) => {
 
 const openLogFolder = async () => {
 	try {
-		await invoke("open_log_folder")
+		await RUNTIME.openLogFolder()
 	} catch (error) {
 		console.error("打开日志目录失败:", error)
 	}
@@ -104,7 +103,7 @@ const runGc = async () => {
 	busy.value = true
 	gcResult.value = ""
 	try {
-		const RESULT = await invoke<{released_bytes: number}>("run_gc_collect")
+		const RESULT = await RUNTIME.runGcCollect()
 		gcResult.value = `已释放 ${formatBytes(RESULT.released_bytes)}`
 	} catch (error) {
 		console.error("触发垃圾回收失败:", error)
@@ -116,7 +115,7 @@ const runGc = async () => {
 
 const writeTestLog = async () => {
 	try {
-		await invoke("write_log", {level: "warn", message: "调试页测试日志: 看到这条说明前端 → 宿主日志链路正常"})
+		await RUNTIME.writeLog("warn", "调试页测试日志: 看到这条说明前端 → 宿主日志链路正常")
 		await refreshLogs()
 	} catch (error) {
 		console.error("写入测试日志失败:", error)
@@ -142,7 +141,7 @@ const crashUnobservedTask = async () => {
 
 const triggerCrashTest = async (mode: string) => {
 	try {
-		await invoke("debug_crash_test", {mode})
+		await RUNTIME.debugCrashTest(mode)
 	} catch (error) {
 		console.error(`崩溃测试 [${mode}] 触发失败:`, error)
 	}

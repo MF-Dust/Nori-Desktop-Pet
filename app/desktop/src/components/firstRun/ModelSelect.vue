@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {ref, watch, onMounted, computed} from "vue"
-import {invoke} from "../../services/host/invoke"
 import useLanguages from "../../services/i18n/useLanguages.ts"
+import {RUNTIME} from "../../services/runtime"
 import Icon from "../../components/Icon.vue"
 import {MODEL_LIST} from "../../services/live2d/models"
 
@@ -9,9 +9,6 @@ const I18N = computed(() => useLanguages().components.firstRun.modelSelect)
 
 // 可选模型列表
 const models = MODEL_LIST
-
-// 配置键名
-const CONFIG_KEY = "selected_model"
 
 // 选中的模型 id
 const selected = ref("arg-nori")
@@ -22,23 +19,21 @@ const MODEL_TAGS: Record<string, {tag: string; desc: string}> = {
 	"nori": {tag: "经典 · 初始造型", desc: "纯净经典的元气造型，轻快灵动"},
 }
 
-// 组件挂载时读取已保存的配置
+// 组件挂载时读取后端快照
 onMounted(async () => {
 	try {
-		const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
-		if (SAVED && models.some(m => m.id === SAVED)) {
-			selected.value = SAVED
-		}
+		await RUNTIME.init()
+		const SAVED = RUNTIME.snapshot.value?.models.selected
+		if (SAVED && models.some(model => model.id === SAVED)) selected.value = SAVED
 	} catch (error) {
 		console.error("读取模型配置失败:", error)
 	}
 })
 
-// 监听选中的模型 id 变化, 写入配置和日志
+// 首次运行窗口专用命令保存选择
 watch(selected, async (newVal) => {
 	try {
-		await invoke("set_config", {key: CONFIG_KEY, value: newVal})
-		await invoke("write_log", {level: "info", message: `切换模型: ${newVal}`})
+		await RUNTIME.firstRunSelectModel(newVal)
 	} catch (error) {
 		console.error("保存模型配置失败:", error)
 	}

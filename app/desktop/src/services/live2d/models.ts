@@ -5,7 +5,7 @@ import arNori from "../../assets/images/live2D/ARGNori.webp"
  * Live2D 模型
  */
 export interface ModelInfo {
-	// 资源名 (对应后端 check_resource 的 name)
+	// 资源目录名 (对应后端模型目录 ID)
 	id: string
 	// 展示名
 	name: string

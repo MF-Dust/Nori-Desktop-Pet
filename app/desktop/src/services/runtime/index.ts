@@ -1,0 +1,337 @@
+/**
+ * 后端运行时客户端
+ *
+ * WebView 唯一的业务桥接入口: 只读状态快照 + 领域命令 + 事件订阅。
+ * 组件不允许直接 invoke 业务命令或触碰配置键 —— 一切经由这里。
+ */
+import {ref} from "vue"
+import {invoke} from "../host/invoke"
+import {listen, type UnlistenFn} from "../host/event"
+import type {
+	AgentEventPayload,
+	BehaviorsState,
+	HistoryMessage,
+	McpServerStatusInfo,
+	MemoryItem,
+	ModelMeta,
+	UiSnapshot,
+} from "./types"
+
+export type {
+	AgentEventPayload,
+	AgentState,
+	ApprovalRequestDto,
+	AppInfo,
+	BehaviorsState,
+	EmbeddingState,
+	EmotionDto,
+	GeneralState,
+	HistoryMessage,
+	McpServerStatusInfo,
+	MemoryItem,
+	ModelItem,
+	ModelMeta,
+	ModelsState,
+	ProactiveState,
+	ReminderDto,
+	SkillDto,
+	ToolDto,
+	UsageMetrics,
+	VoiceState,
+	UiSnapshot,
+} from "./types"
+
+/** 全局只读快照 (响应式) */
+const SNAPSHOT = ref<UiSnapshot | null>(null)
+
+let bootstrap: Promise<void> | null = null
+
+async function refresh(): Promise<void> {
+	try {
+		SNAPSHOT.value = await invoke<UiSnapshot>("ui_get_snapshot")
+	} catch (error) {
+		console.error("获取 UI 快照失败:", error)
+	}
+}
+
+/**
+ * 运行时客户端
+ */
+export const RUNTIME = {
+	/** 只读快照 */
+	snapshot: SNAPSHOT,
+
+	/**
+	 * 引导: 拉取首份快照并订阅全局状态变更广播。
+	 * 幂等, 多窗口/多组件可重复调用。
+	 */
+	async init(): Promise<void> {
+		if (!bootstrap) {
+			bootstrap = (async () => {
+				await refresh()
+				await listen<{version: number; topics: string[]}>("nori:state-changed", () => {
+					void refresh()
+				})
+			})()
+		}
+		await bootstrap
+	},
+
+	/** 手动刷新快照 */
+	refresh,
+
+	// ------------------------------------------------------------------
+	// 事件订阅
+	// ------------------------------------------------------------------
+
+	/** Agent 会话事件 (仅发起会话的窗口会收到) */
+	onAgentEvent(handler: (payload: AgentEventPayload) => void): Promise<UnlistenFn> {
+		return listen<AgentEventPayload>("nori:agent-event", ({payload}) => handler(payload))
+	},
+
+	/** 主动交互消息 (挂机关怀/日程问候/提醒触发) */
+	onProactiveMessage(handler: (text: string) => void): Promise<UnlistenFn> {
+		return listen<{text: string}>("nori:proactive-message", ({payload}) => handler(payload.text))
+	},
+
+	// ------------------------------------------------------------------
+	// 聊天 / Agent
+	// ------------------------------------------------------------------
+
+	startChat(text: string): Promise<string> {
+		return invoke<string>("chat_start", {text})
+	},
+	cancelChat(sessionId: string): Promise<boolean> {
+		return invoke<boolean>("chat_cancel", {sessionId})
+	},
+	respondApproval(requestId: string, approved: boolean): Promise<boolean> {
+		return invoke<boolean>("approval_respond", {requestId, approved})
+	},
+	historyPage(limit = 50, beforeId = 0): Promise<HistoryMessage[]> {
+		return invoke<HistoryMessage[]>("chat_history_page", {limit, beforeId})
+	},
+	clearChat(): Promise<void> {
+		return invoke<void>("chat_clear")
+	},
+
+	// ------------------------------------------------------------------
+	// 设置
+	// ------------------------------------------------------------------
+
+	updateAi(patch: Partial<{provider: string; baseUrl: string; apiKey: string; model: string; persona: string}>): Promise<void> {
+		return invoke<void>("settings_update_ai", patch)
+	},
+	updateVoice(patch: Partial<{
+		volume: string
+		ttsProvider: string
+		ttsBaseUrl: string
+		ttsApiKey: string
+		ttsVoice: string
+		ttsSpeed: string
+		ttsAutoPlay: boolean
+		gptsovitsBaseUrl: string
+		gptsovitsRefAudio: string
+		gptsovitsPromptText: string
+		gptsovitsPromptLang: string
+		sttProvider: string
+		sttBaseUrl: string
+		sttApiKey: string
+	}>): Promise<void> {
+		return invoke<void>("settings_update_voice", patch)
+	},
+	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean}>): Promise<void> {
+		return invoke<void>("settings_update_general", patch)
+	},
+	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {
+		return invoke<void>("settings_update_proactive", patch)
+	},
+	updateEmbedding(patch: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>): Promise<void> {
+		return invoke<void>("settings_update_embedding", patch)
+	},
+	ackVoiceNotice(): Promise<void> {
+		return invoke<void>("settings_ack_voice_notice")
+	},
+	fetchModels(provider: string, baseUrl: string, apiKey: string): Promise<string[]> {
+		return invoke<string[]>("llm_fetch_models", {provider, baseUrl, apiKey})
+	},
+
+	toolsSetEnabled(name: string, enabled: boolean): Promise<void> {
+		return invoke<void>("tools_set_enabled", {name, enabled})
+	},
+	toolsExecuteManual(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+		return invoke("tools_execute_manual", {name, arguments: args})
+	},
+
+	// ------------------------------------------------------------------
+	// 模型
+	// ------------------------------------------------------------------
+
+	selectModel(modelId: string): Promise<void> {
+		return invoke<void>("model_select", {modelId})
+	},
+	firstRunSelectModel(modelId: string): Promise<void> {
+		return invoke<void>("first_run_select_model", {modelId})
+	},
+	completeFirstRun(): Promise<void> {
+		return invoke<void>("complete_first_run")
+	},
+	importLocalModel(): Promise<string[] | null> {
+		return invoke<string[] | null>("model_import_local", {resourceType: "live2d"})
+	},
+	modelMeta(modelId: string): Promise<ModelMeta> {
+		return invoke<ModelMeta>("model_get_meta", {modelId})
+	},
+	setModelDisplay(modelId: string, patch: {scale?: number; expressions?: string[]}): Promise<void> {
+		return invoke<void>("model_set_display", {modelId, ...patch})
+	},
+	setModelBehavior(patch: Partial<BehaviorsState>): Promise<void> {
+		return invoke<void>("model_set_behavior", patch)
+	},
+
+	// ------------------------------------------------------------------
+	// 记忆库
+	// ------------------------------------------------------------------
+
+	memoryAdd(content: string, importance = 0.8, tags?: string): Promise<MemoryItem> {
+		return invoke<MemoryItem>("memory_add", {content, importance, tags})
+	},
+	memoryList(limit = 50): Promise<MemoryItem[]> {
+		return invoke<MemoryItem[]>("memory_list", {limit})
+	},
+	memoryUpdate(id: number, content: string, importance?: number, tags?: string): Promise<boolean> {
+		return invoke<boolean>("memory_update", {id, content, importance, tags})
+	},
+	memoryDelete(id: number): Promise<boolean> {
+		return invoke<boolean>("memory_delete", {id})
+	},
+	memoryClear(): Promise<void> {
+		return invoke<void>("memory_clear")
+	},
+	memorySearch(keyword: string, limit = 20): Promise<MemoryItem[]> {
+		return invoke<MemoryItem[]>("memory_search_hybrid", {keyword, limit})
+	},
+	memoryReembed(): Promise<number> {
+		return invoke<number>("memory_reembed_all")
+	},
+
+	// ------------------------------------------------------------------
+	// 技能
+	// ------------------------------------------------------------------
+
+	skillsMarketplace() {
+		return invoke<import("./types").SkillDto[]>("skills_marketplace")
+	},
+	skillsToggle(id: string, enabled: boolean): Promise<void> {
+		return invoke<void>("skills_toggle", {id, enabled})
+	},
+	skillsInstallUrl(url: string): Promise<unknown> {
+		return invoke("skills_install_url", {url})
+	},
+	skillsSaveCustom(skill: Record<string, unknown>): Promise<unknown> {
+		return invoke("skills_save_custom", {skill})
+	},
+	skillsUninstall(id: string): Promise<void> {
+		return invoke<void>("skills_uninstall", {id})
+	},
+	skillsExport(id: string): Promise<string> {
+		return invoke<string>("skills_export", {id})
+	},
+	skillsImportJson(json: string): Promise<unknown> {
+		return invoke("skills_import_json", {json})
+	},
+
+	// ------------------------------------------------------------------
+	// MCP
+	// ------------------------------------------------------------------
+
+	mcpGetServers(): Promise<McpServerStatusInfo[]> {
+		return invoke<McpServerStatusInfo[]>("mcp_get_servers")
+	},
+	mcpSaveServer(config: Record<string, unknown>): Promise<McpServerStatusInfo> {
+		return invoke<McpServerStatusInfo>("mcp_save_server", config)
+	},
+	mcpDeleteServer(id: string): Promise<boolean> {
+		return invoke<boolean>("mcp_delete_server", {id})
+	},
+	mcpConnect(id: string): Promise<McpServerStatusInfo> {
+		return invoke<McpServerStatusInfo>("mcp_connect_server", {id})
+	},
+	mcpDisconnect(id: string): Promise<McpServerStatusInfo> {
+		return invoke<McpServerStatusInfo>("mcp_disconnect_server", {id})
+	},
+	mcpTestServer(config: Record<string, unknown>): Promise<McpServerStatusInfo> {
+		return invoke<McpServerStatusInfo>("mcp_test_server", config)
+	},
+	mcpCallTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+		return invoke("mcp_call_tool", {serverId, toolName, arguments: args})
+	},
+	mcpImportUrl(url: string): Promise<unknown> {
+		return invoke("mcp_import_url", {url})
+	},
+
+	// ------------------------------------------------------------------
+	// 提醒
+	// ------------------------------------------------------------------
+
+	reminderAdd(content: string, delayMinutes: number): Promise<unknown> {
+		return invoke("reminder_add", {content, delayMinutes})
+	},
+	reminderCancel(id: string): Promise<boolean> {
+		return invoke<boolean>("reminder_cancel", {id})
+	},
+
+	// ------------------------------------------------------------------
+	// 语音
+	// ------------------------------------------------------------------
+
+	ttsTest(text?: string): Promise<void> {
+		return invoke<void>("tts_test", text ? {text} : {})
+	},
+	ttsStop(): Promise<void> {
+		return invoke<void>("tts_stop")
+	},
+	sttStart(): Promise<void> {
+		return invoke<void>("stt_start")
+	},
+	sttStop(): Promise<{text: string}> {
+		return invoke<{text: string}>("stt_stop")
+	},
+
+	// ------------------------------------------------------------------
+	// 桌宠 / 日志 / 调试
+	// ------------------------------------------------------------------
+
+	getRecentLogs(): Promise<{time: string; level: string; source: string; message: string}[]> {
+		return invoke("get_recent_logs")
+	},
+	clearRecentLogs(): Promise<void> {
+		return invoke<void>("clear_recent_logs")
+	},
+	getDiagnosticInfo(): Promise<Record<string, string>> {
+		return invoke("get_diagnostic_info")
+	},
+	openLogFolder(): Promise<void> {
+		return invoke<void>("open_log_folder")
+	},
+	runGcCollect(): Promise<{released_bytes: number}> {
+		return invoke("run_gc_collect")
+	},
+	debugCrashTest(mode: string): Promise<void> {
+		return invoke<void>("debug_crash_test", {mode})
+	},
+	petPlayMotion(name?: string): Promise<boolean> {
+		return invoke<boolean>("pet_play_motion", name ? {name} : {})
+	},
+	writeLog(level: "info" | "warn" | "error", message: string): Promise<void> {
+		return invoke<void>("write_log", {level, message})
+	},
+	exitApp(): Promise<void> {
+		return invoke<void>("exit_app")
+	},
+	copyText(text: string): Promise<void> {
+		return invoke<void>("clipboard_write_text", {text})
+	},
+	openUrl(url: string): Promise<void> {
+		return invoke<void>("open_url", {url})
+	},
+}

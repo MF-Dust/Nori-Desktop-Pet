@@ -18,7 +18,6 @@ import type {Cubism4InternalModel} from "pixi-live2d-display/cubism4"
 type CubismModel = any
 import {ref, type Ref} from "vue"
 
-import {invoke} from "../host/invoke"
 import {assetUrl} from "./config"
 import {selectInteractionMotionGroups} from "./motions"
 import {calcFitModel, calculateSafeBaseSize} from "./composables/fit-model"
@@ -154,34 +153,7 @@ interface InteractionMaskCache {
 // 控制器工厂
 // ===================================================================
 
-export interface PetLive2DProxy {
-	playMotionByName: (name: string) => Promise<boolean>
-	playMotionByIndex: (group: string, index: number) => Promise<boolean>
-	playExpression: (name: string) => Promise<void>
-	stopExpression: () => Promise<void>
-	toggleExpression: (name: string) => Promise<void>
-	getMotions: () => Promise<MotionGroup[]>
-	setMouthOpen: (value: number) => Promise<void>
-	setNowSpeaking: (speaking: boolean) => Promise<void>
-	triggerBeat: (timestamp?: number) => Promise<void>
-}
-
-export type Live2DController = ReturnType<typeof createLive2D> | PetLive2DProxy
-
-/**
- * 桌宠全局控制器 (代理至 C# 原生 Live2D 运行时)
- */
-export const petLive2DController: PetLive2DProxy = {
-	playMotionByName: async (name: string) => (await invoke<boolean>("pet_play_motion", {name})) ?? false,
-	playMotionByIndex: async (group: string, index: number) => (await invoke<boolean>("pet_play_motion", {group, index})) ?? false,
-	playExpression: async (name: string) => { await invoke("pet_play_expression", {name}) },
-	stopExpression: async () => { await invoke("pet_stop_expression") },
-	toggleExpression: async (name: string) => { await invoke("pet_toggle_expression", {name}) },
-	getMotions: async () => (await invoke<MotionGroup[]>("pet_get_motions")) ?? [],
-	setMouthOpen: async (value: number) => { await invoke("pet_set_mouth_open", {value, speaking: true}) },
-	setNowSpeaking: async (speaking: boolean) => { await invoke("pet_set_mouth_open", {value: 0, speaking}) },
-	triggerBeat: async (timestamp?: number) => { await invoke("pet_trigger_beat", {timestamp}) },
-}
+export type Live2DController = ReturnType<typeof createLive2D>
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
 

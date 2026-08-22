@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref} from "vue"
-import {invoke} from "../services/host/invoke"
+import {RUNTIME} from "../services/runtime"
 import {listen, type UnlistenFn} from "../services/host/event"
 import {getCurrentWindow} from "../services/host/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
@@ -14,15 +14,9 @@ const I18N = computed(() => useLanguages().views.init)
 // 状态文本
 const statusText = ref(I18N.value.title)
 
-// 配置键名
-const CONFIG_KEY = "selected_model"
-
-// 模型名
-const modelName = ref("arg-nori")
-
 // 关闭窗口
 const closeApp = () => {
-	invoke("exit_app")
+	void RUNTIME.exitApp()
 }
 
 let unlistenInitStart: UnlistenFn | null = null
@@ -31,16 +25,9 @@ onBeforeUnmount(() => {
 	if (unlistenInitStart) unlistenInitStart()
 })
 
-// 初始化流程: 检查 Live2D 资源, 完成后打开主窗口并关闭 init 窗口
+// 初始化流程: 后端已完成资源/运行时装配, 这里只负责窗口切换
 const startInitFlow = async () => {
-	try {
-		const INSTALLED = await invoke<boolean>("check_resource", {resourceType: "live2d", name: modelName.value})
-		if (!INSTALLED) {
-			await invoke("write_log", {level: "warn", message: `模型 ${modelName.value} 未安装，请导入本地模型`})
-		}
-	} catch (error) {
-		console.error("检查资源失败:", error)
-	}
+	await RUNTIME.init()
 
 	// 初始化完成: 打开主窗口
 	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -59,18 +46,10 @@ const isWindowVisible = async (): Promise<boolean> => {
 }
 
 onMounted(async () => {
-	// 读取 Live2D 模型名
-	statusText.value = I18N.value.live2d
-	try {
-		const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
-		if (typeof SAVED === "string" && SAVED.trim().length > 0) {
-			modelName.value = SAVED.trim()
-		}
-	} catch (error) {
-		console.error("读取模型配置失败:", error)
-	}
 	// 首次运行路径下 init 窗口隐藏启动: 若直接执行会在引导页旁弹出主窗口,
-	// 因此等待 Rust 在向导完成后 emit 事件 (nori:init-start) 再执行
+	// 因此等待宿主在向导完成后 emit 事件 (nori:init-start) 再执行
+	statusText.value = I18N.value.live2d
+	await RUNTIME.init()
 	if (await isWindowVisible()) {
 		await startInitFlow()
 		return

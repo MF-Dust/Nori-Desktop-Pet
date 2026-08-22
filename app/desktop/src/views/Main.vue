@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import {computed, defineAsyncComponent, onMounted, ref} from "vue"
-import {invoke} from "../services/host/invoke"
 import useLanguages from "../services/i18n/useLanguages.ts"
+import {RUNTIME} from "../services/runtime"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
 import type {IconName} from "../services/icon"
 import {showWindow, hideWindow} from "../services/window"
+import {getWindowByLabel} from "../services/host/window"
+import {MODEL_LIST} from "../services/live2d/models"
 
 const HomePanel = defineAsyncComponent(() => import("../components/home/HomePanel.vue"))
 const SettingsPanel = defineAsyncComponent(() => import("../components/settings/SettingsPanel.vue"))
@@ -34,20 +36,20 @@ const minimizeMain = async () => {
 }
 
 const closeWindow = () => {
-	invoke("exit_app")
+	void RUNTIME.exitApp()
 }
 
 // 桌宠当前是否显示
 const petVisible = ref(false)
-const selectedModelName = ref("Nori")
+const selectedModelName = computed(() => {
+	const MODEL_ID = RUNTIME.snapshot.value?.models.selected ?? "nori"
+	return MODEL_LIST.find(model => model.id === MODEL_ID)?.name ?? MODEL_ID
+})
 
 const refreshPetState = async () => {
 	try {
-		petVisible.value = await invoke<boolean>("window_is_visible", {label: "pet"})
-		const modelId = await invoke<string | null>("get_config", {key: "selected_model"})
-		if (modelId) {
-			selectedModelName.value = modelId === "arg-nori" ? "ARG Nori" : "Nori"
-		}
+		petVisible.value = await getWindowByLabel("pet").isVisible()
+		await RUNTIME.refresh()
 	} catch {
 		petVisible.value = false
 	}
@@ -57,17 +59,18 @@ const refreshPetState = async () => {
 const togglePet = async () => {
 	if (petVisible.value) {
 		await hideWindow("pet")
-		await invoke("write_log", {level: "info", message: "主窗口收起 Nori"})
+		await RUNTIME.writeLog("info", "主窗口收起 Nori")
 	} else {
 		await showWindow("pet")
-		await invoke("write_log", {level: "info", message: "主窗口唤出 Nori"})
+		await RUNTIME.writeLog("info", "主窗口唤出 Nori")
 	}
 	await refreshPetState()
 }
 
 onMounted(async () => {
+	await RUNTIME.init()
 	await refreshPetState()
-	invoke("write_log", {level: "info", message: "主窗口 Main 挂载完成"})
+	void RUNTIME.writeLog("info", "主窗口 Main 挂载完成")
 })
 </script>
 

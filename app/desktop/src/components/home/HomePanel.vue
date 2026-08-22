@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
-import {invoke} from "../../services/host/invoke"
-import {openUrl, writeText} from "../../services/host/shell"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../Icon.vue"
 import type {IconMode, IconName} from "../../services/icon"
 import {MODEL_LIST} from "../../services/live2d/models"
+import {RUNTIME} from "../../services/runtime"
 
 const props = defineProps<{
 	petVisible: boolean
@@ -18,19 +17,13 @@ const emit = defineEmits<{
 
 const I18N = computed(() => useLanguages().views.main.home)
 
-// ---- 当前选中的模型 ----
-const selectedModelId = ref("arg-nori")
-const currentModel = computed(() =>
-	MODEL_LIST.find((m) => m.id === selectedModelId.value) ?? MODEL_LIST[0]
-)
-
-// ---- AI 配置状态 ----
-const aiConfigured = ref(false)
-const aiProvider = ref("")
-const aiModel = ref("")
-
-// ---- 模型总数与已安装状态 ----
-const installedCount = ref(1)
+// ---- 状态全部来自后端快照 ----
+const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
+const selectedModelId = computed(() => SNAPSHOT.value?.models.selected ?? "arg-nori")
+const currentModel = computed(() => MODEL_LIST.find(model => model.id === selectedModelId.value) ?? MODEL_LIST[0])
+const aiConfigured = computed(() => SNAPSHOT.value?.ai.configured ?? false)
+const aiProvider = computed(() => SNAPSHOT.value?.ai.provider ?? "")
+const aiModel = computed(() => SNAPSHOT.value?.ai.model ?? "")
 
 // ---- 快捷动作提示反馈 ----
 const motionFeedback = ref(false)
@@ -81,43 +74,10 @@ const communityLinks = computed<CommunityLink[]>(() => [
 	},
 ])
 
-// 读取基础状态
-const loadDashboardState = async () => {
-	try {
-		const [SAVED_MODEL, PROVIDER, BASE, KEY, MODEL] = await Promise.all([
-			invoke<string | null>("get_config", {key: "selected_model"}),
-			invoke<string | null>("get_config", {key: "llm_provider"}),
-			invoke<string | null>("get_config", {key: "llm_api_base"}),
-			invoke<string | null>("get_config", {key: "llm_api_key"}),
-			invoke<string | null>("get_config", {key: "llm_model"}),
-		])
-
-		if (typeof SAVED_MODEL === "string" && SAVED_MODEL.trim().length > 0) {
-			selectedModelId.value = SAVED_MODEL.trim()
-		}
-		if (PROVIDER) aiProvider.value = PROVIDER
-		if (MODEL) aiModel.value = MODEL
-		aiConfigured.value = !!(BASE && KEY && MODEL)
-
-		// 检测已安装模型数量
-		let count = 0
-		for (const m of MODEL_LIST) {
-			const installed = await invoke<boolean>("check_resource", {
-				resourceType: "live2d",
-				name: m.id,
-			}).catch(() => false)
-			if (installed) count++
-		}
-		installedCount.value = Math.max(1, count)
-	} catch (error) {
-		console.error("加载主页仪表盘状态失败:", error)
-	}
-}
-
 // 快速动作: 触发打招呼/随机动作
 const triggerQuickMotion = async () => {
 	try {
-		const PLAYED = await invoke<boolean>("pet_play_motion")
+		const PLAYED = await RUNTIME.petPlayMotion()
 		if (!PLAYED) return
 		motionFeedback.value = true
 		if (feedbackTimer) clearTimeout(feedbackTimer)
@@ -133,28 +93,25 @@ const triggerQuickMotion = async () => {
 const handleCommunityClick = async (link: CommunityLink) => {
 	if (link.qq) {
 		try {
-			await writeText(link.qq)
+			await RUNTIME.copyText(link.qq)
 			qqCopied.value = true
 			if (qqTimer) clearTimeout(qqTimer)
 			qqTimer = setTimeout(() => {
 				qqCopied.value = false
 			}, 2000)
-			await invoke("write_log", {
-				level: "info",
-				message: `已复制 QQ 交流群号: ${link.qq}`,
-			})
+			await RUNTIME.writeLog("info", `已复制 QQ 交流群号: ${link.qq}`)
 		} catch (error) {
 			console.error("复制 QQ 群号失败:", error)
 		}
 		return
 	}
 	if (link.url) {
-		await openUrl(link.url)
+		await RUNTIME.openUrl(link.url)
 	}
 }
 
 onMounted(() => {
-	void loadDashboardState()
+	void RUNTIME.init()
 })
 </script>
 
@@ -295,7 +252,7 @@ onMounted(() => {
 			<div class="system-block">
 				<span class="sys-item">
 					<span class="sys-label">{{ I18N.system.appVersion }}:</span>
-					<span class="sys-value">v0.1.0</span>
+					<span class="sys-value">v{{ SNAPSHOT?.app.appVersion ?? "0.1.0" }}</span>
 				</span>
 				<span class="sys-divider">/</span>
 				<span class="sys-item">

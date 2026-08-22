@@ -1,63 +1,40 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
-import {listen, type UnlistenFn} from "../../services/host/event"
-import {invoke} from "../../services/host/invoke"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {MODEL_LIST, type ModelInfo} from "../../services/live2d/models"
 import {createLive2D} from "../../services/live2d"
-import {
-	l2dModelKey,
-	parseExpressionList,
-	parseNumber,
-	readBehaviorConfig,
-	readModelConfig,
-	resolveModelFileBase,
-} from "../../services/live2d/config"
-import {readMotionGroups} from "../../services/live2d/motions"
+import {resolveModelFileBase} from "../../services/live2d/config"
+import {RUNTIME} from "../../services/runtime"
 import Icon from "../Icon.vue"
 import AdjustControls from "./AdjustControls.vue"
 import Live2dBehaviorControls from "./Live2dBehaviorControls.vue"
 
 const I18N = computed(() => useLanguages().views.main.model)
 
-// 资源类型
-const RESOURCE_TYPE = "live2d"
-
-// 配置键名
-const CONFIG_KEY = "selected_model"
-
-// 各模型安装状态: id -> 是否已安装
+// 各模型安装状态与当前选择由后端快照提供
 const installedMap = ref<Record<string, boolean>>({})
-
-// 当前使用 (selected_model 配置)
 const selectedModel = ref("")
 
 // 本地导入状态
 const importing = ref(false)
 const importStatusText = ref("")
 
-// 本地导入 Live2D 模型
+// 本地导入 Live2D 模型 (文件选择与导入均由宿主完成)
 const importLocalModel = async () => {
 	if (importing.value) return
 	importing.value = true
 	importStatusText.value = "正在选择并导入 Live2D 文件..."
 	try {
-		const imported = await invoke<string[] | null>("import_local_resource", {resourceType: "live2d"})
-		if (imported && imported.length > 0) {
+		const imported = await RUNTIME.importLocalModel()
+		if (imported?.length) {
 			importStatusText.value = `导入成功: ${imported.join(", ")}`
 			await refreshStatus()
-			setTimeout(() => {
-				importStatusText.value = ""
-			}, 3000)
-		} else {
-			importStatusText.value = ""
-		}
+			setTimeout(() => { importStatusText.value = "" }, 3000)
+		} else importStatusText.value = ""
 	} catch (error) {
 		console.error("导入模型失败:", error)
 		importStatusText.value = `导入失败: ${String(error)}`
-		setTimeout(() => {
-			importStatusText.value = ""
-		}, 4000)
+		setTimeout(() => { importStatusText.value = "" }, 4000)
 	} finally {
 		importing.value = false
 	}
@@ -72,60 +49,23 @@ const adjustFor = ref<string | null>(null)
 // 模型 id → 展示名
 const modelNameOf = (id: string): string => MODEL_LIST.find((model) => model.id === id)?.name ?? id
 
-// 动态检测各模型安装状态 (挂载 / 每次状态刷新后调用)
+// 快照刷新后同步模型目录
 const refreshStatus = async () => {
-	try {
-		const results = await Promise.all(
-			MODEL_LIST.map(async (model) => {
-				const installed = await invoke<boolean>("check_resource", {
-					resourceType: RESOURCE_TYPE,
-					name: model.id,
-				})
-				return [model.id, installed] as const
-			})
-		)
-		installedMap.value = Object.fromEntries(results)
-	} catch (error) {
-		console.error("检测模型状态失败:", error)
-	}
-	await publishMotions()
-}
-
-// 各已安装模型: 读取动作组并写入配置 (聊天时 Rust 注入系统提示词, 供 AI 调用)
-const publishMotions = async () => {
-	for (const model of MODEL_LIST) {
-		if (!installedMap.value[model.id]) continue
-		const GROUPS = await readMotionGroups(model.id)
-		if (!GROUPS || GROUPS.length === 0) continue
-		invoke("set_config", {
-			key: `l2d_motions_${model.id}`,
-			value: JSON.stringify(GROUPS),
-		}).catch(() => {})
-	}
+	await RUNTIME.refresh()
+	const ITEMS = RUNTIME.snapshot.value?.models.items ?? []
+	installedMap.value = Object.fromEntries(ITEMS.map(item => [item.id, item.installed]))
+	selectedModel.value = RUNTIME.snapshot.value?.models.selected ?? selectedModel.value
 }
 
 onMounted(async () => {
-	try {
-		const SAVED = await invoke<string | null>("get_config", {key: CONFIG_KEY})
-		if (SAVED) selectedModel.value = SAVED
-	} catch (error) {
-		console.error("读取模型配置失败:", error)
-	}
+	await RUNTIME.init()
 	await refreshStatus()
 	window.addEventListener("resize", onWindowResize)
-	const UNLISTEN = await listen<{key?: string}>("nori:config-changed", ({payload}) => {
-		if (payload?.key === "l2d_click_interaction") void syncPreviewClickInteraction()
-	})
-	if (disposed) UNLISTEN()
-	else unlistenConfigChanged = UNLISTEN
 })
 
 onBeforeUnmount(() => {
-	disposed = true
 	window.removeEventListener("resize", onWindowResize)
 	unbindPreviewClick()
-	unlistenConfigChanged?.()
-	unlistenConfigChanged = null
 	void PREVIEW.destroy()
 })
 
@@ -135,14 +75,13 @@ const toggleCardMenu = (model: ModelInfo) => {
 	cardMenuFor.value = cardMenuFor.value === model.id ? null : model.id
 }
 
-// 启用模型: 写入 selected_model (需已安装)
+// 启用模型: 写入后端 selected_model
 const enableModel = async (model: ModelInfo) => {
-	if (selectedModel.value === model.id) return
-	if (!installedMap.value[model.id]) return
+	if (selectedModel.value === model.id || !installedMap.value[model.id]) return
 	try {
-		await invoke("set_config", {key: CONFIG_KEY, value: model.id})
-		await invoke("write_log", {level: "info", message: `启用模型: ${model.id}`})
+		await RUNTIME.selectModel(model.id)
 		selectedModel.value = model.id
+		await refreshStatus()
 	} catch (error) {
 		console.error("启用模型失败:", error)
 	}
@@ -153,8 +92,6 @@ const PREVIEW = createLive2D()
 const showcaseRef = ref<HTMLElement>()
 const previewReady = ref(false)
 const previewClickInteraction = ref(true)
-let unlistenConfigChanged: UnlistenFn | null = null
-let disposed = false
 
 const onPreviewClick = (event: MouseEvent) => {
 	if (!previewReady.value || !previewClickInteraction.value) return
@@ -172,7 +109,8 @@ const unbindPreviewClick = () => {
 }
 
 const syncPreviewClickInteraction = async () => {
-	previewClickInteraction.value = (await readBehaviorConfig("l2d_click_interaction")) !== false
+	await RUNTIME.refresh()
+	previewClickInteraction.value = RUNTIME.snapshot.value?.behaviors.clickInteraction ?? true
 	PREVIEW.setClickInteraction(previewClickInteraction.value)
 }
 
@@ -196,13 +134,13 @@ const onWindowResize = () => {
 const savePreviewScale = (): void => {
 	const MODEL = adjustFor.value
 	if (!MODEL) return
-	invoke("set_config", {key: l2dModelKey("l2d_scale", MODEL), value: String(pvScale.value)}).catch(() => {})
+	void RUNTIME.setModelDisplay(MODEL, {scale: pvScale.value}).catch(error => console.error("保存预览缩放失败:", error))
 }
 
 const savePreviewExpressions = (list: string[]): void => {
 	const MODEL = adjustFor.value
 	if (!MODEL) return
-	invoke("set_config", {key: l2dModelKey("l2d_expression", MODEL), value: list}).catch(() => {})
+	void RUNTIME.setModelDisplay(MODEL, {expressions: list}).catch(error => console.error("保存预览表情失败:", error))
 }
 
 // 预览播放表情
@@ -235,12 +173,17 @@ const openAdjust = async (model: ModelInfo) => {
 	previewReady.value = false
 	await nextTick()
 
-	// 读取该模型的显示配置
-	pvScale.value = await readModelConfig(model.id, "l2d_scale", parseNumber, 1)
-	previewExpressionList.value = await readModelConfig(model.id, "l2d_expression", (value) => {
-		const LIST = parseExpressionList(value)
-		return LIST.length > 0 ? LIST : null
-	}, [])
+	// 读取该模型的显示配置与后端元数据
+	try {
+		const META = await RUNTIME.modelMeta(model.id)
+		pvScale.value = META.scale
+		const SNAPSHOT = RUNTIME.snapshot.value
+		previewExpressionList.value = SNAPSHOT?.models.selected === model.id ? [...SNAPSHOT.models.expressions] : []
+	} catch (error) {
+		console.error("读取模型显示配置失败:", error)
+		pvScale.value = 1
+		previewExpressionList.value = []
+	}
 
 	// 以预览区域尺寸挂载预览, 避免画布变形
 	const RECT = showcaseRef.value?.getBoundingClientRect()
