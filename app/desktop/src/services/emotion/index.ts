@@ -1,6 +1,7 @@
 import type {EmotionType} from "../agent/protocol"
 import {petLive2DController} from "../live2d"
 import {invoke} from "../host/invoke"
+import {readNumberConfig, readStringConfig} from "../config"
 
 /**
  * 情绪状态描述
@@ -39,18 +40,15 @@ export class EmotionManager {
 
 		try {
 			const [SAVED_TYPE, SAVED_INTENSITY] = await Promise.all([
-				invoke<string | null>("get_config", {key: "nori_emotion"}),
-				invoke<string | null>("get_config", {key: "nori_emotion_intensity"}),
+				readStringConfig("nori_emotion", ""),
+				readNumberConfig("nori_emotion_intensity", this.intensity),
 			])
 
 			if (SAVED_TYPE && VALID_EMOTIONS.includes(SAVED_TYPE as EmotionType)) {
 				this.current = SAVED_TYPE as EmotionType
 			}
-			if (SAVED_INTENSITY) {
-				const NUM = parseFloat(SAVED_INTENSITY)
-				if (!Number.isNaN(NUM) && NUM >= 0 && NUM <= 1) {
-					this.intensity = NUM
-				}
+			if (SAVED_INTENSITY >= 0 && SAVED_INTENSITY <= 1) {
+				this.intensity = SAVED_INTENSITY
 			}
 			this.notify()
 		} catch {

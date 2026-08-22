@@ -1,4 +1,5 @@
 import {invoke} from "../host/invoke"
+import {readBooleanConfig} from "../config"
 import {petLive2DController} from "../live2d"
 import {ttsService} from "../tts"
 
@@ -125,8 +126,8 @@ export class ProactiveService {
 		}
 
 		try {
-			const AUTO_TTS = await invoke<string | null>("get_config", {key: "tts_auto_play"})
-			if (AUTO_TTS === "true" || AUTO_TTS === "1") {
+			const AUTO_TTS = await readBooleanConfig("tts_auto_play", false)
+			if (AUTO_TTS) {
 				void ttsService.speak(text)
 			}
 		} catch {

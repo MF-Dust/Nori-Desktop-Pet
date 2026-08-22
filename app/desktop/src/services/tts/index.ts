@@ -1,5 +1,5 @@
-import {invoke} from "../host/invoke"
 import {audioService} from "../audio"
+import {readNumberConfig, readStringConfig} from "../config"
 
 /**
  * TTS 合成选项
@@ -67,8 +67,8 @@ export class OpenAiTtsProvider implements ITtsProvider {
 
 	public async synthesize(text: string, options: TtsSynthesizeOptions = {}): Promise<ArrayBuffer> {
 		const [BASE_URL, API_KEY] = await Promise.all([
-			invoke<string | null>("get_config", {key: "tts_base_url"}),
-			invoke<string | null>("get_config", {key: "tts_api_key"}),
+			readStringConfig("tts_base_url", ""),
+			readStringConfig("tts_api_key", ""),
 		])
 
 		let endpoint = (BASE_URL || "https://api.openai.com/v1").trim().replace(/\/+$/, "")
@@ -109,7 +109,7 @@ export class EdgeTtsProvider implements ITtsProvider {
 
 	public async synthesize(text: string, options: TtsSynthesizeOptions = {}): Promise<ArrayBuffer | string> {
 		const VOICE = options.voice || "zh-CN-XiaoxiaoNeural"
-		const BASE_URL = await invoke<string | null>("get_config", {key: "tts_base_url"})
+		const BASE_URL = await readStringConfig("tts_base_url", "")
 
 		// 如果配置了本地 edge-tts 服务或自建 HTTP 端点
 		if (BASE_URL && BASE_URL.startsWith("http")) {
@@ -151,7 +151,7 @@ export class CustomHttpTtsProvider implements ITtsProvider {
 	public readonly name = "custom"
 
 	public async synthesize(text: string, options: TtsSynthesizeOptions = {}): Promise<ArrayBuffer> {
-		const ENDPOINT = await invoke<string | null>("get_config", {key: "tts_base_url"})
+		const ENDPOINT = await readStringConfig("tts_base_url", "")
 		if (!ENDPOINT) throw new Error("未配置自定义 TTS 请求端点 URL")
 
 		const RES = await fetch(ENDPOINT, {
@@ -183,10 +183,10 @@ export class GptSoVitsTtsProvider implements ITtsProvider {
 
 	public async synthesize(text: string, options: TtsSynthesizeOptions = {}): Promise<ArrayBuffer> {
 		const [BASE_URL, REF_AUDIO, PROMPT_TEXT, PROMPT_LANG] = await Promise.all([
-			invoke<string | null>("get_config", {key: "gptsovits_base_url"}),
-			invoke<string | null>("get_config", {key: "gptsovits_ref_audio"}),
-			invoke<string | null>("get_config", {key: "gptsovits_prompt_text"}),
-			invoke<string | null>("get_config", {key: "gptsovits_prompt_lang"}),
+			readStringConfig("gptsovits_base_url", ""),
+			readStringConfig("gptsovits_ref_audio", ""),
+			readStringConfig("gptsovits_prompt_text", ""),
+			readStringConfig("gptsovits_prompt_lang", ""),
 		])
 
 		const ENDPOINT = (BASE_URL || "http://127.0.0.1:9880").trim().replace(/\/+$/, "")
@@ -263,18 +263,18 @@ export class TtsService {
 		if (!text.trim()) return
 
 		// 读取 TTS 配置
-		const PROVIDER_NAME = (await invoke<string | null>("get_config", {key: "tts_provider"})) || "web_speech"
+		const PROVIDER_NAME = await readStringConfig("tts_provider", "web_speech")
 		const PROVIDER = this.providers.get(PROVIDER_NAME) || this.providers.get("web_speech")
 		if (!PROVIDER) throw new Error(`未找到 TTS 提供商: ${PROVIDER_NAME}`)
 
 		const [SAVED_VOICE, SAVED_SPEED] = await Promise.all([
-			invoke<string | null>("get_config", {key: "tts_voice"}),
-			invoke<string | null>("get_config", {key: "tts_speed"}),
+			readStringConfig("tts_voice", ""),
+			readNumberConfig("tts_speed", 1.0),
 		])
 
 		const MERGED_OPTIONS: TtsSynthesizeOptions = {
-			voice: options?.voice ?? SAVED_VOICE ?? undefined,
-			speed: options?.speed ?? (SAVED_SPEED ? parseFloat(SAVED_SPEED) : 1.0),
+			voice: options?.voice ?? (SAVED_VOICE || undefined),
+			speed: options?.speed ?? SAVED_SPEED,
 			pitch: options?.pitch ?? 1.0,
 			volume: options?.volume ?? audioService.getVolume(),
 		}

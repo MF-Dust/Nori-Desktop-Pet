@@ -1,4 +1,5 @@
 import {invoke} from "../host/invoke"
+import {readNumberConfig} from "../config"
 
 /**
  * 播放状态
@@ -38,18 +39,11 @@ export class AudioService {
 	 * 初始化读取音量配置
 	 */
 	private async initVolume(): Promise<void> {
-		try {
-			const SAVED = await invoke<string | null>("get_config", {key: "audio_volume"})
-			if (SAVED != null) {
-				const NUM = parseFloat(SAVED)
-				if (!Number.isNaN(NUM) && NUM >= 0 && NUM <= 1) {
-					this.volume = NUM
-					if (this.gainNode) this.gainNode.gain.value = NUM
-					if (this.currentAudio) this.currentAudio.volume = NUM
-				}
-			}
-		} catch {
-			/* 读取失败保持默认音量 1.0 */
+		const NUM = await readNumberConfig("audio_volume", this.volume)
+		if (NUM >= 0 && NUM <= 1) {
+			this.volume = NUM
+			if (this.gainNode) this.gainNode.gain.value = NUM
+			if (this.currentAudio) this.currentAudio.volume = NUM
 		}
 	}
 

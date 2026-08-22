@@ -3,6 +3,14 @@
  */
 import {invoke} from "../host/invoke"
 import {host} from "../host"
+import {
+	readBooleanConfig,
+	readNumberConfig,
+	readRawConfig,
+	readStringConfig,
+} from "../config"
+
+export {parseBoolean, parseNumber} from "../config"
 
 /**
  * 资产基址
@@ -73,37 +81,14 @@ export const L2D_BEHAVIOR_DEFAULTS: Record<L2DBehaviorKey, string | number | boo
 /**
  * 解析布尔配置值
  */
-export const parseBoolean = (value: unknown): boolean | null => {
-	if (typeof value === "boolean") return value
-	if (typeof value === "string") {
-		if (value === "true" || value === "1") return true
-		if (value === "false" || value === "0") return false
-	}
-	if (typeof value === "number") return value !== 0
-	return null
-}
-
 /**
  * 读取全局 Live2D 行为配置
  */
 export const readBehaviorConfig = async (key: L2DBehaviorKey): Promise<typeof L2D_BEHAVIOR_DEFAULTS[L2DBehaviorKey]> => {
 	const DEFAULT = L2D_BEHAVIOR_DEFAULTS[key]
-	try {
-		const VALUE = await invoke<unknown>("get_config", {key})
-		if (VALUE == null) return DEFAULT
-		if (typeof DEFAULT === "boolean") {
-			const PARSED = parseBoolean(VALUE)
-			if (PARSED != null) return PARSED
-		} else if (typeof DEFAULT === "number") {
-			const PARSED = parseNumber(VALUE)
-			if (PARSED != null) return PARSED
-		} else {
-			return String(VALUE)
-		}
-	} catch {
-		/* 读取失败使用默认值 */
-	}
-	return DEFAULT
+	if (typeof DEFAULT === "boolean") return readBooleanConfig(key, DEFAULT)
+	if (typeof DEFAULT === "number") return readNumberConfig(key, DEFAULT)
+	return readStringConfig(key, String(DEFAULT))
 }
 
 /**
@@ -142,14 +127,7 @@ export const l2dModelKey = (base: L2DConfigKey, modelId: string): string => `${b
 /**
  * 解析数字配置值
  */
-export const parseNumber = (value: unknown): number | null => {
-	if (typeof value === "number") return value
-	if (typeof value === "string" && value !== "") {
-		const NUM = parseFloat(value)
-		return Number.isNaN(NUM) ? null : NUM
-	}
-	return null
-}
+// parseNumber 通过上方的通用配置解析器导出, 保持既有 public API.
 
 /**
  * 解析表情列表配置值 (数组或 JSON 字符串)
@@ -178,7 +156,7 @@ export const readModelConfig = async <T>(
 ): Promise<T> => {
 	for (const KEY of [l2dModelKey(base, modelId), base]) {
 		try {
-			const VALUE = await invoke<unknown>("get_config", {key: KEY})
+			const VALUE = await readRawConfig(KEY)
 			if (VALUE != null) {
 				const PARSED = parse(VALUE)
 				if (PARSED != null) return PARSED
