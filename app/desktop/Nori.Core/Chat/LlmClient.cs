@@ -1,5 +1,3 @@
-using Nori.Core.Chat.Adapters;
-
 namespace Nori.Core.Chat;
 
 /// <summary>
@@ -34,12 +32,6 @@ public sealed class LlmClient(HttpClient httpClient)
 		return FetchModelsAsync(null, baseUrl, apiKey, cancellationToken);
 	}
 
-	public static ILlmAdapter CreateAdapter(LlmProvider provider, HttpClient httpClient) => provider switch
-	{
-		LlmProvider.OpenAi => new OpenAiChatAdapter(httpClient),
-		LlmProvider.OpenAiResponses => new OpenAiResponsesAdapter(httpClient),
-		LlmProvider.Anthropic => new AnthropicAdapter(httpClient),
-		LlmProvider.Google => new GoogleGenAiAdapter(httpClient),
-		_ => new OpenAiChatAdapter(httpClient),
-	};
+	public static ILlmAdapter CreateAdapter(LlmProvider provider, HttpClient httpClient) =>
+		ChatClientFactory.Create(provider, httpClient);
 }
