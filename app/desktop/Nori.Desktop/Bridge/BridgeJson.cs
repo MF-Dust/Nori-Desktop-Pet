@@ -16,7 +16,11 @@ public static class BridgeJson
 	{
 		Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-		Converters = { new ConfigValueJsonConverter() },
+		Converters =
+		{
+			new ConfigValueJsonConverter(),
+			new JsonStringEnumConverter(JsonNamingPolicy.CamelCase),
+		},
 	};
 }
 

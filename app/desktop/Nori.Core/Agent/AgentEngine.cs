@@ -128,8 +128,9 @@ public sealed class AgentEngine
 		}
 		LlmProvider providerKind = LlmProviderExtensions.ParseProvider(provider);
 
-		// 2. 组装静态上下文: 记忆 / 情绪 / 动作 / 表情 / 技能 / 工具清单
-		IReadOnlyList<string> memories = await _memory.GetRelevantMemoriesAsync(userText);
+		// 2. 组装静态上下文: 最近对话 / 分层记忆 / 情绪 / 动作 / 表情 / 技能 / 工具清单
+		IReadOnlyList<(string Role, string Content)> recent = AgentHistory.NormalizeRecent(_chat.GetHistory(MaxContextRounds * 2, 0));
+		MemoryContext memoryContext = await _memory.BuildContextAsync(userText, recent, cancellationToken);
 		string currentEmotion = _emotion.CurrentType;
 		IReadOnlyList<string> motions = _motionNames();
 		IReadOnlyList<string> expressions = _expressionNames();
@@ -140,7 +141,14 @@ public sealed class AgentEngine
 		{
 			UserPersona = userPersona,
 			Emotion = currentEmotion,
-			Memories = memories,
+			PersonalMemories = memoryContext.Personal
+				.Select(item => item.PersonaSummary ?? item.CanonicalSummary ?? item.Content)
+				.Concat(memoryContext.Atoms.Select(atom => atom.Content))
+				.Distinct(StringComparer.Ordinal)
+				.Take(6)
+				.ToList(),
+			RelatedKnowledge = memoryContext.Knowledge.Select(item => item.Content).ToList(),
+			MemoryEchoes = memoryContext.Echoes.Select(item => item.Content).ToList(),
 			AvailableMotions = motions,
 			AvailableExpressions = expressions,
 			SkillsPrompt = skillsPrompt,
@@ -150,8 +158,7 @@ public sealed class AgentEngine
 
 		// 3. 准备工作历史: 最近 N 条 + 当前输入 (滑动窗口截断)
 		List<(string Role, string Content)> working =
-		[.. AgentHistory.NormalizeRecent(_chat.GetHistory(MaxContextRounds * 2, 0)),
-			("user", userText)];
+		[.. recent, ("user", userText)];
 
 			ProtocolMessage finalMessage = new("", null, null, null);
 		try

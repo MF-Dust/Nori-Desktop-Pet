@@ -11,6 +11,7 @@ using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
 using Nori.Core.Logging;
+using Nori.Core.Memory;
 using Nori.Core.Mcp;
 using Nori.Core.Platform;
 using Nori.Core.Resources;
@@ -276,15 +277,47 @@ public sealed class BridgeCommands
 		// invoke("memory_update", {id, content, importance?, tags?})
 		"memory_update" => await MemoryUpdateAsync(source, args),
 
-		// invoke("memory_delete", {id})
-		"memory_delete" => RequireMain(source, () => _services.Memory.Delete((long)Num(args, "id"))),
+		// invoke("memory_delete", {id, confirmToken: "DELETE_MEMORY"})
+		"memory_delete" => RequireMain(source, () => HardDeleteMemory(source, args)),
 
-		// invoke("memory_clear")
-		"memory_clear" => RequireMain(source, () => Run(() =>
-		{
-			_services.Memory.Clear();
-			Runtime.Memory.ClearCache();
-		})),
+		// invoke("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
+		"memory_clear" => RequireMain(source, () => ClearMemories(source, args)),
+
+		// invoke("memory_archive", {id})
+		"memory_archive" => RequireMain(source, () => ArchiveMemory(args)),
+
+		// invoke("memory_restore", {id})
+		"memory_restore" => RequireMain(source, () => RestoreMemory(args)),
+
+		// invoke("memory_overview")
+		"memory_overview" => RequireMain(source, MemoryOverview),
+
+		// invoke("memory_list_page", {query?, kind?, status?, limit?, offset?})
+		"memory_list_page" => RequireMain(source, () => MemoryListPage(args)),
+
+		// invoke("memory_get", {id})
+		"memory_get" => RequireMain(source, () => MemoryGet(args)),
+
+		// invoke("memory_atom_list", {memoryId?, status?, limit?, offset?})
+		"memory_atom_list" => RequireMain(source, () => MemoryAtomList(args)),
+
+		// invoke("memory_knowledge_status")
+		"memory_knowledge_status" => RequireMain(source, () => Runtime.Knowledge.Status),
+
+		// invoke("memory_knowledge_reindex")
+		"memory_knowledge_reindex" => await MemoryKnowledgeReindexAsync(source),
+
+		// invoke("memory_knowledge_open")
+		"memory_knowledge_open" => RequireMain(source, () => OpenKnowledgeFolder()),
+
+		// invoke("memory_recall_debug", {query})
+		"memory_recall_debug" => await MemoryRecallDebugAsync(source, args),
+
+		// invoke("memory_get_settings")
+		"memory_get_settings" => RequireMain(source, () => Runtime.Memory.Settings),
+
+		// invoke("memory_update_settings", {settings: {...}})
+		"memory_update_settings" => RequireMain(source, () => UpdateMemorySettings(args)),
 
 		// invoke("memory_search_hybrid", {keyword, limit?})
 		"memory_search_hybrid" => await MemorySearchHybridAsync(source, args),
@@ -451,12 +484,16 @@ public sealed class BridgeCommands
 	private async Task<object?> MemoryAddAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Memory.AddAsync(
+		MemoryKind? kind = OptionalStr(args, "kind") is { } kindText ? MemoryKindExtensions.Parse(kindText) : null;
+		MemoryItem item = await Runtime.Memory.AddAsync(
 			Str(args, "content"),
-			OptionalStr(args, "type") ?? "manual",
+			OptionalStr(args, "type") ?? kind?.ToStorage() ?? "manual",
 			OptionalDouble(args, "importance") ?? 0.5,
 			OptionalStr(args, "tags"),
-			"manual");
+			"manual",
+			kind);
+		Runtime.InvalidateSnapshot("memory");
+		return item;
 	}
 
 	private async Task<object?> MemoryListAsync(IBridgeSource source, JsonElement args)
@@ -468,11 +505,18 @@ public sealed class BridgeCommands
 	private async Task<object?> MemoryUpdateAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Memory.UpdateAsync(
+		MemoryKind? kind = OptionalStr(args, "kind") is { } kindText ? MemoryKindExtensions.Parse(kindText) : null;
+		bool updated = await Runtime.Memory.UpdateAsync(
 			(long)Num(args, "id"),
 			Str(args, "content"),
 			OptionalDouble(args, "importance"),
-			OptionalStr(args, "tags"));
+			OptionalStr(args, "tags"),
+			kind,
+			OptionalStr(args, "canonicalSummary"),
+			OptionalStr(args, "personaSummary"),
+			OptionalDouble(args, "confidence"));
+		if (updated) Runtime.InvalidateSnapshot("memory");
+		return updated;
 	}
 
 	private async Task<object?> MemorySearchHybridAsync(IBridgeSource source, JsonElement args)
@@ -484,7 +528,159 @@ public sealed class BridgeCommands
 	private async Task<object?> MemoryReembedAllAsync(IBridgeSource source)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Memory.ReembedAllAsync();
+		int count = await Runtime.Memory.ReembedAllAsync();
+		Runtime.InvalidateSnapshot("memory");
+		return count;
+	}
+
+	private object? HardDeleteMemory(IBridgeSource source, JsonElement args)
+	{
+		if (args.ValueKind != JsonValueKind.Object || OptionalStr(args, "confirmToken") != "DELETE_MEMORY")
+			throw new InvalidOperationException("删除记忆需要明确确认");
+		bool deleted = Runtime.Memory.Delete((long)Num(args, "id"));
+		if (deleted) Runtime.InvalidateSnapshot("memory");
+		return deleted;
+	}
+
+	private object? ArchiveMemory(JsonElement args)
+	{
+		bool archived = Runtime.Memory.Archive((long)Num(args, "id"));
+		if (archived) Runtime.InvalidateSnapshot("memory");
+		return archived;
+	}
+
+	private object? RestoreMemory(JsonElement args)
+	{
+		bool restored = Runtime.Memory.Restore((long)Num(args, "id"));
+		if (restored) Runtime.InvalidateSnapshot("memory");
+		return restored;
+	}
+
+	private object? ClearMemories(IBridgeSource source, JsonElement args)
+	{
+		if (OptionalStr(args, "confirmToken") != "CLEAR_PERSONAL_MEMORY")
+			throw new InvalidOperationException("清空记忆需要明确确认");
+		Runtime.Memory.Clear();
+		Runtime.Memory.ClearCache();
+		Runtime.InvalidateSnapshot("memory");
+		return null;
+	}
+
+	private object MemoryOverview()
+	{
+		(int active, int atoms, int archived, int total) = Runtime.Memory.GetOverview();
+		MemorySettings settings = Runtime.Memory.Settings;
+		return new
+		{
+			activeMemories = active,
+			atomCount = atoms,
+			archivedMemories = archived,
+			totalMemories = total,
+			knowledgeChunks = Runtime.Knowledge.Status.Total,
+			reflectionCursor = Runtime.Memory.Store.GetEngineState("reflection_cursor"),
+			lastReflection = Runtime.Memory.Store.GetEngineState("last_reflection_at"),
+			lastMaintenance = Runtime.Memory.Store.GetEngineState("last_maintenance_at"),
+			index = Runtime.Knowledge.Status,
+			settings,
+		};
+	}
+
+	private object MemoryListPage(JsonElement args)
+	{
+		string query = OptionalStr(args, "query")?.Trim() ?? "";
+		string? kind = OptionalStr(args, "kind");
+		string? status = OptionalStr(args, "status");
+		int limit = ClampLimit(OptionalInt(args, "limit"), 50);
+		int offset = Math.Max(0, OptionalInt(args, "offset") ?? 0);
+		IEnumerable<MemoryItem> items = query.Length > 0
+			? Runtime.Memory.Store.Search(query, 10000)
+			: Runtime.Memory.Store.GetAll(10000);
+		if (kind is not null) items = items.Where(item => item.Kind.Equals(MemoryKindExtensions.Parse(kind).ToStorage(), StringComparison.OrdinalIgnoreCase));
+		if (status is not null) items = items.Where(item => item.Status.Equals(status, StringComparison.OrdinalIgnoreCase));
+		List<MemoryItem> filtered = items.ToList();
+		return new {items = filtered.Skip(offset).Take(limit).ToArray(), total = filtered.Count};
+	}
+
+	private object MemoryGet(JsonElement args)
+	{
+		long id = (long)Num(args, "id");
+		MemoryItem item = Runtime.Memory.Get(id) ?? throw new InvalidOperationException("未找到记忆");
+		return new {item, atoms = Runtime.Memory.GetAtoms(id, limit: 100), sources = Runtime.Memory.GetSources(id)};
+	}
+
+	private object MemoryAtomList(JsonElement args)
+	{
+		long? memoryId = args.TryGetProperty("memoryId", out JsonElement memoryIdElement) && memoryIdElement.ValueKind == JsonValueKind.Number
+			? memoryIdElement.GetInt64() : null;
+		MemoryStatus? status = OptionalStr(args, "status") is { } statusText ? MemoryStatusExtensions.Parse(statusText) : null;
+		return Runtime.Memory.GetAtoms(memoryId, status, ClampLimit(OptionalInt(args, "limit"), 50), Math.Max(0, OptionalInt(args, "offset") ?? 0));
+	}
+
+	private async Task<object?> MemoryKnowledgeReindexAsync(IBridgeSource source)
+	{
+		RequireMainVoid(source);
+		MemoryIndexStatus status = await Runtime.Knowledge.ReindexAsync().ConfigureAwait(false);
+		Runtime.InvalidateSnapshot("memory");
+		return status;
+	}
+
+	private object? OpenKnowledgeFolder()
+	{
+		string directory = System.IO.Path.GetDirectoryName(Runtime.Knowledge.Path) ?? AppPaths.DataDir;
+		Process.Start(new ProcessStartInfo(directory) {UseShellExecute = true});
+		return null;
+	}
+
+	private async Task<object?> MemoryRecallDebugAsync(IBridgeSource source, JsonElement args)
+	{
+		RequireMainVoid(source);
+		string query = Str(args, "query");
+		IReadOnlyList<(string Role, string Content)> recent = AgentHistory.NormalizeRecent(_services.Chat.GetHistory(8, 0));
+		MemoryContext context = await Runtime.Memory.BuildContextAsync(query, recent, CancellationToken.None, true).ConfigureAwait(false);
+		return new {trace = context.Debug, personal = context.Personal, atoms = context.Atoms, knowledge = context.Knowledge, echoes = context.Echoes};
+	}
+
+	private object? UpdateMemorySettings(JsonElement args)
+	{
+		JsonElement settings = args.TryGetProperty("settings", out JsonElement nested) && nested.ValueKind == JsonValueKind.Object ? nested : args;
+		SetMemoryBool(settings, "enabled", "memory_enabled");
+		SetMemoryBool(settings, "reflectionEnabled", "memory_reflection_enabled");
+		SetMemoryBool(settings, "decayEnabled", "memory_decay_enabled");
+		SetMemoryBool(settings, "archiveEnabled", "memory_archive_enabled");
+		SetMemoryBool(settings, "knowledgeEnabled", "memory_knowledge_enabled");
+		SetMemoryBool(settings, "knowledgeWatch", "memory_knowledge_watch");
+		SetMemoryBool(settings, "debugRetrieval", "memory_debug_retrieval");
+		SetMemoryInt(settings, "reflectionRounds", "memory_reflection_rounds", 1, 32);
+		SetMemoryInt(settings, "reflectionMinChars", "memory_reflection_min_chars", 100, 20000);
+		SetMemoryInt(settings, "recallTopK", "memory_recall_top_k", 1, 20);
+		SetMemoryInt(settings, "keywordTopK", "memory_keyword_top_k", 1, 100);
+		SetMemoryInt(settings, "vectorTopK", "memory_vector_top_k", 1, 100);
+		SetMemoryInt(settings, "rrfK", "memory_rrf_k", 1, 500);
+		SetMemoryDouble(settings, "minSimilarity", "memory_min_similarity");
+		SetMemoryDouble(settings, "sourceRetentionThreshold", "memory_source_retention_threshold");
+		SetMemoryDouble(settings, "archiveThreshold", "memory_archive_threshold");
+		Runtime.InvalidateSnapshot("memory");
+		return Runtime.Memory.Settings;
+	}
+
+	private void SetMemoryBool(JsonElement args, string name, string key)
+	{
+		bool? value = OptionalBool(args, name);
+		if (value is not null) UpdateConfigDirect(key, value.Value ? "true" : "false");
+	}
+
+	private void SetMemoryInt(JsonElement args, string name, string key, int min, int max)
+	{
+		if (!args.TryGetProperty(name, out JsonElement value) || value.ValueKind != JsonValueKind.Number) return;
+		int number = Math.Clamp(value.GetInt32(), min, max);
+		UpdateConfigDirect(key, number.ToString(System.Globalization.CultureInfo.InvariantCulture));
+	}
+
+	private void SetMemoryDouble(JsonElement args, string name, string key)
+	{
+		if (!args.TryGetProperty(name, out JsonElement value) || value.ValueKind != JsonValueKind.Number) return;
+		double number = Math.Clamp(value.GetDouble(), 0, 1);
+		UpdateConfigDirect(key, number.ToString(System.Globalization.CultureInfo.InvariantCulture));
 	}
 
 	private async Task<object?> SkillsInstallUrlAsync(IBridgeSource source, JsonElement args)

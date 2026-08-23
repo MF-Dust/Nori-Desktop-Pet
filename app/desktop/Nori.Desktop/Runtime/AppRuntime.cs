@@ -44,6 +44,8 @@ public sealed class AppRuntime : IAsyncDisposable
 	private readonly CancellationTokenSource _lifetimeCts = new();
 	private readonly WebViewAudioPlayback _playback;
 	private readonly WebViewMicrophoneRecorder _recorder;
+	private readonly ReflectionQueue _reflectionQueue;
+	private readonly ReflectionWorker _reflectionWorker;
 	private int _disposed;
 
 	public AppServices Services { get; }
@@ -57,6 +59,10 @@ public sealed class AppRuntime : IAsyncDisposable
 	public ProactiveScheduler Proactive { get; }
 
 	public MemoryService Memory { get; }
+
+	public KnowledgeService Knowledge { get; }
+
+	public MemoryLifecycleService Lifecycle { get; }
 
 	public VoiceService Voice { get; }
 
@@ -94,6 +100,16 @@ public sealed class AppRuntime : IAsyncDisposable
 		ConfigStore config = services.Config;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config);
+		Knowledge = new KnowledgeService(services.Database, Memory, config);
+		Memory.Knowledge = Knowledge;
+		Lifecycle = new MemoryLifecycleService(Memory);
+		_reflectionQueue = new ReflectionQueue();
+		ReflectionService reflection = new(services.Http, services.Chat, Memory, config);
+		_reflectionWorker = new ReflectionWorker(_reflectionQueue, reflection, exception =>
+		{
+			try { services.Logger.Write(LogSource.Backend, "warn", $"记忆整理失败: {exception.Message}"); }
+			catch { }
+		});
 		Skills = new SkillService(config, services.PublicHttp);
 		Emotion = new EmotionManager(config);
 
@@ -171,6 +187,15 @@ public sealed class AppRuntime : IAsyncDisposable
 
 		Proactive.Message += message => Dispatcher.UIThread.Post(() => OnProactiveMessage(message));
 		Proactive.Start();
+
+		// Knowledge 和 Reflection 都在后台启动；索引或整理失败不能阻塞聊天。
+		Knowledge.EnsureDefaultFile();
+		Knowledge.StartWatcher();
+		_reflectionWorker.Start();
+		_reflectionWorker.TryEnqueue(new ReflectionJob("startup"));
+		TrackBackground(() => Knowledge.ReindexAsync(_lifetimeCts.Token), "Memory.md index");
+		TrackBackground(() => Memory.ReembedAllAsync(_lifetimeCts.Token, false), "memory embedding rebuild");
+		TrackBackground(RunMemoryMaintenanceAsync, "memory lifecycle");
 
 		// 口型同步: 前端回传的播放音量采样直驱原生桌宠嘴型
 		_playback.VolumeSampled += level =>
@@ -395,6 +420,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			{
 				await RefreshMcpToolsAsync(session.Cts.Token);
 				ProtocolMessage final = await Engine.RunAsync(text, sessionId, callbacks, session.Cts.Token);
+				_reflectionWorker.TryEnqueue(new ReflectionJob("chat"));
 				PostAgentEvent(session.SourceLabel, new
 				{
 					type = "complete",
@@ -579,6 +605,10 @@ public sealed class AppRuntime : IAsyncDisposable
 
 		string selectedModel = config.GetStringOr("selected_model", ConfigStore.DefaultModel);
 
+		Nori.Core.Memory.MemorySettings memorySettings = Memory.Settings;
+		(int activeMemories, int atomCount, int archivedMemories, int totalMemories) = Memory.GetOverview();
+		Nori.Core.Memory.MemoryIndexStatus memoryIndex = Knowledge.Status;
+
 		return new
 		{
 			version = SnapshotVersion,
@@ -637,6 +667,34 @@ public sealed class AppRuntime : IAsyncDisposable
 				beatSync = ParseBoolFlag(config.GetStringOr("l2d_beat_sync", "")) ?? false,
 				renderScale = ReadFloat(config, "l2d_render_scale") ?? 2.0,
 				maxFps = (int)(ReadFloat(config, "l2d_max_fps") ?? 0),
+			},
+			memory = new
+			{
+				enabled = memorySettings.Enabled,
+				reflectionEnabled = memorySettings.ReflectionEnabled,
+				decayEnabled = memorySettings.DecayEnabled,
+				archiveEnabled = memorySettings.ArchiveEnabled,
+				active = activeMemories,
+				atoms = atomCount,
+				archived = archivedMemories,
+				total = totalMemories,
+				knowledgePath = Knowledge.Path,
+				knowledgeChunks = Knowledge.Status.Total,
+				indexState = memoryIndex.State.ToString().ToLowerInvariant(),
+				indexProcessed = memoryIndex.Processed,
+				indexTotal = memoryIndex.Total,
+				lastError = memoryIndex.LastError,
+				lastReflection = Memory.Store.GetEngineState("last_reflection_at"),
+				lastMaintenance = Memory.Store.GetEngineState("last_maintenance_at"),
+				ftsAvailable = Services.Memory.IsFtsAvailable,
+				reflectionRounds = memorySettings.ReflectionRounds,
+				reflectionMinChars = memorySettings.ReflectionMinChars,
+				recallTopK = memorySettings.RecallTopK,
+				keywordTopK = memorySettings.KeywordTopK,
+				vectorTopK = memorySettings.VectorTopK,
+				rrfK = memorySettings.RrfK,
+				minSimilarity = memorySettings.MinSimilarity,
+				archiveThreshold = memorySettings.ArchiveThreshold,
 			},
 			voice = new
 			{
@@ -831,6 +889,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		await WaitBoundedAsync(_backgroundTasks.Keys.ToArray(), TimeSpan.FromSeconds(5)).ConfigureAwait(false);
 		_backgroundTasks.Clear();
 
+		try { await _reflectionWorker.DisposeAsync().ConfigureAwait(false); } catch { }
+		try { await Knowledge.DisposeAsync().ConfigureAwait(false); } catch { }
 		try { Proactive.Dispose(); } catch { }
 		try { Emotion.Dispose(); } catch { }
 		// Voice.Dispose 会逆向释放 _playback; 录音票据要单独作废
@@ -854,6 +914,16 @@ public sealed class AppRuntime : IAsyncDisposable
 		Task task = ObserveBackgroundAsync(operation, name);
 		TrackTask(task);
 		return task;
+	}
+
+	private async Task RunMemoryMaintenanceAsync()
+	{
+		while (!_lifetimeCts.IsCancellationRequested)
+		{
+			Lifecycle.RunOnce();
+			try { await Task.Delay(TimeSpan.FromHours(6), _lifetimeCts.Token).ConfigureAwait(false); }
+			catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { break; }
+		}
 	}
 
 	private async Task ObserveBackgroundAsync(Func<Task> operation, string name)

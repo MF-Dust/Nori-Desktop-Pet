@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Nori.Core.Emotion;
+using Nori.Core.Memory;
 using Nori.Core.Network;
 using Nori.Core.Proactive;
 
@@ -80,6 +81,7 @@ public static class BuiltinTools
 
 		// 6. 记住重要事实 / 偏好 (remember 与 addMemory 同体)
 		RegisterRemember(registry, deps);
+		RegisterForget(registry, deps);
 		registry.RegisterAlias("remember", "addMemory", "添加一条长期记忆到记忆库 (remember 的别名)");
 
 		// 7. 搜索长期记忆
@@ -263,14 +265,30 @@ public static class BuiltinTools
 				("content", "记忆内容事实描述 (如: 主人最喜欢的咖啡是冰美式 / 主人的生日是 8月20日)"),
 				("importance", "重要程度 (0.1 ~ 1.0, 默认为 0.8)"),
 				("tags", "标签分类 (可选, 如: 偏好, 姓名, 习惯, 约定)"),
+				("kind", "记忆类型 (可选: identity, preference, factual, relational, episodic, planned)"),
 			], ["content"]),
 			async (args, _) =>
 			{
 				string content = RequireString(args, "content");
 				double importance = OptionalNumber(args, "importance") ?? 0.8;
 				string? tags = OptionalString(args, "tags");
-				Memory.MemoryItem item = await deps.Memory.AddAsync(content, "fact", importance, tags, "agent");
+				MemoryKind? kind = OptionalString(args, "kind") is { } kindText ? MemoryKindExtensions.Parse(kindText) : null;
+				MemoryKind resolvedKind = kind ?? MemoryKind.Factual;
+				Memory.MemoryItem item = await deps.Memory.RememberAsync(content, resolvedKind, importance, tags, "agent");
 				return new {success = true, memory = item};
+			});
+	}
+
+	private static void RegisterForget(ToolRegistry registry, BuiltinToolDeps deps)
+	{
+		Register(registry, "forgetMemory",
+			"在用户明确要求忘记某条长期记忆后，将它归档而不是永久删除", "confirm",
+			Schema([("memoryId", "要归档的记忆 id")], ["memoryId"]),
+			(args, _) =>
+			{
+				long id = (long)(OptionalNumber(args, "memoryId") ?? throw new InvalidOperationException("缺少参数: memoryId"));
+				bool archived = deps.Memory.Archive(id);
+				return Task.FromResult<object?>(new {success = archived, memoryId = id});
 			});
 	}
 
