@@ -29,6 +29,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     name: 校验并创建版本标签
@@ -179,7 +183,7 @@ jobs:
           name: nori-dist-${{ needs.validate.outputs.version }}
           path: app/desktop/dist
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   native_release:
     name: 创建 Native Sentry release
@@ -214,6 +218,22 @@ jobs:
             "$cli" releases info --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE" >/dev/null
           fi
 
+      - name: 创建或复用 GitHub Draft Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release 已存在，直接复用: $TAG"
+          else
+            gh release create "$TAG" \
+              --verify-tag \
+              --draft \
+              --title "$TAG" \
+              --generate-notes
+          fi
+
   native:
     name: ${{ matrix.name }} · ${{ needs.validate.outputs.mode }}
     needs: [validate, frontend, native_release]
@@ -236,7 +256,10 @@ jobs:
         working-directory: app/desktop
     env:
       NORI_VERSION: ${{ needs.validate.outputs.version }}
+      NORI_TAG: ${{ needs.validate.outputs.tag }}
+      NORI_MODE: ${{ needs.validate.outputs.mode }}
       NORI_INCLUDE_RUNTIME: ${{ inputs.include_runtime }}
+      GH_TOKEN: ${{ github.token }}
       NORI_SENTRY_DSN_NATIVE: ${{ secrets.SENTRY_DSN_NATIVE }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
       NORI_SENTRY_ENVIRONMENT: production
@@ -324,39 +347,37 @@ jobs:
           chmod +x "$cli"
           "$cli" debug-files upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" --type portablepdb "bin/publish/${{ matrix.rid }}"
 
-      - name: 剥离 Linux / macOS 符号并重打包
+      - name: 删除 Linux / macOS 符号
         if: matrix.name != 'windows'
         shell: bash
-        run: |
-          find "bin/publish/${{ matrix.rid }}" -name '*.pdb' -delete
-          if [[ "${{ matrix.name }}" == "linux" ]]; then
-            rm -f "bin/publish/${{ matrix.rid }}/nori-${NORI_VERSION}-${{ matrix.rid }}.tar.gz"
-            tar -czf "bin/publish/${{ matrix.rid }}/nori-${NORI_VERSION}-${{ matrix.rid }}.tar.gz" -C "bin/publish/${{ matrix.rid }}/app" .
-          fi
+        run: find "bin/publish/${{ matrix.rid }}" -name '*.pdb' -delete
 
-      - uses: actions/upload-artifact@v4
+      - name: 打包并上传 Windows Release
         if: matrix.name == 'windows'
-        with:
-          name: nori-${{ needs.validate.outputs.version }}-${{ matrix.rid }}-${{ needs.validate.outputs.mode }}
-          path: app/desktop/bin/publish/${{ matrix.rid }}
-          if-no-files-found: error
-          retention-days: 14
+        shell: pwsh
+        run: |
+          $asset = "nori-$($env:NORI_VERSION)-${{ matrix.rid }}-$($env:NORI_MODE).zip"
+          $publishDir = "bin/publish/${{ matrix.rid }}"
+          if (Test-Path $asset) { Remove-Item $asset -Force }
+          Compress-Archive -Path "$publishDir/*" -DestinationPath $asset -CompressionLevel Optimal
+          gh release upload "$env:NORI_TAG" $asset --clobber
 
-      - uses: actions/upload-artifact@v4
+      - name: 打包并上传 Linux Release
         if: matrix.name == 'linux'
-        with:
-          name: nori-${{ needs.validate.outputs.version }}-${{ matrix.rid }}-${{ needs.validate.outputs.mode }}
-          path: app/desktop/bin/publish/${{ matrix.rid }}/nori-*.tar.gz
-          if-no-files-found: error
-          retention-days: 14
+        shell: bash
+        run: |
+          asset="nori-${NORI_VERSION}-${{ matrix.rid }}-${NORI_MODE}.tar.gz"
+          tar -czf "$asset" -C "bin/publish/${{ matrix.rid }}/app" .
+          gh release upload "$NORI_TAG" "$asset" --clobber
 
-      - uses: actions/upload-artifact@v4
+      - name: 打包并上传 macOS Release
         if: matrix.name == 'macos'
-        with:
-          name: nori-${{ needs.validate.outputs.version }}-${{ matrix.rid }}-${{ needs.validate.outputs.mode }}
-          path: app/desktop/bin/publish/${{ matrix.rid }}/Nori.app
-          if-no-files-found: error
-          retention-days: 14
+        shell: bash
+        run: |
+          asset="nori-${NORI_VERSION}-${{ matrix.rid }}-${NORI_MODE}.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "bin/publish/${{ matrix.rid }}/Nori.app" "$asset"
+          gh release upload "$NORI_TAG" "$asset" --clobber
 
   native_finalize:
     name: 完成 Native Sentry release
@@ -384,3 +405,12 @@ jobs:
           cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Linux-x86_64"
           chmod +x "$cli"
           "$cli" releases finalize --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE"
+
+      - name: 发布 GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          gh release edit "$TAG" --draft=false
+          echo "Release 已发布: $TAG"
