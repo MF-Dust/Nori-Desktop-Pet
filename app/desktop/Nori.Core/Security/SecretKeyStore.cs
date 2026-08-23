@@ -16,11 +16,17 @@ namespace Nori.Core.Security;
 /// </summary>
 public interface ISecretKeyStore
 {
-	/// <summary>取出主密钥 (不存在则生成并保存)</summary>
+	/// <summary>取出主密钥 (不存在则生成并保存); 失败必须抛出, 不得返回可导致明文落库的回退值。</summary>
 	byte[] LoadOrCreate();
 
 	/// <summary>当前是否退化为纯文件保护 (无系统密钥库)</summary>
 	bool IsFileFallback { get; }
+}
+
+/// <summary>平台密钥库不可用或密钥文件损坏。</summary>
+public sealed class SecretKeyStoreException(string message, Exception? innerException = null)
+	: InvalidOperationException(message, innerException)
+{
 }
 
 /// <summary>
@@ -51,8 +57,12 @@ public sealed class SecretKeyStore : ISecretKeyStore
 		if (_cached is not null) return _cached;
 
 		byte[]? existing = TryLoad();
-		if (existing is {Length: KeySize})
+		if (existing is not null)
 		{
+			if (existing.Length != KeySize)
+			{
+				throw new SecretKeyStoreException("平台主密钥长度无效, 为避免使已有密文全部失效而拒绝覆盖");
+			}
 			_cached = existing;
 			return existing;
 		}
@@ -82,7 +92,7 @@ public sealed class SecretKeyStore : ISecretKeyStore
 		}
 		catch (Exception exception) when (exception is CryptographicException or IOException or UnauthorizedAccessException)
 		{
-			return null;
+			throw new SecretKeyStoreException("无法读取平台主密钥, 为避免静默更换密钥而拒绝启动敏感配置", exception);
 		}
 	}
 
@@ -91,12 +101,19 @@ public sealed class SecretKeyStore : ISecretKeyStore
 		if (OperatingSystem.IsMacOS() && TryKeychainWrite(key)) return;
 		if (OperatingSystem.IsLinux() && TrySecretToolWrite(key)) return;
 
-		Directory.CreateDirectory(Path.GetDirectoryName(_keyPath) ?? ".");
-		byte[] payload = OperatingSystem.IsWindows()
-			? System.Security.Cryptography.ProtectedData.Protect(
-				key, null, System.Security.Cryptography.DataProtectionScope.CurrentUser)
-			: key;
-		File.WriteAllBytes(_keyPath, payload);
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(_keyPath) ?? ".");
+			byte[] payload = OperatingSystem.IsWindows()
+				? System.Security.Cryptography.ProtectedData.Protect(
+					key, null, System.Security.Cryptography.DataProtectionScope.CurrentUser)
+				: key;
+			File.WriteAllBytes(_keyPath, payload);
+		}
+		catch (Exception exception) when (exception is CryptographicException or IOException or UnauthorizedAccessException)
+		{
+			throw new SecretKeyStoreException("无法保存平台主密钥, 敏感配置将保持未写入", exception);
+		}
 		if (!OperatingSystem.IsWindows())
 		{
 			IsFileFallback = true;

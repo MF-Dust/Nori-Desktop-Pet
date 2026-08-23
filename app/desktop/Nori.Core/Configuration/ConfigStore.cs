@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Nori.Core.Data;
 using Nori.Core.Security;
@@ -6,111 +9,128 @@ using Nori.Core.Security;
 namespace Nori.Core.Configuration;
 
 /// <summary>
-/// 配置读写
+/// 配置读写。
 ///
-/// 对应 Rust 版 config.rs 的自由函数集合. 配置键一律 snake_case, 与前端常量保持一致.
-///
-/// 敏感配置 (API Key 等) 用 AES-256-GCM 加密后落库, 主密钥交给各平台密钥库保管
-/// (Windows DPAPI / macOS Keychain / Linux libsecret, 见 SecretKeyStore)。
-/// 旧的 `enc:dpapi:` 值读到后按需解密并惰性升级成新格式; 非 Windows 上读到
-/// 旧值只能视为不可用, 由 UI 引导用户重填该项 —— 绝不静默清空其他配置。
+/// 敏感配置统一使用 nsec2 AES-256-GCM 保存, 配置键作为 AAD 绑定密文用途。
+/// nsec1 与 Windows 旧 enc:dpapi: 只读兼容并在成功读取后惰性迁移。任何密钥库
+/// 或加密失败都会中止写入, 绝不把明文作为回退值写入数据库。
 /// </summary>
 public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore = null)
 {
 	private readonly ISecretKeyStore _keyStore = keyStore ?? new SecretKeyStore();
+	private readonly NoriDatabase _database = database;
+	private readonly ConcurrentDictionary<string, SecretIssue> _secretIssues = new(StringComparer.Ordinal);
 
-	/// <summary>配置键: 配置结构版本 (不兼容变更时 +1, 用于迁移)</summary>
+	/// <summary>配置键: 配置结构版本。</summary>
 	public const string KeyConfigSchemaVersion = "config_schema_version";
 
-	/// <summary>配置键: 首次启动 (数据库创建) 时间</summary>
+	/// <summary>配置键: 首次启动 (数据库创建) 时间。</summary>
 	public const string KeyInstalledAt = "installed_at";
 
-	/// <summary>配置键: 首次初始化完成时间</summary>
+	/// <summary>配置键: 首次初始化完成时间。</summary>
 	public const string KeyInitializedAt = "initialized_at";
 
-	/// <summary>配置键: 应用版本 (首次安装时的版本)</summary>
+	/// <summary>配置键: 应用版本 (首次安装时的版本)。</summary>
 	public const string KeyAppVersion = "app_version";
 
-	/// <summary>配置键: 界面语言</summary>
+	/// <summary>配置键: 界面语言。</summary>
 	public const string KeyLanguage = "language";
 
-	/// <summary>配置键: 旧版界面语言 (仅用于 v1 → v2 迁移)</summary>
+	/// <summary>配置键: 旧版界面语言 (仅用于 v1 → v2 迁移)。</summary>
 	public const string LegacyKeyLanguage = "app_language";
 
-	/// <summary>配置键: 桌宠模型</summary>
+	/// <summary>配置键: 桌宠模型。</summary>
 	public const string KeySelectedModel = "selected_model";
 
-	/// <summary>配置键: 首次初始化是否已完成</summary>
+	/// <summary>配置键: 首次初始化是否已完成。</summary>
 	public const string KeyFirstRunCompleted = "first_run_completed";
 
-	/// <summary>配置键: 是否允许发送脱敏错误遥测</summary>
+	/// <summary>配置键: 明确的遥测同意状态。</summary>
+	public const string KeyTelemetryConsent = "telemetry_consent";
+
+	/// <summary>旧版布尔遥测开关, 只用于迁移和兼容读取。</summary>
 	public const string KeyTelemetryEnabled = "telemetry_enabled";
 
-	/// <summary>配置键: 桌宠窗口 X 坐标</summary>
+	/// <summary>MCP stdio 环境变量的独立敏感配置键前缀。</summary>
+	public const string McpEnvironmentKeyPrefix = "mcp_server_env_";
+
+	/// <summary>配置键: 桌宠窗口 X 坐标。</summary>
 	public const string KeyPetWindowX = "pet_window_x";
 
-	/// <summary>配置键: 桌宠窗口 Y 坐标</summary>
+	/// <summary>配置键: 桌宠窗口 Y 坐标。</summary>
 	public const string KeyPetWindowY = "pet_window_y";
 
-	/// <summary>配置键: 全局音频音量 (0.0 ~ 1.0)</summary>
+	/// <summary>配置键: 全局音频音量 (0.0 ~ 1.0)。</summary>
 	public const string KeyAudioVolume = "audio_volume";
 
-	/// <summary>当前配置结构版本</summary>
-	public const long ConfigSchemaVersion = 2;
+	/// <summary>当前配置结构版本。</summary>
+	public const long ConfigSchemaVersion = 3;
 
-	/// <summary>没有版本记录的旧数据库所使用的最后旧版本</summary>
+	/// <summary>没有版本记录的旧数据库所使用的最后旧版本。</summary>
 	private const long LegacyConfigSchemaVersion = 1;
 
-	/// <summary>默认桌宠模型</summary>
+	/// <summary>默认桌宠模型。</summary>
 	public const string DefaultModel = "arg-nori";
 
-	private readonly NoriDatabase _database = database;
+	/// <summary>判断某个配置键是否必须加密。</summary>
+	public static bool IsSensitiveKey(string key) =>
+		key.StartsWith(McpEnvironmentKeyPrefix, StringComparison.Ordinal) ||
+		key.EndsWith("_api_key", StringComparison.OrdinalIgnoreCase) ||
+		key.EndsWith("_secret", StringComparison.OrdinalIgnoreCase) ||
+		key.EndsWith("_token", StringComparison.OrdinalIgnoreCase) ||
+		key.EndsWith("_password", StringComparison.OrdinalIgnoreCase);
 
-	/// <summary>
-	/// 读取配置, 不存在返回 null (自动解密 DPAPI 保护的敏感字段)
-	/// </summary>
-	public ConfigValue? Get(string key) => _database.Locked(connection =>
+	/// <summary>读取配置, 敏感值无法解密时按未配置处理。</summary>
+	public ConfigValue? Get(string key)
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "SELECT value FROM config WHERE key = $key";
-		command.Parameters.AddWithValue("$key", key);
-		if (command.ExecuteScalar() is not string stored) return null;
-		string decrypted = UnprotectValue(stored);
-		return ConfigValue.FromStorage(decrypted);
-	});
+		string stored = RawValue(key);
+		if (stored.Length == 0 && !Exists(key)) return null;
+
+		if (!IsSensitiveKey(key)) return ConfigValue.FromStorage(stored);
+		SecretReadResult result = ReadSecretValue(key, stored, migrate: true);
+		return result.IsConfigured ? ConfigValue.FromStorage(result.Value!) : null;
+	}
 
 	/// <summary>
-	/// 写入配置 (存在则覆盖, 敏感字段自动进行 DPAPI 加密)
+	/// 写入配置。敏感字段先完成加密再执行 SQL, 密钥库不可用时原记录保持不变。
 	/// </summary>
-	public void Set(string key, ConfigValue value) => _database.Locked(connection =>
+	public void Set(string key, ConfigValue value)
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = """
-			INSERT INTO config (key, value)
-			VALUES ($key, $value)
-			ON CONFLICT(key)
-			DO UPDATE SET value = excluded.value
-			""";
-		command.Parameters.AddWithValue("$key", key);
-		string toStore = ProtectValue(key, value.ToStorage());
-		command.Parameters.AddWithValue("$value", toStore);
-		command.ExecuteNonQuery();
-	});
+		ArgumentException.ThrowIfNullOrEmpty(key);
+		string toStore = IsSensitiveKey(key) ? ProtectValue(key, value.ToStorage()) : value.ToStorage();
 
-	/// <summary>
-	/// 删除配置, 返回是否真的删除了记录
-	/// </summary>
-	public bool Delete(string key) => _database.Locked(connection =>
+		_database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = """
+				INSERT INTO config (key, value)
+				VALUES ($key, $value)
+				ON CONFLICT(key)
+				DO UPDATE SET value = excluded.value
+				""";
+			command.Parameters.AddWithValue("$key", key);
+			command.Parameters.AddWithValue("$value", toStore);
+			command.ExecuteNonQuery();
+		});
+
+		if (IsSensitiveKey(key)) _secretIssues.TryRemove(key, out _);
+	}
+
+	/// <summary>删除配置, 返回是否真的删除了记录。</summary>
+	public bool Delete(string key)
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "DELETE FROM config WHERE key = $key";
-		command.Parameters.AddWithValue("$key", key);
-		return command.ExecuteNonQuery() > 0;
-	});
+		bool deleted = _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "DELETE FROM config WHERE key = $key";
+			command.Parameters.AddWithValue("$key", key);
+			return command.ExecuteNonQuery() > 0;
+		});
+		if (deleted) _secretIssues.TryRemove(key, out _);
+		return deleted;
+	}
 
-	/// <summary>
-	/// 判断配置是否存在
-	/// </summary>
+	/// <summary>判断配置是否存在。</summary>
 	public bool Exists(string key) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
@@ -120,102 +140,74 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	});
 
 	/// <summary>
-	/// 获取所有配置 (按键排序)
+	/// 读取所有可用配置。无法解密的敏感值不会被伪装成一个普通字符串返回。
 	/// </summary>
-	public IReadOnlyList<KeyValuePair<string, ConfigValue>> GetAll() => _database.Locked(connection =>
+	public IReadOnlyList<KeyValuePair<string, ConfigValue>> GetAll()
 	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "SELECT key, value FROM config ORDER BY key";
-		using SqliteDataReader reader = command.ExecuteReader();
+		List<(string Key, string Stored)> rows = _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "SELECT key, value FROM config ORDER BY key";
+			using SqliteDataReader reader = command.ExecuteReader();
+			List<(string Key, string Stored)> values = [];
+			while (reader.Read()) values.Add((reader.GetString(0), reader.GetString(1)));
+			return values;
+		});
+
 		List<KeyValuePair<string, ConfigValue>> result = [];
-		while (reader.Read())
+		foreach ((string key, string stored) in rows)
 		{
-			string key = reader.GetString(0);
-			string decrypted = UnprotectValue(reader.GetString(1));
-			result.Add(new KeyValuePair<string, ConfigValue>(key, ConfigValue.FromStorage(decrypted)));
+			if (IsSensitiveKey(key))
+			{
+				SecretReadResult secret = ReadSecretValue(key, stored, migrate: true);
+				if (!secret.IsConfigured) continue;
+				result.Add(new KeyValuePair<string, ConfigValue>(key, ConfigValue.FromStorage(secret.Value!)));
+			}
+			else
+			{
+				result.Add(new KeyValuePair<string, ConfigValue>(key, ConfigValue.FromStorage(stored)));
+			}
 		}
-		return (IReadOnlyList<KeyValuePair<string, ConfigValue>>)result;
-	});
+		return result;
+	}
 
-	/// <summary>
-	/// 判断是否为敏感配置项 (需要加密存储)
-	/// </summary>
-	private static bool IsSensitiveKey(string key) =>
-		key.EndsWith("_api_key", StringComparison.OrdinalIgnoreCase) ||
-		key.EndsWith("_secret", StringComparison.OrdinalIgnoreCase) ||
-		key.EndsWith("_token", StringComparison.OrdinalIgnoreCase) ||
-		key.EndsWith("_password", StringComparison.OrdinalIgnoreCase);
-
-	/// <summary>
-	/// 加密敏感数据 (AES-256-GCM, 主密钥来自平台密钥库)
-	/// </summary>
-	private string ProtectValue(string key, string plainText)
+	/// <summary>读取一个敏感配置, 不返回任何替代明文或密文。</summary>
+	public SecretReadResult ReadSecret(string key)
 	{
-		if (!IsSensitiveKey(key) || string.IsNullOrEmpty(plainText)) return plainText;
-		try
+		if (!IsSensitiveKey(key)) throw new ArgumentException("不是敏感配置键", nameof(key));
+		string stored = RawValue(key);
+		return stored.Length == 0 && !Exists(key)
+			? new SecretReadResult(null, SecretIssueCategory.None)
+			: ReadSecretValue(key, stored, migrate: true);
+	}
+
+	/// <summary>判断敏感配置当前是否真正可用。</summary>
+	public bool IsSecretConfigured(string key) => ReadSecret(key).IsConfigured;
+
+	/// <summary>读取某个敏感配置的问题分类, 不包含值。</summary>
+	public SecretIssue? GetSecretIssue(string key) => _secretIssues.TryGetValue(key, out SecretIssue? issue) ? issue : null;
+
+	/// <summary>读取全部敏感配置问题摘要, 不包含值。</summary>
+	public IReadOnlyList<SecretIssue> GetSecretIssues() => _secretIssues.Values
+		.OrderBy(issue => issue.Key, StringComparer.Ordinal)
+		.ToArray();
+
+	/// <summary>供其它核心服务记录一个不含值的敏感配置问题。</summary>
+	public void RecordSecretIssue(string key, SecretIssueCategory category)
+	{
+		if (category == SecretIssueCategory.None)
 		{
-			return SecretProtector.Protect(_keyStore.LoadOrCreate(), plainText);
+			_secretIssues.TryRemove(key, out _);
+			return;
 		}
-		catch (Exception exception) when (exception is System.Security.Cryptography.CryptographicException or IOException or UnauthorizedAccessException)
-		{
-			// 密钥库不可用时宁可存明文也不能让用户的密钥丢失, 但要留下痕迹
-			return plainText;
-		}
+		_secretIssues[key] = new SecretIssue(key, category);
 	}
 
 	/// <summary>
-	/// 解密敏感数据; 无法解密时原样返回 (调用方按“需要重填”处理)
-	/// </summary>
-	private string UnprotectValue(string stored)
-	{
-		if (SecretProtector.IsProtected(stored))
-		{
-			return SecretProtector.TryUnprotect(_keyStore.LoadOrCreate(), stored, out string plain) ? plain : stored;
-		}
-		if (SecretProtector.IsLegacyDpapi(stored)) return UnprotectLegacyDpapi(stored);
-		return stored;
-	}
-
-	/// <summary>
-	/// 解密旧的 DPAPI 值 (仅 Windows 可解)
-	///
-	/// 非 Windows 上无法解密: 原样返回, 由 IsUnreadableSecret 判定并提示用户重填。
-	/// </summary>
-	private static string UnprotectLegacyDpapi(string stored)
-	{
-		if (!OperatingSystem.IsWindows()) return stored;
-		try
-		{
-			byte[] encrypted = Convert.FromBase64String(stored[SecretProtector.LegacyDpapiPrefix.Length..]);
-			byte[] decrypted = System.Security.Cryptography.ProtectedData.Unprotect(
-				encrypted, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
-			return System.Text.Encoding.UTF8.GetString(decrypted);
-		}
-		catch (Exception exception) when (exception is System.Security.Cryptography.CryptographicException or FormatException)
-		{
-			return stored;
-		}
-	}
-
-	/// <summary>
-	/// 判断某个敏感值是否已经无法解密 (需要用户重新填写)
-	///
-	/// 典型场景: 用户把 nori.db 从 Windows 搬到 Linux, 旧的 DPAPI 值只能重填。
+	/// 判断原始值是否属于受保护格式。它只表示格式需要解密, 不代表当前一定能解开。
 	/// </summary>
 	public static bool IsUnreadableSecret(string stored) =>
 		SecretProtector.IsProtected(stored) || SecretProtector.IsLegacyDpapi(stored);
-
-	/// <summary>
-	/// 把仍是旧格式的敏感值惰性升级成新格式 (只在能解密时进行)
-	/// </summary>
-	public void UpgradeSecretFormat(string key)
-	{
-		string stored = RawValue(key);
-		if (stored.Length == 0 || !SecretProtector.IsLegacyDpapi(stored)) return;
-		string plain = UnprotectLegacyDpapi(stored);
-		if (plain == stored) return; // 解不开: 留着让 UI 提示重填
-		Set(key, new ConfigValue.Text(plain));
-	}
 
 	/// <summary>
 	/// 在已有事务中写入配置。
@@ -233,11 +225,11 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 			? "INSERT OR IGNORE INTO config (key, value) VALUES ($key, $value)"
 			: "INSERT INTO config (key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
 		command.Parameters.AddWithValue("$key", key);
-		command.Parameters.AddWithValue("$value", ProtectValue(key, value.ToStorage()));
+		command.Parameters.AddWithValue("$value", IsSensitiveKey(key) ? ProtectValue(key, value.ToStorage()) : value.ToStorage());
 		command.ExecuteNonQuery();
 	}
 
-	/// <summary>读取未经解密的原始存储值 (迁移与诊断用)</summary>
+	/// <summary>读取未经解密的原始存储值 (迁移与安全测试用)。</summary>
 	public string RawValue(string key) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
@@ -246,16 +238,25 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		return command.ExecuteScalar() as string ?? "";
 	});
 
-	/// <summary>
-	/// 读取字符串配置, 缺失/类型不符时返回 fallback
-	/// </summary>
+	/// <summary>升级一个旧敏感值; 解不开时保持原值并记录分类。</summary>
+	public void UpgradeSecretFormat(string key)
+	{
+		if (!IsSensitiveKey(key)) return;
+		string stored = RawValue(key);
+		if (stored.Length == 0) return;
+		_ = ReadSecretValue(key, stored, migrate: true);
+	}
+
+	/// <summary>读取字符串配置, 缺失/类型不符时返回 fallback。</summary>
 	public string GetStringOr(string key, string fallback) => ConfigValue.AsStringOr(Get(key), fallback);
 
 	/// <summary>
 	/// 读取布尔配置, 兼容历史上可能写入的 0/1 与 true/false 字符串。
+	/// 旧遥测键会投影明确同意状态, 但不会把 unset 当成已同意。
 	/// </summary>
 	public bool GetBoolOr(string key, bool fallback)
 	{
+		if (key == KeyTelemetryEnabled) return GetTelemetryConsent() == TelemetryConsent.Granted;
 		ConfigValue? value = Get(key);
 		if (value is ConfigValue.Boolean boolean) return boolean.Value;
 		string raw = ConfigValue.AsStringOr(value, "");
@@ -268,9 +269,32 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		};
 	}
 
+	/// <summary>读取明确的遥测同意状态; 非法或缺失值都 fail-closed 为 unset。</summary>
+	public TelemetryConsent GetTelemetryConsent()
+	{
+		ConfigValue? value = Get(KeyTelemetryConsent);
+		string raw = ConfigValue.AsStringOr(value, "");
+		if (ConfigValidation.TryParseTelemetryConsent(raw, out TelemetryConsent consent)) return consent;
+
+		// 迁移尚未运行或旧数据库被直接读取时仍按旧语义兼容: false=denied, true=unset.
+		string legacy = RawValue(KeyTelemetryEnabled);
+		if (legacy is "0" || legacy.Equals("false", StringComparison.OrdinalIgnoreCase)) return TelemetryConsent.Denied;
+		if (legacy is "1" || legacy.Equals("true", StringComparison.OrdinalIgnoreCase)) return TelemetryConsent.Unset;
+		return TelemetryConsent.Unset;
+	}
+
+	/// <summary>保存明确的遥测同意状态。</summary>
+	public void SetTelemetryConsent(TelemetryConsent consent) =>
+		Set(KeyTelemetryConsent, new ConfigValue.Text(ConfigValidation.TelemetryConsentStorage(consent)));
+
+	/// <summary>首次运行完成时确认默认开启的遥测开关。</summary>
+	public void ConfirmTelemetryConsent()
+	{
+		if (GetTelemetryConsent() == TelemetryConsent.Unset) SetTelemetryConsent(TelemetryConsent.Granted);
+	}
+
 	/// <summary>
-	/// 初始化默认配置: 只补缺失项, 不覆盖用户已有配置.
-	/// 先完成版本迁移, 再插入 language 默认值, 这样旧 app_language 不会被系统语言默认值抢先覆盖.
+	/// 初始化默认配置: 只补缺失项, 不覆盖用户已有配置。
 	/// </summary>
 	public void InitDefaults(string appVersion)
 	{
@@ -285,7 +309,7 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 				(KeyLanguage, new ConfigValue.Text(SystemLanguage())),
 				(KeySelectedModel, new ConfigValue.Text(DefaultModel)),
 				(KeyFirstRunCompleted, new ConfigValue.Boolean(false)),
-				(KeyTelemetryEnabled, new ConfigValue.Boolean(true)),
+				(KeyTelemetryConsent, new ConfigValue.Text(ConfigValidation.TelemetryConsentStorage(TelemetryConsent.Unset))),
 				("memory_enabled", new ConfigValue.Boolean(true)),
 				("memory_reflection_enabled", new ConfigValue.Boolean(true)),
 				("memory_reflection_rounds", new ConfigValue.Integer(8)),
@@ -315,9 +339,7 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	}
 
 	/// <summary>
-	/// 检查配置结构版本
-	///
-	/// 低于当前版本则逐级迁移; 高于当前版本直接报错, 防止旧程序改坏新数据库.
+	/// 检查配置结构版本。低版本逐级迁移, 高版本直接拒绝。
 	/// </summary>
 	public void EnsureSchemaVersion()
 	{
@@ -329,10 +351,7 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		if (current < ConfigSchemaVersion) MigrateSchema(current, ConfigSchemaVersion);
 	}
 
-	/// <summary>
-	/// 数据库结构迁移: v1 → v2 规范化 language 并清理旧键.
-	/// 迁移与版本号写入在同一个 SQLite 事务中完成.
-	/// </summary>
+	/// <summary>数据库结构迁移: v1 语言键, v2 遥测布尔键迁移为三态同意。</summary>
 	private void MigrateSchema(long from, long to) => _database.Locked(connection =>
 	{
 		using SqliteTransaction transaction = connection.BeginTransaction();
@@ -346,6 +365,9 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 					case LegacyConfigSchemaVersion:
 						MigrateLanguage(connection, transaction);
 						break;
+					case 2:
+						MigrateTelemetryConsent(connection, transaction);
+						break;
 					default:
 						throw new InvalidOperationException($"不支持的配置数据库版本: {version}");
 				}
@@ -356,19 +378,13 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		}
 		catch
 		{
-			try
-			{
-				transaction.Rollback();
-			}
-			catch
-			{
-				// 保留原始迁移异常.
-			}
+			try { transaction.Rollback(); }
+			catch { /* 保留原始迁移异常。 */ }
 			throw;
 		}
 	});
 
-	/// <summary>规范化语言键: language 已存在时优先保留, 否则回填 app_language.</summary>
+	/// <summary>规范化语言键: language 已存在时优先保留, 否则回填 app_language。</summary>
 	private static void MigrateLanguage(SqliteConnection connection, SqliteTransaction transaction)
 	{
 		using SqliteCommand copy = connection.CreateCommand();
@@ -391,8 +407,43 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		delete.ExecuteNonQuery();
 	}
 
-	/// <summary>在迁移事务中写入配置版本.</summary>
-	private static void SetSchemaVersion(SqliteConnection connection, SqliteTransaction transaction, long version)
+	/// <summary>旧版 false 迁移为 denied, 历史 true 迁移为 unset, 不自动开始上报。</summary>
+	private static void MigrateTelemetryConsent(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		string? existing = ReadValue(connection, transaction, KeyTelemetryConsent);
+		if (ConfigValidation.TryParseTelemetryConsent(existing, out _))
+		{
+			DeleteValue(connection, transaction, KeyTelemetryEnabled);
+			return;
+		}
+
+		string? legacy = ReadValue(connection, transaction, KeyTelemetryEnabled);
+		TelemetryConsent consent = legacy is "0" || legacy?.Equals("false", StringComparison.OrdinalIgnoreCase) == true
+			? TelemetryConsent.Denied
+			: TelemetryConsent.Unset;
+		SetValue(connection, transaction, KeyTelemetryConsent, ConfigValidation.TelemetryConsentStorage(consent));
+		DeleteValue(connection, transaction, KeyTelemetryEnabled);
+	}
+
+	private static string? ReadValue(SqliteConnection connection, SqliteTransaction transaction, string key)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = "SELECT value FROM config WHERE key = $key";
+		command.Parameters.AddWithValue("$key", key);
+		return command.ExecuteScalar() as string;
+	}
+
+	private static void DeleteValue(SqliteConnection connection, SqliteTransaction transaction, string key)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = "DELETE FROM config WHERE key = $key";
+		command.Parameters.AddWithValue("$key", key);
+		command.ExecuteNonQuery();
+	}
+
+	private static void SetValue(SqliteConnection connection, SqliteTransaction transaction, string key, string value)
 	{
 		using SqliteCommand command = connection.CreateCommand();
 		command.Transaction = transaction;
@@ -400,14 +451,16 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 			INSERT INTO config (key, value) VALUES ($key, $value)
 			ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 			""";
-		command.Parameters.AddWithValue("$key", KeyConfigSchemaVersion);
-		command.Parameters.AddWithValue("$value", version.ToString(CultureInfo.InvariantCulture));
+		command.Parameters.AddWithValue("$key", key);
+		command.Parameters.AddWithValue("$value", value);
 		command.ExecuteNonQuery();
 	}
 
-	/// <summary>
-	/// 读取配置结构版本. 没有版本记录的数据库按 v1 处理, 以便执行遗留键迁移.
-	/// </summary>
+	/// <summary>在迁移事务中写入配置版本。</summary>
+	private static void SetSchemaVersion(SqliteConnection connection, SqliteTransaction transaction, long version) =>
+		SetValue(connection, transaction, KeyConfigSchemaVersion, version.ToString(CultureInfo.InvariantCulture));
+
+	/// <summary>读取配置结构版本. 没有版本记录的数据库按 v1 处理。</summary>
 	private long ReadSchemaVersion() => Get(KeyConfigSchemaVersion) switch
 	{
 		null => LegacyConfigSchemaVersion,
@@ -417,9 +470,125 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		_ => ConfigSchemaVersion,
 	};
 
-	/// <summary>
-	/// 判断是否首次启动
-	/// </summary>
+	/// <summary>敏感值加密; 任意失败都会抛出, 绝不返回明文。</summary>
+	private string ProtectValue(string key, string plainText)
+	{
+		if (!IsSensitiveKey(key) || string.IsNullOrEmpty(plainText)) return plainText;
+		try
+		{
+			byte[] masterKey = _keyStore.LoadOrCreate();
+			if (masterKey.Length != SecretKeyStore.KeySize)
+				throw new SecretKeyStoreException("平台主密钥长度无效, 拒绝写入敏感配置");
+			return SecretProtector.ProtectV2(masterKey, key, plainText);
+		}
+		catch (SecretKeyStoreException)
+		{
+			throw;
+		}
+		catch (Exception exception) when (exception is CryptographicException or IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			throw new SecretKeyStoreException($"敏感配置 {key} 无法使用平台密钥库, 已拒绝写入", exception);
+		}
+	}
+
+	/// <summary>解密一个原始敏感值, 并在成功时尝试升级到 nsec2。</summary>
+	private SecretReadResult ReadSecretValue(string key, string stored, bool migrate)
+	{
+		if (string.IsNullOrEmpty(stored)) return new SecretReadResult(null, SecretIssueCategory.None);
+
+		if (SecretProtector.IsNsec2(stored) || SecretProtector.IsNsec1(stored))
+		{
+			byte[] masterKey;
+			try { masterKey = _keyStore.LoadOrCreate(); }
+			catch (Exception exception) when (exception is SecretKeyStoreException or CryptographicException or IOException or UnauthorizedAccessException or InvalidOperationException)
+			{
+				RecordSecretIssue(key, SecretIssueCategory.KeyStoreUnavailable);
+				return new SecretReadResult(null, SecretIssueCategory.KeyStoreUnavailable);
+			}
+
+			bool valid = SecretProtector.IsNsec2(stored)
+				? SecretProtector.TryUnprotectV2(masterKey, key, stored, out string plain)
+				: SecretProtector.TryUnprotectV1(masterKey, stored, out plain);
+			if (!valid)
+			{
+				RecordSecretIssue(key, SecretIssueCategory.CorruptCiphertext);
+				return new SecretReadResult(null, SecretIssueCategory.CorruptCiphertext);
+			}
+
+			SecretIssueCategory category = SecretProtector.IsNsec1(stored)
+				? SecretIssueCategory.LegacyNsec1
+				: SecretIssueCategory.None;
+			if (migrate && category != SecretIssueCategory.None) TryMigrate(key, plain);
+			if (category == SecretIssueCategory.None) _secretIssues.TryRemove(key, out _);
+			return new SecretReadResult(plain, category);
+		}
+
+		if (SecretProtector.IsLegacyDpapi(stored))
+		{
+			if (!OperatingSystem.IsWindows())
+			{
+				RecordSecretIssue(key, SecretIssueCategory.LegacyUnsupported);
+				return new SecretReadResult(null, SecretIssueCategory.LegacyUnsupported);
+			}
+			if (!TryUnprotectLegacyDpapi(stored, out string plain))
+			{
+				RecordSecretIssue(key, SecretIssueCategory.CorruptCiphertext);
+				return new SecretReadResult(null, SecretIssueCategory.CorruptCiphertext);
+			}
+			if (migrate) TryMigrate(key, plain);
+			return new SecretReadResult(plain, SecretIssueCategory.LegacyDpapi);
+		}
+
+		// 早期错误回退曾把敏感值明文写入数据库。保留一次可用读取并立即尝试加密迁移,
+		// 但绝不再把这类值原样作为新的存储结果写回。
+		if (migrate) TryMigrate(key, stored);
+		return new SecretReadResult(stored, SecretIssueCategory.LegacyPlaintext);
+	}
+
+	private void TryMigrate(string key, string plain)
+	{
+		try
+		{
+			string encrypted = ProtectValue(key, plain);
+			WriteRaw(key, encrypted);
+			_secretIssues.TryRemove(key, out _);
+		}
+		catch (Exception exception) when (exception is SecretKeyStoreException or CryptographicException or IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			RecordSecretIssue(key, SecretIssueCategory.KeyStoreUnavailable);
+		}
+	}
+
+	private void WriteRaw(string key, string value) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = """
+			INSERT INTO config (key, value) VALUES ($key, $value)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+			""";
+		command.Parameters.AddWithValue("$key", key);
+		command.Parameters.AddWithValue("$value", value);
+		command.ExecuteNonQuery();
+	});
+
+	private static bool TryUnprotectLegacyDpapi(string stored, out string plain)
+	{
+		plain = string.Empty;
+		if (!OperatingSystem.IsWindows()) return false;
+		try
+		{
+			byte[] encrypted = Convert.FromBase64String(stored[SecretProtector.LegacyDpapiPrefix.Length..]);
+			byte[] decrypted = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
+			plain = Encoding.UTF8.GetString(decrypted);
+			return true;
+		}
+		catch (Exception exception) when (exception is CryptographicException or FormatException or ArgumentException)
+		{
+			return false;
+		}
+	}
+
+	/// <summary>判断是否首次启动。</summary>
 	public bool IsFirstRun() => Get(KeyFirstRunCompleted) switch
 	{
 		null => true,
@@ -429,16 +598,14 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		_ => false,
 	};
 
-	/// <summary>
-	/// 标记首次启动完成
-	/// </summary>
+	/// <summary>标记首次启动完成。</summary>
 	public void MarkFirstRunCompleted() => Set(KeyFirstRunCompleted, new ConfigValue.Boolean(true));
 
 	/// <summary>
 	/// 原子提交首次运行向导的最终选择。
 	///
-	/// 模型、遥测开关、首次运行标记与初始化时间必须一起落盘，避免进程在
-	/// 首次运行标记已经写入后崩溃，下一次启动却缺少模型配置。
+	/// 模型、遥测同意、首次运行标记与初始化时间必须一起落盘，避免进程在
+	/// 首次运行标记已经写入后崩溃，下一次启动却缺少必要配置。
 	/// </summary>
 	public void CompleteFirstRun(string modelId, bool telemetryEnabled)
 	{
@@ -450,7 +617,9 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 			try
 			{
 				SetInTransaction(connection, transaction, KeySelectedModel, new ConfigValue.Text(modelId.Trim()));
-				SetInTransaction(connection, transaction, KeyTelemetryEnabled, new ConfigValue.Boolean(telemetryEnabled));
+				TelemetryConsent consent = telemetryEnabled ? TelemetryConsent.Granted : TelemetryConsent.Denied;
+				SetInTransaction(connection, transaction, KeyTelemetryConsent,
+					new ConfigValue.Text(ConfigValidation.TelemetryConsentStorage(consent)));
 				SetInTransaction(connection, transaction, KeyFirstRunCompleted, new ConfigValue.Boolean(true));
 				SetInTransaction(connection, transaction, KeyInitializedAt, new ConfigValue.Text(Now()), insertOnly: true);
 				transaction.Commit();
@@ -463,17 +632,13 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		});
 	}
 
-	/// <summary>
-	/// 记录首次初始化完成时间 (只写一次)
-	/// </summary>
+	/// <summary>记录首次初始化完成时间 (只写一次)。</summary>
 	public void MarkInitialized()
 	{
 		if (!Exists(KeyInitializedAt)) Set(KeyInitializedAt, new ConfigValue.Text(Now()));
 	}
 
-	/// <summary>
-	/// 首次初始化配置快照, 对应前端 invoke("get_init_config")
-	/// </summary>
+	/// <summary>首次初始化配置快照, 对应前端 invoke("get_init_config")。</summary>
 	public InitConfig GetInitConfig()
 	{
 		string? initializedAt = Get(KeyInitializedAt) is ConfigValue.Text text && text.Value.Length > 0 ? text.Value : null;
@@ -488,14 +653,10 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		};
 	}
 
-	/// <summary>
-	/// 当前本地时间, 形如 2026-01-01 12:00:00
-	/// </summary>
+	/// <summary>当前本地时间, 形如 2026-01-01 12:00:00。</summary>
 	private static string Now() => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
-	/// <summary>
-	/// 系统语言, 获取失败时回退 zh-CN
-	/// </summary>
+	/// <summary>系统语言, 获取失败时回退 zh-CN。</summary>
 	public static string SystemLanguage()
 	{
 		string name = CultureInfo.CurrentUICulture.Name;

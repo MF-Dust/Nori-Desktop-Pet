@@ -4,6 +4,7 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using Nori.Core.Data;
+using Nori.Core.Security;
 
 namespace Nori.Core.Logging;
 
@@ -97,13 +98,14 @@ public sealed class FileLogger
 		LogLevel normalized = ParseLevel(level, LogLevel.Info);
 		if (normalized.Ordinal < _minimumLevel.Ordinal) return;
 
-		LogEntry entry = LogEntry.Create(source, normalized.Name.ToLowerInvariant(), message);
+		string safeMessage = SensitiveDataRedactor.Redact(message);
+		LogEntry entry = LogEntry.Create(source, normalized.Name.ToLowerInvariant(), safeMessage);
 		lock (_gate)
 		{
 			_memory.Enqueue(entry);
 			while (_memory.Count > MaxMemoryEntries) _memory.Dequeue();
 
-			LogEventInfo eventInfo = new(normalized, source == LogSource.Backend ? _backend.Name : _frontend.Name, message);
+			LogEventInfo eventInfo = new(normalized, source == LogSource.Backend ? _backend.Name : _frontend.Name, safeMessage);
 			eventInfo.Properties["nori-time"] = entry.Time;
 			eventInfo.Properties["nori-level"] = entry.Level;
 			try

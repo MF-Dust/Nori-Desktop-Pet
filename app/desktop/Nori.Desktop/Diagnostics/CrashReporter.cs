@@ -11,6 +11,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Nori.Core.Logging;
+using Nori.Core.Security;
 using Nori.Core.Telemetry;
 
 namespace Nori.Desktop.Diagnostics;
@@ -75,7 +76,7 @@ public static class CrashReporter
 		catch (Exception exception)
 		{
 			_telemetry.CaptureException(exception, "background_task");
-			WriteLogSafe($"{what} 失败: {exception.Message}");
+			WriteLogSafe($"{what} 失败: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 		}
 	}
 
@@ -88,7 +89,9 @@ public static class CrashReporter
 	public static void Report(Exception exception, bool critical = false)
 	{
 		_telemetry.CaptureException(exception, critical ? "startup_failure" : "unhandled_exception", critical, critical);
-		WriteLogSafe(critical ? $"致命异常: {exception}" : $"未处理异常: {exception}");
+		WriteLogSafe(critical
+			? $"致命异常: {SensitiveDataRedactor.ExceptionSummary(exception)}"
+			: $"未处理异常: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 
 		// Avalonia 还没起来 (极早期启动失败): 无法展示任何窗口, 记完日志只能退出
 		if (Application.Current is null || _lifetime is null)
@@ -138,7 +141,7 @@ public static class CrashReporter
 	public static void ReportStartupFatal(string title, string message)
 	{
 		_telemetry.CaptureException(new InvalidOperationException(title), "startup_fatal", unhandled: true, crashed: true);
-		WriteLogSafe($"启动失败: {title}: {message}");
+		WriteLogSafe($"启动失败: {SensitiveDataRedactor.Redact(title)}: {SensitiveDataRedactor.Redact(message)}");
 
 		if (Application.Current is null || _lifetime is null)
 		{
@@ -180,7 +183,7 @@ public static class CrashReporter
 	{
 		if (eventArgs.ExceptionObject is not Exception exception)
 		{
-			WriteLogSafe($"非 Exception 对象导致的域级失败: {eventArgs.ExceptionObject}");
+			WriteLogSafe($"非 Exception 对象导致的域级失败: {SensitiveDataRedactor.ExceptionType(null)}");
 			if (eventArgs.IsTerminating) ExitProcess(1);
 			return;
 		}
@@ -205,7 +208,7 @@ public static class CrashReporter
 		catch (Exception reporterFailure)
 		{
 			// 崩溃报告流程自身出错时不吞: 保持 Handled=false 让异常走域级处理器的退出路径
-			WriteLogSafe($"崩溃报告流程失败: {reporterFailure}");
+			WriteLogSafe($"崩溃报告流程失败: {SensitiveDataRedactor.ExceptionSummary(reporterFailure)}");
 		}
 	}
 
@@ -213,7 +216,7 @@ public static class CrashReporter
 	{
 		e.SetObserved(); // 已记录即视为已观察, 避免反复触发
 		_telemetry.CaptureException(e.Exception, "unobserved_task");
-		WriteLogSafe($"未观察的任务异常 (延迟至 GC 才暴露): {e.Exception}");
+		WriteLogSafe($"未观察的任务异常 (延迟至 GC 才暴露): {SensitiveDataRedactor.ExceptionSummary(e.Exception)}");
 	}
 
 	/// <summary>
@@ -225,7 +228,9 @@ public static class CrashReporter
 		report.AppendLine("程序运行中发生了未处理的异常。");
 		AppendEnvironmentInfo(report);
 		report.AppendLine(new string('=', 40));
-		report.AppendLine(exception.ToString());
+		report.AppendLine($"异常类型: {SensitiveDataRedactor.ExceptionType(exception)}");
+		if (!string.IsNullOrWhiteSpace(exception.StackTrace))
+			report.AppendLine(SensitiveDataRedactor.Redact(exception.StackTrace));
 		return report.ToString();
 	}
 

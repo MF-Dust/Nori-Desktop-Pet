@@ -49,7 +49,8 @@ public class ConfigStoreTests : IDisposable
 		Assert.Equal("0.1.0", _config.GetStringOr(ConfigStore.KeyAppVersion, ""));
 		Assert.NotEqual("", _config.GetStringOr(ConfigStore.KeyInstalledAt, ""));
 		Assert.True(_config.Exists(ConfigStore.KeyLanguage));
-		Assert.True(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, false));
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, false));
+		Assert.Equal(TelemetryConsent.Unset, _config.GetTelemetryConsent());
 	}
 
 	[Fact]
@@ -230,9 +231,104 @@ public class ConfigStoreTests : IDisposable
 		// 另一把密钥的 store 读同一条记录: 拿不到明文, 但也不能抛
 		ConfigStore other = new(_database, new WrongKeyStore());
 		string readBack = other.GetStringOr("llm_api_key", "");
+		Assert.Equal("", readBack);
 		Assert.NotEqual(plainKey, readBack);
-		Assert.Equal(cipher, readBack);
-		Assert.True(ConfigStore.IsUnreadableSecret(readBack));
+		SecretIssue? issue = other.GetSecretIssue("llm_api_key");
+		Assert.Equal(SecretIssueCategory.CorruptCiphertext, issue?.Category);
+		Assert.StartsWith(SecretProtector.Prefix, cipher, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void nsec1读取后惰性迁移到nsec2()
+	{
+		string legacy = SecretProtector.ProtectV1(Enumerable.Range(0, SecretKeyStore.KeySize).Select(index => (byte)index).ToArray(), "legacy-secret");
+		_database.Locked(connection =>
+		{
+			using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "INSERT INTO config (key, value) VALUES ('llm_api_key', $value)";
+			command.Parameters.AddWithValue("$value", legacy);
+			command.ExecuteNonQuery();
+		});
+
+		Assert.Equal("legacy-secret", _config.GetStringOr("llm_api_key", ""));
+		Assert.StartsWith(SecretProtector.Prefix, _config.RawValue("llm_api_key"), StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void 损坏密文按未配置处理并记录分类()
+	{
+		_database.Locked(connection =>
+		{
+			using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "INSERT INTO config (key, value) VALUES ('llm_api_key', 'nsec2:not-valid')";
+			command.ExecuteNonQuery();
+		});
+
+		Assert.Equal("", _config.GetStringOr("llm_api_key", ""));
+		Assert.Equal(SecretIssueCategory.CorruptCiphertext, _config.GetSecretIssue("llm_api_key")?.Category);
+	}
+
+	[Fact]
+	public void 密钥库不可用时拒绝写入且不落明文()
+	{
+		ConfigStore failing = new(_database, new ThrowingKeyStore());
+
+		Assert.Throws<SecretKeyStoreException>(() => failing.Set("llm_api_key", new ConfigValue.Text("must-not-leak")));
+		Assert.False(failing.Exists("llm_api_key"));
+		Assert.DoesNotContain("must-not-leak", failing.RawValue("llm_api_key"), StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void 旧布尔遥测迁移为三态同意()
+	{
+		string path = Path.Combine(Path.GetTempPath(), $"nori-telemetry-migration-{Guid.NewGuid():N}.db");
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			database.Locked(connection =>
+			{
+				using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+				command.CommandText = "INSERT INTO config (key, value) VALUES ('config_schema_version', '2'), ('telemetry_enabled', '1')";
+				command.ExecuteNonQuery();
+			});
+
+			ConfigStore config = new(database);
+			config.EnsureSchemaVersion();
+
+			Assert.Equal(TelemetryConsent.Unset, config.GetTelemetryConsent());
+			Assert.False(config.Exists(ConfigStore.KeyTelemetryEnabled));
+			config.SetTelemetryConsent(TelemetryConsent.Granted);
+			Assert.Equal(TelemetryConsent.Granted, config.GetTelemetryConsent());
+		}
+		finally
+		{
+			TryDeleteDatabase(path);
+		}
+	}
+
+	[Fact]
+	public void 旧布尔遥测false迁移为denied()
+	{
+		string path = Path.Combine(Path.GetTempPath(), $"nori-telemetry-denied-{Guid.NewGuid():N}.db");
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			database.Locked(connection =>
+			{
+				using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
+				command.CommandText = "INSERT INTO config (key, value) VALUES ('config_schema_version', '2'), ('telemetry_enabled', '0')";
+				command.ExecuteNonQuery();
+			});
+
+			ConfigStore config = new(database);
+			config.EnsureSchemaVersion();
+
+			Assert.Equal(TelemetryConsent.Denied, config.GetTelemetryConsent());
+		}
+		finally
+		{
+			TryDeleteDatabase(path);
+		}
 	}
 
 	[Fact]
@@ -247,5 +343,11 @@ public class ConfigStoreTests : IDisposable
 		private readonly byte[] _key = Enumerable.Repeat((byte)0xAB, SecretKeyStore.KeySize).ToArray();
 		public byte[] LoadOrCreate() => _key;
 		public bool IsFileFallback => true;
+	}
+
+	private sealed class ThrowingKeyStore : ISecretKeyStore
+	{
+		public byte[] LoadOrCreate() => throw new InvalidOperationException("keystore unavailable");
+		public bool IsFileFallback => false;
 	}
 }

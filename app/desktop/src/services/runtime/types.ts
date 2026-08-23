@@ -13,6 +13,7 @@
 export interface AppInfo {
 	appVersion: string
 	platform: string
+	debugCrashTestsAvailable: boolean
 }
 
 /** 通用设置 */
@@ -54,8 +55,17 @@ export interface PlatformState {
 
 /** 遥测状态 (不包含 DSN 或任何用户身份) */
 export interface TelemetryState {
+	consent: "unset" | "granted" | "denied"
+	/** 只有 granted 才为 true; unset 时 UI 可视觉开启但远程 SDK 必须关闭 */
 	enabled: boolean
 	available: boolean
+}
+
+/** 敏感配置问题摘要 (只含键名和分类) */
+export interface SecretIssueDto {
+	key: string
+	category: string
+	requiresUserAction: boolean
 }
 
 /** AI 大脑状态 (秘密已脱敏) */
@@ -269,6 +279,7 @@ export interface UiSnapshot {
 	app: AppInfo
 	general: GeneralState
 	telemetry: TelemetryState
+	secretIssues: SecretIssueDto[]
 	ai: AiState
 	models: ModelsState
 	pet: PetState
@@ -421,6 +432,8 @@ export interface McpServerStatusInfo {
 	name: string
 	status: "disconnected" | "connecting" | "connected" | "error"
 	errorMessage?: string
+	hasEnvironment?: boolean
+	secretIssue?: string
 	tools: {
 		name: string
 		description?: string

@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+using Nori.Core.Security;
 
 namespace Nori.Core.Telemetry;
 
@@ -8,7 +8,7 @@ namespace Nori.Core.Telemetry;
 /// 事件只允许携带固定操作名与运行环境标签; 异常正文不跨出本机。这里的文本脱敏仍作为
 /// 最后一层保险, 防止 SDK 或未来调用方把凭据放进了错误摘要、URL 或路径。
 /// </summary>
-public static partial class TelemetrySanitizer
+public static class TelemetrySanitizer
 {
 	private const int MaxOperationLength = 80;
 
@@ -17,7 +17,8 @@ public static partial class TelemetrySanitizer
 	{
 		if (string.IsNullOrWhiteSpace(operation)) return "operation";
 
-		string normalized = NonOperationCharacterRegex().Replace(operation.Trim(), "_").Trim('_');
+		string normalized = new string(operation.Trim().Select(character =>
+			char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '-' ? character : '_').ToArray()).Trim('_');
 		if (normalized.Length == 0) return "operation";
 		return normalized.Length > MaxOperationLength ? normalized[..MaxOperationLength] : normalized;
 	}
@@ -31,10 +32,7 @@ public static partial class TelemetrySanitizer
 	{
 		if (string.IsNullOrEmpty(value)) return string.Empty;
 
-		string scrubbed = CredentialUrlRegex().Replace(value, "$1[redacted]@");
-		scrubbed = QuerySecretRegex().Replace(scrubbed, "$1[redacted]");
-		scrubbed = AssignmentSecretRegex().Replace(scrubbed, "$1[redacted]");
-		scrubbed = PathRegex().Replace(scrubbed, "[path]");
+		string scrubbed = SensitiveDataRedactor.Redact(value);
 		return scrubbed.Length > 240 ? scrubbed[..240] : scrubbed;
 	}
 
@@ -42,18 +40,4 @@ public static partial class TelemetrySanitizer
 	public static string SanitizeExceptionValue(Exception? exception) =>
 		exception is null ? "Exception" : exception.GetType().FullName ?? exception.GetType().Name;
 
-	[GeneratedRegex(@"[^A-Za-z0-9_.-]+", RegexOptions.CultureInvariant)]
-	private static partial Regex NonOperationCharacterRegex();
-
-	[GeneratedRegex(@"(?i)(https?://)[^\s/@:]+(?::[^\s/@]*)?@", RegexOptions.CultureInvariant)]
-	private static partial Regex CredentialUrlRegex();
-
-	[GeneratedRegex(@"(?i)([?&](?:api[_-]?key|authorization|bearer|token|password|secret|cookie)=)[^&#\s]*", RegexOptions.CultureInvariant)]
-	private static partial Regex QuerySecretRegex();
-
-	[GeneratedRegex(@"(?i)((?:api[_-]?key|authorization|bearer|token|password|secret|cookie)\s*[:=]\s*)[^\s,;]+", RegexOptions.CultureInvariant)]
-	private static partial Regex AssignmentSecretRegex();
-
-	[GeneratedRegex(@"(?i)(?:[A-Za-z]:\\|/Users/|/home/|/tmp/|/var/folders/)[^\r\n\s]+", RegexOptions.CultureInvariant)]
-	private static partial Regex PathRegex();
 }

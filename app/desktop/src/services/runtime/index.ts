@@ -60,6 +60,7 @@ export type {
 	ProactiveState,
 	TelemetryState,
 	ReminderDto,
+	SecretIssueDto,
 	SkillDto,
 	ToolDto,
 	UsageMetrics,

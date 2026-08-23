@@ -12,11 +12,13 @@ using Nori.Core.Mcp;
 using Nori.Core.Network;
 using Nori.Core.Proactive;
 using Nori.Core.Skills;
+using Nori.Core.Security;
 using Nori.Core.Tools;
 using Nori.Core.Telemetry;
 using Nori.Core.Voice;
 using Nori.Desktop.Audio;
 using Nori.Desktop.Bridge;
+using Nori.Desktop.Telemetry;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Runtime;
@@ -123,7 +125,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		ReflectionService reflection = new(services.Http, services.Chat, Memory, config);
 		_reflectionWorker = new ReflectionWorker(_reflectionQueue, reflection, exception =>
 		{
-			try { services.Logger.Write(LogSource.Backend, "warn", $"记忆整理失败: {exception.Message}"); }
+			try { services.Logger.Write(LogSource.Backend, "warn", $"记忆整理失败: {SensitiveDataRedactor.ExceptionSummary(exception)}"); }
 			catch { }
 		}, () => InvalidateSnapshot("memory"));
 		Skills = new SkillService(config, services.PublicHttp);
@@ -396,7 +398,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		}
 		catch (Exception exception)
 		{
-			try { Services.Logger.Write(LogSource.Backend, "warn", $"桌宠 AI 互动失败: {exception.Message}"); } catch { }
+			try { Services.Logger.Write(LogSource.Backend, "warn", $"桌宠 AI 互动失败: {SensitiveDataRedactor.ExceptionSummary(exception)}"); } catch { }
 			PostActivePetInteractionFallback(trigger, requestCts);
 		}
 		finally
@@ -502,7 +504,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		}
 		catch (Exception exception)
 		{
-			try { Services.Logger.Write(LogSource.Backend, "warn", $"桌宠互动朗读失败: {exception.Message}"); } catch { }
+			try { Services.Logger.Write(LogSource.Backend, "warn", $"桌宠互动朗读失败: {SensitiveDataRedactor.ExceptionSummary(exception)}"); } catch { }
 		}
 		finally
 		{
@@ -524,7 +526,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		{
 			try
 			{
-				Services.Logger.Write(LogSource.Backend, "warn", $"主动朗读失败: {exception.Message}");
+				Services.Logger.Write(LogSource.Backend, "warn", $"主动朗读失败: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 			}
 			catch
 			{
@@ -686,7 +688,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			}
 			catch (Exception exception)
 			{
-				PostAgentEvent(session.SourceLabel, new {type = "error", sessionId, error = exception.Message});
+				PostAgentEvent(session.SourceLabel, new {type = "error", sessionId, error = SensitiveDataRedactor.Redact(exception.Message)});
 			}
 			finally
 			{
@@ -872,7 +874,12 @@ public sealed class AppRuntime : IAsyncDisposable
 		return new
 		{
 			version = SnapshotVersion,
-			app = new {appVersion = config.GetStringOr("app_version", "0.1.0"), platform = PlatformOsName()},
+			app = new
+			{
+				appVersion = config.GetStringOr("app_version", "0.1.0"),
+				platform = PlatformOsName(),
+				debugCrashTestsAvailable = !SentryTelemetry.IsProductionBuild,
+			},
 			general = new
 			{
 				language = config.GetStringOr("language", "zh-CN"),
@@ -881,9 +888,16 @@ public sealed class AppRuntime : IAsyncDisposable
 			},
 			telemetry = new
 			{
-				enabled = config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true),
+				consent = ConfigValidation.TelemetryConsentStorage(config.GetTelemetryConsent()),
+				enabled = config.GetTelemetryConsent() == TelemetryConsent.Granted,
 				available = Services.Telemetry.IsAvailable,
 			},
+			secretIssues = config.GetSecretIssues().Select(issue => new
+			{
+				key = issue.Key,
+				category = issue.Code,
+				requiresUserAction = issue.RequiresUserAction,
+			}).ToArray(),
 			ai = new
 			{
 				configured = baseUrl.Length > 0 && hasApiKey && model.Length > 0,
@@ -1235,7 +1249,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			try
 			{
 				Services.Telemetry.CaptureException(exception, "runtime.background_task");
-				Services.Logger.Write(LogSource.Backend, "warn", $"{name} failed: {exception.Message}");
+				Services.Logger.Write(LogSource.Backend, "warn", $"{name} failed: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 			}
 			catch { }
 		}

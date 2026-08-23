@@ -96,10 +96,10 @@ public sealed class App : Application
 		CrashReporter.AttachLogger(logger); // 兜底日志与应用共用同一个写入器
 		logger.Write(LogSource.Backend, "info", "日志系统初始化完成");
 
-		// Initialize native telemetry before probing the UI runtime or opening the database.
+		// 先挂接但保持关闭。数据库中的明确同意状态读取完成前, Native Sentry 不得初始化,
+		// 这样 WebView/数据库探测等启动失败始终只留在本机。
 		SentryTelemetry telemetry = new(SentryBuildConfig.NativeDsn, SentryBuildConfig.Release, SentryBuildConfig.Environment);
 		_startupTelemetry = telemetry;
-		telemetry.Configure(true);
 		CrashReporter.AttachTelemetry(telemetry);
 
 		// WebView 运行时缺失时给个能看懂的提示, 而不是弹几个空白窗口。
@@ -123,8 +123,6 @@ public sealed class App : Application
 		NoriDatabase database = NoriDatabase.Open();
 		_startupDatabase = database;
 		ConfigStore config = new(database);
-		telemetry.Configure(config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
-		using ITelemetryTransaction startupTransaction = telemetry.StartTransaction("app.startup");
 		try
 		{
 			config.InitDefaults(AppVersion());
@@ -136,7 +134,10 @@ public sealed class App : Application
 			CrashReporter.ReportStartupFatal("配置数据库版本过高", exception.Message);
 			return;
 		}
-		logger.Write(LogSource.Backend, "info", $"数据库已打开: {AppPaths.DatabasePath}");
+		// 只有完成配置迁移并确认 consent=granted 后才允许初始化 Native Sentry。
+		telemetry.Configure(config.GetTelemetryConsent() == TelemetryConsent.Granted);
+		using ITelemetryTransaction startupTransaction = telemetry.StartTransaction("app.startup");
+		logger.Write(LogSource.Backend, "info", "数据库已打开");
 
 		// 默认校验服务器证书。自签名/私有部署的大模型端点可通过 allow_insecure_tls 显式放开。
 		bool insecureTls = ParseBoolFlag(config.GetStringOr("allow_insecure_tls", "")) ?? false;

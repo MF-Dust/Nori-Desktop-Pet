@@ -15,31 +15,41 @@ const MAX_REPEAT = 5
 const REPEAT_COUNTS = new Map<string, number>()
 
 /**
- * 格式化任意抛出值为可读文本 (Error 带堆栈, 其余 String 化)
+ * 中央错误脱敏边界。
+ *
+ * 错误消息和堆栈可能包含聊天内容、请求正文、令牌或本机路径; 日志只记录类型,
+ * 具体错误仍通过界面反馈给用户, 不把原文送入宿主日志。
  */
+export const RedactErrorText = (value: string): string => value
+	.replace(/https?:\/\/[^\s/@:]+(?::[^\s/@]*)?@/gi, "https://[redacted]@")
+	.replace(/([?&](?:api[_-]?key|authorization|bearer|token|password|secret|cookie)=)[^&#\s]*/gi, "$1[redacted]")
+	.replace(/((?:api[_-]?key|authorization|bearer|token|password|secret|cookie)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+	.replace(/(?:[A-Za-z]:\\|\/Users\/|\/home\/|\/tmp\/|\/var\/folders\/)[^\r\n\s]+/gi, "[path]")
+	.slice(0, 1000)
+
+/** 只返回稳定的错误类型, 不保留异常正文或堆栈。 */
 const formatError = (error: unknown): string => {
-	if (error instanceof Error) {
-		return [`${error.name}: ${error.message}`, error.stack ?? ""].filter(Boolean).join("\n")
-	}
-	return String(error)
+	if (error instanceof Error) return `${error.name}: [redacted]`
+	return "UnknownError: [redacted]"
 }
 
 /**
  * 转发到宿主日志; 同一首行消息限流, 超出后静默丢弃
  */
 const forward = async (message: string): Promise<void> => {
-	const KEY = message.split("\n")[0] ?? message
+	const SAFE_MESSAGE = RedactErrorText(message)
+	const KEY = SAFE_MESSAGE.split("\n")[0] ?? SAFE_MESSAGE
 	const COUNT = (REPEAT_COUNTS.get(KEY) ?? 0) + 1
 	REPEAT_COUNTS.set(KEY, COUNT)
-	if (COUNT === MAX_REPEAT + 1) console.warn(`[error] 相同错误已达上限, 后续不再转发: ${KEY}`)
+	if (COUNT === MAX_REPEAT + 1) console.warn(`[error] 相同错误已达上限, 后续不再转发: ${RedactErrorText(KEY)}`)
 	if (REPEAT_COUNTS.size > 256) REPEAT_COUNTS.delete(REPEAT_COUNTS.keys().next().value as string)
 	if (COUNT > MAX_REPEAT) return
 	try {
-		await invoke("write_log", {level: "error", message})
+		await invoke("write_log", {level: "error", message: SAFE_MESSAGE})
 	} catch (failure) {
 		// 上报自身失败只走控制台, 绝不递归触发捕获
-		console.error("[error] 错误上报失败:", failure)
-		console.error(message)
+		console.error("[error] 错误上报失败:", RedactErrorText(formatError(failure)))
+		console.error(SAFE_MESSAGE)
 	}
 }
 
@@ -63,7 +73,7 @@ export const installErrorHandlers = (app: App): void => {
 		const ERROR = event.error instanceof Error ? event.error : new Error("window error")
 		CaptureError(ERROR, "window.error")
 		const DETAIL = event.error instanceof Error ? `\n${formatError(event.error)}` : ""
-		void forward(`[window.onerror] ${event.message || "window error"}${DETAIL}`)
+		void forward(`[window.onerror] ${RedactErrorText(event.message || "window error")}${DETAIL}`)
 	})
 	// 未处理的 Promise 拒绝
 	window.addEventListener("unhandledrejection", (event) => {

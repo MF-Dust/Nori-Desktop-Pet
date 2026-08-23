@@ -20,6 +20,6 @@ export const NormalizeOperation = (value: string): string => {
 	return (normalized || "operation").slice(0, 80)
 }
 
-/** 无快照、无 DSN 或用户关闭时不创建 Web transport。 */
+/** 无快照、无 DSN 或 consent 未明确 granted 时不创建 Web transport。 */
 export const ShouldEnableTelemetry = (dsn: string, state: TelemetryState | undefined): boolean =>
-	Boolean(dsn && state?.available && state.enabled)
+	Boolean(dsn && state?.available && state.consent === "granted" && state.enabled)

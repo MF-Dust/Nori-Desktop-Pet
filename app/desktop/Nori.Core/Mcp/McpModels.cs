@@ -33,7 +33,12 @@ public sealed record McpServerConfig
 	[JsonPropertyName("args")]
 	public string[]? Args { get; init; }
 
+	/// <summary>
+	/// 仅用于后端连接输入; 持久化时由 McpEnvironmentStore 拆分到独立密文,
+	/// 不会出现在服务器状态 DTO 中。
+	/// </summary>
 	[JsonPropertyName("env")]
+	[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
 	public Dictionary<string, string>? Env { get; init; }
 
 	[JsonPropertyName("url")]
@@ -152,6 +157,14 @@ public sealed record McpServerStatusInfo
 
 	[JsonPropertyName("resources")]
 	public IReadOnlyList<McpResourceDefinition> Resources { get; init; } = [];
+
+	/// <summary>是否存在可用的环境变量, 不返回环境变量本身。</summary>
+	[JsonPropertyName("hasEnvironment")]
+	public bool HasEnvironment { get; init; }
+
+	/// <summary>环境变量密钥问题分类, 不包含值。</summary>
+	[JsonPropertyName("secretIssue")]
+	public string? SecretIssue { get; init; }
 }
 
 /// <summary>

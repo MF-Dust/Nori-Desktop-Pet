@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nori.Core.Configuration;
+using Nori.Core.Security;
 using ModelContextProtocol.Client;
 
 namespace Nori.Core.Mcp;
@@ -15,6 +16,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 	private readonly HttpClient _httpClient = httpClient;
 	private readonly ConfigStore _configStore = configStore;
+	private readonly McpEnvironmentStore _environmentStore = new(configStore);
 	private readonly ConcurrentDictionary<string, OfficialMcpConnection> _activeClients = new();
 	private readonly ConcurrentDictionary<string, McpServerStatusInfo> _serverStatuses = new();
 	private readonly ConcurrentBag<Task> _backgroundTasks = new();
@@ -32,9 +34,15 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 		foreach (McpServerConfig conf in configs)
 		{
+			SecretIssue? secretIssue = _environmentStore.GetIssue(conf.Id);
+			bool hasEnvironment = conf.Env is {Count: > 0};
 			if (_serverStatuses.TryGetValue(conf.Id, out McpServerStatusInfo? status))
 			{
-				results.Add(status);
+				results.Add(status with
+				{
+					HasEnvironment = hasEnvironment,
+					SecretIssue = secretIssue?.Code,
+				});
 			}
 			else
 			{
@@ -42,7 +50,10 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				{
 					ServerId = conf.Id,
 					Name = conf.Name,
-					Status = "disconnected",
+					Status = secretIssue?.RequiresUserAction == true ? "error" : "disconnected",
+					ErrorMessage = secretIssue?.RequiresUserAction == true ? "MCP 环境变量密钥不可用, 请重新填写" : null,
+					HasEnvironment = hasEnvironment,
+					SecretIssue = secretIssue?.Code,
 				});
 			}
 		}
@@ -51,9 +62,10 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	}
 
 	/// <summary>
-	/// 获取所有已配置的服务器配置原始列表
+	/// 获取所有已配置的服务器元数据。
+	/// 环境变量永远不会从这个前端可见的配置查询出口返回。
 	/// </summary>
-	public IReadOnlyList<McpServerConfig> GetServerConfigs() => LoadConfigs();
+	public IReadOnlyList<McpServerConfig> GetServerConfigs() => LoadConfigs(includeEnvironment: false);
 
 	/// <summary>
 	/// 保存/更新服务器配置并根据启用状态自动连接
@@ -92,6 +104,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				ServerId = config.Id,
 				Name = config.Name,
 				Status = "disconnected",
+				HasEnvironment = config.Env is {Count: > 0},
+				SecretIssue = _environmentStore.GetIssue(config.Id)?.Code,
 			};
 			_serverStatuses[config.Id] = disconnectedStatus;
 			return disconnectedStatus;
@@ -116,6 +130,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			{
 				SaveConfigs(configs);
 			}
+			if (ConfigValidation.IsValidMcpServerId(serverId)) _environmentStore.Delete(serverId);
 
 			if (_activeClients.TryRemove(serverId, out OfficialMcpConnection? client))
 			{
@@ -234,7 +249,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			return new McpToolResult
 			{
 				IsError = true,
-				Content = [new McpContentItem { Text = $"调用 MCP 工具失败: {exception.Message}" }],
+				Content = [new McpContentItem { Text = $"调用 MCP 工具失败: {SensitiveDataRedactor.Redact(exception.Message)}" }],
 			};
 		}
 	}
@@ -260,6 +275,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				Status = "connected",
 				Tools = tools,
 				Resources = resources,
+				HasEnvironment = config.Env is {Count: > 0},
+				SecretIssue = _environmentStore.GetIssue(config.Id)?.Code,
 			};
 		}
 		catch (Exception exception)
@@ -350,6 +367,21 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	private async Task<McpServerStatusInfo> ConnectServerInternalAsync(McpServerConfig config)
 	{
 		config = McpConfigValidator.Validate(config);
+		SecretIssue? secretIssue = _environmentStore.GetIssue(config.Id);
+		if (secretIssue?.RequiresUserAction == true)
+		{
+			McpServerStatusInfo blocked = new()
+			{
+				ServerId = config.Id,
+				Name = config.Name,
+				Status = "error",
+				ErrorMessage = "MCP 环境变量密钥不可用, 请重新填写",
+				SecretIssue = secretIssue.Code,
+			};
+			_serverStatuses[config.Id] = blocked;
+			return blocked;
+		}
+
 		if (_activeClients.TryRemove(config.Id, out OfficialMcpConnection? existing))
 		{
 			await existing.DisposeAsync();
@@ -360,6 +392,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			ServerId = config.Id,
 			Name = config.Name,
 			Status = "connecting",
+			HasEnvironment = config.Env is {Count: > 0},
 		};
 
 		OfficialMcpConnection? client = null;
@@ -380,6 +413,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				Status = "connected",
 				Tools = tools,
 				Resources = resources,
+				HasEnvironment = config.Env is {Count: > 0},
+				SecretIssue = _environmentStore.GetIssue(config.Id)?.Code,
 			};
 			_serverStatuses[config.Id] = connectedStatus;
 			return connectedStatus;
@@ -398,6 +433,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				Name = config.Name,
 				Status = "error",
 				ErrorMessage = DescribeConnectionError(exception),
+				HasEnvironment = config.Env is {Count: > 0},
+				SecretIssue = _environmentStore.GetIssue(config.Id)?.Code,
 			};
 			_serverStatuses[config.Id] = errorStatus;
 			return errorStatus;
@@ -410,16 +447,56 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			?? (exception as AggregateException)?.Flatten().InnerExceptions.OfType<ClientTransportClosedException>().FirstOrDefault();
 		if (transport?.Details is StdioClientCompletionDetails stdio)
 		{
-			string stderr = stdio.StandardErrorTail is not {Count: > 0} ? "" : $" stderr: {string.Join(" | ", stdio.StandardErrorTail)}";
-			return $"MCP 进程已退出 (code={stdio.ExitCode?.ToString() ?? "unknown"}).{stderr}";
+			// stderr 可能包含环境变量、访问令牌或用户输入, 只保留退出码。
+			return $"MCP 进程已退出 (code={stdio.ExitCode?.ToString() ?? "unknown"})";
 		}
-		return exception.Message;
+		return Nori.Core.Security.SensitiveDataRedactor.Redact(exception.Message);
 	}
 
-	private List<McpServerConfig> LoadConfigs()
+	private List<McpServerConfig> LoadConfigs(bool includeEnvironment = true)
+	{
+		List<McpServerConfig> metadata = LoadMetadata();
+		List<McpServerConfig> result = [];
+		bool migrated = false;
+		foreach (McpServerConfig original in metadata)
+		{
+			McpServerConfig config = original;
+			if (original.Env is {Count: > 0})
+			{
+				// 旧版把 env 和元数据一起写入 mcp_servers; 先尝试加密, 无法加密时
+				// 也要从元数据移除明文, 让该服务器按无环境变量 fail-closed 运行。
+				try
+				{
+					_environmentStore.Save(original.Id, original.Env);
+				}
+				catch (Exception exception) when (exception is SecretKeyStoreException or InvalidOperationException or IOException or UnauthorizedAccessException)
+				{
+					_configStore.RecordSecretIssue(McpEnvironmentStore.KeyFor(original.Id), SecretIssueCategory.KeyStoreUnavailable);
+				}
+				config = config with {Env = null};
+				migrated = true;
+			}
+
+			if (includeEnvironment && config.Env is null)
+			{
+				IReadOnlyDictionary<string, string> environment = _environmentStore.Read(config.Id);
+				config = config with {Env = environment.Count == 0 ? null : new Dictionary<string, string>(environment)};
+			}
+			else
+			{
+				config = config with {Env = null};
+			}
+			result.Add(config);
+		}
+
+		if (migrated) SaveMetadata(result.Select(config => config with {Env = null}).ToList());
+		return result;
+	}
+
+	private List<McpServerConfig> LoadMetadata()
 	{
 		ConfigValue? val = _configStore.Get(KeyMcpServers);
-		if (val is not ConfigValue.Json { Value: JsonArray array }) return [];
+		if (val is not ConfigValue.Json {Value: JsonArray array}) return [];
 		try
 		{
 			List<McpServerConfig> parsed = array.Deserialize<List<McpServerConfig>>() ?? [];
@@ -439,11 +516,17 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 	private void SaveConfigs(List<McpServerConfig> configs)
 	{
+		foreach (McpServerConfig config in configs)
+		{
+			_environmentStore.Save(config.Id, config.Env);
+		}
+		SaveMetadata(configs.Select(config => config with {Env = null}).ToList());
+	}
+
+	private void SaveMetadata(List<McpServerConfig> configs)
+	{
 		string json = JsonSerializer.Serialize(configs);
 		JsonNode? node = JsonNode.Parse(json);
-		if (node is JsonArray array)
-		{
-			_configStore.Set(KeyMcpServers, new ConfigValue.Json(array));
-		}
+		if (node is JsonArray array) _configStore.Set(KeyMcpServers, new ConfigValue.Json(array));
 	}
 }

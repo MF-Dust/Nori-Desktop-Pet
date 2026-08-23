@@ -16,10 +16,12 @@ using Nori.Core.Memory;
 using Nori.Core.Mcp;
 using Nori.Core.Platform;
 using Nori.Core.Resources;
+using Nori.Core.Security;
 using Nori.Core.Skills;
 using Nori.Core.Tools;
 using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Runtime;
+using Nori.Desktop.Telemetry;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Bridge;
@@ -171,8 +173,8 @@ public sealed class BridgeCommands
 				UpdateOptionalConfig(args, "language", ConfigStore.KeyLanguage);
 				UpdateBoolConfig(args, "petAutoSummon", "pet_auto_summon");
 				UpdateBoolConfig(args, "sidebarCollapsed", "ui_sidebar_collapsed");
-				UpdateBoolConfig(args, "telemetryEnabled", ConfigStore.KeyTelemetryEnabled);
-				_services.Telemetry.Configure(_services.Config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+				UpdateTelemetryConsent(source, args);
+				_services.Telemetry.Configure(_services.Config.GetTelemetryConsent() == TelemetryConsent.Granted);
 				Runtime.InvalidateSnapshot("general", "telemetry");
 			})),
 
@@ -1113,6 +1115,22 @@ public sealed class BridgeCommands
 		}
 	}
 
+	/// <summary>保存遥测三态同意; 首次运行的默认开启只在完成向导时确认。</summary>
+	private void UpdateTelemetryConsent(IBridgeSource source, JsonElement args)
+	{
+		bool? enabled = OptionalBool(args, "telemetryEnabled");
+		if (enabled is null) return;
+
+		if (source.Label == WindowLabels.FirstRun)
+		{
+			_services.Config.SetTelemetryConsent(enabled.Value ? TelemetryConsent.Unset : TelemetryConsent.Denied);
+		}
+		else
+		{
+			_services.Config.SetTelemetryConsent(enabled.Value ? TelemetryConsent.Granted : TelemetryConsent.Denied);
+		}
+	}
+
 	private void UpdateNumberConfig(JsonElement args, string argName, string configKey)
 	{
 		if (args.ValueKind == JsonValueKind.Object
@@ -1473,6 +1491,9 @@ public sealed class BridgeCommands
 
 	private object? DebugCrashTest(string mode)
 	{
+		if (SentryTelemetry.IsProductionBuild)
+			throw new InvalidOperationException("生产环境不支持调试崩溃测试");
+
 		switch (mode)
 		{
 			case "ui_thread":

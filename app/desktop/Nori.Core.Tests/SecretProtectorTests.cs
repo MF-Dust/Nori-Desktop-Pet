@@ -29,6 +29,28 @@ public class SecretProtectorTests
 	}
 
 	[Fact]
+	public void nsec2使用配置键作为AAD()
+	{
+		byte[] key = Key(0x2A);
+		string cipher = SecretProtector.ProtectV2(key, "llm_api_key", "secret");
+
+		Assert.StartsWith(SecretProtector.Nsec2Prefix, cipher, StringComparison.Ordinal);
+		Assert.True(SecretProtector.TryUnprotectV2(key, "llm_api_key", cipher, out string plain));
+		Assert.Equal("secret", plain);
+		Assert.False(SecretProtector.TryUnprotectV2(key, "tts_api_key", cipher, out _));
+	}
+
+	[Fact]
+	public void nsec1仍可读取()
+	{
+		string cipher = SecretProtector.ProtectV1(Key(0x2B), "legacy");
+
+		Assert.StartsWith(SecretProtector.LegacyNsec1Prefix, cipher, StringComparison.Ordinal);
+		Assert.True(SecretProtector.TryUnprotect(Key(0x2B), "any_key", cipher, out string plain));
+		Assert.Equal("legacy", plain);
+	}
+
+	[Fact]
 	public void 错误密钥拒绝解密()
 	{
 		string cipher = SecretProtector.Protect(Key(0x33), "secret");

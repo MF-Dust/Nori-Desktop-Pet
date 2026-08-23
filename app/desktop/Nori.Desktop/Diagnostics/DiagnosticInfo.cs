@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Nori.Core.Data;
+using Nori.Core.Security;
 using Nori.Desktop.Live2D;
 
 namespace Nori.Desktop.Diagnostics;
@@ -32,10 +33,10 @@ public static class DiagnosticInfo
 			["os_arch"] = RuntimeInformation.OSArchitecture.ToString(),
 			["process_uptime"] = FormatDuration(Environment.TickCount64),
 			["process_bits"] = Environment.Is64BitProcess ? "64-bit" : "32-bit",
-			["data_dir"] = AppPaths.DataDir,
-			["resources_dir"] = AppPaths.ResourcesDir,
-			["log_dir"] = AppPaths.LogDir,
-			["database_path"] = AppPaths.DatabasePath,
+			["data_dir"] = SensitiveDataRedactor.Redact(AppPaths.DataDir),
+			["resources_dir"] = SensitiveDataRedactor.Redact(AppPaths.ResourcesDir),
+			["log_dir"] = SensitiveDataRedactor.Redact(AppPaths.LogDir),
+			["database_path"] = SensitiveDataRedactor.Redact(AppPaths.DatabasePath),
 			["database_size"] = dbBytes < 0 ? "不存在" : FormatSize(dbBytes),
 			["live2d_effective_quality"] = render?.EffectiveQuality ?? "unknown",
 			["live2d_effective_fps"] = render?.EffectiveFps.ToString() ?? "0",

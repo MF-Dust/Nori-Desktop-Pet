@@ -90,6 +90,17 @@ public class FileLoggerTests : IDisposable
 	}
 
 	[Fact]
+	public void 日志会统一脱敏凭据和路径()
+	{
+		_logger.Write(LogSource.Backend, "error", "api_key=secret-value https://user:pass@example.com /home/user/nori.db");
+
+		string message = _logger.RecentLogs()[0].Message;
+		Assert.DoesNotContain("secret-value", message, StringComparison.Ordinal);
+		Assert.DoesNotContain("user:pass", message, StringComparison.Ordinal);
+		Assert.DoesNotContain("/home/user/nori.db", message, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public void 日志时间使用统一格式()
 	{
 		_logger.Write(LogSource.Backend, "info", "时间格式");

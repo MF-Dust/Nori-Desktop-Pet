@@ -40,6 +40,7 @@ const diagnostic = ref<Record<string, string>>({})
 const gcReleased = ref("")
 const gcFailed = ref(false)
 const busy = ref(false)
+const DEBUG_CRASH_TESTS_AVAILABLE = computed(() => RUNTIME.snapshot.value?.app.debugCrashTestsAvailable ?? false)
 
 const FILTERED_LOGS = computed(() =>
 	levelFilter.value === "all" ? logs.value : logs.value.filter((item) => item.level === levelFilter.value)
@@ -277,6 +278,7 @@ const formatBytes = (bytes: number): string => {
 
 			<!-- 4. 危险操作 (危险语义边框, 不复用 AppCard 的青绿头部) -->
 			<section
+				v-if="DEBUG_CRASH_TESTS_AVAILABLE"
 				class="surface-card border-danger/30 flex flex-col gap-3 p-4
 					transition-colors duration-200 hover:border-danger/60"
 			>

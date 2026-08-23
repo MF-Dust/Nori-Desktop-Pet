@@ -72,9 +72,9 @@ public sealed class McpSseTransport(HttpClient httpClient, McpServerConfig confi
 			using HttpResponseMessage response = await _httpClient.PostAsJsonAsync(_postEndpoint, request, linked.Token);
 			if (!response.IsSuccessStatusCode)
 			{
-				string error = await response.Content.ReadAsStringAsync(linked.Token);
 				_pendingRequests.TryRemove(requestId, out _);
-				throw new HttpRequestException($"MCP SSE 请求失败: HTTP {(int)response.StatusCode}, {error}");
+				// 不读取或记录响应正文, 其中可能包含令牌、请求内容或服务器内部信息。
+				throw new HttpRequestException($"MCP SSE 请求失败: HTTP {(int)response.StatusCode}");
 			}
 
 			// 部分 SSE 服务直接在 POST 响应里返回结果

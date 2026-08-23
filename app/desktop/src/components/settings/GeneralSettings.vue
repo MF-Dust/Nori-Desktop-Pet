@@ -12,14 +12,17 @@ const currentLang = ref("zh-CN")
 const autoSummon = ref(true)
 const appVersion = ref("0.1.0")
 const telemetryEnabled = ref(true)
+const telemetryConsent = ref<"unset" | "granted" | "denied">("unset")
 const telemetryAvailable = ref(false)
 const TEXT = computed(() => useLanguages().views.main.general)
 const TELEMETRY_DESC = computed(() => {
 	if (!telemetryAvailable.value) return TEXT.value.telemetry.unavailable
+	if (telemetryConsent.value === "unset") return TEXT.value.telemetry.pending
 	return telemetryEnabled.value ? TEXT.value.telemetry.enabledDesc : TEXT.value.telemetry.disabled
 })
 const TELEMETRY_STATUS = computed(() => {
 	if (!telemetryAvailable.value) return TEXT.value.telemetry.unavailable
+	if (telemetryConsent.value === "unset") return TEXT.value.telemetry.statusPending
 	return telemetryEnabled.value ? TEXT.value.telemetry.statusEnabled : TEXT.value.telemetry.statusDisabled
 })
 
@@ -31,7 +34,8 @@ onMounted(async () => {
 	synced = true
 	currentLang.value = SNAPSHOT.general.language
 	autoSummon.value = SNAPSHOT.general.petAutoSummon
-	telemetryEnabled.value = SNAPSHOT.telemetry.enabled
+	telemetryConsent.value = SNAPSHOT.telemetry.consent
+	telemetryEnabled.value = SNAPSHOT.telemetry.consent !== "denied"
 	telemetryAvailable.value = SNAPSHOT.telemetry.available
 	appVersion.value = SNAPSHOT.app.appVersion
 })
@@ -53,6 +57,7 @@ const onTelemetryChange = async (val: boolean) => {
 	telemetryEnabled.value = val
 	try {
 		await RUNTIME.updateGeneral({telemetryEnabled: val})
+		telemetryConsent.value = val ? "granted" : "denied"
 	} catch (error) {
 		telemetryEnabled.value = PREVIOUS
 		feedback.error(TEXT.value.telemetry.saveFailed, error)

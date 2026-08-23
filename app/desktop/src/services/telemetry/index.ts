@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/vue"
 import type {ErrorEvent, Event, SpanJSON, TransactionEvent} from "@sentry/core"
 import type {App} from "vue"
 import type {Router} from "vue-router"
@@ -16,6 +15,10 @@ const MAX_RECENT_ERRORS = 128
 const RECENT_ERROR_TTL_MS = 1000
 const SCRUBBED_URL = "app://webview"
 
+type SentryModule = typeof import("@sentry/vue")
+
+// 绝不能静态 import。只有 consent=granted 且存在 DSN 时才加载 Web Sentry chunk。
+let SENTRY: SentryModule | null = null
 let active = false
 let initialized = false
 let consentEnabled = false
@@ -60,7 +63,6 @@ const scrubStackPath = (value: unknown): string => {
 	}
 	return PATH.replace(/[?#].*$/, "").slice(0, 256)
 }
-
 
 const scrubFrame = (frame: {filename?: string; abs_path?: string; module?: string; vars?: unknown; pre_context?: unknown; post_context?: unknown}): void => {
 	if (frame.filename !== undefined) frame.filename = scrubStackPath(frame.filename)
@@ -108,8 +110,8 @@ export const scrubReplayRecordingEvent = (event: unknown): unknown => scrubRepla
 
 /** 把错误压缩成稳定 key, 只用于本地去重, 不会发送给 Sentry。 */
 const errorKey = (error: unknown): string => {
-	const KEY = error instanceof Error ? `${error.name}:${error.message}` : `${typeof error}:${String(error)}`
-	return KEY.slice(0, 240)
+	const KEY = error instanceof Error ? error.name : typeof error
+	return KEY.slice(0, 80)
 }
 
 /** 前端事件最后一道脱敏边界。 */
@@ -170,9 +172,10 @@ export const scrubTransaction = (event: TransactionEvent): TransactionEvent | nu
 }
 
 /** 初始化 Web SDK; Replay 作为可选集成单独控制。 */
-const InitializeWebSentry = (app: App, router: Router, includeReplay: boolean): ReplayController | undefined => {
-	Sentry.init({
+const InitializeWebSentry = (SDK: SentryModule, app: App, router: Router, includeReplay: boolean): ReplayController | undefined => {
+	SDK.init({
 		app,
+		enabled: false,
 		attachErrorHandler: false,
 		attachProps: false,
 		dsn: WEB_DSN,
@@ -181,7 +184,7 @@ const InitializeWebSentry = (app: App, router: Router, includeReplay: boolean): 
 		integrations: integrations => {
 			const RESULT = integrations
 				.filter(integration => !REPLAY_INTEGRATIONS.has(integration.name))
-				.concat(Sentry.browserTracingIntegration({
+				.concat(SDK.browserTracingIntegration({
 					router,
 					traceFetch: false,
 					traceXHR: false,
@@ -189,7 +192,7 @@ const InitializeWebSentry = (app: App, router: Router, includeReplay: boolean): 
 					instrumentNavigation: true,
 				}))
 			if (includeReplay) {
-				RESULT.push(Sentry.replayIntegration({
+				RESULT.push(SDK.replayIntegration({
 					...REPLAY_OPTIONS,
 					networkCaptureBodies: false,
 					beforeAddRecordingEvent: event => scrubReplayRecordingEvent(event) as typeof event,
@@ -205,9 +208,14 @@ const InitializeWebSentry = (app: App, router: Router, includeReplay: boolean): 
 		beforeSendTransaction: scrubTransaction,
 		beforeBreadcrumb: () => null,
 	})
-	const CLIENT = Sentry.getClient()
+	const CLIENT = SDK.getClient()
 	CLIENT?.addEventProcessor(scrubReplayEvent)
 	return includeReplay ? CLIENT?.getIntegrationByName("Replay") as unknown as ReplayController | undefined : undefined
+}
+
+const loadWebSentry = async (): Promise<SentryModule> => {
+	if (!SENTRY) SENTRY = await import("@sentry/vue")
+	return SENTRY
 }
 
 const disableWebTelemetry = async (): Promise<void> => {
@@ -217,14 +225,14 @@ const disableWebTelemetry = async (): Promise<void> => {
 	} catch {
 		// Replay cleanup is best effort; the transport is disabled below regardless.
 	}
-	const CLIENT = Sentry.getClient()
+	const CLIENT = SENTRY?.getClient()
 	if (CLIENT) CLIENT.getOptions().enabled = false
 	active = false
 	activeKey = ""
 }
 
 const enableWebTelemetry = (): boolean => {
-	const CLIENT = Sentry.getClient()
+	const CLIENT = SENTRY?.getClient()
 	if (!CLIENT) {
 		active = false
 		activeKey = ""
@@ -259,38 +267,40 @@ const applyWebTelemetry = async (app: App, router: Router, snapshot: UiSnapshot 
 	}
 	if (initialized) {
 		if (!active) enableWebTelemetry()
-		if (!active) return
+		if (!active || !SENTRY) return
 		if (activeKey !== NEXT_KEY) {
-			Sentry.setTags(safeTags())
+			SENTRY.setTags(safeTags())
 			activeKey = NEXT_KEY
 		}
 		return
 	}
 
 	try {
-		replay = InitializeWebSentry(app, router, NEXT_WINDOW === "main")
+		const SDK = await loadWebSentry()
+		replay = InitializeWebSentry(SDK, app, router, NEXT_WINDOW === "main")
 	} catch {
 		// Keep error/performance telemetry if Replay cannot initialize in a WebView.
 		try {
-			replay = InitializeWebSentry(app, router, false)
+			const SDK = await loadWebSentry()
+			replay = InitializeWebSentry(SDK, app, router, false)
 		} catch {
 			replay = undefined
 		}
 	}
-	initialized = Boolean(Sentry.getClient())
-	if (!initialized || !enableWebTelemetry()) {
+	initialized = Boolean(SENTRY?.getClient())
+	if (!initialized || !enableWebTelemetry() || !SENTRY) {
 		consentEnabled = false
 		return
 	}
 	consentEnabled = true
-	Sentry.setTags(safeTags())
+	SENTRY.setTags(safeTags())
 	activeKey = NEXT_KEY
 }
 
 /**
  * 根据宿主快照启停 Web SDK。
  *
- * 没有快照、没有 Web DSN 或用户关闭开关时都不初始化 transport。
+ * 没有快照、没有 DSN 或 consent 未明确 granted 时都不加载 transport。
  */
 export const SyncWebTelemetry = async (app: App, router: Router, snapshot: UiSnapshot | null): Promise<void> => {
 	const RUN = syncQueue.then(() => applyWebTelemetry(app, router, snapshot))
@@ -300,7 +310,7 @@ export const SyncWebTelemetry = async (app: App, router: Router, snapshot: UiSna
 
 /** 手动捕获前端异常; 全局错误处理器和 Vue handler 共用此入口。 */
 export const CaptureError = (error: unknown, operation: string): void => {
-	if (!active || !consentEnabled) return
+	if (!active || !consentEnabled || !SENTRY) return
 	if (typeof error === "object" && error !== null) {
 		if (SEEN_ERROR_OBJECTS.has(error)) return
 		SEEN_ERROR_OBJECTS.add(error)
@@ -319,10 +329,10 @@ export const CaptureError = (error: unknown, operation: string): void => {
 	}
 	RECENT_ERRORS.set(KEY, NOW)
 	try {
-		Sentry.withScope(scope => {
+		SENTRY.withScope(scope => {
 			scope.setTags(safeTags())
 			scope.setTag("operation", NormalizeOperation(operation))
-			Sentry.captureException(error)
+			SENTRY?.captureException(error)
 		})
 	} catch {
 		// 错误上报自身失败不能触发第二条错误链路。

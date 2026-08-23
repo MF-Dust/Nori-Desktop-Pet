@@ -15,9 +15,11 @@ const emit = defineEmits<{
 }>()
 
 const telemetryEnabled = ref(true)
+const telemetryConsent = ref<"unset" | "granted" | "denied">("unset")
 const telemetryAvailable = ref(false)
 const TELEMETRY_DESC = computed(() => {
 	if (!telemetryAvailable.value) return I18N.value.telemetry.unavailable
+	if (telemetryConsent.value === "unset") return I18N.value.telemetry.pending
 	return telemetryEnabled.value ? I18N.value.telemetry.enabled : I18N.value.telemetry.disabled
 })
 
@@ -26,7 +28,8 @@ onMounted(async () => {
 		await RUNTIME.init()
 		const SNAPSHOT = RUNTIME.snapshot.value
 		if (!SNAPSHOT) return
-		telemetryEnabled.value = SNAPSHOT.telemetry.enabled
+		telemetryConsent.value = SNAPSHOT.telemetry.consent
+		telemetryEnabled.value = SNAPSHOT.telemetry.consent !== "denied"
 		telemetryAvailable.value = SNAPSHOT.telemetry.available
 		emit("telemetryChanged", telemetryEnabled.value)
 	} catch (error) {
@@ -36,6 +39,7 @@ onMounted(async () => {
 
 const onTelemetryChange = (value: boolean) => {
 	telemetryEnabled.value = value
+	telemetryConsent.value = value ? "granted" : "denied"
 	emit("telemetryChanged", value)
 }
 

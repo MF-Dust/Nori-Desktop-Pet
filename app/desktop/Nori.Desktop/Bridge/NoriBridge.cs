@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Avalonia.Threading;
 using Nori.Core.Logging;
+using Nori.Core.Security;
 using Nori.Core.Telemetry;
 using Nori.Desktop.Windows;
 
@@ -90,7 +91,7 @@ public sealed class NoriBridge(AppServices services)
 			try
 			{
 				_services.Telemetry.CaptureException(exception, "bridge.invoke");
-				_services.Logger.Write(LogSource.Backend, "error", $"桥接调用后台任务失败: {exception.Message}");
+				_services.Logger.Write(LogSource.Backend, "error", $"桥接调用后台任务失败: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 			}
 			catch
 			{
@@ -121,8 +122,8 @@ public sealed class NoriBridge(AppServices services)
 		{
 			_services.Telemetry.CaptureException(exception, $"bridge.{cmd}");
 			// 命令错误一律以可读字符串回给前端展示, 与 Rust 版 Result<T, String> 等价
-			_services.Logger.Write(LogSource.Backend, "error", $"命令执行失败: {cmd}: {exception.Message}");
-			source.PostResult(message.Id, null, exception.Message);
+			_services.Logger.Write(LogSource.Backend, "error", $"命令执行失败: {cmd}: {SensitiveDataRedactor.ExceptionSummary(exception)}");
+			source.PostResult(message.Id, null, SensitiveDataRedactor.Redact(exception.Message));
 		}
 	}
 

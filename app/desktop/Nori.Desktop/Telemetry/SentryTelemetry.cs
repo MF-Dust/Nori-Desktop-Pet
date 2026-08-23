@@ -13,6 +13,9 @@ namespace Nori.Desktop.Telemetry;
 /// </summary>
 public sealed class SentryTelemetry : ITelemetry
 {
+	/// <summary>生产构建禁止故意崩溃测试, 防止调试入口进入正式包。</summary>
+	public static bool IsProductionBuild => string.Equals(SentryBuildConfig.Environment, "production", StringComparison.OrdinalIgnoreCase);
+
 	private readonly object _gate = new();
 	private readonly string _dsn;
 	private readonly string _release;
