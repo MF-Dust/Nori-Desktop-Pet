@@ -87,6 +87,44 @@ public class MediaExchangeTests
 	}
 
 	[Fact]
+	public async Task 带MIME的录音上传保留格式和文件名()
+	{
+		MediaExchange exchange = new();
+		string token = exchange.CreateUploadTicket();
+		Task<RecordedAudio> waiting = exchange.WaitForRecordedUploadAsync(token, TimeSpan.FromSeconds(5));
+
+		Assert.True(exchange.TryCompleteUpload(token, new RecordedAudio([1, 2], "audio/webm;codecs=opus", "speech.webm")));
+		RecordedAudio audio = await waiting;
+		Assert.Equal("audio/webm;codecs=opus", audio.Mime);
+		Assert.Equal("speech.webm", audio.FileName);
+	}
+
+	[Fact]
+	public async Task 录音失败立即结束等待()
+	{
+		MediaExchange exchange = new();
+		string token = exchange.CreateUploadTicket();
+		Task<RecordedAudio> waiting = exchange.WaitForRecordedUploadAsync(token, TimeSpan.FromMinutes(1));
+
+		Assert.True(exchange.TryFailUpload(token, "权限被拒绝"));
+		InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => waiting);
+		Assert.Contains("权限被拒绝", error.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 过期媒体和上传票据不可用()
+	{
+		MediaExchange exchange = new(TimeSpan.FromMilliseconds(1));
+		string download = exchange.PublishAudio([1], "audio/wav");
+		string upload = exchange.CreateUploadTicket();
+		await Task.Delay(20);
+
+		Assert.False(exchange.TryTakeAudio(download, out _, out _));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			exchange.WaitForRecordedUploadAsync(upload, TimeSpan.FromSeconds(1)));
+	}
+
+	[Fact]
 	public async Task 未知票据无法等待()
 	{
 		MediaExchange exchange = new();

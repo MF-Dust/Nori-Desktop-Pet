@@ -29,6 +29,7 @@ const ttsVoice = ref("nova")
 const ttsSpeed = ref(1.0)
 const ttsAutoPlay = ref(true)
 const isSpeakingTest = ref(false)
+const isSpeaking = computed(() => VOICE.value?.speaking ?? false)
 
 // GPT-SoVITS 配置
 const gptsovitsBaseUrl = ref("http://127.0.0.1:9880")
@@ -82,7 +83,7 @@ const ackNotice = async () => {
 
 // 试听当前音色 (合成与播放全部在后端)
 const testVoice = async () => {
-	if (isSpeakingTest.value) return
+	if (isSpeakingTest.value || isSpeaking.value) return
 	isSpeakingTest.value = true
 	try {
 		await RUNTIME.ttsTest()
@@ -288,12 +289,12 @@ const testVoice = async () => {
 				<div class="flex gap-2 pt-1">
 					<n-button
 						type="primary"
-						:loading="isSpeakingTest"
-						:disabled="isSpeakingTest"
+						:loading="isSpeakingTest || isSpeaking"
+						:disabled="isSpeakingTest || isSpeaking"
 						@click="testVoice"
 					>
 						<template #icon>
-							<Icon :name="isSpeakingTest ? 'loading' : 'play'" :size="15"/>
+							<Icon :name="isSpeakingTest || isSpeaking ? 'loading' : 'play'" :size="15"/>
 						</template>
 						{{ isSpeakingTest ? I18N.tts.testing : I18N.tts.test }}
 					</n-button>

@@ -45,6 +45,7 @@ public sealed class AppRuntime : IAsyncDisposable
 	private readonly CancellationTokenSource _lifetimeCts = new();
 	private readonly WebViewAudioPlayback _playback;
 	private readonly WebViewMicrophoneRecorder _recorder;
+	private readonly AudioHostChannel _audioChannel;
 	private readonly ReflectionQueue _reflectionQueue;
 	private readonly ReflectionWorker _reflectionWorker;
 	private readonly PetInteractionReactionService _petInteractionService;
@@ -143,6 +144,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		WebViewMicrophoneRecorder recorder = new(media, mediaUrl, channel);
 		_playback = playback;
 		_recorder = recorder;
+		_audioChannel = channel;
 		Voice = new VoiceService(services.Http, config, playback, () => VoiceRetired() ? null : recorder);
 		_petInteractionService = new PetInteractionReactionService(services.Http, config);
 
@@ -248,6 +250,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				/* 桌宠未加载时忽略 */
 			}
 		};
+		Voice.SpeakingChanged += _ => InvalidateSnapshot("voice");
 
 		Voice.VolumeChanged += volume => _playback.SetDeviceVolume(volume);
 		_playback.SetDeviceVolume(Voice.GetVolume());
@@ -816,6 +819,15 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	/// <summary>前端回报实时播放音量 (0~1), 驱动桌宠口型</summary>
 	public void ReportAudioLevel(double level) => _playback.ReportLevel(level);
+
+	/// <summary>前端 main WebView 完成监听器安装后的就绪握手。</summary>
+	public void MarkAudioHostReady() => _audioChannel.MarkReady();
+
+	/// <summary>前端回报 MediaRecorder 已获权并开始。</summary>
+	public void ReportRecordingReady(string token) => _recorder.ReportRecordingReady(token);
+
+	/// <summary>前端回报麦克风权限、录音或上传失败。</summary>
+	public void ReportRecordingFailed(string token, string? error) => _recorder.ReportRecordingFailed(token, error);
 
 	// ===================================================================
 	// UI 状态快照

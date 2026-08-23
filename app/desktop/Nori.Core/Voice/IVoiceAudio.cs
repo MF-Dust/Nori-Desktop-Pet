@@ -22,8 +22,8 @@ public interface ITtsProvider
 	/// <summary>提供商名 (对应配置键 tts_provider 的取值)</summary>
 	string Name { get; }
 
-	/// <summary>合成文本并返回音频字节</summary>
-	Task<byte[]> SynthesizeAsync(string text, TtsSynthesizeOptions options, CancellationToken cancellationToken);
+	/// <summary>合成文本并返回带 MIME 的音频数据</summary>
+	Task<EncodedAudio> SynthesizeAsync(string text, TtsSynthesizeOptions options, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -46,8 +46,13 @@ public interface IAudioPlayback : IDisposable
 	/// <summary>音量采样 (0.0 ~ 1.0)</summary>
 	event Action<double>? VolumeSampled;
 
-	/// <summary>阻塞式播放一段音频 (mp3/wav)</summary>
-	Task PlayAsync(byte[] data, string? mime, CancellationToken cancellationToken);
+	/// <summary>阻塞式播放一段带 MIME 的音频</summary>
+	Task PlayAsync(EncodedAudio audio, CancellationToken cancellationToken) =>
+		PlayAsync(audio.Bytes, audio.Mime, cancellationToken);
+
+	/// <summary>旧字节播放兼容入口；新实现应覆盖带 MIME 的重载。</summary>
+	Task PlayAsync(byte[] data, string? mime, CancellationToken cancellationToken) =>
+		throw new NotSupportedException("音频播放后端未实现带 MIME 的播放接口");
 
 	/// <summary>停止当前播放并清空队列</summary>
 	void Stop();
@@ -63,8 +68,8 @@ public interface IMicrophoneRecorder : IDisposable
 	/// <summary>开始录制</summary>
 	Task StartAsync(CancellationToken cancellationToken = default);
 
-	/// <summary>停止录制并返回完整音频字节 (wav / webm, 由录音端决定)</summary>
-	Task<byte[]> StopAsync(CancellationToken cancellationToken = default);
+	/// <summary>停止录制并返回 MediaRecorder 的实际 MIME 与文件名</summary>
+	Task<RecordedAudio> StopAsync(CancellationToken cancellationToken = default);
 
 	/// <summary>是否正在录制</summary>
 	bool IsRecording { get; }

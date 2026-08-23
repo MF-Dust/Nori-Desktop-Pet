@@ -149,6 +149,7 @@ public sealed class BridgeCommands
 					{
 						_services.Runtime.Voice.SetVolume(vol);
 					}
+					if (HasTtsConfigurationChange(args)) _services.Runtime.Voice.NotifyConfigurationChanged();
 				}
 				Runtime.InvalidateSnapshot("voice");
 			})),
@@ -420,6 +421,9 @@ public sealed class BridgeCommands
 		"stt_stop" => await SttStopAsync(source),
 
 		// ---- 前端音频宿主回报 (WebAudio / MediaRecorder 下沉后的反向通道) ----
+		// invoke("audio_host_ready")
+		"audio_host_ready" => RequireMain(source, () => Run(Runtime.MarkAudioHostReady)),
+
 		// invoke("audio_playback_finished", {token, error?})
 		"audio_playback_finished" => RequireMain(source, () =>
 			Run(() => Runtime.ReportPlaybackFinished(Str(args, "token"), OptionalStr(args, "error")))),
@@ -427,6 +431,18 @@ public sealed class BridgeCommands
 		// invoke("audio_level", {level: 0.42})
 		"audio_level" => RequireMain(source, () =>
 			Run(() => Runtime.ReportAudioLevel(Num(args, "level")))),
+
+		// invoke("audio_record_ready", {token})
+		"audio_record_ready" => RequireMain(source, () =>
+			Run(() => Runtime.ReportRecordingReady(Str(args, "token")))),
+
+		// invoke("audio_record_failed", {token, error?})
+		"audio_record_failed" => RequireMain(source, () =>
+			Run(() => Runtime.ReportRecordingFailed(Str(args, "token"), OptionalStr(args, "error")))),
+
+		// invoke("audio_upload_failed", {token, error?})
+		"audio_upload_failed" => RequireMain(source, () =>
+			Run(() => Runtime.ReportRecordingFailed(Str(args, "token"), OptionalStr(args, "error")))),
 
 		// ---- 桌宠 Live2D 原生控制 ----
 		// invoke("pet_play_motion", {name?})
@@ -1456,6 +1472,16 @@ public sealed class BridgeCommands
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
 			? value.GetString()
 			: null;
+
+	private static bool HasTtsConfigurationChange(JsonElement args)
+	{
+		if (args.ValueKind != JsonValueKind.Object) return false;
+		string[] keys = [
+			"ttsProvider", "ttsBaseUrl", "ttsApiKey", "ttsVoice", "ttsSpeed",
+			"gptsovitsBaseUrl", "gptsovitsRefAudio", "gptsovitsPromptText", "gptsovitsPromptLang",
+		];
+		return keys.Any(key => args.TryGetProperty(key, out _));
+	}
 
 	private static double Num(JsonElement args, string name) =>
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number

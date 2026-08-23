@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
+using Nori.Core.Voice;
 
 namespace Nori.Core.Assets;
 
@@ -42,7 +43,7 @@ public sealed class AssetServer : IAsyncDisposable
 	private const string AppSegment = "app";
 	private const string AssetSegment = "nori-assets";
 	private const string MediaSegment = "media";
-	private const long MaxMediaUploadBytes = 32L * 1024 * 1024;
+	private const long MaxMediaUploadBytes = VoiceAudioLimits.MaxBytes;
 
 	private readonly WebApplication _app;
 	private readonly AssetServerOptions _options;
@@ -142,14 +143,44 @@ public sealed class AssetServer : IAsyncDisposable
 				if (bodyLimit is not null) bodyLimit.MaxRequestBodySize = MaxMediaUploadBytes;
 				if (context.Request.ContentLength > MaxMediaUploadBytes)
 				{
+					media.TryFailUpload(token, "录音上传超过 32MiB 限制");
 					context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
 					return;
 				}
-				using MemoryStream buffer = new();
-				await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
-				if (!media.TryCompleteUpload(token, buffer.ToArray()))
+
+				string mime;
+				try
 				{
-					await Fail(context);
+					// 旧的手写测试请求没有 Content-Type；真实 MediaRecorder 请求始终带实际 MIME。
+					mime = AudioMime.Validate(context.Request.ContentType ?? "audio/wav");
+				}
+				catch (InvalidOperationException)
+				{
+					media.TryFailUpload(token, "录音 MIME 类型无效");
+					context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
+					return;
+				}
+
+				byte[]? bytes = await ReadCappedBodyAsync(context.Request.Body, context.RequestAborted);
+				if (bytes is null)
+				{
+					media.TryFailUpload(token, "录音上传超过 32MiB 限制");
+					context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+					return;
+				}
+				if (bytes.Length == 0)
+				{
+					media.TryFailUpload(token, "录音内容为空");
+					context.Response.StatusCode = StatusCodes.Status400BadRequest;
+					return;
+				}
+
+				string fileName = context.Request.Headers["X-Nori-Audio-Filename"].ToString();
+				RecordedAudio audio = new(bytes, mime, fileName);
+				if (!media.TryCompleteUpload(token, audio))
+				{
+					if (!media.TryFailUpload(token, "录音内容无效")) await Fail(context);
+					else context.Response.StatusCode = StatusCodes.Status400BadRequest;
 					return;
 				}
 				context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -248,6 +279,19 @@ public sealed class AssetServer : IAsyncDisposable
 			?? throw new InvalidOperationException("资源服务未能绑定到回环地址");
 		origin = origin.Replace("//localhost:", "//127.0.0.1:", StringComparison.Ordinal).TrimEnd('/');
 		return new AssetServer(app, options, prefix, origin, media);
+	}
+
+	private static async Task<byte[]?> ReadCappedBodyAsync(Stream body, CancellationToken cancellationToken)
+	{
+		using MemoryStream buffer = new();
+		byte[] chunk = new byte[64 * 1024];
+		int read;
+		while ((read = await body.ReadAsync(chunk.AsMemory(), cancellationToken)) > 0)
+		{
+			if (buffer.Length + read > VoiceAudioLimits.MaxBytes) return null;
+			buffer.Write(chunk, 0, read);
+		}
+		return buffer.ToArray();
 	}
 
 	private static async Task Fail(HttpContext context)
