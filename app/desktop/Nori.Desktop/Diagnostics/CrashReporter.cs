@@ -96,7 +96,7 @@ public static class CrashReporter
 			if (critical)
 			{
 				FlushTelemetrySafe();
-				Environment.Exit(1);
+				ExitProcess(1);
 			}
 			return;
 		}
@@ -113,7 +113,8 @@ public static class CrashReporter
 		try
 		{
 			// InvokeAsync(Func<Task>) 返回的 Task 在内层异步操作 (含等窗) 完成时才完成
-			Dispatcher.UIThread.InvokeAsync(() => ShowCrashWindowAsync(critical, BuildReport(exception), null)).Wait();
+			Dispatcher.UIThread.InvokeAsync(() => ShowCrashWindowAsync(critical, BuildReport(exception), null))
+				.Wait(TimeSpan.FromSeconds(5));
 		}
 		catch (Exception failure)
 		{
@@ -124,7 +125,7 @@ public static class CrashReporter
 			if (critical)
 			{
 				FlushTelemetrySafe();
-				Environment.Exit(1);
+				ExitProcess(1);
 			}
 		}
 	}
@@ -142,7 +143,7 @@ public static class CrashReporter
 		if (Application.Current is null || _lifetime is null)
 		{
 			FlushTelemetrySafe();
-			Environment.Exit(1);
+			ExitProcess(1);
 			return;
 		}
 
@@ -159,7 +160,8 @@ public static class CrashReporter
 
 		try
 		{
-			Dispatcher.UIThread.InvokeAsync(() => ShowCrashWindowAsync(critical: true, report.ToString(), title)).Wait();
+			Dispatcher.UIThread.InvokeAsync(() => ShowCrashWindowAsync(critical: true, report.ToString(), title))
+				.Wait(TimeSpan.FromSeconds(5));
 		}
 		catch (Exception failure)
 		{
@@ -168,7 +170,7 @@ public static class CrashReporter
 		finally
 		{
 			FlushTelemetrySafe();
-			Environment.Exit(1);
+			ExitProcess(1);
 		}
 	}
 
@@ -179,7 +181,7 @@ public static class CrashReporter
 		if (eventArgs.ExceptionObject is not Exception exception)
 		{
 			WriteLogSafe($"非 Exception 对象导致的域级失败: {eventArgs.ExceptionObject}");
-			if (eventArgs.IsTerminating) Environment.Exit(1);
+			if (eventArgs.IsTerminating) ExitProcess(1);
 			return;
 		}
 		try
@@ -189,7 +191,7 @@ public static class CrashReporter
 		catch
 		{
 			// 兜底自身都失败了, 只能放弃: 进程即将终止或已不可救
-			if (eventArgs.IsTerminating) Environment.Exit(1);
+			if (eventArgs.IsTerminating) ExitProcess(1);
 		}
 	}
 
@@ -404,6 +406,23 @@ public static class CrashReporter
 		catch
 		{
 		}
+	}
+
+	private static void ExitProcess(int code)
+	{
+		try
+		{
+			if (_lifetime is not null)
+			{
+				_lifetime.Shutdown(code);
+				return;
+			}
+		}
+		catch
+		{
+			// Fall through to a hard exit when the UI lifetime is unavailable.
+		}
+		Environment.Exit(code);
 	}
 
 	private static void WriteLogSafe(string message)

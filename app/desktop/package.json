@@ -16,8 +16,6 @@
 		"@pixi/app": "^6.5.10",
 		"@pixi/extensions": "^6.5.10",
 		"@pixi/ticker": "^6.5.10",
-		"@sentry/core": "10.70.0",
-		"@sentry/vite-plugin": "5.4.0",
 		"@sentry/vue": "10.70.0",
 		"@vueuse/core": "14.4.0",
 		"dompurify": "3.4.14",
@@ -31,6 +29,8 @@
 	},
 	"devDependencies": {
 		"@sentry/cli": "3.6.2",
+		"@sentry/core": "10.70.0",
+		"@sentry/vite-plugin": "5.4.0",
 		"@vitejs/plugin-vue": "^5.2.1",
 		"jsdom": "30.0.1",
 		"less": "^4.9.0",

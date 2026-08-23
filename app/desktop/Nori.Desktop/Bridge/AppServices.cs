@@ -72,20 +72,48 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>桥接命令, 服务装配完成后回填</summary>
 	public BridgeCommands Commands { get; set; } = null!;
 
+	/// <summary>桥接内核, 服务装配完成后回填</summary>
+	public NoriBridge? Bridge { get; set; }
+
 	/// <summary>原生 Live2D 桌宠运行时</summary>
 	public PetRuntime PetRuntime { get; set; } = null!;
 
 	/// <summary>应用业务运行时 (Agent/技能/情绪/提醒/语音), 窗口建好后回填</summary>
 	public Runtime.AppRuntime? Runtime { get; set; }
 
+	private int _disposed;
+
 	public async ValueTask DisposeAsync()
 	{
-		await Telemetry.FlushAsync(TimeSpan.FromSeconds(1));
-		Telemetry.Dispose();
-		await Mcp.DisposeAsync();
-		if (Assets is not null) await Assets.DisposeAsync();
-		if (_publicHttp is not null && !ReferenceEquals(_publicHttp, Http)) _publicHttp.Dispose();
-		Http.Dispose();
-		Database.Dispose();
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+		// Shutdown is best-effort: one broken subsystem must not strand the rest.
+		await DisposeStep(() => Bridge?.DisposeAsync() ?? ValueTask.CompletedTask);
+		await DisposeStep(() => Runtime?.DisposeAsync() ?? ValueTask.CompletedTask);
+		await DisposeStep(() => Mcp.DisposeAsync());
+		await DisposeStep(() => Assets?.DisposeAsync() ?? ValueTask.CompletedTask);
+		await DisposeStep(() =>
+		{
+			if (_publicHttp is not null && !ReferenceEquals(_publicHttp, Http)) _publicHttp.Dispose();
+			Http.Dispose();
+			return ValueTask.CompletedTask;
+		});
+		await DisposeStep(() =>
+		{
+			Database.Dispose();
+			return ValueTask.CompletedTask;
+		});
+		await DisposeStep(async () => await Telemetry.FlushAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false));
+		await DisposeStep(() =>
+		{
+			Telemetry.Dispose();
+			return ValueTask.CompletedTask;
+		});
+	}
+
+	private static async ValueTask DisposeStep(Func<ValueTask> dispose)
+	{
+		try { await dispose().ConfigureAwait(false); }
+		catch { /* continue releasing independent resources */ }
 	}
 }

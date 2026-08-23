@@ -142,6 +142,9 @@ public sealed class SentryTelemetry : ITelemetry
 		options.EnableLogs = false;
 		options.EnableMetrics = false;
 		options.AutoSessionTracking = false;
+		options.DisableAppDomainUnhandledExceptionCapture();
+		options.DisableUnobservedTaskExceptionCapture();
+		options.DisableAppDomainProcessExitFlush();
 		options.MaxBreadcrumbs = 0;
 		options.ShutdownTimeout = TimeSpan.FromSeconds(1);
 		options.FlushTimeout = TimeSpan.FromSeconds(1);
@@ -175,6 +178,15 @@ public sealed class SentryTelemetry : ITelemetry
 			foreach (SentryException exception in current.SentryExceptions)
 			{
 				exception.Value = TelemetrySanitizer.SanitizeExceptionValue(current.Exception);
+				if (exception.Stacktrace?.Frames is { } frames)
+				{
+					foreach (SentryStackFrame frame in frames)
+					{
+						frame.FileName = ScrubPath(frame.FileName);
+						frame.AbsolutePath = null;
+						frame.ContextLine = null;
+					}
+				}
 			}
 		}
 		return current;
@@ -198,6 +210,15 @@ public sealed class SentryTelemetry : ITelemetry
 	}
 
 	private static Breadcrumb? DropBreadcrumb(Breadcrumb breadcrumb, SentryHint hint) => null;
+
+	private static string? ScrubPath(string? value)
+	{
+		if (string.IsNullOrWhiteSpace(value)) return value;
+		string trimmed = value.Trim();
+		if (trimmed.Contains('\\') || trimmed.Contains('/') || trimmed.Contains("://", StringComparison.Ordinal))
+			return "[path]";
+		return trimmed.Length > 240 ? trimmed[..240] : trimmed;
+	}
 
 	private void CloseLocked()
 	{

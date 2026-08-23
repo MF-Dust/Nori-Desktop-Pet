@@ -60,6 +60,17 @@ interface DisplayBubble {
 	isFirstInGroup: boolean
 }
 
+const MARKDOWN_CACHE = new Map<string, string>()
+const markdownFor = (key: string, content: string): string => {
+	const CACHE_KEY = `${key}:${content}`
+	const CACHED = MARKDOWN_CACHE.get(CACHE_KEY)
+	if (CACHED !== undefined) return CACHED
+	const HTML = renderMarkdown(content)
+	MARKDOWN_CACHE.set(CACHE_KEY, HTML)
+	if (MARKDOWN_CACHE.size > 512) MARKDOWN_CACHE.delete(MARKDOWN_CACHE.keys().next().value as string)
+	return HTML
+}
+
 const displayBubbles = computed<DisplayBubble[]>(() => {
 	const LIST: DisplayBubble[] = []
 	const LAST_INDEX = bubbles.value.length - 1
@@ -74,7 +85,7 @@ const displayBubbles = computed<DisplayBubble[]>(() => {
 			key: `${msg.key}-${sliceIndex}`,
 			role: "assistant",
 			content: slice,
-			html: renderMarkdown(slice),
+			html: markdownFor(`${msg.key}-${sliceIndex}`, slice),
 			isFirstInGroup: sliceIndex === 0,
 		}))
 	})
@@ -443,6 +454,7 @@ const toggleVoiceInput = async () => {
 				<div
 					v-for="bubble in displayBubbles"
 					:key="bubble.key"
+					v-memo="[bubble.content, bubble.html, bubble.isFirstInGroup]"
 					class="group flex max-w-[84%] animate-bubble-in"
 					:class="[
 						bubble.role === 'user' ? 'self-end flex-row-reverse' : 'self-start',

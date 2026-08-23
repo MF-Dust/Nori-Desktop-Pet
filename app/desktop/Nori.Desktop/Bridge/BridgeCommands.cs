@@ -256,7 +256,7 @@ public sealed class BridgeCommands
 
 		// invoke("chat_history_page", {limit?: 50, beforeId?: 0})
 		"chat_history_page" => RequireMain(source, () => GetHistoryPage(
-			OptionalInt(args, "limit") ?? 50,
+			ClampLimit(OptionalInt(args, "limit"), 50),
 			(long)(OptionalDouble(args, "beforeId") ?? 0))),
 
 		// invoke("chat_clear")
@@ -462,7 +462,7 @@ public sealed class BridgeCommands
 	private async Task<object?> MemoryListAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return _services.Memory.GetAll(OptionalInt(args, "limit") ?? 50);
+		return _services.Memory.GetAll(ClampLimit(OptionalInt(args, "limit"), 50));
 	}
 
 	private async Task<object?> MemoryUpdateAsync(IBridgeSource source, JsonElement args)
@@ -478,7 +478,7 @@ public sealed class BridgeCommands
 	private async Task<object?> MemorySearchHybridAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await Runtime.Memory.SearchHybridAsync(Str(args, "keyword"), OptionalInt(args, "limit") ?? 20);
+		return await Runtime.Memory.SearchHybridAsync(Str(args, "keyword"), ClampLimit(OptionalInt(args, "limit"), 20));
 	}
 
 	private async Task<object?> MemoryReembedAllAsync(IBridgeSource source)
@@ -1208,6 +1208,8 @@ public sealed class BridgeCommands
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
 			? value.GetInt32()
 			: null;
+
+	private static int ClampLimit(int? value, int fallback) => Math.Clamp(value ?? fallback, 1, 100);
 
 	private static McpServerConfig ParseMcpConfig(JsonElement args)
 	{

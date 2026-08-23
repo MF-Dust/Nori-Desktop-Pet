@@ -12,6 +12,7 @@ using Nori.Core.Network;
 using Nori.Core.Proactive;
 using Nori.Core.Skills;
 using Nori.Core.Tools;
+using Nori.Core.Telemetry;
 using Nori.Core.Voice;
 using Nori.Desktop.Audio;
 using Nori.Desktop.Bridge;
@@ -39,8 +40,11 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	private readonly ConcurrentDictionary<string, AgentSessionState> _sessions = new();
 	private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new();
+	private readonly ConcurrentDictionary<Task, byte> _backgroundTasks = new();
+	private readonly CancellationTokenSource _lifetimeCts = new();
 	private readonly WebViewAudioPlayback _playback;
 	private readonly WebViewMicrophoneRecorder _recorder;
+	private int _disposed;
 
 	public AppServices Services { get; }
 
@@ -196,7 +200,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		_playback.SetDeviceVolume(Voice.GetVolume());
 
 		DetectLegacyVoiceConfig();
-		_ = RefreshMcpToolsAsync();
+		TrackBackground(() => RefreshMcpToolsAsync(), "MCP tools refresh");
 
 		InvalidateSnapshot("all");
 	}
@@ -267,14 +271,18 @@ public sealed class AppRuntime : IAsyncDisposable
 	/// 同步已连接 MCP 工具到 Agent 注册表。
 	/// 每个动态工具默认 confirm, 由 AgentRuntime 的逐调用授权链路 fail-closed 控制。
 	/// </summary>
-	public async Task RefreshMcpToolsAsync()
+	public async Task RefreshMcpToolsAsync(CancellationToken cancellationToken = default)
 	{
+		using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, cancellationToken);
+		CancellationToken ct = linkedCts.Token;
+		ct.ThrowIfCancellationRequested();
 		foreach (RegisteredTool tool in Tools.List().Where(tool => tool.Category == "mcp"))
 		{
 			Tools.Unregister(tool.Name);
 		}
 
 		IReadOnlyList<McpServerStatusInfo> servers = await Services.Mcp.GetServersAsync();
+		ct.ThrowIfCancellationRequested();
 		foreach (McpServerStatusInfo server in servers.Where(server => server.Status == "connected"))
 		{
 			foreach (McpToolDefinition definition in server.Tools)
@@ -342,6 +350,7 @@ public sealed class AppRuntime : IAsyncDisposable
 	/// </summary>
 	public string StartChat(IBridgeSource source, string text)
 	{
+		if (Volatile.Read(ref _disposed) != 0) throw new InvalidOperationException("Application is shutting down");
 		string sessionId = $"agent-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds():x}-{Interlocked.Increment(ref _sessionCounter):x}";
 		AgentSessionState session = new(source.Label);
 		_sessions[sessionId] = session;
@@ -379,11 +388,12 @@ public sealed class AppRuntime : IAsyncDisposable
 			},
 		};
 
-		_ = Task.Run(async () =>
+		Task worker = Task.Run(async () =>
 		{
+			using ITelemetryTransaction operation = Services.Telemetry.StartTransaction("agent.run");
 			try
 			{
-				await RefreshMcpToolsAsync();
+				await RefreshMcpToolsAsync(session.Cts.Token);
 				ProtocolMessage final = await Engine.RunAsync(text, sessionId, callbacks, session.Cts.Token);
 				PostAgentEvent(session.SourceLabel, new
 				{
@@ -414,6 +424,8 @@ public sealed class AppRuntime : IAsyncDisposable
 				session.Dispose();
 			}
 		});
+		session.Worker = worker;
+		TrackTask(worker);
 
 		return sessionId;
 	}
@@ -736,13 +748,23 @@ public sealed class AppRuntime : IAsyncDisposable
 	/// <summary>向指定窗口推送 Agent 事件</summary>
 	private void PostAgentEvent(string label, object payload)
 	{
-		Services.Windows.GetNoriWindow(label)?.PostEvent(AgentEventName, payload);
+		if (Volatile.Read(ref _disposed) != 0) return;
+		try { Services.Windows.GetNoriWindow(label)?.PostEvent(AgentEventName, payload); }
+		catch { /* windows may already be closing */ }
 	}
 
 	/// <summary>向所有 WebView 窗口广播</summary>
 	private void BroadcastEvent(string name, object payload)
 	{
-		Dispatcher.UIThread.Post(() => Services.Windows.Broadcast(name, payload));
+		if (Volatile.Read(ref _disposed) != 0) return;
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (Volatile.Read(ref _disposed) == 0)
+			{
+				try { Services.Windows.Broadcast(name, payload); }
+				catch { /* windows may already be closing */ }
+			}
+		});
 	}
 
 	/// <summary>Agent 事件通道名</summary>
@@ -785,14 +807,15 @@ public sealed class AppRuntime : IAsyncDisposable
 		return float.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float value) ? value : null;
 	}
 
-	public ValueTask DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+		_lifetimeCts.Cancel();
+
 		foreach ((string _, AgentSessionState session) in _sessions)
 		{
 			session.Cts.Cancel();
-			session.Dispose();
 		}
-		_sessions.Clear();
 
 		foreach ((string _, PendingApproval approval) in _approvals)
 		{
@@ -801,12 +824,58 @@ public sealed class AppRuntime : IAsyncDisposable
 		}
 		_approvals.Clear();
 
-		Proactive.Dispose();
-		Emotion.Dispose();
+		Task[] workers = _sessions.Values.Select(session => session.Worker).OfType<Task>().ToArray();
+		await WaitBoundedAsync(workers, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+		foreach (AgentSessionState session in _sessions.Values) session.Dispose();
+		_sessions.Clear();
+		await WaitBoundedAsync(_backgroundTasks.Keys.ToArray(), TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+		_backgroundTasks.Clear();
+
+		try { Proactive.Dispose(); } catch { }
+		try { Emotion.Dispose(); } catch { }
 		// Voice.Dispose 会逆向释放 _playback; 录音票据要单独作废
-		_recorder.Dispose();
-		Voice.Dispose();
-		return ValueTask.CompletedTask;
+		try { _recorder.Dispose(); } catch { }
+		try { Voice.Dispose(); } catch { }
+		_lifetimeCts.Dispose();
+	}
+
+	private void TrackTask(Task task)
+	{
+		_backgroundTasks.TryAdd(task, 0);
+		_ = task.ContinueWith(
+			completed => _backgroundTasks.TryRemove(completed, out _),
+			CancellationToken.None,
+			TaskContinuationOptions.ExecuteSynchronously,
+			TaskScheduler.Default);
+	}
+
+	private Task TrackBackground(Func<Task> operation, string name)
+	{
+		Task task = ObserveBackgroundAsync(operation, name);
+		TrackTask(task);
+		return task;
+	}
+
+	private async Task ObserveBackgroundAsync(Func<Task> operation, string name)
+	{
+		try { await operation().ConfigureAwait(false); }
+		catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { }
+		catch (Exception exception)
+		{
+			try
+			{
+				Services.Telemetry.CaptureException(exception, "runtime.background_task");
+				Services.Logger.Write(LogSource.Backend, "warn", $"{name} failed: {exception.Message}");
+			}
+			catch { }
+		}
+	}
+
+	private static async Task WaitBoundedAsync(IReadOnlyCollection<Task> tasks, TimeSpan timeout)
+	{
+		if (tasks.Count == 0) return;
+		Task all = Task.WhenAll(tasks);
+		await Task.WhenAny(all, Task.Delay(timeout)).ConfigureAwait(false);
 	}
 
 	/// <summary>活动 Agent 会话状态</summary>
@@ -815,6 +884,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		public string SourceLabel { get; } = sourceLabel;
 
 		public CancellationTokenSource Cts { get; } = new();
+
+		public Task? Worker { get; set; }
 
 		public void Dispose()
 		{

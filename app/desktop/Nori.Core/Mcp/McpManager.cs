@@ -321,7 +321,9 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		_lifetimeCts.Cancel();
 		try
 		{
-			await Task.WhenAll(_backgroundTasks.ToArray());
+			Task all = Task.WhenAll(_backgroundTasks.ToArray());
+			try { await all.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+			catch (TimeoutException) { /* transports below still get a bounded close */ }
 		}
 		catch
 		{
@@ -330,7 +332,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 		foreach ((string _, OfficialMcpConnection client) in _activeClients)
 		{
-			try { await client.DisposeAsync(); }
+			try { await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
 			catch { /* Transport closure during exit is expected. */ }
 		}
 		_activeClients.Clear();
@@ -356,7 +358,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		OfficialMcpConnection? client = null;
 		try
 		{
-			using CancellationTokenSource cts = new(TimeSpan.FromSeconds(20));
+			using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(20));
+			using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, timeout.Token);
 			client = await OfficialMcpConnection.ConnectAsync(config, _httpClient, cts.Token);
 			IReadOnlyList<McpToolDefinition> tools = await client.ListToolsAsync(cts.Token);
 			IReadOnlyList<McpResourceDefinition> resources = await client.ListResourcesAsync(cts.Token);

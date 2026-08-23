@@ -29,6 +29,13 @@ namespace Nori.Desktop;
 public sealed class App : Application
 {
 	private AppServices? _services;
+	private NoriDatabase? _startupDatabase;
+	private SentryTelemetry? _startupTelemetry;
+	private NoriHttpClients? _startupHttpClients;
+	private AssetServer? _startupAssets;
+	private Nori.Core.Mcp.McpManager? _startupMcp;
+	private Task? _shutdownTask;
+	private int _shutdownStarted;
 
 	public override void Initialize() => Styles.Add(new FluentTheme());
 
@@ -39,13 +46,12 @@ public sealed class App : Application
 			// 关掉最后一个窗口不退应用: 托盘常驻
 			desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 			CrashReporter.Register(desktop); // UI 线程与任务级异常兜底
-			desktop.Exit += async (_, _) =>
+			desktop.Exit += (_, _) =>
 			{
-				if (_services is not null)
-				{
-					if (_services.Runtime is not null) await _services.Runtime.DisposeAsync();
-					await _services.DisposeAsync();
-				}
+				if (Interlocked.CompareExchange(ref _shutdownStarted, 1, 0) == 0)
+					_shutdownTask = ShutdownAsync();
+				try { _shutdownTask?.GetAwaiter().GetResult(); }
+				catch { /* exit must continue even when cleanup fails */ }
 			};
 			_ = StartAsync(desktop);
 		}
@@ -82,6 +88,12 @@ public sealed class App : Application
 		CrashReporter.AttachLogger(logger); // 兜底日志与应用共用同一个写入器
 		logger.Write(LogSource.Backend, "info", "日志系统初始化完成");
 
+		// Initialize native telemetry before probing the UI runtime or opening the database.
+		SentryTelemetry telemetry = new(SentryBuildConfig.NativeDsn, SentryBuildConfig.Release, SentryBuildConfig.Environment);
+		_startupTelemetry = telemetry;
+		telemetry.Configure(true);
+		CrashReporter.AttachTelemetry(telemetry);
+
 		// WebView 运行时缺失时给个能看懂的提示, 而不是弹几个空白窗口。
 		// 三平台各自的原生引擎: Windows→WebView2, macOS→WKWebView, Linux→WebKitGTK
 		(WebViewAdapterType adapterType, string engineName, string installHint) = OperatingSystem.IsWindows()
@@ -100,10 +112,9 @@ public sealed class App : Application
 		}
 
 		NoriDatabase database = NoriDatabase.Open();
+		_startupDatabase = database;
 		ConfigStore config = new(database);
-		SentryTelemetry telemetry = new(SentryBuildConfig.NativeDsn, SentryBuildConfig.Release, SentryBuildConfig.Environment);
 		telemetry.Configure(config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
-		CrashReporter.AttachTelemetry(telemetry);
 		using ITelemetryTransaction startupTransaction = telemetry.StartTransaction("app.startup");
 		try
 		{
@@ -123,6 +134,7 @@ public sealed class App : Application
 		NoriHttpClients httpClients = NoriHttpClients.Create(
 			insecureTls,
 			TimeSpan.FromSeconds(ChatService.TimeoutSeconds + 10));
+		_startupHttpClients = httpClients;
 		HttpClient http = httpClients.Local;
 		HttpClient publicHttp = httpClients.Public;
 		if (insecureTls)
@@ -135,9 +147,11 @@ public sealed class App : Application
 			ResourcesRoot = AppPaths.ResourcesDir,
 			DevMode = devMode,
 		});
+		_startupAssets = assets;
 		logger.Write(LogSource.Backend, "info", $"资源服务已启动: {assets.Origin} (dev={devMode})");
 
 		Nori.Core.Mcp.McpManager mcp = new(http, config);
+		_startupMcp = mcp;
 
 		AppServices services = new()
 		{
@@ -157,6 +171,11 @@ public sealed class App : Application
 			AgentOperations = new Bridge.AgentOperationRegistry(),
 		};
 		_services = services;
+		_startupDatabase = null;
+		_startupTelemetry = null;
+		_startupHttpClients = null;
+		_startupAssets = null;
+		_startupMcp = null;
 
 		// 异步自动连接已启用的 MCP 服务; 后台任务失败只记日志, 不崩进程
 		CrashReporter.Forget(mcp.AutoConnectEnabledAsync(), "MCP 自动连接");
@@ -166,6 +185,7 @@ public sealed class App : Application
 			services.Windows = new WindowManager(assets, desktop);
 			services.Commands = new BridgeCommands(services);
 			NoriBridge bridge = new(services);
+			services.Bridge = bridge;
 			services.Windows.CreateAll(bridge, services);
 
 			// 业务运行时 (Agent/技能/情绪/提醒/语音): 桌宠窗口就绪后启动,
@@ -182,6 +202,37 @@ public sealed class App : Application
 			logger.Write(LogSource.Backend, "info", firstRun ? "首次启动应用" : "应用启动完成");
 			services.Windows.Show(firstRun ? WindowLabels.FirstRun : WindowLabels.Init);
 		});
+	}
+
+	private async Task ShutdownAsync()
+	{
+		try
+		{
+			if (_services is not null) await _services.DisposeAsync().ConfigureAwait(false);
+		}
+		finally
+		{
+			if (_startupMcp is not null)
+			{
+				try { await _startupMcp.DisposeAsync().ConfigureAwait(false); } catch { }
+				_startupMcp = null;
+			}
+			if (_startupAssets is not null)
+			{
+				try { await _startupAssets.DisposeAsync().ConfigureAwait(false); } catch { }
+				_startupAssets = null;
+			}
+			try { _startupHttpClients?.Dispose(); } catch { }
+			_startupHttpClients = null;
+			try { _startupDatabase?.Dispose(); } catch { }
+			_startupDatabase = null;
+			if (_startupTelemetry is not null)
+			{
+				try { await _startupTelemetry.FlushAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); } catch { }
+				try { _startupTelemetry.Dispose(); } catch { }
+				_startupTelemetry = null;
+			}
+		}
 	}
 
 	/// <summary>

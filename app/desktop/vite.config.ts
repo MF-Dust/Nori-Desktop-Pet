@@ -57,6 +57,20 @@ export default defineConfig(async () => {
 		build: {
 			target: "esnext",
 			sourcemap: SHOULD_UPLOAD_SOURCEMAPS ? "hidden" : false,
+			rollupOptions: {
+				output: {
+					manualChunks: (id) => {
+						if (!id.includes("node_modules")) return undefined
+						if (id.includes("@sentry") || id.includes("rrweb")) return "sentry"
+						if (id.includes("naive-ui")) return "naive-ui"
+						if (id.includes("pixi-live2d-display")) return "live2d"
+						if (id.includes("pixi-filters")) return "pixi-filters"
+						if (id.includes("@pixi")) return "pixi"
+						if (id.includes("live2d")) return "live2d"
+						return undefined
+					},
+				},
+			},
 		},
 		// 1. 不要用 vite 的清屏盖掉宿主的编译错误
 		clearScreen: false,

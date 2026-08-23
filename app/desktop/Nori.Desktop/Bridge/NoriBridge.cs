@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Avalonia.Threading;
 using Nori.Core.Logging;
@@ -15,12 +16,16 @@ namespace Nori.Desktop.Bridge;
 public sealed class NoriBridge(AppServices services)
 {
 	private readonly AppServices _services = services;
+	private readonly CancellationTokenSource _shutdownCts = new();
+	private readonly ConcurrentDictionary<Task, byte> _pendingInvokes = new();
+	private int _disposed;
 
 	/// <summary>
 	/// 处理页面发来的一条消息
 	/// </summary>
 	public void Handle(NoriWindow source, string raw)
 	{
+		if (Volatile.Read(ref _disposed) != 0) return;
 		BridgeMessage? message;
 		try
 		{
@@ -33,17 +38,22 @@ public sealed class NoriBridge(AppServices services)
 		}
 		if (message is null) return;
 
-		switch (message.Kind)
+			switch (message.Kind)
 		{
 			case "invoke":
-				_ = HandleInvokeAsync(source, message);
+				TrackInvoke(source, message);
 				break;
 			case "emit":
 				// 前端 emit 与 Tauri 一致: 全局广播给所有窗口
 				if (message.Event is { Length: > 0 } name)
 				{
 					object? payload = message.Payload.ValueKind == JsonValueKind.Undefined ? null : message.Payload.Clone();
-					Dispatcher.UIThread.Post(() => _services.Windows.Broadcast(name, payload));
+					Dispatcher.UIThread.Post(() =>
+					{
+						if (Volatile.Read(ref _disposed) != 0) return;
+						try { _services.Windows.Broadcast(name, payload); }
+						catch { /* closing windows must not fault the dispatcher */ }
+					});
 				}
 				break;
 			default:
@@ -52,16 +62,52 @@ public sealed class NoriBridge(AppServices services)
 		}
 	}
 
+	private void TrackInvoke(NoriWindow source, BridgeMessage message)
+	{
+		Task task = HandleInvokeObservedAsync(source, message);
+		_pendingInvokes.TryAdd(task, 0);
+		_ = task.ContinueWith(
+			completed => _pendingInvokes.TryRemove(completed, out _),
+			CancellationToken.None,
+			TaskContinuationOptions.ExecuteSynchronously,
+			TaskScheduler.Default);
+	}
+
+	private async Task HandleInvokeObservedAsync(NoriWindow source, BridgeMessage message)
+	{
+		try
+		{
+			await HandleInvokeAsync(source, message, _shutdownCts.Token).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+		{
+		}
+		catch (Exception exception)
+		{
+			try
+			{
+				_services.Telemetry.CaptureException(exception, "bridge.invoke");
+				_services.Logger.Write(LogSource.Backend, "error", $"桥接调用后台任务失败: {exception.Message}");
+			}
+			catch
+			{
+				// Shutdown may already have released logging/telemetry dependencies.
+			}
+		}
+	}
+
 	/// <summary>
 	/// 执行一次命令调用并把结果回给页面
 	/// </summary>
-	private async Task HandleInvokeAsync(NoriWindow source, BridgeMessage message)
+	private async Task HandleInvokeAsync(NoriWindow source, BridgeMessage message, CancellationToken cancellationToken)
 	{
 		string cmd = message.Cmd ?? "";
 		using ITelemetryTransaction transaction = _services.Telemetry.StartTransaction($"bridge.{cmd}");
 		try
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			object? value = await _services.Commands.InvokeAsync(source, cmd, message.Args);
+			cancellationToken.ThrowIfCancellationRequested();
 			source.PostResult(message.Id, value, null);
 		}
 		catch (Exception exception)
@@ -71,5 +117,18 @@ public sealed class NoriBridge(AppServices services)
 			_services.Logger.Write(LogSource.Backend, "error", $"命令执行失败: {cmd}: {exception.Message}");
 			source.PostResult(message.Id, null, exception.Message);
 		}
+	}
+
+	public async ValueTask DisposeAsync()
+	{
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+		_shutdownCts.Cancel();
+		Task[] pending = _pendingInvokes.Keys.ToArray();
+		if (pending.Length > 0)
+		{
+			Task all = Task.WhenAll(pending);
+			await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+		}
+		_shutdownCts.Dispose();
 	}
 }

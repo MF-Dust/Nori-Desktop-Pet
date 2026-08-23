@@ -31,8 +31,9 @@ const forward = async (message: string): Promise<void> => {
 	const KEY = message.split("\n")[0] ?? message
 	const COUNT = (REPEAT_COUNTS.get(KEY) ?? 0) + 1
 	REPEAT_COUNTS.set(KEY, COUNT)
-	if (COUNT > MAX_REPEAT) return
 	if (COUNT === MAX_REPEAT + 1) console.warn(`[error] 相同错误已达上限, 后续不再转发: ${KEY}`)
+	if (REPEAT_COUNTS.size > 256) REPEAT_COUNTS.delete(REPEAT_COUNTS.keys().next().value as string)
+	if (COUNT > MAX_REPEAT) return
 	try {
 		await invoke("write_log", {level: "error", message})
 	} catch (failure) {
@@ -53,9 +54,16 @@ export const installErrorHandlers = (app: App): void => {
 	}
 	// errorHandler 覆盖不到的同步脚本错误与资源加载失败
 	window.addEventListener("error", (event) => {
-		CaptureError(event.error instanceof Error ? event.error : new Error("window error"), "window.error")
+		const TARGET = event.target
+		const RESOURCE = TARGET instanceof HTMLScriptElement || TARGET instanceof HTMLLinkElement || TARGET instanceof HTMLImageElement
+		if (RESOURCE) {
+			void forward(`[resource.error] ${TARGET.tagName.toLowerCase()}`)
+			return
+		}
+		const ERROR = event.error instanceof Error ? event.error : new Error("window error")
+		CaptureError(ERROR, "window.error")
 		const DETAIL = event.error instanceof Error ? `\n${formatError(event.error)}` : ""
-		void forward(`[window.onerror] ${event.message} @ ${event.filename}:${event.lineno}:${event.colno}${DETAIL}`)
+		void forward(`[window.onerror] ${event.message || "window error"}${DETAIL}`)
 	})
 	// 未处理的 Promise 拒绝
 	window.addEventListener("unhandledrejection", (event) => {

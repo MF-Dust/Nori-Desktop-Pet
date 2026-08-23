@@ -11,6 +11,9 @@ import "virtual:uno.css"
 
 const APP = createApp(App)
 
+// Install before runtime bootstrap so host/locale initialization failures are observable.
+installErrorHandlers(APP)
+
 // 先引导后端运行时, 只有拿到快照并确认用户开关后才初始化 Web Sentry。
 try {
 	await RUNTIME.init()
@@ -26,9 +29,6 @@ try {
 watch(RUNTIME.snapshot, (snapshot) => {
 	void SyncWebTelemetry(APP, router, snapshot)
 })
-
-// 在运行时初始化后安装, 让 Vue/全局异常既进本地日志也进脱敏 Sentry。
-installErrorHandlers(APP)
 
 APP.use(router)
 APP.use(i18n)

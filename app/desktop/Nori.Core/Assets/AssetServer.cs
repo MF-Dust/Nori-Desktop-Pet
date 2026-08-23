@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -41,6 +42,7 @@ public sealed class AssetServer : IAsyncDisposable
 	private const string AppSegment = "app";
 	private const string AssetSegment = "nori-assets";
 	private const string MediaSegment = "media";
+	private const long MaxMediaUploadBytes = 32L * 1024 * 1024;
 
 	private readonly WebApplication _app;
 	private readonly AssetServerOptions _options;
@@ -136,6 +138,13 @@ public sealed class AssetServer : IAsyncDisposable
 
 			if (HttpMethods.IsPost(context.Request.Method))
 			{
+				IHttpMaxRequestBodySizeFeature? bodyLimit = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+				if (bodyLimit is not null) bodyLimit.MaxRequestBodySize = MaxMediaUploadBytes;
+				if (context.Request.ContentLength > MaxMediaUploadBytes)
+				{
+					context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+					return;
+				}
 				using MemoryStream buffer = new();
 				await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
 				if (!media.TryCompleteUpload(token, buffer.ToArray()))
