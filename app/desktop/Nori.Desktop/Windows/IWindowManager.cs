@@ -49,6 +49,12 @@ public interface IWindowManager
 	/// <summary>向所有 WebView2 窗口广播事件</summary>
 	void Broadcast(string name, object? payload);
 
+	/// <summary>在原生桌宠窗口显示临时短句</summary>
+	void ShowPetSpeech(string text);
+
+	/// <summary>清除原生桌宠窗口短句</summary>
+	void ClearPetSpeech();
+
 	/// <summary>退出应用</summary>
 	void Shutdown();
 }

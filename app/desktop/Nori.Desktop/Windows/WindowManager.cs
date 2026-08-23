@@ -144,6 +144,12 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		else Show(WindowLabels.Pet);
 	}
 
+	/// <inheritdoc />
+	public void ShowPetSpeech(string text) => _petWindow?.ShowSpeech(text);
+
+	/// <inheritdoc />
+	public void ClearPetSpeech() => _petWindow?.ClearSpeech();
+
 	/// <summary>
 	/// 向所有 WebView2 窗口广播事件
 	/// </summary>

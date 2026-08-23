@@ -37,6 +37,7 @@ public sealed class PetWindow : Window
 	private readonly AppServices _services;
 	private readonly PetRuntime _runtime;
 	private readonly PetGlControl _glControl;
+	private readonly PetSpeechOverlay _speechOverlay;
 	private readonly Win32Properties.CustomWndProcHookCallback _wndProcHook;
 	private readonly DispatcherTimer _cursorTrackingTimer;
 	/// <summary>非 Windows 平台的穿透同步 (Windows 由 WM_NCHITTEST 逐点判定, 不需要)</summary>
@@ -74,7 +75,11 @@ public sealed class PetWindow : Window
 		Icon = LoadIcon();
 
 		_glControl = new PetGlControl(_runtime);
-		Content = _glControl;
+		_speechOverlay = new PetSpeechOverlay();
+		Grid root = new();
+		root.Children.Add(_glControl);
+		root.Children.Add(_speechOverlay);
+		Content = root;
 
 		_wndProcHook = OnWndProc;
 
@@ -129,8 +134,23 @@ public sealed class PetWindow : Window
 			_glControl.PauseRenderLoop();
 			_cursorTrackingTimer.Stop();
 			_hitShapeTimer?.Stop();
+			_speechOverlay.ClearText();
 		}
 	}
+
+	/// <summary>显示桌宠短句气泡。</summary>
+	public void ShowSpeech(string text)
+	{
+		if (!Dispatcher.UIThread.CheckAccess())
+		{
+			Dispatcher.UIThread.Post(() => ShowSpeech(text));
+			return;
+		}
+		_speechOverlay.ShowText(text);
+	}
+
+	/// <summary>清除桌宠短句气泡。</summary>
+	public void ClearSpeech() => _speechOverlay.ClearText();
 
 	private void OnOpened(object? sender, EventArgs e)
 	{
@@ -210,6 +230,7 @@ public sealed class PetWindow : Window
 
 	private void OnClosed(object? sender, EventArgs e)
 	{
+		_speechOverlay.ClearText();
 		_cursorTrackingTimer.Stop();
 		_hitShapeTimer?.Stop();
 		if (OperatingSystem.IsWindows())

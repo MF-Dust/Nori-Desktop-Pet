@@ -11,6 +11,7 @@ using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
 using Nori.Core.Logging;
+using Nori.Core.Live2D;
 using Nori.Core.Memory;
 using Nori.Core.Mcp;
 using Nori.Core.Platform;
@@ -230,8 +231,12 @@ public sealed class BridgeCommands
 				scale,
 				expressions = meta.Expressions,
 				motions = meta.Motions.Select(group => new {group = group.Group, names = group.Names}),
+				interactions = ReadInteractionConfig(modelId),
 			};
 		}),
+
+		/// invoke("model_set_interactions", {modelId, interactions})
+		"model_set_interactions" => await ModelSetInteractionsAsync(source, args),
 
 		// invoke("model_set_display", {modelId, scale?, expressions?})
 		"model_set_display" => await ModelSetDisplayAsync(source, args),
@@ -777,6 +782,62 @@ public sealed class BridgeCommands
 		return await ImportLocalResourceAsync(source, args);
 	}
 
+	/// <summary>读取指定模型的互动配置; 损坏配置按空配置处理并记录日志。</summary>
+	private PetInteractionConfig ReadInteractionConfig(string modelId)
+	{
+		if (_services.Config.Get(PetInteractionConfig.StorageKey(modelId)) is not ConfigValue.Json {Value: JsonNode node})
+		{
+			return PetInteractionConfig.Empty;
+		}
+
+		try
+		{
+			return PetInteractionConfig.Parse(node.ToJsonString(PetInteractionJson.Options));
+		}
+		catch (Exception exception)
+		{
+			_services.Logger.Write(LogSource.Backend, "warn", $"读取模型互动配置失败 [{modelId}]: {exception.Message}");
+			return PetInteractionConfig.Empty;
+		}
+	}
+
+	/// <summary>
+	/// 写入指定模型的互动配置。
+	/// 前端调用: invoke("model_set_interactions", {modelId, interactions})
+	/// </summary>
+	private async Task<object?> ModelSetInteractionsAsync(IBridgeSource source, JsonElement args)
+	{
+		RequireMainVoid(source);
+		string modelId = Str(args, "modelId").Trim();
+		if (modelId.Length == 0) throw new InvalidOperationException("模型 ID 不能为空");
+		if (!_services.Resources.IsInstalled(ResourceType.Live2D, modelId)) throw new InvalidOperationException("模型尚未安装");
+		if (!args.TryGetProperty("interactions", out JsonElement interactionsElement)
+			|| interactionsElement.ValueKind != JsonValueKind.Object)
+		{
+			throw new InvalidOperationException("互动配置不能为空");
+		}
+
+		PetInteractionConfig config;
+		try
+		{
+			config = PetInteractionConfig.Parse(interactionsElement.GetRawText());
+		}
+		catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+		{
+			throw new InvalidOperationException($"互动配置无效: {exception.Message}", exception);
+		}
+
+		string dir = _services.Resources.ResourceDir(ResourceType.Live2D, modelId);
+		Model3MetaInfo meta = Model3Meta.Read(dir);
+		config.ValidateBindings(meta.Motions, meta.Expressions);
+		_services.Config.Set(PetInteractionConfig.StorageKey(modelId), new ConfigValue.Json(config.ToJsonNode()));
+		_services.PetRuntime?.SetInteractionConfig(modelId, config);
+		PostBroadcast("nori:config-changed", new {key = PetInteractionConfig.StorageKey(modelId), value = config});
+		Runtime.InvalidateSnapshot("models");
+		await Task.CompletedTask;
+		return null;
+	}
+
 	/// <summary>
 	/// 模型显示参数写入 (缩放按模型存储, 表情列表同)
 	/// </summary>
@@ -816,6 +877,7 @@ public sealed class BridgeCommands
 		SetBehaviorKey(args, "lipSync", "l2d_lip_sync");
 		SetBehaviorKey(args, "shadow", "l2d_shadow");
 		SetBehaviorKey(args, "beatSync", "l2d_beat_sync");
+		SetBehaviorKey(args, "aiInteraction", PetInteractionConfig.AiEnabledKey);
 		SetBehaviorKey(args, "renderScale", "l2d_render_scale");
 		SetBehaviorKey(args, "maxFps", "l2d_max_fps");
 		await Task.CompletedTask;

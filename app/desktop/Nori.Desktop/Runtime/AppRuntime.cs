@@ -6,6 +6,7 @@ using Nori.Core.Agent;
 using Nori.Core.Configuration;
 using Nori.Core.Emotion;
 using Nori.Core.Logging;
+using Nori.Core.Live2D;
 using Nori.Core.Memory;
 using Nori.Core.Mcp;
 using Nori.Core.Network;
@@ -46,6 +47,16 @@ public sealed class AppRuntime : IAsyncDisposable
 	private readonly WebViewMicrophoneRecorder _recorder;
 	private readonly ReflectionQueue _reflectionQueue;
 	private readonly ReflectionWorker _reflectionWorker;
+	private readonly PetInteractionReactionService _petInteractionService;
+	private readonly SemaphoreSlim _petInteractionGate = new(1, 1);
+	private readonly Lock _petInteractionThrottleGate = new();
+	private readonly Lock _petSpeechGate = new();
+	private CancellationTokenSource? _petInteractionCts;
+	private CancellationTokenSource? _petSpeechCts;
+	private PetInteractionTrigger? _activePetInteractionTrigger;
+	private bool _activePetInteractionFallbackPosted;
+	private DateTimeOffset _lastPetInteractionAt = DateTimeOffset.MinValue;
+	private bool _petInteractionSubscribed;
 	private int _disposed;
 
 	public AppServices Services { get; }
@@ -67,6 +78,9 @@ public sealed class AppRuntime : IAsyncDisposable
 	public VoiceService Voice { get; }
 
 	public AgentEngine Engine { get; }
+
+	/// <summary>桌宠轻量互动 LLM 服务, 不进入聊天历史和工具链。</summary>
+	public PetInteractionReactionService PetInteraction => _petInteractionService;
 
 	/// <summary>当前快照版本号 (每次状态变更递增)</summary>
 	public int SnapshotVersion => Volatile.Read(ref _snapshotVersion);
@@ -130,6 +144,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		_playback = playback;
 		_recorder = recorder;
 		Voice = new VoiceService(services.Http, config, playback, () => VoiceRetired() ? null : recorder);
+		_petInteractionService = new PetInteractionReactionService(services.Http, config);
 
 		Tools = BuildToolRegistry(true);
 		Engine = new AgentEngine(
@@ -147,8 +162,15 @@ public sealed class AppRuntime : IAsyncDisposable
 		// 窗口显隐变化 (含托盘切换桌宠) 直接作废快照, 主界面的桌宠状态因此不会陈旧
 		if (services.Windows is not null)
 		{
-			services.Windows.VisibilityChanged += (label, _) =>
+			services.Windows.VisibilityChanged += (label, visible) =>
+			{
+				if (label == WindowLabels.Pet && !visible)
+				{
+					CancelPetInteractionRequest();
+					CancelPetInteractionSpeech();
+				}
 				InvalidateSnapshot(label == WindowLabels.Pet ? "pet" : "windows");
+			};
 		}
 	}
 
@@ -160,6 +182,13 @@ public sealed class AppRuntime : IAsyncDisposable
 	public void Start()
 	{
 		Emotion.Initialize();
+		if (!_petInteractionSubscribed && Services.PetRuntime is not null)
+		{
+			Services.PetRuntime.InteractionTriggered += OnPetInteractionTriggered;
+			Services.PetRuntime.ModelLoadRequested += CancelPetInteractionRequest;
+			Services.PetRuntime.ModelLoadRequested += CancelPetInteractionPresentation;
+			_petInteractionSubscribed = true;
+		}
 		Emotion.ExpressionRequested += expression =>
 		{
 			try
@@ -272,6 +301,216 @@ public sealed class AppRuntime : IAsyncDisposable
 		}
 	}
 
+	private void CancelPetInteractionRequest() => CancelPetInteractionRequest(false);
+
+	/// <summary>取消当前桌宠 AI 请求；聊天抢占时只补发一次本地兜底。</summary>
+	private void CancelPetInteractionRequest(bool applyLocalFallback)
+	{
+		CancellationTokenSource? requestCts;
+		PetInteractionTrigger? fallback = null;
+		lock (_petInteractionThrottleGate)
+		{
+			requestCts = _petInteractionCts;
+			if (applyLocalFallback
+				&& !_activePetInteractionFallbackPosted
+				&& _activePetInteractionTrigger is { } trigger)
+			{
+				_activePetInteractionFallbackPosted = true;
+				fallback = trigger;
+			}
+		}
+		try { requestCts?.Cancel(); }
+		catch (ObjectDisposedException) { }
+		if (fallback is not null) PostPetInteractionFallback(fallback);
+	}
+
+	private void OnPetInteractionTriggered(PetInteractionTrigger trigger)
+	{
+		if (Volatile.Read(ref _disposed) != 0) return;
+		if (!IsPetInteractionAiEnabled() || !IsLlmConfigured() || _sessions.Count > 0)
+		{
+			PostPetInteractionFallback(trigger);
+			return;
+		}
+		if (!_petInteractionGate.Wait(0))
+		{
+			PostPetInteractionFallback(trigger);
+			return;
+		}
+
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		lock (_petInteractionThrottleGate)
+		{
+			if (now - _lastPetInteractionAt < TimeSpan.FromSeconds(3))
+			{
+				_petInteractionGate.Release();
+				PostPetInteractionFallback(trigger);
+				return;
+			}
+			_lastPetInteractionAt = now;
+		}
+
+		Task task = RunPetInteractionAsync(trigger);
+		TrackTask(task);
+	}
+
+	private async Task RunPetInteractionAsync(PetInteractionTrigger trigger)
+	{
+		using CancellationTokenSource requestCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+		lock (_petInteractionThrottleGate)
+		{
+			_petInteractionCts = requestCts;
+			_activePetInteractionTrigger = trigger;
+			_activePetInteractionFallbackPosted = false;
+		}
+		try
+		{
+			PetInteractionReactionRequest request = new()
+			{
+				ModelId = trigger.ModelId,
+				RegionId = trigger.Hit.Region.Id,
+				RegionName = trigger.Hit.Region.Name,
+				ModelX = trigger.Hit.ModelX,
+				ModelY = trigger.Hit.ModelY,
+				RegionX = trigger.Hit.RegionX,
+				RegionY = trigger.Hit.RegionY,
+				CurrentEmotion = Emotion.CurrentType,
+				AvailableMotions = Services.PetRuntime.MotionGroups
+					.Select(group => new MotionGroupInfo {Group = group.Group, Names = [.. group.Names]})
+					.ToArray(),
+				AvailableExpressions = Services.PetRuntime.Expressions.ToArray(),
+			};
+			PetInteractionReaction reaction = await _petInteractionService.ReactAsync(request, requestCts.Token).ConfigureAwait(false);
+			if (requestCts.IsCancellationRequested || !IsCurrentPetInteraction(trigger)) return;
+			await Dispatcher.UIThread.InvokeAsync(() =>
+			{
+				if (!requestCts.IsCancellationRequested) ApplyPetInteractionReaction(trigger, reaction);
+			});
+		}
+		catch (OperationCanceledException) when (requestCts.IsCancellationRequested || _lifetimeCts.IsCancellationRequested)
+		{
+			// 应用退出、模型切换、隐藏或聊天抢占时取消，不显示错误也不应用旧结果。
+		}
+		catch (Exception exception)
+		{
+			try { Services.Logger.Write(LogSource.Backend, "warn", $"桌宠 AI 互动失败: {exception.Message}"); } catch { }
+			PostActivePetInteractionFallback(trigger, requestCts);
+		}
+		finally
+		{
+			lock (_petInteractionThrottleGate)
+			{
+				if (ReferenceEquals(_petInteractionCts, requestCts))
+				{
+					_petInteractionCts = null;
+					_activePetInteractionTrigger = null;
+					_activePetInteractionFallbackPosted = false;
+				}
+			}
+			_petInteractionGate.Release();
+		}
+	}
+
+	private void ApplyPetInteractionReaction(PetInteractionTrigger trigger, PetInteractionReaction reaction)
+	{
+		if (!IsCurrentPetInteraction(trigger)) return;
+		if (!string.IsNullOrWhiteSpace(reaction.Emotion) && EmotionTypes.IsValid(reaction.Emotion))
+		{
+			try { Emotion.SetEmotion(reaction.Emotion); } catch { }
+		}
+		if (!string.IsNullOrWhiteSpace(reaction.Motion)) Services.PetRuntime.PlayMotionByName(reaction.Motion);
+		if (!string.IsNullOrWhiteSpace(reaction.Expression)) Services.PetRuntime.PlayExpression(reaction.Expression);
+		if (string.IsNullOrWhiteSpace(reaction.Text)) return;
+		Services.Windows.ShowPetSpeech(reaction.Text);
+		bool autoTts = ParseBoolFlag(Services.Config.GetStringOr("tts_auto_play", "")) ?? false;
+		if (autoTts) StartPetInteractionSpeech(reaction.Text);
+	}
+
+	private void PostActivePetInteractionFallback(PetInteractionTrigger trigger, CancellationTokenSource requestCts)
+	{
+		bool shouldPost = false;
+		lock (_petInteractionThrottleGate)
+		{
+			if (ReferenceEquals(_petInteractionCts, requestCts) && !_activePetInteractionFallbackPosted)
+			{
+				_activePetInteractionFallbackPosted = true;
+				shouldPost = true;
+			}
+		}
+		if (shouldPost) PostPetInteractionFallback(trigger);
+	}
+
+	private void PostPetInteractionFallback(PetInteractionTrigger trigger)
+	{
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (IsCurrentPetInteraction(trigger)) Services.PetRuntime.ApplyLocalInteraction(trigger.Hit.Region);
+		});
+	}
+
+	private bool IsCurrentPetInteraction(PetInteractionTrigger trigger) =>
+		Services.Windows.IsWindowVisible(WindowLabels.Pet)
+		&& Services.PetRuntime.CurrentModelId.Equals(trigger.ModelId, StringComparison.OrdinalIgnoreCase)
+		&& Services.PetRuntime.ModelGeneration == trigger.ModelGeneration;
+
+	private bool IsPetInteractionAiEnabled() =>
+		ParseBoolFlag(Services.Config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false;
+
+	private bool IsLlmConfigured() =>
+		Services.Config.GetStringOr("llm_api_base", "").Trim().Length > 0
+		&& Services.Config.GetStringOr("llm_api_key", "").Length > 0
+		&& Services.Config.GetStringOr("llm_model", "").Trim().Length > 0;
+
+	private void StartPetInteractionSpeech(string text)
+	{
+		CancelPetInteractionSpeech();
+		CancellationTokenSource speechCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+		lock (_petSpeechGate) _petSpeechCts = speechCts;
+		TrackTask(SpeakPetInteractionSafelyAsync(text, speechCts));
+	}
+
+	private void CancelPetInteractionPresentation()
+	{
+		CancelPetInteractionSpeech();
+		Dispatcher.UIThread.Post(Services.Windows.ClearPetSpeech);
+	}
+
+	private void CancelPetInteractionSpeech()
+	{
+		CancellationTokenSource? speechCts;
+		lock (_petSpeechGate)
+		{
+			speechCts = _petSpeechCts;
+			_petSpeechCts = null;
+		}
+		try { speechCts?.Cancel(); }
+		catch (ObjectDisposedException) { }
+	}
+
+	private async Task SpeakPetInteractionSafelyAsync(string text, CancellationTokenSource speechCts)
+	{
+		try
+		{
+			await Voice.SpeakAsync(text, null, speechCts.Token);
+		}
+		catch (OperationCanceledException) when (speechCts.IsCancellationRequested)
+		{
+			// 隐藏、切换模型、开始聊天或退出时取消，不作为播放失败。
+		}
+		catch (Exception exception)
+		{
+			try { Services.Logger.Write(LogSource.Backend, "warn", $"桌宠互动朗读失败: {exception.Message}"); } catch { }
+		}
+		finally
+		{
+			lock (_petSpeechGate)
+			{
+				if (ReferenceEquals(_petSpeechCts, speechCts)) _petSpeechCts = null;
+			}
+			speechCts.Dispose();
+		}
+	}
+
 	private async Task SpeakSafelyAsync(string text)
 	{
 		try
@@ -378,6 +617,9 @@ public sealed class AppRuntime : IAsyncDisposable
 		string sessionId = $"agent-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds():x}-{Interlocked.Increment(ref _sessionCounter):x}";
 		AgentSessionState session = new(source.Label);
 		_sessions[sessionId] = session;
+		// 聊天请求优先于桌宠轻量请求与其语音；旧 AI 请求改走该区域的本地兜底。
+		CancelPetInteractionRequest(true);
+		CancelPetInteractionPresentation();
 
 		AgentCallbacks callbacks = new()
 		{
@@ -664,6 +906,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				lipSync = ParseBoolFlag(config.GetStringOr("l2d_lip_sync", "true")) ?? true,
 				shadow = ParseBoolFlag(config.GetStringOr("l2d_shadow", "true")) ?? true,
 				beatSync = ParseBoolFlag(config.GetStringOr("l2d_beat_sync", "")) ?? false,
+				aiInteraction = ParseBoolFlag(config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false,
 				renderScale = ReadFloat(config, "l2d_render_scale") ?? 2.0,
 				maxFps = (int)(ReadFloat(config, "l2d_max_fps") ?? 0),
 			},
@@ -872,6 +1115,15 @@ public sealed class AppRuntime : IAsyncDisposable
 	{
 		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 		_lifetimeCts.Cancel();
+		if (_petInteractionSubscribed && Services.PetRuntime is not null)
+		{
+			Services.PetRuntime.InteractionTriggered -= OnPetInteractionTriggered;
+			Services.PetRuntime.ModelLoadRequested -= CancelPetInteractionRequest;
+			Services.PetRuntime.ModelLoadRequested -= CancelPetInteractionPresentation;
+			_petInteractionSubscribed = false;
+		}
+		CancelPetInteractionRequest();
+		CancelPetInteractionSpeech();
 
 		foreach ((string _, AgentSessionState session) in _sessions)
 		{
@@ -899,6 +1151,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		// Voice.Dispose 会逆向释放 _playback; 录音票据要单独作废
 		try { _recorder.Dispose(); } catch { }
 		try { Voice.Dispose(); } catch { }
+		_petInteractionGate.Dispose();
 		_lifetimeCts.Dispose();
 	}
 

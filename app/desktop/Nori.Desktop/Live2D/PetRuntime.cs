@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Avalonia.Threading;
 using Live2DCSharpSDK.App;
 using Live2DCSharpSDK.Framework;
@@ -48,6 +49,9 @@ public sealed class PetRuntime
 
 	private double _lastUpdateTime;
 	private double _lastTapTime;
+	private readonly Lock _interactionGate = new();
+	private PetInteractionConfig _interactionConfig = PetInteractionConfig.Empty;
+	private PetViewportMapping? _viewportMapping;
 
 	// ---- 后台模型准备 (世代归属) ----
 	//
@@ -75,7 +79,21 @@ public sealed class PetRuntime
 	public int MaxFps { get; set; }
 
 	public event Action? ModelChanged;
+	public event Action? ModelLoadRequested;
 	public event Action? FrameRendered;
+	public event Action<PetInteractionTrigger>? InteractionTriggered;
+
+	/// <summary>当前模型加载世代, AI 结果应用前用它判断是否已经切换模型。</summary>
+	public long ModelGeneration => Volatile.Read(ref _modelGeneration);
+
+	/// <summary>当前模型的自定义互动配置快照。</summary>
+	public PetInteractionConfig InteractionConfig
+	{
+		get
+		{
+			lock (_interactionGate) return _interactionConfig;
+		}
+	}
 
 	/// <summary>缩放变化: 桌宠窗口据此重算窗口尺寸</summary>
 	public event Action? LayoutChanged;
@@ -141,6 +159,7 @@ public sealed class PetRuntime
 		}
 		// 同上: 释放交给 manager, PetGlControl 随后的 _lapp.Dispose() 会走到 ReleaseAllModel()
 		_currentModel = null;
+		lock (_interactionGate) _viewportMapping = null;
 		_app?.Live2dManager.ReleaseAllModel();
 		_app = null;
 		_gl = null;
@@ -160,6 +179,33 @@ public sealed class PetRuntime
 		BeatSyncEnabled = ParseBoolConfig("l2d_beat_sync", false);
 		ClickInteraction = ParseBoolConfig("l2d_click_interaction", true);
 		MaxFps = (int)ParseFloatConfig("l2d_max_fps", 0.0f);
+		LoadInteractionConfig();
+	}
+
+	/// <summary>读取当前模型的自定义互动配置；损坏配置按空配置处理。</summary>
+	private void LoadInteractionConfig()
+	{
+		PetInteractionConfig config = PetInteractionConfig.Empty;
+		if (_services.Config.Get(PetInteractionConfig.StorageKey(_currentModelId)) is ConfigValue.Json {Value: JsonNode node})
+		{
+			try
+			{
+				config = PetInteractionConfig.Parse(node.ToJsonString(PetInteractionJson.Options));
+			}
+			catch (Exception exception)
+			{
+				WriteCubismLog($"互动配置无效 [{_currentModelId}]: {exception.Message}");
+			}
+		}
+		lock (_interactionGate) _interactionConfig = config;
+	}
+
+	/// <summary>桥接保存配置后的当前模型热应用。</summary>
+	public void SetInteractionConfig(string modelId, PetInteractionConfig config)
+	{
+		if (!modelId.Equals(_currentModelId, StringComparison.OrdinalIgnoreCase)) return;
+		config.Validate();
+		lock (_interactionGate) _interactionConfig = config;
 	}
 
 	/// <summary>
@@ -254,6 +300,8 @@ public sealed class PetRuntime
 				}
 			}, CancellationToken.None);
 		}
+		try { ModelLoadRequested?.Invoke(); }
+		catch (Exception exception) { WriteCubismLog($"模型切换取消互动请求失败: {exception.Message}"); }
 	}
 
 	/// <summary>
@@ -306,6 +354,7 @@ public sealed class PetRuntime
 			_currentModel = _app.Live2dManager.LoadModel(prepared.ModelDir, prepared.Model3FileName);
 			_currentModelId = prepared.ModelId;
 			_currentModelDir = prepared.ModelDir;
+			lock (_interactionGate) _viewportMapping = null;
 
 			// 自定义值更新挂钩
 			_currentModel.CustomValueUpdate = true;
@@ -415,11 +464,13 @@ public sealed class PetRuntime
 		// 之前这里乘的是 aspectModel / aspectWindow, 等于多乘了一个模型宽高比,
 		// 竖长模型 (宽高比 < 1) 会被按这个比例横向压扁。
 		_projectionMatrix.LoadIdentity();
-		float canvasW = _currentModel.Model.GetCanvasWidthPixel();
-		float canvasH = _currentModel.Model.GetCanvasHeightPixel();
+		float canvasPixelW = _currentModel.Model.GetCanvasWidthPixel();
+		float canvasPixelH = _currentModel.Model.GetCanvasHeightPixel();
+		float canvasUnitW = _currentModel.Model.GetCanvasWidth();
+		float canvasUnitH = _currentModel.Model.GetCanvasHeight();
 
 		float aspectWindow = (float)viewportWidth / viewportHeight;
-		float aspectModel = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1.0f;
+		float aspectModel = canvasPixelW > 0 && canvasPixelH > 0 ? canvasPixelW / canvasPixelH : 1.0f;
 
 		float scaleX = (float)viewportHeight / viewportWidth;
 		float scaleY = 1.0f;
@@ -434,6 +485,18 @@ public sealed class PetRuntime
 		}
 
 		_projectionMatrix.Scale(scaleX, scaleY);
+		PetViewportMapping mapping = PetViewportMapping.Create(
+			viewportWidth,
+			viewportHeight,
+			// ModelMatrix 由 Cubism 的 Unit 画布尺寸构造；这里必须使用同一单位，
+			// 不能传 Pixel 尺寸，否则 PixelsPerUnit 会把归一化点击压缩到画布中心。
+			canvasUnitW,
+			canvasUnitH,
+			_currentModel.ModelMatrix.GetScaleX(),
+			_currentModel.ModelMatrix.GetScaleY(),
+			_currentModel.ModelMatrix.GetTranslateX(),
+			_currentModel.ModelMatrix.GetTranslateY());
+		lock (_interactionGate) _viewportMapping = mapping;
 
 		_currentModel.Update();
 		_currentModel.Draw(_projectionMatrix);
@@ -456,18 +519,87 @@ public sealed class PetRuntime
 		if (now - _lastTapTime < 0.6) return;
 		_lastTapTime = now;
 
+		PetViewportMapping? mapping;
+		PetInteractionConfig interactions;
+		lock (_interactionGate)
+		{
+			mapping = _viewportMapping;
+			interactions = _interactionConfig;
+		}
+
+		if (mapping is { } currentMapping
+			&& currentMapping.TryMapClientToModel(clientX, clientY, out double modelX, out double modelY)
+			&& PetInteractionResolver.TryResolve(interactions, modelX, modelY, out PetInteractionHit? hit)
+			&& hit is not null)
+		{
+			if (hit.Region.ReactionMode == PetInteractionReactionMode.Ai)
+			{
+				PetInteractionTrigger trigger = new(_currentModelId, ModelGeneration, hit);
+				Action<PetInteractionTrigger>? handler = InteractionTriggered;
+				if (handler is null)
+				{
+					ApplyLocalInteraction(hit.Region);
+				}
+				else
+				{
+					try { handler(trigger); }
+					catch (Exception exception)
+					{
+						WriteCubismLog($"AI 互动调度失败: {exception.Message}");
+						ApplyLocalInteraction(hit.Region);
+					}
+				}
+			}
+			else
+			{
+				ApplyLocalInteraction(hit.Region);
+			}
+			return;
+		}
+
+		// 没有 HitAreas 的模型也会走这里: PetWindow 已经用 alpha 掩码确认点击的是模型像素。
 		float normX = (clientX / windowW) * 2.0f - 1.0f;
 		float normY = -((clientY / windowH) * 2.0f - 1.0f);
-
 		if (_currentModel.HitTest(LAppDefine.HitAreaNameHead, normX, normY)
 			&& ExpressionEnabled
 			&& ToggleRandomExpression())
 		{
 			return;
 		}
-
-		// 没有 HitAreas 的模型也会走这里: PetWindow 已经用 alpha 掩码确认点击的是模型像素。
 		PlayTapBodyOrRandomMotion();
+	}
+
+	/// <summary>执行一个区域配置的本地 Motion/Expression 反应。</summary>
+	public void ApplyLocalInteraction(PetInteractionRegion region)
+	{
+		switch (region.Motion.Mode)
+		{
+			case PetInteractionActionMode.Random:
+				PlayRandomMotion();
+				break;
+			case PetInteractionActionMode.Selected:
+				PlayMotionExact(region.Motion.Group ?? "", region.Motion.Name ?? "");
+				break;
+		}
+
+		if (!ExpressionEnabled) return;
+		switch (region.Expression.Mode)
+		{
+			case PetInteractionActionMode.Random:
+				ToggleRandomExpression();
+				break;
+			case PetInteractionActionMode.Selected:
+				PlayExpression(region.Expression.Name ?? "");
+				break;
+		}
+	}
+
+	private bool PlayMotionExact(string group, string name)
+	{
+		MotionGroupInfo? matched = FindMotionGroup(group);
+		if (matched is null) return false;
+		int index = matched.Names.FindIndex(item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
+		return index >= 0 && TryStartMotion(matched.Group, index) is not null;
 	}
 
 	/// <summary>
