@@ -6,9 +6,7 @@ using Nori.Core.Data;
 
 namespace Nori.Core.Memory;
 
-/// <summary>
-/// 记忆数据模型
-/// </summary>
+/// <summary>记忆数据模型。</summary>
 public sealed record MemoryItem
 {
 	public required long Id { get; init; }
@@ -20,10 +18,21 @@ public sealed record MemoryItem
 	public string? Embedding { get; init; }
 	public required string CreatedAt { get; init; }
 	public required string UpdatedAt { get; init; }
+	public string Kind { get; init; } = "general";
+	public string? CanonicalSummary { get; init; }
+	public string? PersonaSummary { get; init; }
+	public double Confidence { get; init; } = 0.8;
+	public string Status { get; init; } = "active";
+	public int AccessCount { get; init; }
+	public int ReinforcementCount { get; init; }
+	public string? LastAccessedAt { get; init; }
+	public string? LastReinforcedAt { get; init; }
+	public double? TtlDays { get; init; }
+	public string? ExpiresAt { get; init; }
+	public long? SupersededBy { get; init; }
+	public string? EmbeddingFingerprint { get; init; }
 
-	/// <summary>
-	/// 辅助方法: 解析 JSON 向量数组
-	/// </summary>
+	/// <summary>解析 JSON 向量数组。</summary>
 	public float[]? GetVector()
 	{
 		if (string.IsNullOrWhiteSpace(Embedding)) return null;
@@ -38,9 +47,7 @@ public sealed record MemoryItem
 	}
 }
 
-/// <summary>
-/// 语义检索匹配结果
-/// </summary>
+/// <summary>语义检索匹配结果。</summary>
 public sealed record MemorySearchResult
 {
 	public required MemoryItem Item { get; init; }
@@ -49,24 +56,20 @@ public sealed record MemorySearchResult
 }
 
 /// <summary>
-/// SQLite 记忆库存储层 (集成 BGE-M3 语义向量检索与混合搜索)
+/// SQLite 记忆存储兼容层。
+/// 旧的 MemoryStore API 保留给桥接和插件；所有新增聚合写入在这里统一维护 Atom、Source 与 FTS。
 /// </summary>
 public sealed class MemoryStore
 {
-	/// <summary>语义检索最多读取的候选记录数</summary>
-	public const int DefaultSemanticCandidateLimit = 500;
-
-	/// <summary>解析向量的本地 LRU 缓存容量</summary>
+	public const int DefaultSemanticCandidateLimit = 100000;
 	public const int DefaultVectorCacheCapacity = 512;
 
 	private readonly NoriDatabase _database;
 	private readonly int _semanticCandidateLimit;
 	private readonly int _vectorCacheCapacity;
-
-	// 向量缓存: 语义检索的热路径上避免每次全量反序列化 JSON 向量。
-	// Dictionary 的枚举顺序作为 LRU 顺序: 末尾是最近使用项.
 	private readonly Lock _vectorCacheGate = new();
 	private readonly Dictionary<long, (string UpdatedAt, float[] Vector)> _vectorCache = [];
+	private bool _ftsAvailable;
 
 	public MemoryStore(
 		NoriDatabase database,
@@ -78,11 +81,12 @@ public sealed class MemoryStore
 		_database = database;
 		_semanticCandidateLimit = semanticCandidateLimit;
 		_vectorCacheCapacity = vectorCacheCapacity;
+		InitializeFts();
 	}
 
-	/// <summary>
-	/// 取记忆的向量, 命中缓存时不再反序列化 JSON 向量
-	/// </summary>
+	/// <summary>当前 SQLite 是否提供可用的 FTS5 索引。</summary>
+	public bool IsFtsAvailable => _ftsAvailable;
+
 	private float[]? VectorOf(MemoryItem item)
 	{
 		if (string.IsNullOrWhiteSpace(item.Embedding)) return null;
@@ -109,49 +113,67 @@ public sealed class MemoryStore
 		}
 	}
 
-	/// <summary>从向量缓存中逐出一条 (行被删改时调用)</summary>
 	private void EvictVector(long id)
 	{
-		lock (_vectorCacheGate)
-		{
-			_vectorCache.Remove(id);
-		}
+		lock (_vectorCacheGate) _vectorCache.Remove(id);
 	}
 
-	/// <summary>
-	/// 添加一条新记忆
-	/// </summary>
+	/// <summary>添加一条记忆，并初始化 v4 聚合字段。</summary>
 	public MemoryItem Add(
 		string type,
 		string content,
 		double importance = 0.5,
 		string source = "chat",
 		string? tags = null,
-		string? embedding = null)
+		string? embedding = null,
+		MemoryKind kind = MemoryKind.General,
+		string? canonicalSummary = null,
+		string? personaSummary = null,
+		double confidence = 0.8,
+		double? ttlDays = null,
+		string? expiresAt = null,
+		string? embeddingFingerprint = null)
 	{
+		ValidateScore(importance, nameof(importance));
+		ValidateScore(confidence, nameof(confidence));
 		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+		string storageKind = kind == MemoryKind.General ? MemoryKindExtensions.Parse(type).ToStorage() : kind.ToStorage();
 		long id = _database.Locked(connection =>
 		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
 			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
 			command.CommandText = """
-				INSERT INTO memories (type, content, importance, source, tags, embedding, created_at, updated_at)
-				VALUES ($type, $content, $importance, $source, $tags, $embedding, $created_at, $updated_at);
+				INSERT INTO memories
+					(type, content, importance, source, tags, embedding, created_at, updated_at,
+					 kind, canonical_summary, persona_summary, confidence, status, ttl_days, expires_at, embedding_fingerprint)
+				VALUES ($type, $content, $importance, $source, $tags, $embedding, $created_at, $updated_at,
+					 $kind, $canonical_summary, $persona_summary, $confidence, 'active', $ttl_days, $expires_at, $embedding_fingerprint);
 				SELECT last_insert_rowid();
 				""";
-			command.Parameters.AddWithValue("$type", type);
-			command.Parameters.AddWithValue("$content", content);
-			command.Parameters.AddWithValue("$importance", importance);
-			command.Parameters.AddWithValue("$source", source);
-			command.Parameters.AddWithValue("$tags", (object?)tags ?? DBNull.Value);
-			command.Parameters.AddWithValue("$embedding", (object?)embedding ?? DBNull.Value);
-			command.Parameters.AddWithValue("$created_at", now);
-			command.Parameters.AddWithValue("$updated_at", now);
-
-			return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+			AddParameter(command, "$type", type);
+			AddParameter(command, "$content", content);
+			AddParameter(command, "$importance", importance);
+			AddParameter(command, "$source", source);
+			AddParameter(command, "$tags", tags);
+			AddParameter(command, "$embedding", embedding);
+			AddParameter(command, "$created_at", now);
+			AddParameter(command, "$updated_at", now);
+			AddParameter(command, "$kind", storageKind);
+			AddParameter(command, "$canonical_summary", canonicalSummary ?? content);
+			AddParameter(command, "$persona_summary", personaSummary ?? content);
+			AddParameter(command, "$confidence", confidence);
+			AddParameter(command, "$ttl_days", ttlDays);
+			AddParameter(command, "$expires_at", expiresAt);
+			AddParameter(command, "$embedding_fingerprint", embeddingFingerprint);
+			long result = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+			RefreshMemoryIndex(connection, transaction, result);
+			transaction.Commit();
+			return result;
 		});
 
 		return new MemoryItem
-	{
+		{
 			Id = id,
 			Type = type,
 			Content = content,
@@ -161,116 +183,189 @@ public sealed class MemoryStore
 			Embedding = embedding,
 			CreatedAt = now,
 			UpdatedAt = now,
+			Kind = storageKind,
+			CanonicalSummary = canonicalSummary ?? content,
+			PersonaSummary = personaSummary ?? content,
+			Confidence = confidence,
+			Status = "active",
+			TtlDays = ttlDays,
+			ExpiresAt = expiresAt,
+			EmbeddingFingerprint = embeddingFingerprint,
 		};
 	}
 
-	/// <summary>
-	/// 更新记忆的向量嵌入 (用于后台批量补全或重新生成 Embedding)
-	/// </summary>
-	public bool UpdateEmbedding(long id, string embedding)
+	/// <summary>直接创建一个事实原子。</summary>
+	public MemoryAtom AddAtom(
+		long parentMemoryId,
+		MemoryKind kind,
+		string content,
+		double importance = 0.5,
+		double confidence = 0.8,
+		double? ttlDays = null,
+		string? expiresAt = null,
+		string? entities = null)
+	{
+		ValidateScore(importance, nameof(importance));
+		ValidateScore(confidence, nameof(confidence));
+		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+		return _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
+			command.CommandText = """
+				INSERT INTO memory_atoms
+					(parent_memory_id, atom_type, content, importance, confidence, status, created_at, ttl_days, expires_at, entities)
+				VALUES ($parent, $kind, $content, $importance, $confidence, 'active', $created, $ttl, $expires, $entities);
+				SELECT last_insert_rowid();
+				""";
+			AddParameter(command, "$parent", parentMemoryId);
+			AddParameter(command, "$kind", kind.ToStorage());
+			AddParameter(command, "$content", content);
+			AddParameter(command, "$importance", importance);
+			AddParameter(command, "$confidence", confidence);
+			AddParameter(command, "$created", now);
+			AddParameter(command, "$ttl", ttlDays);
+			AddParameter(command, "$expires", expiresAt);
+			AddParameter(command, "$entities", entities);
+			long id = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+			RefreshAtomIndex(connection, transaction, id);
+			transaction.Commit();
+			return new MemoryAtom
+			{
+				Id = id,
+				ParentMemoryId = parentMemoryId,
+				AtomType = kind.ToStorage(),
+				Content = content,
+				Importance = importance,
+				Confidence = confidence,
+				Status = MemoryStatus.Active,
+				CreatedAt = now,
+				TtlDays = ttlDays,
+				ExpiresAt = expiresAt,
+				Entities = entities,
+			};
+		});
+	}
+
+	/// <summary>更新记忆的向量嵌入和 fingerprint。</summary>
+	public bool UpdateEmbedding(long id, string embedding, string? fingerprint = null)
 	{
 		bool updated = _database.Locked(connection =>
 		{
 			using SqliteCommand command = connection.CreateCommand();
-			command.CommandText = "UPDATE memories SET embedding = $embedding WHERE id = $id";
-			command.Parameters.AddWithValue("$id", id);
-			command.Parameters.AddWithValue("$embedding", embedding);
+			command.CommandText = "UPDATE memories SET embedding = $embedding, embedding_fingerprint = COALESCE($fingerprint, embedding_fingerprint) WHERE id = $id";
+			AddParameter(command, "$id", id);
+			AddParameter(command, "$embedding", embedding);
+			AddParameter(command, "$fingerprint", fingerprint);
 			return command.ExecuteNonQuery() > 0;
 		});
 		if (updated) EvictVector(id);
 		return updated;
 	}
 
-	/// <summary>
-	/// 获取所有记忆 (按重要度与创建时间降序)
-	/// </summary>
+	/// <summary>按重要度和时间读取记忆；兼容旧设置页的全量接口。</summary>
 	public IReadOnlyList<MemoryItem> GetAll(int limit = 100) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at FROM memories ORDER BY importance DESC, id DESC LIMIT $limit";
-		command.Parameters.AddWithValue("$limit", limit);
-		using SqliteDataReader reader = command.ExecuteReader();
-		List<MemoryItem> list = [];
-		while (reader.Read())
-		{
-			list.Add(ReadRow(reader));
-		}
-		return list;
+		command.CommandText = """
+			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at,
+			       kind, canonical_summary, persona_summary, confidence, status, access_count,
+			       reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at,
+			       superseded_by, embedding_fingerprint
+			FROM memories ORDER BY importance DESC, id DESC LIMIT $limit
+			""";
+		AddParameter(command, "$limit", Math.Max(0, limit));
+		return ReadItems(command);
 	});
 
-	/// <summary>
-	/// 按 id 游标读取待嵌入记忆, 用于显式的分页重建流程.
-	/// </summary>
+	/// <summary>按游标读取待嵌入记忆。</summary>
 	public IReadOnlyList<MemoryItem> GetUnembedded(int limit = 100, long afterId = 0) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
 		command.CommandText = """
-			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at
+			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at,
+			       kind, canonical_summary, persona_summary, confidence, status, access_count,
+			       reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at,
+			       superseded_by, embedding_fingerprint
 			FROM memories
-			WHERE id > $afterId AND (embedding IS NULL OR embedding = '')
-			ORDER BY id ASC
-			LIMIT $limit
+			WHERE id > $afterId AND (embedding IS NULL OR embedding = '') AND status IN ('active', 'dormant')
+			ORDER BY id ASC LIMIT $limit
 			""";
-		command.Parameters.AddWithValue("$afterId", afterId);
-		command.Parameters.AddWithValue("$limit", limit);
-		using SqliteDataReader reader = command.ExecuteReader();
-		List<MemoryItem> list = [];
-		while (reader.Read())
-		{
-			list.Add(ReadRow(reader));
-		}
-		return (IReadOnlyList<MemoryItem>)list;
+		AddParameter(command, "$afterId", afterId);
+		AddParameter(command, "$limit", Math.Max(1, limit));
+		return ReadItems(command);
 	});
 
-	/// <summary>
-	/// 按关键词搜索记忆
-	/// </summary>
-	public IReadOnlyList<MemoryItem> Search(string keyword, int limit = 20) => _database.Locked(connection =>
+	/// <summary>读取需要向量重建的记忆，支持 fingerprint 变化和强制重建。</summary>
+	public IReadOnlyList<MemoryItem> GetReembedCandidates(string fingerprint, int limit = 100, long afterId = 0, bool force = false) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = """
-			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at
-			FROM memories
-			WHERE content LIKE $pattern OR tags LIKE $pattern
-			ORDER BY importance DESC, id DESC
-			LIMIT $limit
-			""";
-		command.Parameters.AddWithValue("$pattern", $"%{keyword}%");
-		command.Parameters.AddWithValue("$limit", limit);
-		using SqliteDataReader reader = command.ExecuteReader();
-		List<MemoryItem> list = [];
-		while (reader.Read())
-		{
-			list.Add(ReadRow(reader));
-		}
-		return list;
+		command.CommandText = BaseSelect + " WHERE id > $afterId AND status IN ('active', 'dormant') AND (embedding IS NULL OR embedding = '' OR $force = 1 OR embedding_fingerprint IS NULL OR embedding_fingerprint <> $fingerprint) ORDER BY id ASC LIMIT $limit";
+		AddParameter(command, "$afterId", afterId);
+		AddParameter(command, "$force", force ? 1 : 0);
+		AddParameter(command, "$fingerprint", fingerprint);
+		AddParameter(command, "$limit", Math.Max(1, limit));
+		return ReadItems(command);
 	});
 
-	/// <summary>
-	/// 读取有限的语义候选集, 避免查询规模随记忆总量无界增长.
-	/// </summary>
-	private IReadOnlyList<MemoryItem> GetSemanticCandidates() => _database.Locked(connection =>
+	/// <summary>按 id 获取记忆。</summary>
+	public MemoryItem? Get(long id) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = """
-			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at
-			FROM memories
-			ORDER BY importance DESC, id DESC
-			LIMIT $limit
-			""";
-		command.Parameters.AddWithValue("$limit", _semanticCandidateLimit);
+		command.CommandText = BaseSelect + " WHERE id = $id";
+		AddParameter(command, "$id", id);
 		using SqliteDataReader reader = command.ExecuteReader();
-		List<MemoryItem> list = [];
-		while (reader.Read())
-		{
-			list.Add(ReadRow(reader));
-		}
-		return (IReadOnlyList<MemoryItem>)list;
+		return reader.Read() ? ReadRow(reader) : null;
 	});
 
-	/// <summary>
-	/// 基于 BGE-M3 / OpenAI 向量的语义检索 (余弦相似度)
-	/// </summary>
+	/// <summary>按关键词搜索；FTS 不可用时降级到 LIKE。</summary>
+	public IReadOnlyList<MemoryItem> Search(string keyword, int limit = 20) =>
+		SearchKeyword(keyword, limit).Select(hit => Get(hit.MemoryId)).OfType<MemoryItem>().ToList();
+
+	/// <summary>返回关键词检索的排序命中。</summary>
+	public IReadOnlyList<RetrievalHit> SearchKeyword(string keyword, int limit = 20)
+	{
+		if (string.IsNullOrWhiteSpace(keyword)) return [];
+		return _database.Locked(connection =>
+		{
+			if (!_ftsAvailable) return SearchLikeHits(connection, keyword, limit);
+			List<RetrievalHit> hits = SearchFts(connection, "memories_fts", keyword, limit);
+			return hits.Count > 0 ? hits : SearchLikeHits(connection, keyword, limit);
+		});
+	}
+
+	/// <summary>返回 Atom 的关键词检索命中。</summary>
+	public IReadOnlyList<RetrievalHit> SearchAtomKeyword(string keyword, int limit = 10)
+	{
+		if (string.IsNullOrWhiteSpace(keyword)) return [];
+		return _database.Locked(connection =>
+		{
+			if (!_ftsAvailable)
+			{
+				using SqliteCommand command = connection.CreateCommand();
+				command.CommandText = """
+					SELECT id FROM memory_atoms
+					WHERE status IN ('active', 'dormant') AND content LIKE $pattern
+					ORDER BY importance DESC, id DESC LIMIT $limit
+					""";
+				AddParameter(command, "$pattern", $"%{keyword}%");
+				AddParameter(command, "$limit", Math.Max(0, limit));
+				using SqliteDataReader reader = command.ExecuteReader();
+				return ReadHits(reader);
+			}
+			List<RetrievalHit> hits = SearchFts(connection, "memory_atoms_fts", keyword, limit);
+			if (hits.Count > 0) return hits;
+			using SqliteCommand fallback = connection.CreateCommand();
+			fallback.CommandText = "SELECT id FROM memory_atoms WHERE status IN ('active', 'dormant') AND content LIKE $pattern ORDER BY importance DESC, id DESC LIMIT $limit";
+			AddParameter(fallback, "$pattern", $"%{keyword}%");
+			AddParameter(fallback, "$limit", Math.Max(0, limit));
+			using SqliteDataReader fallbackReader = fallback.ExecuteReader();
+			return ReadHits(fallbackReader);
+		});
+	}
+
+	/// <summary>向量语义检索，候选集只包含可正常召回的状态。</summary>
 	public IReadOnlyList<MemorySearchResult> SearchSemantic(
 		float[] queryVector,
 		int limit = 10,
@@ -278,143 +373,376 @@ public sealed class MemoryStore
 	{
 		IReadOnlyList<MemoryItem> candidates = GetSemanticCandidates();
 		List<MemorySearchResult> results = [];
-
 		foreach (MemoryItem item in candidates)
 		{
-			float[]? vec = VectorOf(item);
-			if (vec == null || vec.Length != queryVector.Length) continue;
-
-			double sim = CosineSimilarity(queryVector, vec);
-			if (sim >= minSimilarity)
+			float[]? vector = VectorOf(item);
+			if (vector is null || vector.Length != queryVector.Length) continue;
+			double similarity = CosineSimilarity(queryVector, vector);
+			if (similarity < minSimilarity) continue;
+			results.Add(new MemorySearchResult
 			{
-				// 综合评分 = 向量相似度 * 0.75 + 记忆重要度 * 0.25
-				double score = (sim * 0.75) + (item.Importance * 0.25);
-				results.Add(new MemorySearchResult
-				{
-					Item = item,
-					Similarity = sim,
-					Score = score,
-				});
-			}
+				Item = item,
+				Similarity = similarity,
+				Score = similarity,
+			});
 		}
-
-		results.Sort((a, b) => b.Score.CompareTo(a.Score));
-		limit = Math.Max(0, limit);
-		if (results.Count > limit)
-		{
-			results.RemoveRange(limit, results.Count - limit);
-		}
+		results.Sort((left, right) => right.Score.CompareTo(left.Score));
+		if (results.Count > Math.Max(0, limit)) results.RemoveRange(Math.Max(0, limit), results.Count - Math.Max(0, limit));
 		return results;
 	}
 
-	/// <summary>
-	/// 混合检索 (关键词匹配 + 向量语义检索加权融合)
-	/// </summary>
-	public IReadOnlyList<MemoryItem> SearchHybrid(
-		string keyword,
-		float[]? queryVector = null,
-		int limit = 10)
+	/// <summary>真正的关键词 + 向量 RRF 兼容搜索。</summary>
+	public IReadOnlyList<MemoryItem> SearchHybrid(string keyword, float[]? queryVector = null, int limit = 10)
 	{
-		if (queryVector != null && queryVector.Length > 0)
-		{
-			IReadOnlyList<MemorySearchResult> semanticResults = SearchSemantic(queryVector, limit);
-			if (semanticResults.Count > 0)
-			{
-				List<MemoryItem> items = [];
-				foreach (MemorySearchResult res in semanticResults)
-				{
-					items.Add(res.Item);
-				}
-				return items;
-			}
-		}
-
-		// 降级回退至关键词文本搜索
-		return Search(keyword, limit);
+		List<RetrievalHit> keywordHits = [.. SearchKeyword(keyword, Math.Max(limit * 2, 20))];
+		List<RetrievalHit> vectorHits = queryVector is {Length: > 0}
+			? SearchSemantic(queryVector, Math.Max(limit * 2, 20), 0).Select((hit, index) => new RetrievalHit(hit.Item.Id, hit.Similarity, index + 1)).ToList()
+			: [];
+		Dictionary<long, double> fused = FuseRrf([keywordHits, vectorHits], 60);
+		return fused.OrderByDescending(pair => pair.Value).Take(Math.Max(0, limit))
+			.Select(pair => Get(pair.Key)).OfType<MemoryItem>().ToList();
 	}
 
-	/// <summary>
-	/// 更新记忆内容与重要性.
-	/// 文本变化且没有新向量时会清空旧 embedding; 成功更新后总会逐出内存缓存.
-	/// </summary>
+	/// <summary>读取单个 Atom。</summary>
+	public MemoryAtom? GetAtom(long id) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "SELECT id, parent_memory_id, atom_type, content, importance, confidence, status, created_at, last_accessed_at, last_reinforced_at, ttl_days, expires_at, reinforcement_count, decay_type, entities, superseded_by FROM memory_atoms WHERE id = $id";
+		AddParameter(command, "$id", id);
+		using SqliteDataReader reader = command.ExecuteReader();
+		return reader.Read() ? ReadAtom(reader) : null;
+	});
+
+	/// <summary>读取 Atom。</summary>
+	public IReadOnlyList<MemoryAtom> GetAtoms(long? parentMemoryId = null, MemoryStatus? status = null, int limit = 100, int offset = 0) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		List<string> where = [];
+		if (parentMemoryId is not null) { where.Add("parent_memory_id = $parent"); AddParameter(command, "$parent", parentMemoryId.Value); }
+		if (status is not null) { where.Add("status = $status"); AddParameter(command, "$status", status.Value.ToStorage()); }
+		command.CommandText = "SELECT id, parent_memory_id, atom_type, content, importance, confidence, status, created_at, last_accessed_at, last_reinforced_at, ttl_days, expires_at, reinforcement_count, decay_type, entities, superseded_by FROM memory_atoms"
+			+ (where.Count == 0 ? "" : " WHERE " + string.Join(" AND ", where))
+			+ " ORDER BY importance DESC, id DESC LIMIT $limit OFFSET $offset";
+		AddParameter(command, "$limit", Math.Max(0, limit));
+		AddParameter(command, "$offset", Math.Max(0, offset));
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<MemoryAtom> result = [];
+		while (reader.Read()) result.Add(ReadAtom(reader));
+		return (IReadOnlyList<MemoryAtom>)result;
+	});
+
+	/// <summary>批量保存来源消息。</summary>
+	public void AddSources(long memoryId, IReadOnlyList<MemorySource> sources)
+	{
+		if (sources.Count == 0) return;
+		_database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			foreach (MemorySource source in sources)
+			{
+				using SqliteCommand command = connection.CreateCommand();
+				command.Transaction = transaction;
+				command.CommandText = "INSERT INTO memory_sources(memory_id, role, content, message_time, sequence) VALUES ($memory, $role, $content, $time, $sequence)";
+				AddParameter(command, "$memory", memoryId);
+				AddParameter(command, "$role", source.Role);
+				AddParameter(command, "$content", source.Content);
+				AddParameter(command, "$time", source.MessageTime);
+				AddParameter(command, "$sequence", source.Sequence);
+				command.ExecuteNonQuery();
+			}
+			transaction.Commit();
+		});
+	}
+
+	/// <summary>读取某条记忆的来源。</summary>
+	public IReadOnlyList<MemorySource> GetSources(long memoryId) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "SELECT id, memory_id, role, content, message_time, sequence FROM memory_sources WHERE memory_id = $id ORDER BY sequence ASC";
+		AddParameter(command, "$id", memoryId);
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<MemorySource> result = [];
+		while (reader.Read())
+		{
+			result.Add(new MemorySource
+			{
+				Id = reader.GetInt64(0), MemoryId = reader.GetInt64(1), Role = reader.GetString(2),
+				Content = reader.GetString(3), MessageTime = reader.IsDBNull(4) ? null : reader.GetString(4), Sequence = reader.GetInt32(5),
+			});
+		}
+		return (IReadOnlyList<MemorySource>)result;
+	});
+
+	/// <summary>更新记忆内容与 v4 元数据。</summary>
 	public bool Update(
 		long id,
 		string content,
 		double? importance = null,
 		string? tags = null,
-		string? embedding = null)
+		string? embedding = null,
+		MemoryKind? kind = null,
+		string? canonicalSummary = null,
+		string? personaSummary = null,
+		double? confidence = null,
+		double? ttlDays = null,
+		string? expiresAt = null,
+		string? embeddingFingerprint = null)
 	{
+		if (importance is not null) ValidateScore(importance.Value, nameof(importance));
+		if (confidence is not null) ValidateScore(confidence.Value, nameof(confidence));
 		bool updated = _database.Locked(connection =>
 		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
 			string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
 			command.CommandText = """
-				UPDATE memories
-				SET content = $content,
-				    importance = COALESCE($importance, importance),
-				    tags = COALESCE($tags, tags),
-				    embedding = CASE
-				        WHEN $embedding IS NOT NULL THEN $embedding
-				        WHEN content <> $content THEN NULL
-				        ELSE embedding
-				    END,
-				    updated_at = $updated_at
+				UPDATE memories SET
+					content = $content,
+					importance = COALESCE($importance, importance),
+					tags = COALESCE($tags, tags),
+					kind = COALESCE($kind, kind),
+					canonical_summary = COALESCE($canonical, canonical_summary, $content),
+					persona_summary = COALESCE($persona, persona_summary, $content),
+					confidence = COALESCE($confidence, confidence),
+					ttl_days = COALESCE($ttl, ttl_days),
+					expires_at = COALESCE($expires, expires_at),
+					embedding = CASE WHEN $embedding IS NOT NULL THEN $embedding WHEN content <> $content THEN NULL ELSE embedding END,
+					embedding_fingerprint = CASE WHEN $embedding IS NOT NULL THEN $embeddingFingerprint WHEN content <> $content THEN NULL ELSE embedding_fingerprint END,
+					updated_at = $updated
 				WHERE id = $id
 				""";
-			command.Parameters.AddWithValue("$id", id);
-			command.Parameters.AddWithValue("$content", content);
-			command.Parameters.AddWithValue("$importance", (object?)importance ?? DBNull.Value);
-			command.Parameters.AddWithValue("$tags", (object?)tags ?? DBNull.Value);
-			command.Parameters.AddWithValue("$embedding", (object?)embedding ?? DBNull.Value);
-			command.Parameters.AddWithValue("$updated_at", now);
-
-			return command.ExecuteNonQuery() > 0;
+			AddParameter(command, "$id", id);
+			AddParameter(command, "$content", content);
+			AddParameter(command, "$importance", importance);
+			AddParameter(command, "$tags", tags);
+			AddParameter(command, "$kind", kind?.ToStorage());
+			AddParameter(command, "$canonical", canonicalSummary);
+			AddParameter(command, "$persona", personaSummary);
+			AddParameter(command, "$confidence", confidence);
+			AddParameter(command, "$ttl", ttlDays);
+			AddParameter(command, "$expires", expiresAt);
+			AddParameter(command, "$embedding", embedding);
+			AddParameter(command, "$embeddingFingerprint", embeddingFingerprint);
+			AddParameter(command, "$updated", now);
+			int count = command.ExecuteNonQuery();
+			if (count > 0) RefreshMemoryIndex(connection, transaction, id);
+			transaction.Commit();
+			return count > 0;
 		});
 		if (updated) EvictVector(id);
 		return updated;
 	}
 
-	/// <summary>
-	/// 删除单条记忆
-	/// </summary>
+	/// <summary>更新记忆状态，状态改变同步 FTS。</summary>
+	public bool SetStatus(long id, MemoryStatus status, long? supersededBy = null)
+	{
+		bool updated = _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
+			command.CommandText = "UPDATE memories SET status = $status, superseded_by = $superseded WHERE id = $id";
+			AddParameter(command, "$id", id);
+			AddParameter(command, "$status", status.ToStorage());
+			AddParameter(command, "$superseded", supersededBy);
+			int count = command.ExecuteNonQuery();
+			if (count > 0)
+			{
+				using SqliteCommand atoms = connection.CreateCommand();
+				atoms.Transaction = transaction;
+				atoms.CommandText = "UPDATE memory_atoms SET status = $status WHERE parent_memory_id = $id AND status <> 'superseded'";
+				AddParameter(atoms, "$id", id);
+				AddParameter(atoms, "$status", status.ToStorage());
+				atoms.ExecuteNonQuery();
+				RefreshMemoryIndex(connection, transaction, id);
+				RebuildAtomIndex(connection, transaction);
+			}
+			transaction.Commit();
+			return count > 0;
+		});
+		return updated;
+	}
+
+	/// <summary>归档或恢复记忆；Superseded 不允许普通恢复。</summary>
+	public bool Archive(long id) => SetStatus(id, MemoryStatus.Archived);
+
+	public bool Restore(long id) => _database.Locked(connection =>
+	{
+		using SqliteTransaction transaction = connection.BeginTransaction();
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = "UPDATE memories SET status = 'active', expires_at = NULL, last_accessed_at = $now WHERE id = $id AND status IN ('archived', 'expired')";
+		AddParameter(command, "$id", id);
+		AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+		int count = command.ExecuteNonQuery();
+		if (count > 0)
+		{
+			using SqliteCommand atoms = connection.CreateCommand();
+			atoms.Transaction = transaction;
+			atoms.CommandText = "UPDATE memory_atoms SET status = 'active' WHERE parent_memory_id = $id AND status IN ('archived', 'expired')";
+			AddParameter(atoms, "$id", id);
+			atoms.ExecuteNonQuery();
+			RefreshMemoryIndex(connection, transaction, id);
+			RebuildAtomIndex(connection, transaction);
+		}
+		transaction.Commit();
+		return count > 0;
+	});
+
+	/// <summary>硬删除仅由明确的管理界面调用；外键自动清理 Atom/Source。</summary>
 	public bool Delete(long id)
 	{
 		bool deleted = _database.Locked(connection =>
 		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
 			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
+			if (_ftsAvailable)
+			{
+				using SqliteCommand atomDelete = connection.CreateCommand();
+				atomDelete.Transaction = transaction;
+				atomDelete.CommandText = "DELETE FROM memory_atoms_fts WHERE memory_id IN (SELECT id FROM memory_atoms WHERE parent_memory_id = $id)";
+				AddParameter(atomDelete, "$id", id);
+				atomDelete.ExecuteNonQuery();
+			}
 			command.CommandText = "DELETE FROM memories WHERE id = $id";
-			command.Parameters.AddWithValue("$id", id);
-			return command.ExecuteNonQuery() > 0;
+			AddParameter(command, "$id", id);
+			bool result = command.ExecuteNonQuery() > 0;
+			if (_ftsAvailable)
+			{
+				DeleteFtsRow(connection, transaction, "memories_fts", id);
+			}
+			transaction.Commit();
+			return result;
 		});
 		if (deleted) EvictVector(id);
 		return deleted;
 	}
 
-	/// <summary>
-	/// 清空所有记忆
-	/// </summary>
+	/// <summary>清空个人记忆，不触碰 Knowledge 表。</summary>
 	public void Clear()
 	{
 		_database.Locked(connection =>
 		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
 			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
 			command.CommandText = "DELETE FROM memories";
 			command.ExecuteNonQuery();
+			if (_ftsAvailable) command.CommandText = "DELETE FROM memories_fts; DELETE FROM memory_atoms_fts;";
+			if (_ftsAvailable) command.ExecuteNonQuery();
+			transaction.Commit();
 		});
-		lock (_vectorCacheGate)
-		{
-			_vectorCache.Clear();
-		}
+		lock (_vectorCacheGate) _vectorCache.Clear();
 	}
 
-	/// <summary>
-	/// 计算两个向量的余弦相似度
-	/// </summary>
+	/// <summary>只强化最终注入 Prompt 的记忆。</summary>
+	public void MarkAccessed(IEnumerable<long> ids)
+	{
+		long[] unique = ids.Distinct().ToArray();
+		if (unique.Length == 0) return;
+		_database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			foreach (long id in unique)
+			{
+				using SqliteCommand command = connection.CreateCommand();
+				command.Transaction = transaction;
+				command.CommandText = "UPDATE memories SET access_count = access_count + 1, last_accessed_at = $now, status = CASE WHEN status = 'dormant' THEN 'active' ELSE status END WHERE id = $id";
+				AddParameter(command, "$id", id);
+				AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+				command.ExecuteNonQuery();
+			}
+			transaction.Commit();
+		});
+	}
+
+	/// <summary>强化一条重复记忆。</summary>
+	public bool Reinforce(long id, double importanceIncrement = 0.02)
+	{
+		return _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "UPDATE memories SET reinforcement_count = reinforcement_count + 1, importance = MIN(1.0, importance + $increment), last_reinforced_at = $now, status = 'active' WHERE id = $id AND status <> 'superseded'";
+			AddParameter(command, "$id", id);
+			AddParameter(command, "$increment", Math.Max(0, importanceIncrement));
+			AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+			return command.ExecuteNonQuery() > 0;
+		});
+	}
+
+	/// <summary>读取后台引擎状态值。</summary>
+	public string? GetEngineState(string key) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "SELECT value FROM memory_engine_state WHERE key = $key";
+		AddParameter(command, "$key", key);
+		return command.ExecuteScalar() as string;
+	});
+
+	/// <summary>写入后台引擎状态值。</summary>
+	public void SetEngineState(string key, string value) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "INSERT INTO memory_engine_state(key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+		AddParameter(command, "$key", key);
+		AddParameter(command, "$value", value);
+		command.ExecuteNonQuery();
+	});
+
+	/// <summary>统计个人记忆。</summary>
+	public (int Active, int Atoms, int Archived, int Total) GetOverview()
+	{
+		return _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = "SELECT (SELECT COUNT(*) FROM memories WHERE status = 'active'), (SELECT COUNT(*) FROM memory_atoms WHERE status IN ('active', 'dormant')), (SELECT COUNT(*) FROM memories WHERE status = 'archived'), (SELECT COUNT(*) FROM memories)";
+			using SqliteDataReader reader = command.ExecuteReader();
+			return reader.Read() ? (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3)) : (0, 0, 0, 0);
+		});
+	}
+
+	/// <summary>计算两个向量的余弦相似度。</summary>
 	public static double CosineSimilarity(float[] a, float[] b)
 	{
 		if (a.Length != b.Length || a.Length == 0) return 0;
 		float similarity = TensorPrimitives.CosineSimilarity(a, b);
 		return float.IsFinite(similarity) ? similarity : 0;
+	}
+
+	/// <summary>RRF 融合多个独立排名。</summary>
+	public static Dictionary<long, double> FuseRrf(IReadOnlyList<IReadOnlyList<RetrievalHit>> rankings, int k = 60)
+	{
+		Dictionary<long, double> result = [];
+		int safeK = Math.Max(1, k);
+		foreach (IReadOnlyList<RetrievalHit> ranking in rankings)
+		{
+			for (int index = 0; index < ranking.Count; index++)
+			{
+				long id = ranking[index].MemoryId;
+				result[id] = result.GetValueOrDefault(id) + (1.0 / (safeK + index + 1));
+			}
+		}
+		return result;
+	}
+
+	private IReadOnlyList<MemoryItem> GetSemanticCandidates() => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = BaseSelect + " WHERE status IN ('active', 'dormant') ORDER BY importance DESC, id DESC LIMIT $limit";
+		AddParameter(command, "$limit", _semanticCandidateLimit);
+		return ReadItems(command);
+	});
+
+	private const string BaseSelect = "SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at, kind, canonical_summary, persona_summary, confidence, status, access_count, reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at, superseded_by, embedding_fingerprint FROM memories";
+
+	private static List<MemoryItem> ReadItems(SqliteCommand command)
+	{
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<MemoryItem> result = [];
+		while (reader.Read()) result.Add(ReadRow(reader));
+		return result;
 	}
 
 	private static MemoryItem ReadRow(SqliteDataReader reader) => new()
@@ -428,5 +756,164 @@ public sealed class MemoryStore
 		Embedding = reader.IsDBNull(6) ? null : reader.GetString(6),
 		CreatedAt = reader.GetString(7),
 		UpdatedAt = reader.GetString(8),
+		Kind = reader.IsDBNull(9) ? "general" : reader.GetString(9),
+		CanonicalSummary = reader.IsDBNull(10) ? null : reader.GetString(10),
+		PersonaSummary = reader.IsDBNull(11) ? null : reader.GetString(11),
+		Confidence = reader.IsDBNull(12) ? 0.8 : reader.GetDouble(12),
+		Status = reader.IsDBNull(13) ? "active" : reader.GetString(13),
+		AccessCount = reader.IsDBNull(14) ? 0 : reader.GetInt32(14),
+		ReinforcementCount = reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
+		LastAccessedAt = reader.IsDBNull(16) ? null : reader.GetString(16),
+		LastReinforcedAt = reader.IsDBNull(17) ? null : reader.GetString(17),
+		TtlDays = reader.IsDBNull(18) ? null : reader.GetDouble(18),
+		ExpiresAt = reader.IsDBNull(19) ? null : reader.GetString(19),
+		SupersededBy = reader.IsDBNull(20) ? null : reader.GetInt64(20),
+		EmbeddingFingerprint = reader.IsDBNull(21) ? null : reader.GetString(21),
 	};
+
+	private static MemoryAtom ReadAtom(SqliteDataReader reader) => new()
+	{
+		Id = reader.GetInt64(0), ParentMemoryId = reader.GetInt64(1), AtomType = reader.GetString(2), Content = reader.GetString(3),
+		Importance = reader.GetDouble(4), Confidence = reader.GetDouble(5), Status = MemoryStatusExtensions.Parse(reader.GetString(6)), CreatedAt = reader.GetString(7),
+		LastAccessedAt = reader.IsDBNull(8) ? null : reader.GetString(8), LastReinforcedAt = reader.IsDBNull(9) ? null : reader.GetString(9),
+		TtlDays = reader.IsDBNull(10) ? null : reader.GetDouble(10), ExpiresAt = reader.IsDBNull(11) ? null : reader.GetString(11),
+		ReinforcementCount = reader.GetInt32(12), DecayType = reader.GetString(13), Entities = reader.IsDBNull(14) ? null : reader.GetString(14),
+		SupersededBy = reader.IsDBNull(15) ? null : reader.GetInt64(15),
+	};
+
+	private static void ValidateScore(double value, string name)
+	{
+		if (!double.IsFinite(value) || value is < 0 or > 1) throw new ArgumentOutOfRangeException(name, "分数必须在 0 到 1 之间");
+	}
+
+	private static void AddParameter(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+
+	private static List<RetrievalHit> ReadHits(SqliteDataReader reader)
+	{
+		List<RetrievalHit> result = [];
+		int rank = 0;
+		while (reader.Read()) result.Add(new RetrievalHit(reader.GetInt64(0), 1.0 / (++rank), rank));
+		return result;
+	}
+
+	private static List<RetrievalHit> SearchFts(SqliteConnection connection, string table, string keyword, int limit)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = $"SELECT CAST(memory_id AS INTEGER) FROM {table} WHERE {table} MATCH $query ORDER BY bm25({table}) LIMIT $limit";
+		AddParameter(command, "$query", $"\"{keyword.Replace("\"", "\"\"", StringComparison.Ordinal)}\"");
+		AddParameter(command, "$limit", Math.Max(0, limit));
+		try
+		{
+			using SqliteDataReader reader = command.ExecuteReader();
+			return ReadHits(reader);
+		}
+		catch (SqliteException)
+		{
+			return [];
+		}
+	}
+
+	private static List<RetrievalHit> SearchLikeHits(SqliteConnection connection, string keyword, int limit)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = """
+			SELECT id FROM memories
+			WHERE status IN ('active', 'dormant') AND (content LIKE $pattern OR canonical_summary LIKE $pattern OR persona_summary LIKE $pattern OR tags LIKE $pattern)
+			ORDER BY importance DESC, id DESC LIMIT $limit
+			""";
+		AddParameter(command, "$pattern", $"%{keyword}%");
+		AddParameter(command, "$limit", Math.Max(0, limit));
+		using SqliteDataReader reader = command.ExecuteReader();
+		return ReadHits(reader);
+	}
+
+	private void InitializeFts()
+	{
+		_database.Locked(connection =>
+		{
+			try
+			{
+				CreateFts(connection, "trigram");
+			}
+			catch (SqliteException)
+			{
+				try
+				{
+					CreateFts(connection, "unicode61");
+				}
+				catch (SqliteException)
+				{
+					_ftsAvailable = false;
+					return;
+				}
+			}
+			_ftsAvailable = true;
+			using SqliteCommand rebuild = connection.CreateCommand();
+			rebuild.CommandText = """
+				DELETE FROM memories_fts;
+				INSERT INTO memories_fts(memory_id, content, tags)
+				SELECT id, COALESCE(canonical_summary, content) || ' ' || COALESCE(persona_summary, ''), COALESCE(tags, '')
+				FROM memories WHERE status IN ('active', 'dormant');
+				DELETE FROM memory_atoms_fts;
+				INSERT INTO memory_atoms_fts(memory_id, content)
+				SELECT id, content FROM memory_atoms WHERE status IN ('active', 'dormant');
+				""";
+			try { rebuild.ExecuteNonQuery(); }
+			catch (SqliteException) { _ftsAvailable = false; }
+		});
+	}
+
+	private static void CreateFts(SqliteConnection connection, string tokenizer)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = $"""
+			CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(memory_id UNINDEXED, content, tags, tokenize = '{tokenizer}');
+			CREATE VIRTUAL TABLE IF NOT EXISTS memory_atoms_fts USING fts5(memory_id UNINDEXED, content, tokenize = '{tokenizer}');
+			""";
+		command.ExecuteNonQuery();
+	}
+
+	private void RefreshMemoryIndex(SqliteConnection connection, SqliteTransaction transaction, long id)
+	{
+		if (!_ftsAvailable) return;
+		DeleteFtsRow(connection, transaction, "memories_fts", id);
+		using SqliteCommand insert = connection.CreateCommand();
+		insert.Transaction = transaction;
+		insert.CommandText = """
+			INSERT INTO memories_fts(memory_id, content, tags)
+			SELECT id, COALESCE(canonical_summary, content) || ' ' || COALESCE(persona_summary, ''), COALESCE(tags, '')
+			FROM memories WHERE id = $id AND status IN ('active', 'dormant')
+			""";
+		AddParameter(insert, "$id", id);
+		insert.ExecuteNonQuery();
+	}
+
+	private void RefreshAtomIndex(SqliteConnection connection, SqliteTransaction transaction, long id)
+	{
+		if (!_ftsAvailable) return;
+		DeleteFtsRow(connection, transaction, "memory_atoms_fts", id);
+		using SqliteCommand insert = connection.CreateCommand();
+		insert.Transaction = transaction;
+		insert.CommandText = "INSERT INTO memory_atoms_fts(memory_id, content) SELECT id, content FROM memory_atoms WHERE id = $id AND status IN ('active', 'dormant')";
+		AddParameter(insert, "$id", id);
+		insert.ExecuteNonQuery();
+	}
+
+	private void RebuildAtomIndex(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		if (!_ftsAvailable) return;
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = "DELETE FROM memory_atoms_fts; INSERT INTO memory_atoms_fts(memory_id, content) SELECT id, content FROM memory_atoms WHERE status IN ('active', 'dormant');";
+		command.ExecuteNonQuery();
+	}
+
+	private static void DeleteFtsRow(SqliteConnection connection, SqliteTransaction transaction, string table, long id)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = $"DELETE FROM {table} WHERE memory_id = $id";
+		AddParameter(command, "$id", id);
+		command.ExecuteNonQuery();
+	}
 }

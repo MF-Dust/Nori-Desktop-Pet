@@ -36,6 +36,7 @@
 	<ItemGroup>
 		<!-- 人格提示词编译进程序集, 与 Rust 版 include_str! 等价: 改了必须重新构建才生效 -->
 		<EmbeddedResource Include="Chat/nori-system-prompt.md" LogicalName="Nori.Core.Chat.nori-system-prompt.md"/>
+		<EmbeddedResource Include="Memory.md" LogicalName="Nori.Core.Memory.md"/>
 	</ItemGroup>
 
 </Project>

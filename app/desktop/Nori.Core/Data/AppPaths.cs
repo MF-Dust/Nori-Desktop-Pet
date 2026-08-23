@@ -45,6 +45,12 @@ public static class AppPaths
 	/// </summary>
 	public static string LogDir => Path.Combine(DataDir, "log");
 
+	/// <summary>ARG 知识库目录: &lt;data&gt;/knowledge</summary>
+	public static string KnowledgeDir => Path.Combine(DataDir, "knowledge");
+
+	/// <summary>运行时可编辑的 ARG 知识文件路径</summary>
+	public static string MemoryMarkdownPath => Path.Combine(KnowledgeDir, "Memory.md");
+
 	/// <summary>
 	/// 创建数据目录与各子目录 (启动时调用, 幂等)
 	/// </summary>
@@ -53,6 +59,7 @@ public static class AppPaths
 		Directory.CreateDirectory(DataDir);
 		Directory.CreateDirectory(ResourcesDir);
 		Directory.CreateDirectory(LogDir);
+		Directory.CreateDirectory(KnowledgeDir);
 	}
 
 	/// <summary>

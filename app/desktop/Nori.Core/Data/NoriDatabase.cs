@@ -12,7 +12,7 @@ namespace Nori.Core.Data;
 public sealed class NoriDatabase : IDisposable
 {
 	/// <summary>当前 memories 数据库结构版本</summary>
-	public const long DatabaseSchemaVersion = 3;
+	public const long DatabaseSchemaVersion = 4;
 
 	/// <summary>建表语句, 与 Rust 版 SCHEMA 完全一致</summary>
 	private const string Schema = """
@@ -60,6 +60,8 @@ public sealed class NoriDatabase : IDisposable
 		NoriDatabase database = new(connection);
 		try
 		{
+			// 外键必须在事务开始前启用, 记忆删除时由 SQLite 清理 Atom/Source/Knowledge 子记录.
+			database.Execute("PRAGMA foreign_keys=ON;");
 			// WAL: 写不阻塞读, 拖拽落盘这类高频小写不会让界面卡在 fsync 上
 			database.Execute("PRAGMA journal_mode=WAL;");
 			// 多线程争用单连接时等锁而不是立刻抛 "database is locked"
@@ -130,6 +132,9 @@ public sealed class NoriDatabase : IDisposable
 						break;
 					case 2:
 						CreateRemindersTable(connection, transaction);
+						break;
+					case 3:
+						MigrateMemoryEngineV4(connection, transaction);
 						break;
 					default:
 						throw new InvalidOperationException($"不支持的记忆数据库版本: {version}");
@@ -228,6 +233,163 @@ public sealed class NoriDatabase : IDisposable
 			CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON reminders(trigger_at ASC);
 			""";
 		command.ExecuteNonQuery();
+	}
+
+	/// <summary>
+	/// v4: 建立 Living Memory 聚合、事实原子、来源和知识索引元数据.
+	/// 旧记忆不删除: 摘要、状态、来源和 Atom 都在同一事务中回填.
+	/// </summary>
+	private static void MigrateMemoryEngineV4(SqliteConnection connection, SqliteTransaction transaction)
+	{
+		(string Name, string Definition)[] columns =
+		[
+			("kind", "TEXT NOT NULL DEFAULT 'general'"),
+			("canonical_summary", "TEXT"),
+			("persona_summary", "TEXT"),
+			("confidence", "REAL NOT NULL DEFAULT 0.8"),
+			("status", "TEXT NOT NULL DEFAULT 'active'"),
+			("access_count", "INTEGER NOT NULL DEFAULT 0"),
+			("reinforcement_count", "INTEGER NOT NULL DEFAULT 0"),
+			("last_accessed_at", "TEXT"),
+			("last_reinforced_at", "TEXT"),
+			("ttl_days", "REAL"),
+			("expires_at", "TEXT"),
+			("superseded_by", "INTEGER"),
+			("embedding_fingerprint", "TEXT"),
+		];
+		foreach ((string name, string definition) in columns)
+		{
+			if (HasColumn(connection, transaction, "memories", name)) continue;
+			using SqliteCommand alter = connection.CreateCommand();
+			alter.Transaction = transaction;
+			alter.CommandText = $"ALTER TABLE memories ADD COLUMN {name} {definition};";
+			alter.ExecuteNonQuery();
+		}
+
+		using (SqliteCommand backfill = connection.CreateCommand())
+		{
+			backfill.Transaction = transaction;
+			backfill.CommandText = """
+				UPDATE memories
+				SET kind = CASE lower(type)
+					WHEN 'fact' THEN 'factual'
+					WHEN 'preference' THEN 'preference'
+					WHEN 'identity' THEN 'identity'
+					WHEN 'relational' THEN 'relational'
+					WHEN 'episodic' THEN 'episodic'
+					WHEN 'planned' THEN 'planned'
+					ELSE 'general'
+				END,
+				canonical_summary = COALESCE(canonical_summary, content),
+				persona_summary = COALESCE(persona_summary, content),
+				confidence = COALESCE(confidence, 0.8),
+				status = COALESCE(status, 'active'),
+				embedding_fingerprint = CASE
+					WHEN embedding IS NOT NULL AND embedding <> '' AND (embedding_fingerprint IS NULL OR embedding_fingerprint = '')
+					THEN 'legacy-unknown'
+					ELSE embedding_fingerprint
+				END;
+				""";
+			backfill.ExecuteNonQuery();
+		}
+
+		using (SqliteCommand create = connection.CreateCommand())
+		{
+			create.Transaction = transaction;
+			create.CommandText = """
+				CREATE TABLE IF NOT EXISTS memory_atoms (
+				    id INTEGER PRIMARY KEY AUTOINCREMENT,
+				    parent_memory_id INTEGER NOT NULL,
+				    atom_type TEXT NOT NULL,
+				    content TEXT NOT NULL,
+				    importance REAL NOT NULL DEFAULT 0.5,
+				    confidence REAL NOT NULL DEFAULT 0.8,
+				    status TEXT NOT NULL DEFAULT 'active',
+				    created_at TEXT NOT NULL,
+				    last_accessed_at TEXT,
+				    last_reinforced_at TEXT,
+				    ttl_days REAL,
+				    expires_at TEXT,
+				    reinforcement_count INTEGER NOT NULL DEFAULT 0,
+				    decay_type TEXT NOT NULL DEFAULT 'exponential',
+				    entities TEXT,
+				    superseded_by INTEGER,
+				    FOREIGN KEY(parent_memory_id) REFERENCES memories(id) ON DELETE CASCADE
+				);
+				CREATE TABLE IF NOT EXISTS memory_sources (
+				    id INTEGER PRIMARY KEY AUTOINCREMENT,
+				    memory_id INTEGER NOT NULL,
+				    role TEXT NOT NULL,
+				    content TEXT NOT NULL,
+				    message_time TEXT,
+				    sequence INTEGER NOT NULL,
+				    FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+				);
+				CREATE TABLE IF NOT EXISTS knowledge_documents (
+				    id INTEGER PRIMARY KEY AUTOINCREMENT,
+				    path TEXT NOT NULL UNIQUE,
+				    content_hash TEXT NOT NULL,
+				    updated_at TEXT NOT NULL
+				);
+				CREATE TABLE IF NOT EXISTS knowledge_chunks (
+				    id INTEGER PRIMARY KEY AUTOINCREMENT,
+				    document_id INTEGER NOT NULL,
+				    chunk_key TEXT NOT NULL,
+				    sequence INTEGER NOT NULL DEFAULT 0,
+				    heading TEXT,
+				    subheading TEXT,
+				    content TEXT NOT NULL,
+				    knowledge_type TEXT,
+				    awareness TEXT,
+				    content_hash TEXT NOT NULL,
+				    embedding TEXT,
+				    embedding_fingerprint TEXT,
+				    updated_at TEXT NOT NULL,
+				    FOREIGN KEY(document_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+				    UNIQUE(document_id, chunk_key)
+				);
+				CREATE TABLE IF NOT EXISTS memory_engine_state (
+				    key TEXT PRIMARY KEY,
+				    value TEXT NOT NULL
+				);
+				CREATE INDEX IF NOT EXISTS idx_memories_status_kind ON memories(status, kind, importance DESC);
+				CREATE INDEX IF NOT EXISTS idx_memories_accessed ON memories(last_accessed_at);
+				CREATE INDEX IF NOT EXISTS idx_memory_atoms_parent_status ON memory_atoms(parent_memory_id, status);
+				CREATE INDEX IF NOT EXISTS idx_memory_atoms_type_status ON memory_atoms(atom_type, status, importance DESC);
+				CREATE INDEX IF NOT EXISTS idx_memory_sources_memory ON memory_sources(memory_id, sequence);
+				CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id, sequence);
+				""";
+			create.ExecuteNonQuery();
+		}
+
+		using (SqliteCommand atoms = connection.CreateCommand())
+		{
+			atoms.Transaction = transaction;
+			atoms.CommandText = """
+				INSERT INTO memory_atoms
+					(parent_memory_id, atom_type, content, importance, confidence, status, created_at, ttl_days)
+				SELECT m.id, m.kind, COALESCE(m.canonical_summary, m.content), m.importance,
+				       m.confidence, m.status, m.created_at, m.ttl_days
+				FROM memories AS m
+				WHERE NOT EXISTS (
+					SELECT 1 FROM memory_atoms AS a WHERE a.parent_memory_id = m.id
+				);
+				""";
+			atoms.ExecuteNonQuery();
+		}
+	}
+
+	private static bool HasColumn(SqliteConnection connection, SqliteTransaction transaction, string table, string column)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = $"PRAGMA table_info({table});";
+		using SqliteDataReader reader = command.ExecuteReader();
+		while (reader.Read())
+		{
+			if (reader.GetString(1).Equals(column, StringComparison.OrdinalIgnoreCase)) return true;
+		}
+		return false;
 	}
 
 	public void Dispose()

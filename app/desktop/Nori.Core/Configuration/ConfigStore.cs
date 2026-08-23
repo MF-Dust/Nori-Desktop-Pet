@@ -266,6 +266,22 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 				(KeySelectedModel, new ConfigValue.Text(DefaultModel)),
 				(KeyFirstRunCompleted, new ConfigValue.Boolean(false)),
 				(KeyTelemetryEnabled, new ConfigValue.Boolean(true)),
+				("memory_enabled", new ConfigValue.Boolean(true)),
+				("memory_reflection_enabled", new ConfigValue.Boolean(true)),
+				("memory_reflection_rounds", new ConfigValue.Integer(8)),
+				("memory_reflection_min_chars", new ConfigValue.Integer(2500)),
+				("memory_recall_top_k", new ConfigValue.Integer(6)),
+				("memory_keyword_top_k", new ConfigValue.Integer(20)),
+				("memory_vector_top_k", new ConfigValue.Integer(20)),
+				("memory_rrf_k", new ConfigValue.Integer(60)),
+				("memory_min_similarity", new ConfigValue.Text("0.25")),
+				("memory_decay_enabled", new ConfigValue.Boolean(true)),
+				("memory_archive_enabled", new ConfigValue.Boolean(true)),
+				("memory_source_retention_threshold", new ConfigValue.Text("0.75")),
+				("memory_archive_threshold", new ConfigValue.Text("0.15")),
+				("memory_knowledge_enabled", new ConfigValue.Boolean(true)),
+				("memory_knowledge_watch", new ConfigValue.Boolean(true)),
+				("memory_debug_retrieval", new ConfigValue.Boolean(false)),
 			];
 			foreach ((string key, ConfigValue value) in defaults)
 			{
