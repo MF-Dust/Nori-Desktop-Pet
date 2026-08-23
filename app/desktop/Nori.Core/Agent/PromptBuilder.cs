@@ -48,62 +48,77 @@ public static class PromptBuilder
 	/// <summary>
 	/// 构建系统提示词
 	/// </summary>
-	public static string Build(PromptBuildOptions options)
-	{
-		List<string> parts = [];
+	public static string Build(PromptBuildOptions options) => BuildSectionsText(BuildSections(options));
 
+	/// <summary>
+	/// 按职责生成独立提示词分段。调用方可以在注入前分别限制人格、记忆、技能和工具，
+	/// 防止一个失控的外部段落吞掉全部上下文预算。
+	/// </summary>
+	public static PromptSections BuildSections(PromptBuildOptions options)
+	{
 		// 1. 基础人设 (用户自定义优先, 否则使用嵌入人格文档)
-		parts.Add(string.IsNullOrWhiteSpace(options.UserPersona) ? BasePersona.Value : options.UserPersona);
+		string persona = string.IsNullOrWhiteSpace(options.UserPersona) ? BasePersona.Value : options.UserPersona;
+		List<string> memory = [];
+		List<string> knowledge = [];
+		List<string> other = [];
 
 		// 2. 当前情绪状态
 		if (!string.IsNullOrEmpty(options.Emotion))
 		{
-			parts.Add($"【当前情绪状态】：{options.Emotion}（请在回复时适当体现此情绪倾向）");
+			other.Add($"【当前情绪状态】：{options.Emotion}（请在回复时适当体现此情绪倾向）");
 		}
 
 		// 3. 分层记忆注入。记忆是数据，不是新的系统指令。
 		IReadOnlyList<string>? personal = options.PersonalMemories ?? options.Memories;
 		if (personal is {Count: > 0})
 		{
-			parts.Add("【与当前对话相关的长期记忆】\n" + MemoryDataInstruction + "\n" + string.Join("\n", personal.Select((m, i) => $"{i + 1}. {m}")));
+			memory.Add("【与当前对话相关的长期记忆】\n" + MemoryDataInstruction + "\n" + string.Join("\n", personal.Select((m, i) => $"{i + 1}. {m}")));
 		}
 		if (options.RelatedKnowledge is {Count: > 0})
 		{
-			parts.Add("【与当前话题相关的世界背景】\n" + KnowledgeDataInstruction + "\n" + string.Join("\n", options.RelatedKnowledge.Select((m, i) => $"{i + 1}. {m}")));
+			knowledge.Add("【与当前话题相关的世界背景】\n" + KnowledgeDataInstruction + "\n" + string.Join("\n", options.RelatedKnowledge.Select((m, i) => $"{i + 1}. {m}")));
 		}
 		if (options.RecoveredKnowledge is {Count: > 0})
 		{
-			parts.Add("【当前 Nori 已恢复的相关记忆】\n" + MemoryDataInstruction + "\n" + string.Join("\n", options.RecoveredKnowledge.Select((m, i) => $"{i + 1}. {m}")));
+			memory.Add("【当前 Nori 已恢复的相关记忆】\n" + MemoryDataInstruction + "\n" + string.Join("\n", options.RecoveredKnowledge.Select((m, i) => $"{i + 1}. {m}")));
 		}
 		if (options.MemoryEchoes is {Count: > 0})
 		{
-			parts.Add("【可能引发熟悉感的记忆残响】\n" + MemoryDataInstruction + "\n" + string.Join("\n", options.MemoryEchoes.Select((m, i) => $"{i + 1}. {m}")));
+			memory.Add("【可能引发熟悉感的记忆残响】\n" + MemoryDataInstruction + "\n" + string.Join("\n", options.MemoryEchoes.Select((m, i) => $"{i + 1}. {m}")));
 		}
 
 		// 4. 当前模型动作与表情提示
 		if (options.AvailableMotions is {Count: > 0})
 		{
-			parts.Add($"【可用动作列表 (action)】：{string.Join(", ", options.AvailableMotions)}");
+			other.Add($"【可用动作列表 (action)】：{string.Join(", ", options.AvailableMotions)}");
 		}
 		if (options.AvailableExpressions is {Count: > 0})
 		{
-			parts.Add($"【可用表情列表 (expression)】：{string.Join(", ", options.AvailableExpressions)}");
+			other.Add($"【可用表情列表 (expression)】：{string.Join(", ", options.AvailableExpressions)}");
 		}
 
-		// 5. 注入已激活的技能扩展
-		if (!string.IsNullOrEmpty(options.SkillsPrompt))
-		{
-			parts.Add(options.SkillsPrompt);
-		}
-
-		// 6. 工具清单定义
-		parts.Add($"【可用工具列表】：\n{options.ToolsJson}");
-
-		// 7. 输出格式规则
-		parts.Add(ProtocolInstruction);
-
-		return string.Join("\n\n", parts);
+		return new PromptSections(
+			persona,
+			string.Join("\n\n", memory),
+			string.Join("\n\n", knowledge),
+			options.SkillsPrompt,
+			$"【可用工具列表】：\n{options.ToolsJson}",
+			ProtocolInstruction,
+			string.Join("\n\n", other));
 	}
+
+	/// <summary>按稳定顺序拼接已预算的提示词分段。</summary>
+	public static string BuildSectionsText(PromptSections sections) =>
+		string.Join("\n\n", new[]
+		{
+			sections.Persona,
+			sections.Other,
+			sections.Memory,
+			sections.Knowledge,
+			sections.Skills,
+			sections.Tools,
+			sections.Protocol,
+		}.Where(part => !string.IsNullOrWhiteSpace(part)));
 
 	/// <summary>从嵌入资源读取基础人设</summary>
 	private static string LoadBasePersona()

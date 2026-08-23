@@ -32,30 +32,33 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		lock (_gate)
 		{
 			if (_initialized) return;
-			Dictionary<string, SkillRecord> loaded = [];
+			// 内置技能由程序集定义，配置只能恢复其 Enabled 状态，不能替换名称、指令或权限等内容。
+			Dictionary<string, SkillRecord> loaded = SkillPresets.All
+				.Where(preset => preset.Source == "builtin")
+				.ToDictionary(preset => preset.Id, preset => SkillLimits.Normalize(preset));
 
 			try
 			{
 				if (configStore.Get(ConfigKey) is ConfigValue.Json { Value: JsonNode node })
 				{
 					List<SkillRecord>? list = node.Deserialize<List<SkillRecord>>(JsonOptions);
-					foreach (SkillRecord skill in list ?? [])
+					foreach (SkillRecord rawSkill in list ?? [])
 					{
-						if (!string.IsNullOrEmpty(skill.Id)) loaded[skill.Id] = skill;
+						if (string.IsNullOrWhiteSpace(rawSkill.Id)) continue;
+						if (loaded.TryGetValue(rawSkill.Id, out SkillRecord? builtin))
+						{
+							// 只接受旧配置对内置技能的启停修改，拒绝覆盖内置定义。
+							loaded[rawSkill.Id] = builtin with {Enabled = rawSkill.Enabled};
+							continue;
+						}
+						SkillRecord normalized = SkillLimits.Normalize(rawSkill, remote: rawSkill.Source == "url");
+						loaded[normalized.Id] = normalized;
 					}
 				}
 			}
 			catch (JsonException)
 			{
-				// 配置损坏时回退到内置预设, 不抛出避免阻断启动
-			}
-
-			if (loaded.Count == 0)
-			{
-				foreach (SkillRecord preset in SkillPresets.All.Where(p => p.Source == "builtin"))
-				{
-					loaded[preset.Id] = preset;
-				}
+				// 配置损坏时保留可信的内置预设, 不抛出避免阻断启动
 			}
 
 			_skills = loaded;
@@ -97,7 +100,11 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		SkillRecord? target = SkillPresets.Find(skillId)
 			?? throw new InvalidOperationException($"未在市场中找到技能 ID: {skillId}");
 
-		SkillRecord installed = target with { Enabled = true, InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+		SkillRecord installed = SkillLimits.Normalize(target with
+		{
+			Enabled = true,
+			InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+		});
 		Upsert(installed);
 		return installed;
 	}
@@ -106,9 +113,18 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 	public SkillRecord SaveCustom(SkillRecord skill)
 	{
 		EnsureLoaded();
+		if (SkillPresets.Find(skill.Id) is not null)
+		{
+			throw new InvalidOperationException($"不能覆盖内置技能: {skill.Id}");
+		}
 		long existingAt;
 		lock (_gate) existingAt = _skills.TryGetValue(skill.Id, out SkillRecord? old) ? old.InstalledAt : 0;
-		SkillRecord complete = skill with { InstalledAt = existingAt != 0 ? existingAt : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+		SkillRecord complete = SkillLimits.Normalize(skill with
+		{
+			Source = "custom",
+			Enabled = skill.Enabled,
+			InstalledAt = existingAt != 0 ? existingAt : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+		});
 		Upsert(complete);
 		return complete;
 	}
@@ -146,13 +162,18 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		{
 			throw new InvalidOperationException("技能 JSON 缺少必要的 name 或 instructions 字段");
 		}
-		SkillRecord skill = data with
+		string id = string.IsNullOrEmpty(data.Id) ? $"custom_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" : data.Id;
+		if (SkillPresets.Find(id) is not null)
 		{
-			Id = string.IsNullOrEmpty(data.Id) ? $"custom_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}" : data.Id,
+			throw new InvalidOperationException($"不能覆盖内置技能: {id}");
+		}
+		SkillRecord skill = SkillLimits.Normalize(data with
+		{
+			Id = id,
 			Source = "custom",
 			InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
 			Enabled = true,
-		};
+		});
 		Upsert(skill);
 		return skill;
 	}
@@ -172,15 +193,17 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		{
 			throw new HttpRequestException($"下载技能失败: HTTP {(int)response.StatusCode}");
 		}
-		string text = await UrlAccessPolicy.ReadCappedTextAsync(response.Content, UrlAccessPolicy.MaxResponseBytes, cancellationToken);
+		string text = await UrlAccessPolicy.ReadCappedTextAsync(
+			response.Content, SkillLimits.MaxRemoteDocumentCharacters, cancellationToken);
 		if (string.IsNullOrWhiteSpace(text))
 		{
 			throw new InvalidOperationException("远程技能文件内容为空");
 		}
 
 		SkillRecord skill = text.TrimStart().StartsWith("---") ? ParseSkillMarkdown(text, url) : ParseSkillJson(text, url);
-		Upsert(skill with { Enabled = true });
-		return skill;
+		SkillRecord remote = SkillLimits.Normalize(skill with {Enabled = false, Source = "url", Url = url}, remote: true);
+		Upsert(remote);
+		return remote;
 	}
 
 	private SkillRecord ParseSkillJson(string text, string url)
@@ -257,7 +280,7 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 			Tags = tags,
 			Category = "productivity",
 			Instructions = body,
-			Enabled = true,
+			Enabled = false,
 			Source = "url",
 			InstalledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
 			Url = url,
@@ -283,32 +306,42 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 	/// </summary>
 	public string BuildSkillsPrompt(IReadOnlySet<string>? availableTools = null)
 	{
-		IReadOnlyList<SkillRecord> active = GetEnabled().Where(skill => skill.Enabled).ToList();
+		IReadOnlyList<SkillRecord> active = GetEnabled().Where(skill => skill.Enabled).Take(SkillLimits.MaxSkills).ToList();
 		if (active.Count == 0) return "";
 
 		List<string> lines = ["【已激活技能与扩展指令 (Active Skills)】："];
 		for (int i = 0; i < active.Count; i++)
 		{
-			SkillRecord skill = active[i];
-			lines.Add($"\n=== 技能 {i + 1}：{skill.Name} (v{skill.Version}) ===");
-			if (!string.IsNullOrEmpty(skill.Description)) lines.Add($"简介: {skill.Description}");
+			SkillRecord skill = SkillLimits.Normalize(active[i], remote: active[i].Source == "url");
+			List<string> entry = [$"\n=== 技能 {i + 1}：{skill.Name} (v{skill.Version}) ==="];
+			if (!string.IsNullOrEmpty(skill.Description)) entry.Add($"简介: {skill.Description}");
 			if (skill.Tools is {Count: > 0})
 			{
 				IEnumerable<string> available = availableTools is null ? skill.Tools : skill.Tools.Where(availableTools.Contains);
 				IEnumerable<string> missing = availableTools is null ? [] : skill.Tools.Where(tool => !availableTools.Contains(tool));
-				lines.Add($"Available tools: {string.Join(", ", available)}");
-				if (missing.Any()) lines.Add($"Unavailable tools: {string.Join(", ", missing)}");
+				entry.Add($"Available tools: {string.Join(", ", available)}");
+				if (missing.Any()) entry.Add($"Unavailable tools: {string.Join(", ", missing)}");
 			}
-			lines.Add(skill.Instructions);
+			entry.Add(skill.Instructions);
+			string candidate = string.Join("\n", lines.Append(string.Join("\n", entry)));
+			if (candidate.Length > SkillLimits.MaxPromptCharacters) break;
+			lines.Add(string.Join("\n", entry));
 		}
-		return string.Join("\n", lines);
+		return SkillLimits.Cap(string.Join("\n", lines), SkillLimits.MaxPromptCharacters);
 	}
 
 	private void Upsert(SkillRecord skill)
 	{
+		SkillRecord normalized = SkillLimits.Normalize(skill, remote: skill.Source == "url");
 		lock (_gate)
 		{
-			_skills[skill.Id] = skill;
+			if (_skills.TryGetValue(normalized.Id, out SkillRecord? existing)
+				&& existing.Source == "builtin"
+				&& normalized.Source != "builtin")
+			{
+				throw new InvalidOperationException($"不能覆盖内置技能: {normalized.Id}");
+			}
+			_skills[normalized.Id] = normalized;
 			SaveLocked();
 		}
 	}

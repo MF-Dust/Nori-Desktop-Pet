@@ -40,10 +40,10 @@ public sealed record McpServerConfig
 	public string? Url { get; init; }
 
 	[JsonPropertyName("enabled")]
-	public bool Enabled { get; init; } = true;
+	public bool Enabled { get; init; } = false;
 
 	[JsonPropertyName("autoConnect")]
-	public bool AutoConnect { get; init; } = true;
+	public bool AutoConnect { get; init; } = false;
 }
 
 /// <summary>
@@ -121,7 +121,12 @@ public sealed record McpToolResult
 				texts.Add(item.Text);
 			}
 		}
-		return texts.Count > 0 ? string.Join("\n", texts) : (IsError ? "执行失败 (无详细输出)" : "执行成功");
+		string result = texts.Count > 0
+			? string.Join("\n", texts)
+			: (IsError ? "MCP 工具执行失败 (无详细输出)" : "MCP 工具执行成功");
+		return result.Length <= McpConfigValidator.MaxResultCharacters
+			? result
+			: result[..McpConfigValidator.MaxResultCharacters];
 	}
 }
 

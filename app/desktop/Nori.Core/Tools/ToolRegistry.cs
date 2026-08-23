@@ -57,6 +57,12 @@ public sealed class ToolRegistry
 	/// <summary>注册一个工具 (重名覆盖)</summary>
 	public void Register(RegisteredTool tool)
 	{
+		ArgumentNullException.ThrowIfNull(tool);
+		if (string.IsNullOrWhiteSpace(tool.Name) || tool.Name.Length > ToolLimits.MaxNameCharacters)
+		{
+			throw new InvalidOperationException($"工具名称不能为空且不能超过 {ToolLimits.MaxNameCharacters} 个字符");
+		}
+		if (tool.Execute is null) throw new InvalidOperationException($"工具 {tool.Name} 缺少执行体");
 		lock (_gate)
 		{
 			if (_disabled.Contains(tool.Name)) tool.Enabled = false;
@@ -114,17 +120,43 @@ public sealed class ToolRegistry
 		}
 	}
 
+	private bool IsDisabled(string name)
+	{
+		lock (_gate) return _disabled.Contains(name);
+	}
+
 	/// <summary>
 	/// 生成注入 Prompt 的可用工具清单文本 (仅包含当前启用的工具)
 	/// </summary>
 	public string BuildToolsPrompt()
 	{
-		var list = ListEnabled().Select(tool => new
+		List<object> list = [];
+		foreach (RegisteredTool tool in ListEnabled())
 		{
-			name = tool.Name,
-			description = tool.Description,
-			parameters = tool.Parameters,
-		});
+			object candidate = new
+			{
+				name = ToolLimits.CapText(tool.Name, ToolLimits.MaxNameCharacters),
+				description = ToolLimits.CapText(tool.Description, ToolLimits.MaxDescriptionCharacters),
+				parameters = ToolLimits.CapSchema(tool.Parameters),
+			};
+			List<object> next = [.. list, candidate];
+			string serialized = JsonSerializer.Serialize(next, JsonOptions);
+			if (serialized.Length > ToolLimits.MaxToolsPromptCharacters)
+			{
+				// 工具清单按注册顺序确定性截断，不能让后注册的外部工具挤掉全部内置工具。
+				if (list.Count == 0)
+				{
+					list.Add(new
+					{
+						name = ToolLimits.CapText(tool.Name, ToolLimits.MaxNameCharacters),
+						description = "工具定义已达到安全长度上限。",
+						parameters = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() },
+					});
+				}
+				break;
+			}
+			list.Add(candidate);
+		}
 		return JsonSerializer.Serialize(list, JsonOptions);
 	}
 	/// <summary>为已注册工具添加别名入口 (同名执行体, 独立描述)</summary>
@@ -151,44 +183,57 @@ public sealed class ToolRegistry
 	/// </summary>
 	public async Task<ToolResult> ExecuteAsync(string name, JsonNode? args, ToolContext? context = null)
 	{
+		ToolContext effectiveContext = context ?? new ToolContext();
+		if (effectiveContext.CancellationToken.IsCancellationRequested)
+		{
+			return new ToolResult(null, $"会话已取消，工具 {name} 不再执行");
+		}
 		RegisteredTool? tool = Get(name);
 		if (tool is null) return new ToolResult(null, $"未找到工具: {name}");
-		if (!tool.Enabled || _disabled.Contains(name)) return new ToolResult(null, $"工具 {name} 已被禁用");
+		if (!tool.Enabled || IsDisabled(name)) return new ToolResult(null, $"工具 {name} 已被禁用");
+		if (tool.PermissionLevel is not ("safe" or "confirm" or "dangerous"))
+		{
+			return new ToolResult(null, $"工具 {name} 的权限级别无效，已拒绝执行");
+		}
+		if (ToolLimits.SerializedLength(args) > ToolLimits.MaxArgumentsCharacters)
+		{
+			return new ToolResult(null, $"工具 {name} 的参数超过安全长度上限 ({ToolLimits.MaxArgumentsCharacters} 字符)");
+		}
 
 		if (tool.PermissionLevel != "safe")
 		{
-			ToolApprovalHandler? approve = context?.Approve;
+			ToolApprovalHandler? approve = effectiveContext.Approve;
 			if (approve is null)
 			{
 				return new ToolResult(null,
 					$"工具 {name} 标记为 {(tool.PermissionLevel == "dangerous" ? "危险" : "需确认")}，但当前没有可用的用户授权通道，已拒绝执行");
 			}
-			if (context is {CancellationToken.IsCancellationRequested: true})
-			{
-				return new ToolResult(null, $"会话已取消，工具 {name} 不再执行");
-			}
 
 			bool approved;
 			try
 			{
-				approved = await approve(new ToolApprovalRequest
+				Task<bool> approvalTask = approve(new ToolApprovalRequest
 				{
 					RequestId = $"approval-{Guid.NewGuid():N}",
 					ToolName = name,
 					Arguments = args,
-					Description = tool.Description,
-					PermissionLevel = tool.PermissionLevel == "dangerous" ? "dangerous" : "confirm",
+					Description = ToolLimits.CapText(tool.Description, ToolLimits.MaxDescriptionCharacters),
+					PermissionLevel = tool.PermissionLevel,
 					Category = tool.Category,
 				});
+				TimeSpan approvalTimeout = effectiveContext.ApprovalTimeout <= TimeSpan.Zero
+					? TimeSpan.FromMinutes(2)
+					: effectiveContext.ApprovalTimeout;
+				approved = await approvalTask.WaitAsync(approvalTimeout, effectiveContext.CancellationToken);
 			}
 			catch
 			{
-				// 授权通道异常同样视为拒绝, 绝不默认放行
-				return new ToolResult(null, $"工具 {name} 的授权请求失败，已拒绝执行");
+				// 授权通道异常、超时或取消同样视为拒绝, 绝不默认放行。
+				return new ToolResult(null, $"工具 {name} 的授权请求失败或已取消，已拒绝执行");
 			}
 
 			if (!approved) return new ToolResult(null, $"用户拒绝执行工具: {name}");
-			if (context is {CancellationToken.IsCancellationRequested: true})
+			if (effectiveContext.CancellationToken.IsCancellationRequested)
 			{
 				return new ToolResult(null, $"等待授权期间会话已取消，工具 {name} 不再执行");
 			}
@@ -196,12 +241,19 @@ public sealed class ToolRegistry
 
 		try
 		{
-			object? result = await tool.Execute(args, context ?? new ToolContext());
-			return new ToolResult(result, null);
+			Task<object?> executeTask = tool.Execute(args, effectiveContext);
+			object? result = effectiveContext.CancellationToken.CanBeCanceled
+				? await executeTask.WaitAsync(effectiveContext.CancellationToken)
+				: await executeTask;
+			return new ToolResult(ToolLimits.CapResult(result), null);
+		}
+		catch (OperationCanceledException) when (effectiveContext.CancellationToken.IsCancellationRequested)
+		{
+			throw;
 		}
 		catch (Exception exception)
 		{
-			return new ToolResult(null, exception.Message);
+			return new ToolResult(null, ToolLimits.CapError(exception.Message));
 		}
 	}
 }

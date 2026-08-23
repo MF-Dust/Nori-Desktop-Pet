@@ -185,6 +185,10 @@ public sealed class ChatClientLlmAdapter(LlmProvider provider, HttpClient httpCl
 			});
 			return fullText.ToString();
 		}
+		catch (Exception exception) when (ToolsUnsupportedException.TryCreate(exception, out ToolsUnsupportedException? unsupported))
+		{
+			throw unsupported!;
+		}
 		catch (ChatException)
 		{
 			throw;

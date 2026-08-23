@@ -60,6 +60,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task<McpServerStatusInfo> SaveServerAsync(McpServerConfig config)
 	{
+		config = McpConfigValidator.Validate(config);
 		await _lock.WaitAsync();
 		try
 		{
@@ -135,6 +136,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task<McpServerStatusInfo> ConnectServerAsync(string serverId)
 	{
+		if (string.IsNullOrWhiteSpace(serverId)) throw new InvalidOperationException("MCP 服务器 ID 不能为空");
 		McpServerConfig? config = LoadConfigs().FirstOrDefault(c => c.Id == serverId);
 		if (config is null)
 		{
@@ -199,8 +201,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 					serverName = status.Name,
 					toolName = tool.Name,
 					fullName = $"mcp__{serverId}__{tool.Name}",
-					description = tool.Description ?? "",
-					inputSchema = tool.InputSchema,
+					description = McpConfigValidator.CapDescription(tool.Description),
+					inputSchema = McpConfigValidator.CapSchema(tool.InputSchema),
 				});
 			}
 		}
@@ -212,6 +214,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task<McpToolResult> CallToolAsync(string serverId, string toolName, JsonObject? arguments, CancellationToken cancellationToken = default)
 	{
+		if (string.IsNullOrWhiteSpace(serverId)) throw new InvalidOperationException("MCP 服务器 ID 不能为空");
+		JsonObject safeArguments = McpConfigValidator.ValidateToolCall(toolName, arguments);
 		if (!_activeClients.TryGetValue(serverId, out OfficialMcpConnection? client) || !client.IsConnected)
 		{
 			return new McpToolResult
@@ -223,7 +227,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 		try
 		{
-			return await client.CallToolAsync(toolName, arguments, cancellationToken);
+			return await client.CallToolAsync(toolName, safeArguments, cancellationToken);
 		}
 		catch (Exception exception)
 		{
@@ -240,6 +244,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task<McpServerStatusInfo> TestServerAsync(McpServerConfig config)
 	{
+		config = McpConfigValidator.Validate(config);
 		OfficialMcpConnection? client = null;
 		try
 		{
@@ -281,6 +286,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	/// </summary>
 	public async Task AutoConnectEnabledAsync()
 	{
+		if (_disposed) return;
 		List<McpServerConfig> configs = LoadConfigs();
 		foreach (McpServerConfig config in configs)
 		{
@@ -343,6 +349,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 
 	private async Task<McpServerStatusInfo> ConnectServerInternalAsync(McpServerConfig config)
 	{
+		config = McpConfigValidator.Validate(config);
 		if (_activeClients.TryRemove(config.Id, out OfficialMcpConnection? existing))
 		{
 			await existing.DisposeAsync();
@@ -412,18 +419,22 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	private List<McpServerConfig> LoadConfigs()
 	{
 		ConfigValue? val = _configStore.Get(KeyMcpServers);
-		if (val is ConfigValue.Json { Value: JsonArray array })
+		if (val is not ConfigValue.Json { Value: JsonArray array }) return [];
+		try
 		{
-			try
+			List<McpServerConfig> parsed = array.Deserialize<List<McpServerConfig>>() ?? [];
+			List<McpServerConfig> valid = [];
+			foreach (McpServerConfig config in parsed)
 			{
-				return array.Deserialize<List<McpServerConfig>>() ?? [];
+				try { valid.Add(McpConfigValidator.Validate(config)); }
+				catch (InvalidOperationException) { /* 损坏或不安全配置不进入运行时连接池 */ }
 			}
-			catch
-			{
-				return [];
-			}
+			return valid;
 		}
-		return [];
+		catch (JsonException)
+		{
+			return [];
+		}
 	}
 
 	private void SaveConfigs(List<McpServerConfig> configs)

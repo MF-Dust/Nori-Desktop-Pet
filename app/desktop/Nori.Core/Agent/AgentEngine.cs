@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nori.Core.Chat;
@@ -33,6 +34,9 @@ public sealed class AgentCallbacks
 	/// <summary>流式文本增量 (已解析协议后的可见文本)</summary>
 	public Action<string>? OnTextChunk { get; init; }
 
+	/// <summary>完整协议解析发现增量投影不一致时的替换文本。</summary>
+	public Action<string>? OnTextCorrection { get; init; }
+
 	/// <summary>工具开始执行</summary>
 	public Action<string, JsonNode?>? OnToolExecuting { get; init; }
 
@@ -62,7 +66,10 @@ public sealed class AgentEngine
 	public const int CallTimeoutSeconds = ChatService.TimeoutSeconds;
 
 	private const int MaxContextRounds = 12;
+	private const int DefaultContextTokens = 12_000;
+	private const int DefaultReservedOutputTokens = 2_000;
 	private readonly int _maxToolIterations;
+	private readonly AgentSessionCoordinator _sessionCoordinator;
 
 	private readonly HttpClient _http;
 	private readonly ConfigStore _config;
@@ -88,7 +95,8 @@ public sealed class AgentEngine
 		IPetActions? pet,
 		Func<IReadOnlyList<string>> motionNames,
 		Func<IReadOnlyList<string>> expressionNames,
-		int maxToolIterations = 5)
+		int maxToolIterations = 5,
+		AgentSessionCoordinator? sessionCoordinator = null)
 	{
 		_http = http;
 		_config = config;
@@ -100,7 +108,9 @@ public sealed class AgentEngine
 		_pet = pet;
 		_motionNames = motionNames;
 		_expressionNames = expressionNames;
+		if (maxToolIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxToolIterations), "工具轮数上限必须为正数");
 		_maxToolIterations = maxToolIterations;
+		_sessionCoordinator = sessionCoordinator ?? new AgentSessionCoordinator();
 	}
 
 	/// <summary>
@@ -111,6 +121,9 @@ public sealed class AgentEngine
 	public async Task<ProtocolMessage> RunAsync(string userText, string sessionId, AgentCallbacks callbacks, CancellationToken cancellationToken)
 	{
 		if (string.IsNullOrWhiteSpace(userText)) throw new InvalidOperationException("消息内容不能为空");
+		ArgumentNullException.ThrowIfNull(callbacks);
+		using AgentSessionLease session = _sessionCoordinator.Start(sessionId, cancellationToken);
+		CancellationToken runToken = session.CancellationToken;
 
 		void SetState(AgentRunState state) => callbacks.OnState?.Invoke(state);
 
@@ -130,7 +143,7 @@ public sealed class AgentEngine
 
 		// 2. 组装静态上下文: 最近对话 / 分层记忆 / 情绪 / 动作 / 表情 / 技能 / 工具清单
 		IReadOnlyList<(string Role, string Content)> recent = AgentHistory.NormalizeRecent(_chat.GetHistory(MaxContextRounds * 2, 0));
-		MemoryContext memoryContext = await _memory.BuildContextAsync(userText, recent, cancellationToken);
+		MemoryContext memoryContext = await _memory.BuildContextAsync(userText, recent, runToken);
 		string currentEmotion = _emotion.CurrentType;
 		IReadOnlyList<string> motions = _motionNames();
 		IReadOnlyList<string> expressions = _expressionNames();
@@ -159,18 +172,36 @@ public sealed class AgentEngine
 			SkillsPrompt = skillsPrompt,
 			ToolsJson = _tools.BuildToolsPrompt(),
 		};
-		string systemPrompt = PromptBuilder.Build(promptOptions);
+		ContextBudgetOptions budgetOptions = new()
+		{
+			MaxInputTokens = ReadConfigInt("agent_context_tokens", DefaultContextTokens, 512, 128_000),
+			ReservedOutputTokens = ReadConfigInt("agent_reserved_output_tokens", DefaultReservedOutputTokens, 128, 64_000),
+		};
+		ContextBudgetResult initialBudget = ContextBudgeter.Build(
+			promptOptions,
+			recent.Append(("user", userText)).ToList(),
+			userText,
+			budgetOptions);
+		string systemPrompt = initialBudget.SystemPrompt;
 
 		// 3. 准备工作历史: 最近 N 条 + 当前输入 (滑动窗口截断)
-		List<(string Role, string Content)> working =
-		[.. recent, ("user", userText)];
-
-			ProtocolMessage finalMessage = new("", null, null, null);
+		List<(string Role, string Content)> working = initialBudget.Messages
+			.Select(message => (message.Role, message.Content)).ToList();
+		ToolExecutionTracker executionTracker = new();
+		ProtocolMessage finalMessage = new("", null, null, null);
 		try
 		{
 			ILlmAdapter adapter = LlmClient.CreateAdapter(providerKind, _http);
-			async Task<ToolResult> ExecuteToolAsync(string name, JsonNode? arguments, CancellationToken token)
+			async Task<ToolResult> ExecuteToolAsync(string name, JsonNode? arguments, CancellationToken token, string? callId = null)
 			{
+				runToken.ThrowIfCancellationRequested();
+				string executionKey = ToolExecutionTracker.Key(callId, name, arguments);
+				if (executionTracker.TryGetCompleted(executionKey, out ToolResult? previous)) return previous;
+				if (!executionTracker.TryStart(executionKey))
+				{
+					return new ToolResult(null, $"工具调用 {name} 已执行过，已阻止重复副作用");
+				}
+
 				callbacks.OnToolExecuting?.Invoke(name, arguments);
 				ToolResult result = await _tools.ExecuteAsync(name, arguments, new ToolContext
 				{
@@ -180,31 +211,38 @@ public sealed class AgentEngine
 						? request => approve(request)
 						: null,
 				});
+				executionTracker.Complete(executionKey, result);
 				callbacks.OnToolExecuted?.Invoke(name, result.Result, result.Error);
 				return result;
 			}
 
 			for (int iteration = 0; iteration < _maxToolIterations; iteration++)
 			{
-				cancellationToken.ThrowIfCancellationRequested();
+				runToken.ThrowIfCancellationRequested();
+				ContextBudgetResult roundBudget = ContextBudgeter.Build(promptOptions, working, userText, budgetOptions);
+				IReadOnlyList<ChatMessageInput> requestMessages = roundBudget.Messages;
+				StreamingMessageTextProjector projector = new();
+				TextChunkCoalescer coalescer = new();
+				StringBuilder rawResponseText = new();
+				bool emittedText = false;
 
-				StreamingJsonParser parser = new();
-				string rawResponseText = "";
+				void EmitText(string text)
+				{
+					if (text.Length == 0) return;
+					emittedText = true;
+					callbacks.OnTextChunk?.Invoke(text);
+				}
 
-				using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+				using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(runToken);
 				timeout.CancelAfter(TimeSpan.FromSeconds(CallTimeoutSeconds));
 
 				SetState(AgentRunState.Streaming);
 				Action<string> onChunk = chunk =>
 				{
-					rawResponseText += chunk;
-					foreach (AgentProtocolItem item in SafePush(parser, chunk))
-					{
-						if (item is ProtocolMessage {Text.Length: > 0} message)
-						{
-							callbacks.OnTextChunk?.Invoke(message.Text);
-						}
-					}
+					rawResponseText.Append(chunk);
+					StreamingTextProjection projection = projector.Push(chunk);
+					if (projection.IsCorrection) callbacks.OnTextCorrection?.Invoke(projection.FullText);
+					if (coalescer.Push(projection.Delta) is {Length: > 0} batch) EmitText(batch);
 				};
 				Action<LlmUsageInfo> onUsage = usage => callbacks.OnUsage?.Invoke(new AgentUsage(
 					usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens,
@@ -217,20 +255,20 @@ public sealed class AgentEngine
 					{
 						raw = await toolAdapter.StreamWithToolsAsync(
 							baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
-							[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
+							requestMessages,
 							enabledTools,
 							(name, arguments) => ExecuteToolAsync(name, arguments, timeout.Token),
 							onChunk, onUsage, timeout.Token);
 					}
-					catch (Exception exception) when (IsToolCallingUnavailable(exception))
+					catch (ToolsUnsupportedException) when (!executionTracker.HasStarted && !projector.HasProjectedText && !emittedText)
 					{
-						// Older OpenAI-compatible endpoints reject the native tools field.
-						// Retry once through the portable Nori JSON protocol.
-						rawResponseText = "";
-						parser = new StreamingJsonParser();
+						// 只有明确的 typed capability error 才允许一次 portable fallback。
+						rawResponseText.Clear();
+						projector.Reset();
+						coalescer.Reset();
 						raw = await adapter.StreamAsync(
 							baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
-							[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
+							requestMessages,
 							onChunk, onUsage, timeout.Token);
 					}
 				}
@@ -238,15 +276,16 @@ public sealed class AgentEngine
 				{
 					raw = await adapter.StreamAsync(
 						baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
-						[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
+						requestMessages,
 						onChunk, onUsage, timeout.Token);
 				}
 
-				cancellationToken.ThrowIfCancellationRequested();
+				if (await coalescer.FlushAsync(timeout.Token) is {Length: > 0} finalBatch) EmitText(finalBatch);
+				runToken.ThrowIfCancellationRequested();
 				SetState(AgentRunState.Streaming);
 
 				// 剥离动作标记并触发桌宠播放, 再做完整协议解析
-				(string stripped, IReadOnlyList<string> markerMotions) = MotionMarkers.Extract(raw);
+				(string stripped, IReadOnlyList<string> markerMotions) = MotionMarkers.Extract(raw.Length > 0 ? raw : rawResponseText.ToString());
 				foreach (string motion in markerMotions)
 				{
 					try
@@ -260,6 +299,9 @@ public sealed class AgentEngine
 				}
 
 				IReadOnlyList<AgentProtocolItem> items = StreamingJsonParser.ParseComplete(stripped);
+				StreamingTextProjection correction = projector.Complete(items);
+				if (correction.IsCorrection) callbacks.OnTextCorrection?.Invoke(correction.FullText);
+				else if (await coalescer.FlushAsync(timeout.Token) is {Length: > 0} correctionBatch) EmitText(correctionBatch);
 				bool hasToolCall = false;
 
 				foreach (AgentProtocolItem item in items)
@@ -277,7 +319,7 @@ public sealed class AgentEngine
 						{
 							hasToolCall = true;
 							SetState(AgentRunState.ToolExecuting);
-							ToolResult result = await ExecuteToolAsync(call.Name, call.Arguments, cancellationToken);
+							ToolResult result = await ExecuteToolAsync(call.Name, call.Arguments, timeout.Token, call.Id);
 
 							working.Add(("assistant", SerializeToolCall(call)));
 							working.Add(("user",
@@ -297,16 +339,21 @@ public sealed class AgentEngine
 
 				// 若本轮没有触发新的工具调用，说明已产出最终回复，跳出循环
 				if (!hasToolCall) break;
+				if (iteration == _maxToolIterations - 1)
+				{
+					throw new AgentToolRoundsExceededException(_maxToolIterations);
+				}
 			}
 
+			if (finalMessage.Text.Length == 0)
+			{
+				throw new InvalidOperationException("Agent 未产出最终回复");
+			}
 			SetState(AgentRunState.Idle);
 
 			// 落库: 只保存用户可见的最终一轮对话 (纯文本, 不再存协议 JSON)
-			if (finalMessage.Text.Length > 0)
-			{
-				_chat.SaveMessage("user", userText);
-				_chat.SaveMessage("assistant", finalMessage.Text);
-			}
+			_chat.SaveMessage("user", userText);
+			_chat.SaveMessage("assistant", finalMessage.Text);
 			callbacks.OnComplete?.Invoke(finalMessage);
 			return finalMessage;
 		}
@@ -389,16 +436,17 @@ public sealed class AgentEngine
 		}
 	}
 
-	private static bool IsToolCallingUnavailable(Exception exception)
+	private int ReadConfigInt(string key, int fallback, int min, int max)
 	{
-		if (exception is OperationCanceledException) return false;
-		if (exception is NotSupportedException) return true;
-		string message = exception.Message.ToLowerInvariant();
-		return message.Contains("tool", StringComparison.Ordinal)
-			|| message.Contains("function", StringComparison.Ordinal)
-			|| message.Contains("unsupported", StringComparison.Ordinal);
+		return int.TryParse(_config.GetStringOr(key, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
+			? Math.Clamp(value, min, max)
+			: fallback;
 	}
 }
+
+/// <summary>工具调用轮数耗尽且没有最终回复时的明确错误。</summary>
+public sealed class AgentToolRoundsExceededException(int maxRounds)
+	: InvalidOperationException($"工具调用轮数已达到上限 ({maxRounds})，未产出最终回复");
 
 /// <summary>
 /// 聊天历史规范化

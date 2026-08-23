@@ -14,6 +14,8 @@ public sealed class McpClient : IAsyncDisposable
 	private readonly IMcpTransport _transport;
 	private int _nextRequestId;
 	private bool _initialized;
+	private bool _disposed;
+	private readonly HashSet<string> _knownTools = new(StringComparer.Ordinal);
 
 	public McpServerConfig Config => _config;
 
@@ -21,7 +23,7 @@ public sealed class McpClient : IAsyncDisposable
 
 	public McpClient(McpServerConfig config, HttpClient httpClient)
 	{
-		_config = config;
+		_config = McpConfigValidator.Validate(config);
 		_transport = config.Transport == McpTransportType.Sse
 			? new McpSseTransport(httpClient, config)
 			: new McpStdioTransport(config);
@@ -29,7 +31,7 @@ public sealed class McpClient : IAsyncDisposable
 
 	public McpClient(McpServerConfig config, IMcpTransport transport)
 	{
-		_config = config;
+		_config = McpConfigValidator.Validate(config);
 		_transport = transport;
 	}
 
@@ -38,6 +40,10 @@ public sealed class McpClient : IAsyncDisposable
 	/// </summary>
 	public async Task InitializeAsync(CancellationToken cancellationToken = default)
 	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (IsConnected) return;
+		_initialized = false;
+		_knownTools.Clear();
 		await _transport.StartAsync(cancellationToken);
 
 		// 1. 发送 initialize 请求
@@ -119,6 +125,11 @@ public sealed class McpClient : IAsyncDisposable
 			}
 		}
 
+		lock (_knownTools)
+		{
+			_knownTools.Clear();
+			foreach (McpToolDefinition tool in tools) _knownTools.Add(tool.Name);
+		}
 		return tools;
 	}
 
@@ -128,6 +139,18 @@ public sealed class McpClient : IAsyncDisposable
 	public async Task<McpToolResult> CallToolAsync(string toolName, JsonObject? arguments, CancellationToken cancellationToken = default)
 	{
 		EnsureInitialized();
+		JsonObject safeArguments = McpConfigValidator.ValidateToolCall(toolName, arguments);
+		lock (_knownTools)
+		{
+			if (_knownTools.Count > 0 && !_knownTools.Contains(toolName))
+			{
+				return new McpToolResult
+				{
+					IsError = true,
+					Content = [new McpContentItem {Text = $"MCP 工具不存在或未在 tools/list 中声明: {toolName}"}],
+				};
+			}
+		}
 
 		JsonRpcRequest request = new()
 		{
@@ -136,7 +159,7 @@ public sealed class McpClient : IAsyncDisposable
 			Params = new
 			{
 				name = toolName,
-				arguments = arguments ?? new JsonObject(),
+				arguments = safeArguments,
 			},
 		};
 
@@ -150,8 +173,17 @@ public sealed class McpClient : IAsyncDisposable
 			};
 		}
 
+		if (response.Result is null)
+		{
+			return new McpToolResult
+			{
+				IsError = true,
+				Content = [new McpContentItem {Text = "MCP 工具返回了空结果"}],
+			};
+		}
+
 		List<McpContentItem> contentList = [];
-		bool isError = response.Result?["isError"]?.GetValue<bool>() ?? false;
+		bool isError = response.Result["isError"]?.GetValue<bool>() ?? false;
 
 		if (response.Result?["content"] is JsonArray contentArray)
 		{
@@ -252,19 +284,26 @@ public sealed class McpClient : IAsyncDisposable
 
 	public async Task CloseAsync()
 	{
+		if (_disposed) return;
 		_initialized = false;
+		lock (_knownTools) _knownTools.Clear();
 		await _transport.CloseAsync();
 	}
 
 	public async ValueTask DisposeAsync()
 	{
-		await CloseAsync();
-		await _transport.DisposeAsync();
+		if (_disposed) return;
+		_disposed = true;
+		_initialized = false;
+		lock (_knownTools) _knownTools.Clear();
+		try { await _transport.CloseAsync(); }
+		finally { await _transport.DisposeAsync(); }
 		GC.SuppressFinalize(this);
 	}
 
 	private void EnsureInitialized()
 	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (!_initialized || !_transport.IsConnected)
 		{
 			throw new InvalidOperationException($"MCP 客户端 {_config.Name} 尚未初始化或连接已断开");
