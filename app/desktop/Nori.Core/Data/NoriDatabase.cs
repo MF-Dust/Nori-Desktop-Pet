@@ -11,8 +11,16 @@ namespace Nori.Core.Data;
 /// </summary>
 public sealed class NoriDatabase : IDisposable
 {
-	/// <summary>当前 memories 数据库结构版本</summary>
-	public const long DatabaseSchemaVersion = 4;
+	/// <summary>当前数据库结构版本</summary>
+	public const long DatabaseSchemaVersion = 5;
+
+	/// <summary>单个迁移备份的最大大小，避免损坏的旧库拖垮磁盘。</summary>
+	private const long MigrationBackupMaxBytes = 64L * 1024 * 1024;
+
+	/// <summary>每个数据库最多保留的迁移前备份数。</summary>
+	private const int MigrationBackupCount = 3;
+
+	private const string MigrationBackupMarker = ".pre-migration-";
 
 	/// <summary>建表语句, 与 Rust 版 SCHEMA 完全一致</summary>
 	private const string Schema = """
@@ -34,10 +42,12 @@ public sealed class NoriDatabase : IDisposable
 		    source      TEXT NOT NULL DEFAULT 'chat',
 		    tags        TEXT,
 		    embedding   TEXT,
+		    embedding_blob BLOB,
 		    created_at  TEXT NOT NULL,
 		    updated_at  TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at, id);
 		""";
 	private readonly SqliteConnection _connection;
 	private readonly Lock _gate = new();
@@ -62,12 +72,20 @@ public sealed class NoriDatabase : IDisposable
 		{
 			// 外键必须在事务开始前启用, 记忆删除时由 SQLite 清理 Atom/Source/Knowledge 子记录.
 			database.Execute("PRAGMA foreign_keys=ON;");
-			// WAL: 写不阻塞读, 拖拽落盘这类高频小写不会让界面卡在 fsync 上
+			// WAL: 写不阻塞读, 拖拽落盘这类高频小写不会让界面卡在 fsync 上.
 			database.Execute("PRAGMA journal_mode=WAL;");
-			// 多线程争用单连接时等锁而不是立刻抛 "database is locked"
+			// NORMAL 在 WAL 下仍保持崩溃一致性, 避免每次小写入都强制 fsync.
+			database.Execute("PRAGMA synchronous=NORMAL;");
+			// 由应用在可控的维护点主动 checkpoint, 不让 WAL 无限增长.
+			database.Execute("PRAGMA wal_autocheckpoint=1000;");
+			// 多线程争用单连接时等锁而不是立刻抛 "database is locked".
 			database.Execute("PRAGMA busy_timeout=5000;");
+
+			long current = ReadUserVersion(connection);
+			if (current < DatabaseSchemaVersion) database.CreateMigrationBackup(path);
 			database.Execute(Schema);
 			database.MigrateSchema();
+			database.OptimizeAndCheckpoint();
 			return database;
 		}
 		catch
@@ -114,7 +132,12 @@ public sealed class NoriDatabase : IDisposable
 		{
 			throw new InvalidOperationException($"记忆数据库版本 {current} 高于当前应用支持版本 {DatabaseSchemaVersion}, 请升级应用");
 		}
-		if (current == DatabaseSchemaVersion) return;
+		if (current == DatabaseSchemaVersion)
+		{
+			MigrateEmbeddingStorageV5(connection, null);
+			EnsureOperationalIndexes(connection, null);
+			return;
+		}
 
 		using SqliteTransaction transaction = connection.BeginTransaction();
 		try
@@ -128,13 +151,16 @@ public sealed class NoriDatabase : IDisposable
 						EnsureEmbeddingColumn(connection, transaction);
 						break;
 					case 1:
-						ClearLegacyEmbeddings(connection, transaction);
+						// 保留旧 JSON 向量, 由读取路径按需转换到 BLOB.
 						break;
 					case 2:
 						CreateRemindersTable(connection, transaction);
 						break;
 					case 3:
 						MigrateMemoryEngineV4(connection, transaction);
+						break;
+					case 4:
+						MigrateEmbeddingStorageV5(connection, transaction);
 						break;
 					default:
 						throw new InvalidOperationException($"不支持的记忆数据库版本: {version}");
@@ -143,6 +169,7 @@ public sealed class NoriDatabase : IDisposable
 				version++;
 				SetUserVersion(connection, transaction, version);
 			}
+			EnsureOperationalIndexes(connection, transaction);
 			transaction.Commit();
 		}
 		catch
@@ -174,6 +201,128 @@ public sealed class NoriDatabase : IDisposable
 		command.Transaction = transaction;
 		command.CommandText = $"PRAGMA user_version = {version};";
 		command.ExecuteNonQuery();
+	}
+
+	/// <summary>v5: 增加 Float32 BLOB 向量列, 不触碰旧 JSON, 由读取路径惰性迁移。</summary>
+	private static void MigrateEmbeddingStorageV5(SqliteConnection connection, SqliteTransaction? transaction)
+	{
+		if (!HasColumn(connection, transaction, "memories", "embedding_blob"))
+		{
+			using SqliteCommand alter = connection.CreateCommand();
+			alter.Transaction = transaction;
+			alter.CommandText = "ALTER TABLE memories ADD COLUMN embedding_blob BLOB;";
+			alter.ExecuteNonQuery();
+		}
+		if (!HasColumn(connection, transaction, "knowledge_chunks", "embedding_blob"))
+		{
+			using SqliteCommand alter = connection.CreateCommand();
+			alter.Transaction = transaction;
+			alter.CommandText = "ALTER TABLE knowledge_chunks ADD COLUMN embedding_blob BLOB;";
+			alter.ExecuteNonQuery();
+		}
+		using SqliteCommand state = connection.CreateCommand();
+		state.Transaction = transaction;
+		state.CommandText = """
+			CREATE TABLE IF NOT EXISTS proactive_occurrences (
+			    key TEXT PRIMARY KEY,
+			    occurrence TEXT NOT NULL,
+			    updated_at TEXT NOT NULL
+			);
+			""";
+		state.ExecuteNonQuery();
+	}
+
+	/// <summary>幂等补齐聊天、记忆和后台索引使用的索引。</summary>
+	private static void EnsureOperationalIndexes(SqliteConnection connection, SqliteTransaction? transaction)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = """
+			CREATE TABLE IF NOT EXISTS proactive_occurrences (
+			    key TEXT PRIMARY KEY,
+			    occurrence TEXT NOT NULL,
+			    updated_at TEXT NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at, id);
+			CREATE INDEX IF NOT EXISTS idx_chat_messages_role_id ON chat_messages(role, id DESC);
+			CREATE INDEX IF NOT EXISTS idx_memories_status_importance_id ON memories(status, importance DESC, id DESC);
+			CREATE INDEX IF NOT EXISTS idx_memories_embedding_work ON memories(status, embedding_fingerprint, id);
+			CREATE INDEX IF NOT EXISTS idx_memories_expiry ON memories(status, expires_at);
+			CREATE INDEX IF NOT EXISTS idx_memory_sources_memory_sequence ON memory_sources(memory_id, sequence);
+			CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding_work ON knowledge_chunks(document_id, embedding_fingerprint, id);
+			""";
+		command.ExecuteNonQuery();
+	}
+
+	/// <summary>
+	/// 在结构迁移前生成一致性备份。VACUUM INTO 会包含 WAL 中已提交的数据；
+	/// 备份失败不阻止事务迁移，数量和单文件大小均有上限。
+	/// </summary>
+	private void CreateMigrationBackup(string databasePath)
+	{
+		try
+		{
+			FileInfo source = new(databasePath);
+			if (!source.Exists || source.Length == 0 || source.Length > MigrationBackupMaxBytes) return;
+			string directory = source.DirectoryName ?? ".";
+			string temporary = Path.Combine(directory, $"{source.Name}{MigrationBackupMarker}{Guid.NewGuid():N}.tmp");
+			string backup = Path.Combine(directory, $"{source.Name}{MigrationBackupMarker}{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.bak");
+			try
+			{
+				using SqliteCommand command = _connection.CreateCommand();
+				command.CommandText = "VACUUM INTO $path";
+				command.Parameters.AddWithValue("$path", temporary);
+				command.ExecuteNonQuery();
+				FileInfo created = new(temporary);
+				if (!created.Exists || created.Length == 0 || created.Length > MigrationBackupMaxBytes)
+				{
+					TryDelete(temporary);
+					return;
+				}
+				File.Move(temporary, backup);
+				PruneMigrationBackups(directory, source.Name);
+			}
+			finally
+			{
+				TryDelete(temporary);
+			}
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
+		{
+			// 迁移事务本身仍提供原子性，备份属于尽力而为的额外保护。
+		}
+	}
+
+	private static void PruneMigrationBackups(string directory, string databaseName)
+	{
+		IEnumerable<string> paths = Directory.EnumerateFiles(directory, $"{databaseName}{MigrationBackupMarker}*.bak")
+			.OrderByDescending(path => File.GetLastWriteTimeUtc(path));
+		foreach (string path in paths.Skip(MigrationBackupCount)) TryDelete(path);
+	}
+
+	private static void TryDelete(string path)
+	{
+		try { if (File.Exists(path)) File.Delete(path); }
+		catch (IOException) { }
+		catch (UnauthorizedAccessException) { }
+	}
+
+	/// <summary>在受控维护点运行优化并尝试被动 checkpoint。</summary>
+	public void OptimizeAndCheckpoint()
+	{
+		Locked(connection =>
+		{
+			using (SqliteCommand optimize = connection.CreateCommand())
+			{
+				optimize.CommandText = "PRAGMA optimize;";
+				optimize.ExecuteNonQuery();
+			}
+			using (SqliteCommand checkpoint = connection.CreateCommand())
+			{
+				checkpoint.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+				checkpoint.ExecuteReader().Dispose();
+			}
+		});
 	}
 
 	/// <summary>
@@ -379,7 +528,7 @@ public sealed class NoriDatabase : IDisposable
 		}
 	}
 
-	private static bool HasColumn(SqliteConnection connection, SqliteTransaction transaction, string table, string column)
+	private static bool HasColumn(SqliteConnection connection, SqliteTransaction? transaction, string table, string column)
 	{
 		using SqliteCommand command = connection.CreateCommand();
 		command.Transaction = transaction;
@@ -394,6 +543,22 @@ public sealed class NoriDatabase : IDisposable
 
 	public void Dispose()
 	{
-		lock (_gate) _connection.Dispose();
+		lock (_gate)
+		{
+			try
+			{
+				using SqliteCommand optimize = _connection.CreateCommand();
+				optimize.CommandText = "PRAGMA optimize;";
+				optimize.ExecuteNonQuery();
+				using SqliteCommand checkpoint = _connection.CreateCommand();
+				checkpoint.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+				checkpoint.ExecuteReader().Dispose();
+			}
+			catch (SqliteException)
+			{
+				// 关闭阶段的维护失败不应阻止数据库释放。
+			}
+			_connection.Dispose();
+		}
 	}
 }

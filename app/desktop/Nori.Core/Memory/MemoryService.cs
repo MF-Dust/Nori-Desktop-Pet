@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using System.Threading.Channels;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
@@ -12,19 +12,32 @@ namespace Nori.Core.Memory;
 /// 长期记忆 Facade。
 /// 写入、检索和生命周期逻辑均通过 MemoryStore 聚合层完成，保留旧版公开 API 兼容性。
 /// </summary>
-public sealed class MemoryService
+public sealed class MemoryService : IAsyncDisposable
 {
 	public const int MaxCacheSize = 250;
+	private const int EmbeddingBatchSize = 32;
+	private const string ReembedFingerprintState = "embedding_reembed_fingerprint";
+	private const string ReembedCursorState = "embedding_reembed_cursor";
 	private readonly MemoryStore _store;
 	private readonly IEmbeddingAdapter _embedding;
 	private readonly ConfigStore _config;
 	private readonly SemaphoreSlim _reembedGate = new(1, 1);
+	private readonly Channel<EmbeddingJob> _embeddingQueue = Channel.CreateBounded<EmbeddingJob>(new BoundedChannelOptions(128)
+	{
+		FullMode = BoundedChannelFullMode.DropWrite,
+		SingleReader = true,
+		SingleWriter = false,
+	});
+	private readonly CancellationTokenSource _embeddingCts = new();
+	private readonly Task _embeddingWorker;
+	private int _disposed;
 
 	public MemoryService(MemoryStore store, IEmbeddingAdapter embedding, ConfigStore config)
 	{
 		_store = store;
 		_embedding = embedding;
 		_config = config;
+		_embeddingWorker = Task.Run(ProcessEmbeddingQueueAsync);
 	}
 
 	public MemoryStore Store => _store;
@@ -124,8 +137,8 @@ public sealed class MemoryService
 
 	public void ClearCache() => _embedding.ClearCache();
 
-	/// <summary>添加长期记忆，同时创建一个可独立召回的事实原子。</summary>
-	public async Task<MemoryItem> AddAsync(
+	/// <summary>添加长期记忆，先保证文本与 Atom 落库，再排队生成向量。</summary>
+	public Task<MemoryItem> AddAsync(
 		string content,
 		string type = "general",
 		double importance = 0.5,
@@ -141,11 +154,10 @@ public sealed class MemoryService
 		if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("记忆内容不能为空", nameof(content));
 		MemoryKind resolvedKind = kind ?? MemoryKindExtensions.Parse(type);
 		double? ttl = DefaultTtl(resolvedKind);
-		float[]? vector = await EmbedAsync(embeddingText ?? canonicalSummary ?? content).ConfigureAwait(false);
-		string? embedding = vector is null ? null : JsonSerializer.Serialize(vector);
-		return _store.AddAggregate(type, content, importance, source, tags, embedding, resolvedKind,
-			canonicalSummary, personaSummary, confidence, ttl, null,
-			vector is null ? null : ResolveEmbeddingFingerprint(), sources);
+		MemoryItem item = _store.AddAggregate(type, content, importance, source, tags, null, resolvedKind,
+			canonicalSummary, personaSummary, confidence, ttl, null, null, sources);
+		QueueEmbedding(item.Id, embeddingText ?? canonicalSummary ?? content);
+		return Task.FromResult(item);
 	}
 
 	/// <summary>用户或 Agent 明确要求记住时使用的入口，先做同类型精确去重和强化。</summary>
@@ -165,17 +177,16 @@ public sealed class MemoryService
 		return await AddAsync(content, kind.ToStorage(), importance, tags, source, kind).ConfigureAwait(false);
 	}
 
-	/// <summary>更新记忆内容，文本变化而向量失败时会使旧向量失效。</summary>
-	public async Task<bool> UpdateAsync(long id, string content, double? importance = null, string? tags = null,
+	/// <summary>更新文本时先清除旧向量，再把新向量放入后台队列。</summary>
+	public Task<bool> UpdateAsync(long id, string content, double? importance = null, string? tags = null,
 		MemoryKind? kind = null, string? canonicalSummary = null, string? personaSummary = null, double? confidence = null)
 	{
 		if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("记忆内容不能为空", nameof(content));
 		MemoryItem? before = _store.Get(id);
-		if (before is null) return false;
+		if (before is null) return Task.FromResult(false);
 		MemoryKind resolvedKind = kind ?? MemoryKindExtensions.Parse(before.Kind);
-		float[]? vector = await EmbedAsync(canonicalSummary ?? content).ConfigureAwait(false);
-		bool updated = _store.Update(id, content, importance, tags, vector is null ? null : JsonSerializer.Serialize(vector), kind,
-			canonicalSummary, personaSummary, confidence, embeddingFingerprint: vector is null ? null : ResolveEmbeddingFingerprint());
+		bool updated = _store.Update(id, content, importance, tags, "", kind,
+			canonicalSummary, personaSummary, confidence, embeddingFingerprint: null);
 		if (updated)
 		{
 			string oldSummary = before.CanonicalSummary ?? before.Content;
@@ -184,8 +195,9 @@ public sealed class MemoryService
 			{
 				_store.UpdateAtom(defaultAtom.Id, canonicalSummary ?? content, resolvedKind, importance, confidence);
 			}
+			QueueEmbedding(id, canonicalSummary ?? content);
 		}
-		return updated;
+		return Task.FromResult(updated);
 	}
 
 	/// <summary>真正的关键词 + 向量混合检索。</summary>
@@ -272,30 +284,60 @@ public sealed class MemoryService
 		}
 	}
 
-	/// <summary>批量为未嵌入记忆生成向量。</summary>
+	/// <summary>按 fingerprint 批量重建向量，进度持久化后可取消并从游标恢复。</summary>
 	public async Task<int> ReembedAllAsync(CancellationToken cancellationToken = default, bool force = true)
 	{
 		if (!EmbeddingConfigured) return 0;
 		await _reembedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-		long afterId = 0;
-		int count = 0;
-		string fingerprint = ResolveEmbeddingFingerprint();
-		while (true)
-		{
-			cancellationToken.ThrowIfCancellationRequested();
-			IReadOnlyList<MemoryItem> page = _store.GetReembedCandidates(fingerprint, 100, afterId, force);
-			if (page.Count == 0) break;
-			foreach (MemoryItem item in page)
+			string fingerprint = ResolveEmbeddingFingerprint();
+			string? savedFingerprint = _store.GetEngineState(ReembedFingerprintState);
+			long afterId = savedFingerprint == fingerprint && long.TryParse(_store.GetEngineState(ReembedCursorState), out long savedCursor)
+				? Math.Max(0, savedCursor)
+				: 0;
+			_store.SetEngineState(ReembedFingerprintState, fingerprint);
+			int count = 0;
+			while (true)
 			{
-				afterId = item.Id;
-				float[]? vector = await EmbedAsync(item.CanonicalSummary ?? item.Content, cancellationToken).ConfigureAwait(false);
-				if (vector is null) continue;
-				if (_store.UpdateEmbedding(item.Id, JsonSerializer.Serialize(vector), fingerprint)) count++;
+				cancellationToken.ThrowIfCancellationRequested();
+				IReadOnlyList<MemoryEmbeddingWorkItem> page = _store.GetReembedWork(fingerprint, EmbeddingBatchSize, afterId, force);
+				if (page.Count == 0) break;
+				IReadOnlyList<float[]> vectors;
+				try
+				{
+					(string baseUrl, string apiKey, string model, int? dimensions) = ResolveConfig();
+					vectors = await _embedding.GetEmbeddingsAsync(baseUrl, apiKey, model,
+						page.Select(item => item.Text).ToArray(), dimensions, cancellationToken).ConfigureAwait(false);
+				}
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+				{
+					throw;
+				}
+				catch
+				{
+					// 单批失败不阻塞文本；推进游标并在下一次运行从头重试失败项。
+					SaveReembedCursor(page[^1].Id);
+					afterId = page[^1].Id;
+					continue;
+				}
+
+				if (vectors.Count == page.Count)
+			{
+					List<MemoryEmbeddingUpdate> updates = [];
+					for (int index = 0; index < page.Count; index++)
+					{
+						float[] vector = vectors[index];
+						if (vector.Length == 0 || vector.Any(value => !float.IsFinite(value))) continue;
+						updates.Add(new MemoryEmbeddingUpdate {Id = page[index].Id, UpdatedAt = page[index].UpdatedAt, Vector = vector});
+					}
+					count += _store.UpdateEmbeddings(updates, fingerprint);
+				}
+				afterId = page[^1].Id;
+				SaveReembedCursor(afterId);
 			}
-		}
-		return count;
+			SaveReembedCursor(0);
+			return count;
 		}
 		finally
 		{
@@ -311,6 +353,64 @@ public sealed class MemoryService
 	public IReadOnlyList<MemoryAtom> GetAtoms(long? parentId = null, MemoryStatus? status = null, int limit = 100, int offset = 0) => _store.GetAtoms(parentId, status, limit, offset);
 	public IReadOnlyList<MemorySource> GetSources(long memoryId) => _store.GetSources(memoryId);
 	public (int Active, int Atoms, int Archived, int Total) GetOverview() => _store.GetOverview();
+
+	private void QueueEmbedding(long id, string text)
+	{
+		if (Volatile.Read(ref _disposed) != 0 || string.IsNullOrWhiteSpace(text)) return;
+		_embeddingQueue.Writer.TryWrite(new EmbeddingJob(id, text));
+	}
+
+	private async Task ProcessEmbeddingQueueAsync()
+	{
+		try
+		{
+			await foreach (EmbeddingJob first in _embeddingQueue.Reader.ReadAllAsync(_embeddingCts.Token).ConfigureAwait(false))
+			{
+				List<EmbeddingJob> batch = [first];
+				while (batch.Count < EmbeddingBatchSize && _embeddingQueue.Reader.TryRead(out EmbeddingJob? next) && next is not null) batch.Add(next);
+				try { await EmbedAndStoreBatchAsync(batch, _embeddingCts.Token).ConfigureAwait(false); }
+				catch (OperationCanceledException) when (_embeddingCts.IsCancellationRequested) { return; }
+				catch { }
+			}
+		}
+		catch (OperationCanceledException) when (_embeddingCts.IsCancellationRequested) { }
+	}
+
+	private async Task EmbedAndStoreBatchAsync(IReadOnlyList<EmbeddingJob> batch, CancellationToken cancellationToken)
+	{
+		if (!EmbeddingConfigured || batch.Count == 0) return;
+		(string baseUrl, string apiKey, string model, int? dimensions) = ResolveConfig();
+		IReadOnlyList<float[]> vectors = await _embedding.GetEmbeddingsAsync(baseUrl, apiKey, model,
+			batch.Select(job => job.Text).ToArray(), dimensions, cancellationToken).ConfigureAwait(false);
+		if (vectors.Count != batch.Count) return;
+		string fingerprint = ResolveEmbeddingFingerprint();
+		List<MemoryEmbeddingUpdate> updates = [];
+		for (int index = 0; index < batch.Count; index++)
+		{
+			float[] vector = vectors[index];
+			if (vector.Length == 0 || vector.Any(value => !float.IsFinite(value))) continue;
+			MemoryItem? item = _store.Get(batch[index].Id);
+			if (item is null) continue;
+			updates.Add(new MemoryEmbeddingUpdate {Id = item.Id, UpdatedAt = item.UpdatedAt, Vector = vector});
+		}
+		_store.UpdateEmbeddings(updates, fingerprint);
+	}
+
+	private void SaveReembedCursor(long cursor) => _store.SetEngineState(ReembedCursorState, cursor.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+	public async ValueTask DisposeAsync()
+	{
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+		_embeddingQueue.Writer.TryComplete();
+		_embeddingCts.Cancel();
+		try { await _embeddingWorker.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+		catch (OperationCanceledException) { }
+		catch (TimeoutException) { }
+		_embeddingCts.Dispose();
+		_reembedGate.Dispose();
+	}
+
+	private sealed record EmbeddingJob(long Id, string Text);
 
 	private static string Normalize(string value) => string.Join(' ', value.Trim().ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 

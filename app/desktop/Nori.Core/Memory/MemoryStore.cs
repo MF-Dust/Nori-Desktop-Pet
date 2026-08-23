@@ -1,8 +1,9 @@
+using System.Buffers;
 using System.Globalization;
-using System.Text.Json;
-using Microsoft.Data.Sqlite;
 using System.Numerics.Tensors;
+using Microsoft.Data.Sqlite;
 using Nori.Core.Data;
+using Nori.Core.Embedding;
 
 namespace Nori.Core.Memory;
 
@@ -15,7 +16,10 @@ public sealed record MemoryItem
 	public required double Importance { get; init; }
 	public required string Source { get; init; }
 	public string? Tags { get; init; }
+	/// <summary>旧版 JSON 向量兼容字段，新写入优先使用 EmbeddingBlob。</summary>
 	public string? Embedding { get; init; }
+	/// <summary>Float32 little-endian 向量存储。</summary>
+	public byte[]? EmbeddingBlob { get; init; }
 	public required string CreatedAt { get; init; }
 	public required string UpdatedAt { get; init; }
 	public string Kind { get; init; } = "general";
@@ -32,18 +36,11 @@ public sealed record MemoryItem
 	public long? SupersededBy { get; init; }
 	public string? EmbeddingFingerprint { get; init; }
 
-	/// <summary>解析 JSON 向量数组。</summary>
+	/// <summary>解析 BLOB 或旧 JSON 向量数组。</summary>
 	public float[]? GetVector()
 	{
-		if (string.IsNullOrWhiteSpace(Embedding)) return null;
-		try
-		{
-			return JsonSerializer.Deserialize<float[]>(Embedding);
-		}
-		catch
-		{
-			return null;
-		}
+		if (!string.IsNullOrWhiteSpace(Embedding) && EmbeddingVectorCodec.TryDecodeJson(Embedding, out float[] legacy)) return legacy;
+		return EmbeddingBlob is {Length: > 0} && EmbeddingVectorCodec.TryDecode(EmbeddingBlob, out float[] vector) ? vector : null;
 	}
 }
 
@@ -138,6 +135,7 @@ public sealed class MemoryStore
 		ValidateScore(confidence, nameof(confidence));
 		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 		string storageKind = kind == MemoryKind.General ? MemoryKindExtensions.Parse(type).ToStorage() : kind.ToStorage();
+		(string? Legacy, byte[]? Blob) embeddingStorage = PrepareEmbedding(embedding);
 		long id = _database.Locked(connection =>
 		{
 			using SqliteTransaction transaction = connection.BeginTransaction();
@@ -145,9 +143,9 @@ public sealed class MemoryStore
 			command.Transaction = transaction;
 			command.CommandText = """
 				INSERT INTO memories
-					(type, content, importance, source, tags, embedding, created_at, updated_at,
+					(type, content, importance, source, tags, embedding, embedding_blob, created_at, updated_at,
 					 kind, canonical_summary, persona_summary, confidence, status, ttl_days, expires_at, embedding_fingerprint)
-				VALUES ($type, $content, $importance, $source, $tags, $embedding, $created_at, $updated_at,
+				VALUES ($type, $content, $importance, $source, $tags, $embedding, $embedding_blob, $created_at, $updated_at,
 					 $kind, $canonical_summary, $persona_summary, $confidence, 'active', $ttl_days, $expires_at, $embedding_fingerprint);
 				SELECT last_insert_rowid();
 				""";
@@ -156,7 +154,8 @@ public sealed class MemoryStore
 			AddParameter(command, "$importance", importance);
 			AddParameter(command, "$source", source);
 			AddParameter(command, "$tags", tags);
-			AddParameter(command, "$embedding", embedding);
+			AddParameter(command, "$embedding", embeddingStorage.Legacy);
+			AddParameter(command, "$embedding_blob", embeddingStorage.Blob);
 			AddParameter(command, "$created_at", now);
 			AddParameter(command, "$updated_at", now);
 			AddParameter(command, "$kind", storageKind);
@@ -181,6 +180,7 @@ public sealed class MemoryStore
 			Source = source,
 			Tags = tags,
 			Embedding = embedding,
+			EmbeddingBlob = embeddingStorage.Blob,
 			CreatedAt = now,
 			UpdatedAt = now,
 			Kind = storageKind,
@@ -215,6 +215,7 @@ public sealed class MemoryStore
 		ValidateScore(confidence, nameof(confidence));
 		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 		string storageKind = kind == MemoryKind.General ? MemoryKindExtensions.Parse(type).ToStorage() : kind.ToStorage();
+		(string? Legacy, byte[]? Blob) embeddingStorage = PrepareEmbedding(embedding);
 		long id = _database.Locked(connection =>
 		{
 			using SqliteTransaction transaction = connection.BeginTransaction();
@@ -222,9 +223,9 @@ public sealed class MemoryStore
 			memory.Transaction = transaction;
 			memory.CommandText = """
 				INSERT INTO memories
-					(type, content, importance, source, tags, embedding, created_at, updated_at,
+					(type, content, importance, source, tags, embedding, embedding_blob, created_at, updated_at,
 					 kind, canonical_summary, persona_summary, confidence, status, ttl_days, expires_at, embedding_fingerprint)
-				VALUES ($type, $content, $importance, $source, $tags, $embedding, $created_at, $updated_at,
+				VALUES ($type, $content, $importance, $source, $tags, $embedding, $embedding_blob, $created_at, $updated_at,
 					 $kind, $canonical_summary, $persona_summary, $confidence, 'active', $ttl_days, $expires_at, $embedding_fingerprint);
 				SELECT last_insert_rowid();
 				""";
@@ -233,7 +234,8 @@ public sealed class MemoryStore
 			AddParameter(memory, "$importance", importance);
 			AddParameter(memory, "$source", source);
 			AddParameter(memory, "$tags", tags);
-			AddParameter(memory, "$embedding", embedding);
+			AddParameter(memory, "$embedding", embeddingStorage.Legacy);
+			AddParameter(memory, "$embedding_blob", embeddingStorage.Blob);
 			AddParameter(memory, "$created_at", now);
 			AddParameter(memory, "$updated_at", now);
 			AddParameter(memory, "$kind", storageKind);
@@ -290,7 +292,7 @@ public sealed class MemoryStore
 		return new MemoryItem
 		{
 			Id = id, Type = type, Content = content, Importance = importance, Source = source, Tags = tags,
-			Embedding = embedding, CreatedAt = now, UpdatedAt = now, Kind = storageKind,
+			Embedding = embedding, EmbeddingBlob = embeddingStorage.Blob, CreatedAt = now, UpdatedAt = now, Kind = storageKind,
 			CanonicalSummary = canonicalSummary ?? content, PersonaSummary = personaSummary ?? content,
 			Confidence = confidence, Status = "active", TtlDays = ttlDays, ExpiresAt = expiresAt,
 			EmbeddingFingerprint = embeddingFingerprint,
@@ -375,30 +377,49 @@ public sealed class MemoryStore
 	/// <summary>更新记忆的向量嵌入和 fingerprint。</summary>
 	public bool UpdateEmbedding(long id, string embedding, string? fingerprint = null)
 	{
-		bool updated = _database.Locked(connection =>
+		(string? Legacy, byte[]? Blob) storage = PrepareEmbedding(embedding);
+		return _database.Locked(connection =>
 		{
 			using SqliteCommand command = connection.CreateCommand();
-			command.CommandText = "UPDATE memories SET embedding = $embedding, embedding_fingerprint = COALESCE($fingerprint, embedding_fingerprint) WHERE id = $id";
+			command.CommandText = "UPDATE memories SET embedding = $embedding, embedding_blob = $embedding_blob, embedding_fingerprint = COALESCE($fingerprint, embedding_fingerprint) WHERE id = $id";
 			AddParameter(command, "$id", id);
-			AddParameter(command, "$embedding", embedding);
+			AddParameter(command, "$embedding", storage.Legacy);
+			AddParameter(command, "$embedding_blob", storage.Blob);
 			AddParameter(command, "$fingerprint", fingerprint);
 			return command.ExecuteNonQuery() > 0;
 		});
-		if (updated) EvictVector(id);
-		return updated;
+	}
+
+	/// <summary>在一个事务中批量写回向量，并用 updated_at 防止覆盖新内容。</summary>
+	public int UpdateEmbeddings(IReadOnlyList<MemoryEmbeddingUpdate> updates, string fingerprint)
+	{
+		if (updates.Count == 0) return 0;
+		return _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			int count = 0;
+			foreach (MemoryEmbeddingUpdate update in updates)
+			{
+				if (update.Vector.Length == 0 || update.Vector.Any(value => !float.IsFinite(value))) continue;
+				using SqliteCommand command = connection.CreateCommand();
+				command.Transaction = transaction;
+				command.CommandText = "UPDATE memories SET embedding = NULL, embedding_blob = $embedding_blob, embedding_fingerprint = $fingerprint WHERE id = $id AND updated_at = $updated_at AND status IN ('active', 'dormant')";
+				AddParameter(command, "$id", update.Id);
+				AddParameter(command, "$updated_at", update.UpdatedAt);
+				AddParameter(command, "$embedding_blob", EmbeddingVectorCodec.Encode(update.Vector));
+				AddParameter(command, "$fingerprint", fingerprint);
+				count += command.ExecuteNonQuery();
+			}
+			transaction.Commit();
+			return count;
+		});
 	}
 
 	/// <summary>按重要度和时间读取记忆；兼容旧设置页的全量接口。</summary>
 	public IReadOnlyList<MemoryItem> GetAll(int limit = 100) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = """
-			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at,
-			       kind, canonical_summary, persona_summary, confidence, status, access_count,
-			       reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at,
-			       superseded_by, embedding_fingerprint
-			FROM memories ORDER BY importance DESC, id DESC LIMIT $limit
-			""";
+		command.CommandText = BaseSelect + " ORDER BY importance DESC, id DESC LIMIT $limit";
 		AddParameter(command, "$limit", Math.Max(0, limit));
 		return ReadItems(command);
 	});
@@ -407,15 +428,7 @@ public sealed class MemoryStore
 	public IReadOnlyList<MemoryItem> GetUnembedded(int limit = 100, long afterId = 0) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = """
-			SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at,
-			       kind, canonical_summary, persona_summary, confidence, status, access_count,
-			       reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at,
-			       superseded_by, embedding_fingerprint
-			FROM memories
-			WHERE id > $afterId AND (embedding IS NULL OR embedding = '') AND status IN ('active', 'dormant')
-			ORDER BY id ASC LIMIT $limit
-			""";
+		command.CommandText = BaseSelect + " WHERE id > $afterId AND embedding_blob IS NULL AND (embedding IS NULL OR embedding = '') AND status IN ('active', 'dormant') ORDER BY id ASC LIMIT $limit";
 		AddParameter(command, "$afterId", afterId);
 		AddParameter(command, "$limit", Math.Max(1, limit));
 		return ReadItems(command);
@@ -425,12 +438,35 @@ public sealed class MemoryStore
 	public IReadOnlyList<MemoryItem> GetReembedCandidates(string fingerprint, int limit = 100, long afterId = 0, bool force = false) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = BaseSelect + " WHERE id > $afterId AND status IN ('active', 'dormant') AND (embedding IS NULL OR embedding = '' OR $force = 1 OR embedding_fingerprint IS NULL OR embedding_fingerprint <> $fingerprint) ORDER BY id ASC LIMIT $limit";
+		command.CommandText = BaseSelect + " WHERE id > $afterId AND status IN ('active', 'dormant') AND ($force = 1 OR (embedding_blob IS NULL AND (embedding IS NULL OR embedding = '')) OR embedding_fingerprint IS NULL OR embedding_fingerprint <> $fingerprint) ORDER BY id ASC LIMIT $limit";
 		AddParameter(command, "$afterId", afterId);
 		AddParameter(command, "$force", force ? 1 : 0);
 		AddParameter(command, "$fingerprint", fingerprint);
 		AddParameter(command, "$limit", Math.Max(1, limit));
 		return ReadItems(command);
+	});
+
+	/// <summary>读取批量重嵌入所需的最小字段，避免先物化完整 MemoryItem。</summary>
+	public IReadOnlyList<MemoryEmbeddingWorkItem> GetReembedWork(string fingerprint, int limit = 32, long afterId = 0, bool force = false) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "SELECT id, updated_at, COALESCE(canonical_summary, content) FROM memories WHERE id > $afterId AND status IN ('active', 'dormant') AND ($force = 1 OR (embedding_blob IS NULL AND (embedding IS NULL OR embedding = '')) OR embedding_fingerprint IS NULL OR embedding_fingerprint <> $fingerprint) ORDER BY id ASC LIMIT $limit";
+		AddParameter(command, "$afterId", afterId);
+		AddParameter(command, "$force", force ? 1 : 0);
+		AddParameter(command, "$fingerprint", fingerprint);
+		AddParameter(command, "$limit", Math.Max(1, limit));
+		using SqliteDataReader reader = command.ExecuteReader();
+		List<MemoryEmbeddingWorkItem> result = [];
+		while (reader.Read())
+		{
+			result.Add(new MemoryEmbeddingWorkItem
+			{
+				Id = reader.GetInt64(0),
+				UpdatedAt = reader.GetString(1),
+				Text = reader.GetString(2),
+			});
+		}
+		return (IReadOnlyList<MemoryEmbeddingWorkItem>)result;
 	});
 
 	/// <summary>按 id 获取记忆。</summary>
@@ -489,30 +525,61 @@ public sealed class MemoryStore
 		});
 	}
 
-	/// <summary>向量语义检索，候选集只包含可正常召回的状态。</summary>
+	/// <summary>向量语义检索，只扫描轻量向量列，最后才物化 top-K 记忆。</summary>
 	public IReadOnlyList<MemorySearchResult> SearchSemantic(
 		float[] queryVector,
 		int limit = 10,
 		double minSimilarity = 0.25)
 	{
-		IReadOnlyList<MemoryItem> candidates = GetSemanticCandidates();
-		List<MemorySearchResult> results = [];
-		foreach (MemoryItem item in candidates)
+		int take = Math.Max(0, limit);
+		if (take == 0 || queryVector.Length == 0) return [];
+		float[] queryBuffer = ArrayPool<float>.Shared.Rent(queryVector.Length);
+		float[] vectorBuffer = ArrayPool<float>.Shared.Rent(queryVector.Length);
+		queryVector.AsSpan().CopyTo(queryBuffer);
+		List<(long Id, byte[] Blob)> legacyMigrations = [];
+		PriorityQueue<SemanticScore, (double Score, long Id)> heap = new();
+		try
 		{
-			float[]? vector = VectorOf(item);
-			if (vector is null || vector.Length != queryVector.Length) continue;
-			double similarity = CosineSimilarity(queryVector, vector);
-			if (similarity < minSimilarity) continue;
-			results.Add(new MemorySearchResult
+			_database.Locked(connection =>
 			{
-				Item = item,
-				Similarity = similarity,
-				Score = similarity,
+				using SqliteCommand command = connection.CreateCommand();
+				command.CommandText = "SELECT id, updated_at, embedding_blob, embedding FROM memories WHERE status IN ('active', 'dormant') AND (embedding_blob IS NOT NULL OR (embedding IS NOT NULL AND embedding <> '')) ORDER BY importance DESC, id DESC LIMIT $limit";
+				AddParameter(command, "$limit", _semanticCandidateLimit);
+				using SqliteDataReader reader = command.ExecuteReader();
+				while (reader.Read())
+				{
+					long id = reader.GetInt64(0);
+					string? legacy = reader.IsDBNull(3) ? null : reader.GetString(3);
+					int vectorLength = 0;
+					bool decoded = !string.IsNullOrWhiteSpace(legacy)
+						? EmbeddingVectorCodec.TryDecodeJson(legacy, vectorBuffer, out vectorLength)
+						: !reader.IsDBNull(2) && EmbeddingVectorCodec.TryDecode(reader.GetFieldValue<byte[]>(2), vectorBuffer, out vectorLength);
+					if (!decoded || vectorLength != queryVector.Length) continue;
+					double similarity = CosineSimilarity(queryBuffer.AsSpan(0, queryVector.Length), vectorBuffer.AsSpan(0, vectorLength));
+					if (!double.IsFinite(similarity) || similarity < minSimilarity) continue;
+					if (legacy is not null) legacyMigrations.Add((id, EmbeddingVectorCodec.Encode(vectorBuffer.AsSpan(0, vectorLength))));
+					SemanticScore candidate = new(id, similarity);
+					heap.Enqueue(candidate, (similarity, id));
+					if (heap.Count > take) heap.Dequeue();
+				}
 			});
 		}
-		results.Sort((left, right) => right.Score.CompareTo(left.Score));
-		if (results.Count > Math.Max(0, limit)) results.RemoveRange(Math.Max(0, limit), results.Count - Math.Max(0, limit));
-		return results;
+		finally
+		{
+			ArrayPool<float>.Shared.Return(vectorBuffer);
+			ArrayPool<float>.Shared.Return(queryBuffer);
+		}
+
+		if (legacyMigrations.Count > 0) MigrateLegacyEmbeddings(legacyMigrations);
+		List<SemanticScore> ranked = heap.UnorderedItems.Select(item => item.Element)
+			.OrderByDescending(item => item.Score)
+			.ThenByDescending(item => item.Id)
+			.ToList();
+		Dictionary<long, MemoryItem> items = GetMany(ranked.Select(item => item.Id).ToArray());
+		return ranked
+			.Where(item => items.ContainsKey(item.Id))
+			.Select(item => new MemorySearchResult {Item = items[item.Id], Similarity = item.Score, Score = item.Score})
+			.ToList();
 	}
 
 	/// <summary>真正的关键词 + 向量 RRF 兼容搜索。</summary>
@@ -614,6 +681,7 @@ public sealed class MemoryStore
 	{
 		if (importance is not null) ValidateScore(importance.Value, nameof(importance));
 		if (confidence is not null) ValidateScore(confidence.Value, nameof(confidence));
+		(string? Legacy, byte[]? Blob) embeddingStorage = embedding is null ? (null, null) : PrepareEmbedding(embedding);
 		bool updated = _database.Locked(connection =>
 		{
 			using SqliteTransaction transaction = connection.BeginTransaction();
@@ -631,8 +699,9 @@ public sealed class MemoryStore
 					confidence = COALESCE($confidence, confidence),
 					ttl_days = COALESCE($ttl, ttl_days),
 					expires_at = COALESCE($expires, expires_at),
-					embedding = CASE WHEN $embedding IS NOT NULL THEN $embedding WHEN content <> $content THEN NULL ELSE embedding END,
-					embedding_fingerprint = CASE WHEN $embedding IS NOT NULL THEN $embeddingFingerprint WHEN content <> $content THEN NULL ELSE embedding_fingerprint END,
+					embedding = CASE WHEN $embeddingProvided = 1 THEN $embedding WHEN content <> $content THEN NULL ELSE embedding END,
+					embedding_blob = CASE WHEN $embeddingProvided = 1 THEN $embedding_blob WHEN content <> $content THEN NULL ELSE embedding_blob END,
+					embedding_fingerprint = CASE WHEN $embeddingProvided = 1 THEN $embeddingFingerprint WHEN content <> $content THEN NULL ELSE embedding_fingerprint END,
 					updated_at = $updated
 				WHERE id = $id
 				""";
@@ -646,7 +715,9 @@ public sealed class MemoryStore
 			AddParameter(command, "$confidence", confidence);
 			AddParameter(command, "$ttl", ttlDays);
 			AddParameter(command, "$expires", expiresAt);
-			AddParameter(command, "$embedding", embedding);
+			AddParameter(command, "$embedding", embeddingStorage.Legacy);
+			AddParameter(command, "$embedding_blob", embeddingStorage.Blob);
+			AddParameter(command, "$embeddingProvided", embedding is null ? 0 : 1);
 			AddParameter(command, "$embeddingFingerprint", embeddingFingerprint);
 			AddParameter(command, "$updated", now);
 			int count = command.ExecuteNonQuery();
@@ -867,12 +938,7 @@ public sealed class MemoryStore
 	}
 
 	/// <summary>计算两个向量的余弦相似度。</summary>
-	public static double CosineSimilarity(float[] a, float[] b)
-	{
-		if (a.Length != b.Length || a.Length == 0) return 0;
-		float similarity = TensorPrimitives.CosineSimilarity(a, b);
-		return float.IsFinite(similarity) ? similarity : 0;
-	}
+	public static double CosineSimilarity(float[] a, float[] b) => CosineSimilarity(a.AsSpan(), b.AsSpan());
 
 	/// <summary>RRF 融合多个独立排名。</summary>
 	public static Dictionary<long, double> FuseRrf(IReadOnlyList<IReadOnlyList<RetrievalHit>> rankings, int k = 60)
@@ -890,15 +956,7 @@ public sealed class MemoryStore
 		return result;
 	}
 
-	private IReadOnlyList<MemoryItem> GetSemanticCandidates() => _database.Locked(connection =>
-	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = BaseSelect + " WHERE status IN ('active', 'dormant') ORDER BY importance DESC, id DESC LIMIT $limit";
-		AddParameter(command, "$limit", _semanticCandidateLimit);
-		return ReadItems(command);
-	});
-
-	private const string BaseSelect = "SELECT id, type, content, importance, source, tags, embedding, created_at, updated_at, kind, canonical_summary, persona_summary, confidence, status, access_count, reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at, superseded_by, embedding_fingerprint FROM memories";
+	private const string BaseSelect = "SELECT id, type, content, importance, source, tags, embedding, embedding_blob, created_at, updated_at, kind, canonical_summary, persona_summary, confidence, status, access_count, reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at, superseded_by, embedding_fingerprint FROM memories";
 
 	private static List<MemoryItem> ReadItems(SqliteCommand command)
 	{
@@ -908,31 +966,42 @@ public sealed class MemoryStore
 		return result;
 	}
 
-	private static MemoryItem ReadRow(SqliteDataReader reader) => new()
+	private static MemoryItem ReadRow(SqliteDataReader reader)
 	{
-		Id = reader.GetInt64(0),
-		Type = reader.GetString(1),
-		Content = reader.GetString(2),
-		Importance = reader.GetDouble(3),
-		Source = reader.GetString(4),
-		Tags = reader.IsDBNull(5) ? null : reader.GetString(5),
-		Embedding = reader.IsDBNull(6) ? null : reader.GetString(6),
-		CreatedAt = reader.GetString(7),
-		UpdatedAt = reader.GetString(8),
-		Kind = reader.IsDBNull(9) ? "general" : reader.GetString(9),
-		CanonicalSummary = reader.IsDBNull(10) ? null : reader.GetString(10),
-		PersonaSummary = reader.IsDBNull(11) ? null : reader.GetString(11),
-		Confidence = reader.IsDBNull(12) ? 0.8 : reader.GetDouble(12),
-		Status = reader.IsDBNull(13) ? "active" : reader.GetString(13),
-		AccessCount = reader.IsDBNull(14) ? 0 : reader.GetInt32(14),
-		ReinforcementCount = reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
-		LastAccessedAt = reader.IsDBNull(16) ? null : reader.GetString(16),
-		LastReinforcedAt = reader.IsDBNull(17) ? null : reader.GetString(17),
-		TtlDays = reader.IsDBNull(18) ? null : reader.GetDouble(18),
-		ExpiresAt = reader.IsDBNull(19) ? null : reader.GetString(19),
-		SupersededBy = reader.IsDBNull(20) ? null : reader.GetInt64(20),
-		EmbeddingFingerprint = reader.IsDBNull(21) ? null : reader.GetString(21),
-	};
+		string? legacy = reader.IsDBNull(6) ? null : reader.GetString(6);
+		byte[]? blob = reader.IsDBNull(7) ? null : reader.GetFieldValue<byte[]>(7);
+		string? compatibilityEmbedding = legacy;
+		if (compatibilityEmbedding is null && blob is not null && EmbeddingVectorCodec.TryDecode(blob, out float[] vector))
+		{
+			compatibilityEmbedding = EmbeddingVectorCodec.ToJson(vector);
+		}
+		return new MemoryItem
+		{
+			Id = reader.GetInt64(0),
+			Type = reader.GetString(1),
+			Content = reader.GetString(2),
+			Importance = reader.GetDouble(3),
+			Source = reader.GetString(4),
+			Tags = reader.IsDBNull(5) ? null : reader.GetString(5),
+			Embedding = compatibilityEmbedding,
+			EmbeddingBlob = blob,
+			CreatedAt = reader.GetString(8),
+			UpdatedAt = reader.GetString(9),
+			Kind = reader.IsDBNull(10) ? "general" : reader.GetString(10),
+			CanonicalSummary = reader.IsDBNull(11) ? null : reader.GetString(11),
+			PersonaSummary = reader.IsDBNull(12) ? null : reader.GetString(12),
+			Confidence = reader.IsDBNull(13) ? 0.8 : reader.GetDouble(13),
+			Status = reader.IsDBNull(14) ? "active" : reader.GetString(14),
+			AccessCount = reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
+			ReinforcementCount = reader.IsDBNull(16) ? 0 : reader.GetInt32(16),
+			LastAccessedAt = reader.IsDBNull(17) ? null : reader.GetString(17),
+			LastReinforcedAt = reader.IsDBNull(18) ? null : reader.GetString(18),
+			TtlDays = reader.IsDBNull(19) ? null : reader.GetDouble(19),
+			ExpiresAt = reader.IsDBNull(20) ? null : reader.GetString(20),
+			SupersededBy = reader.IsDBNull(21) ? null : reader.GetInt64(21),
+			EmbeddingFingerprint = reader.IsDBNull(22) ? null : reader.GetString(22),
+		};
+	}
 
 	private static MemoryAtom ReadAtom(SqliteDataReader reader) => new()
 	{
@@ -943,6 +1012,65 @@ public sealed class MemoryStore
 		ReinforcementCount = reader.GetInt32(12), DecayType = reader.GetString(13), Entities = reader.IsDBNull(14) ? null : reader.GetString(14),
 		SupersededBy = reader.IsDBNull(15) ? null : reader.GetInt64(15),
 	};
+
+	private void MigrateLegacyEmbeddings(IReadOnlyList<(long Id, byte[] Blob)> migrations)
+	{
+		_database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			foreach ((long id, byte[] blob) in migrations)
+			{
+				using SqliteCommand command = connection.CreateCommand();
+				command.Transaction = transaction;
+				command.CommandText = "UPDATE memories SET embedding = NULL, embedding_blob = $embedding_blob WHERE id = $id AND embedding IS NOT NULL";
+				AddParameter(command, "$id", id);
+				AddParameter(command, "$embedding_blob", blob);
+				command.ExecuteNonQuery();
+			}
+			transaction.Commit();
+		});
+	}
+
+	private Dictionary<long, MemoryItem> GetMany(IReadOnlyList<long> ids)
+	{
+		if (ids.Count == 0) return [];
+		return _database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			string[] parameters = new string[ids.Count];
+			for (int index = 0; index < ids.Count; index++)
+			{
+				parameters[index] = $"$id{index}";
+				AddParameter(command, parameters[index], ids[index]);
+			}
+			command.CommandText = $"{BaseSelect} WHERE id IN ({string.Join(", ", parameters)})";
+			using SqliteDataReader reader = command.ExecuteReader();
+			Dictionary<long, MemoryItem> result = [];
+			while (reader.Read())
+			{
+				MemoryItem item = ReadRow(reader);
+				result[item.Id] = item;
+			}
+			return result;
+		});
+	}
+
+	private static (string? Legacy, byte[]? Blob) PrepareEmbedding(string? embedding)
+	{
+		if (string.IsNullOrWhiteSpace(embedding)) return (null, null);
+		return EmbeddingVectorCodec.TryDecodeJson(embedding, out float[] vector)
+			? (null, EmbeddingVectorCodec.Encode(vector))
+			: (embedding, null);
+	}
+
+	private static double CosineSimilarity(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
+	{
+		if (a.Length != b.Length || a.Length == 0) return 0;
+		float similarity = TensorPrimitives.CosineSimilarity(a, b);
+		return float.IsFinite(similarity) ? similarity : 0;
+	}
+
+	private readonly record struct SemanticScore(long Id, double Score);
 
 	private static void ValidateScore(double value, string name)
 	{

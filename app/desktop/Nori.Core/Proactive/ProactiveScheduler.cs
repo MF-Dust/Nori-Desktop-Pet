@@ -32,12 +32,12 @@ public sealed class ProactiveScheduler : IDisposable
 
 	private readonly GreetingSlot[] _greetingSlots =
 	[
-		new("30 8 * * *", "早安主人！新的一天也要元气满满哦~", "wave", "Smile"),
-		new("0 12 * * *", "到午饭时间啦！不要饿肚子，去吃点好吃的吧~", "smile", "Smile"),
-		new("0 23 * * *", "夜深了，工作再忙也要注意身体，早点休息吧主人~", "think", "Sleepy"),
+		new("proactive-greeting-morning", "30 8 * * *", "早安主人！新的一天也要元气满满哦~", "Good morning! Let’s have an energetic day~", "wave", "Smile"),
+		new("proactive-greeting-lunch", "0 12 * * *", "到午饭时间啦！不要饿肚子，去吃点好吃的吧~", "It’s lunchtime! Please grab something tasty~", "smile", "Smile"),
+		new("proactive-greeting-night", "0 23 * * *", "夜深了，工作再忙也要注意身体，早点休息吧主人~", "It’s late. Even when work is busy, please get some rest~", "think", "Sleepy"),
 	];
-	/// <summary>上次挂机触发时间戳, 防止频繁刷屏</summary>
-	private long _lastIdleFiredAt;
+	/// <summary>当前挂机 session 是否已经触发过关怀。</summary>
+	private int _idleSessionFired;
 
 	/// <summary>主动发声事件</summary>
 	public event Action<ProactiveMessage>? Message;
@@ -84,11 +84,11 @@ public sealed class ProactiveScheduler : IDisposable
 		{
 			Tick();
 		}
-		catch (Exception exception)
+		catch (Exception)
 		{
 			try
 			{
-				_logger.Write(LogSource.Backend, "warn", $"主动交互调度异常: {exception.Message}");
+				_logger.Write(LogSource.Backend, "warn", "主动交互调度异常");
 			}
 			catch
 			{
@@ -114,17 +114,20 @@ public sealed class ProactiveScheduler : IDisposable
 			: DateTimeOffset.UtcNow;
 		FireDueReminders(now.ToUnixTimeMilliseconds());
 		CheckDailyGreetings(now);
+		CheckIdle();
 	}
 
 	private void FireDueReminders(long nowMs)
 	{
 		foreach (ReminderItem reminder in _store.TakeDue(nowMs))
 		{
-			string text = $"主人！提醒时间到了：{reminder.Content}";
+			string text = IsEnglish()
+				? $"Reminder time: {reminder.Content}"
+				: $"主人！提醒时间到了：{reminder.Content}";
 			Message?.Invoke(new ProactiveMessage(text, "wave", "Surprised"));
 			try
 			{
-				_logger.Write(LogSource.Backend, "info", $"定时提醒触发: {reminder.Content}");
+				_logger.Write(LogSource.Backend, "info", "定时提醒触发");
 			}
 			catch
 			{
@@ -144,12 +147,9 @@ public sealed class ProactiveScheduler : IDisposable
 			DateTimeOffset from = localNow.AddMinutes(-15).AddTicks(-1);
 			DateTimeOffset? occurrence = slot.Schedule.GetNextOccurrence(from, TimeZoneInfo.Local);
 			if (occurrence is null || occurrence > localNow || localNow - occurrence > TimeSpan.FromMinutes(15)) continue;
-			lock (_gate)
-			{
-				if (slot.LastFired == occurrence) continue;
-				slot.LastFired = occurrence;
-			}
-			Message?.Invoke(new ProactiveMessage(slot.Text, slot.Motion, slot.Expression));
+			string occurrenceValue = occurrence.Value.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
+			if (!_store.TryClaimOccurrence(slot.Key, occurrenceValue)) continue;
+			Message?.Invoke(new ProactiveMessage(slot.Text(IsEnglish()), slot.Motion, slot.Expression));
 		}
 	}
 
@@ -161,19 +161,25 @@ public sealed class ProactiveScheduler : IDisposable
 			ParseDouble(_config.GetStringOr("proactive_idle_minutes", DefaultIdleMinutes.ToString(CultureInfo.InvariantCulture)), DefaultIdleMinutes) * 60);
 
 		double? idleSeconds = _idleSecondsProvider();
-		if (idleSeconds is not { } idle || idle < thresholdSeconds) return;
+		if (idleSeconds is not { } idle || idle < thresholdSeconds)
+		{
+			// 任意一次真实活动都结束上一轮挂机 session。
+			Interlocked.Exchange(ref _idleSessionFired, 0);
+			return;
+		}
+		if (Interlocked.Exchange(ref _idleSessionFired, 1) != 0) return;
 
-		long now = Environment.TickCount64;
-		// 同一轮挂机只关怀一次: 触发后至少再等一个完整阈值周期
-		if (now - Interlocked.Read(ref _lastIdleFiredAt) < (long)(thresholdSeconds * 1000)) return;
-		Interlocked.Exchange(ref _lastIdleFiredAt, now);
-
-		string[] texts =
-		[
-			"主人已经好久没有理 Nori 啦...",
-			"伸个懒腰~ 工作辛苦啦，记得休息一下眼睛哦！",
-			"呼啊... 好困呀，主人在忙什么呢？",
-		];
+		string[] texts = IsEnglish()
+			? [
+				"It’s been a while since you checked in with Nori...",
+				"Stretch break~ You’ve worked hard. Please rest your eyes!",
+				"Yawn... I wonder what you’re busy with?",
+			]
+			: [
+				"主人已经好久没有理 Nori 啦...",
+				"伸个懒腰~ 工作辛苦啦，记得休息一下眼睛哦！",
+				"呼啊... 好困呀，主人在忙什么呢？",
+			];
 		string[] motions = ["think", "smile", "wave"];
 		string[] expressions = ["Sad", "Smile", "Sleepy"];
 		int pick = Random.Shared.Next(texts.Length);
@@ -192,6 +198,8 @@ public sealed class ProactiveScheduler : IDisposable
 	private static double ParseDouble(string raw, double fallback) =>
 		double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value : fallback;
 
+	private bool IsEnglish() => _config.GetStringOr(ConfigStore.KeyLanguage, "zh-CN").StartsWith("en", StringComparison.OrdinalIgnoreCase);
+
 	public void Dispose()
 	{
 		System.Threading.Timer? timer;
@@ -205,19 +213,23 @@ public sealed class ProactiveScheduler : IDisposable
 
 	private sealed class GreetingSlot
 	{
-		public GreetingSlot(string expression, string text, string motion, string face)
+		public GreetingSlot(string key, string expression, string chineseText, string englishText, string motion, string face)
 		{
+			Key = key;
 			Schedule = CronExpression.Parse(expression, CronFormat.Standard);
-			Text = text;
+			ChineseText = chineseText;
+			EnglishText = englishText;
 			Motion = motion;
 			Expression = face;
 		}
 
+		public string Key { get; }
 		public CronExpression Schedule { get; }
-		public string Text { get; }
+		public string ChineseText { get; }
+		public string EnglishText { get; }
 		public string Motion { get; }
 		public string Expression { get; }
-		public DateTimeOffset? LastFired { get; set; }
+		public string Text(bool english) => english ? EnglishText : ChineseText;
 	}
 }
 

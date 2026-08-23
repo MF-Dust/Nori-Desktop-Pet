@@ -1,5 +1,21 @@
 namespace Nori.Core.Memory;
 
+/// <summary>待后台批量生成向量的轻量记录。</summary>
+public sealed record MemoryEmbeddingWorkItem
+{
+	public required long Id { get; init; }
+	public required string UpdatedAt { get; init; }
+	public required string Text { get; init; }
+}
+
+/// <summary>待写回数据库的向量。</summary>
+public sealed record MemoryEmbeddingUpdate
+{
+	public required long Id { get; init; }
+	public required string UpdatedAt { get; init; }
+	public required float[] Vector { get; init; }
+}
+
 /// <summary>记忆事实原子。</summary>
 public sealed record MemoryAtom
 {

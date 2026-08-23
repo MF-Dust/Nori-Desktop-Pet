@@ -139,6 +139,26 @@ public sealed class ReminderStore(NoriDatabase database)
 		return command.ExecuteNonQuery() > 0;
 	});
 
+	/// <summary>原子领取一个主动问候 occurrence，重启后仍只会触发一次。</summary>
+	public bool TryClaimOccurrence(string key, string occurrence)
+	{
+		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+		return database.Locked(connection =>
+		{
+			using SqliteCommand command = connection.CreateCommand();
+			command.CommandText = """
+				INSERT INTO proactive_occurrences(key, occurrence, updated_at)
+				VALUES ($key, $occurrence, $updated)
+				ON CONFLICT(key) DO UPDATE SET occurrence = excluded.occurrence, updated_at = excluded.updated_at
+				WHERE proactive_occurrences.occurrence <> excluded.occurrence
+				""";
+			command.Parameters.AddWithValue("$key", key);
+			command.Parameters.AddWithValue("$occurrence", occurrence);
+			command.Parameters.AddWithValue("$updated", now);
+			return command.ExecuteNonQuery() > 0;
+		});
+	}
+
 	/// <summary>清空全部提醒</summary>
 	public void Clear()
 	{
