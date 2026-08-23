@@ -518,9 +518,11 @@ public sealed class PetRuntime
 	public bool PlayMotionByName(string name)
 	{
 		if (_currentModel is null || string.IsNullOrWhiteSpace(name)) return false;
+		string? resolved = PetActionResolver.ResolveMotion(_motionGroups, name);
+		if (resolved is null) return false;
 		foreach (MotionGroupInfo group in _motionGroups)
 		{
-			int index = group.Names.FindIndex(item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
+			int index = group.Names.FindIndex(item => item.Equals(resolved, StringComparison.OrdinalIgnoreCase));
 			if (index >= 0) return TryStartMotion(group.Group, index) is not null;
 		}
 		return false;
@@ -547,7 +549,11 @@ public sealed class PetRuntime
 		return false;
 	}
 
-	public void PlayExpression(string name) => _expressionStore.Play(name);
+	public bool PlayExpression(string name)
+	{
+		string? resolved = PetActionResolver.ResolveExpression(Expressions, name);
+		return resolved is not null && _expressionStore.Play(resolved);
+	}
 	public void StopExpression() => _expressionStore.Stop();
 	public void ToggleExpression(string name) => _expressionStore.Toggle(name);
 

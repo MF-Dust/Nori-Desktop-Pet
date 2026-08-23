@@ -65,11 +65,14 @@ public sealed class BuiltinToolDeps
 /// <summary>桌宠动作/表情控制</summary>
 public interface IPetActions
 {
+	IReadOnlyList<string> MotionNames { get; }
+	IReadOnlyList<string> ExpressionNames { get; }
+
 	/// <summary>按名称播放动作</summary>
 	bool PlayMotionByName(string name);
 
 	/// <summary>播放指定表情</summary>
-	void PlayExpression(string name);
+	bool PlayExpression(string name);
 }
 
 /// <summary>剪贴板读写能力</summary>

@@ -63,7 +63,7 @@ public static class BuiltinTools
 				string name = RequireString(args, "name");
 				IPetActions pet = Require(deps.Pet, "桌宠尚未加载");
 				bool played = pet.PlayMotionByName(name);
-				return Task.FromResult<object?>(new {success = played, played = name});
+				return Task.FromResult<object?>(new {success = played, played = played ? name : null, available = played ? null : pet.MotionNames});
 			});
 
 		// 5. 控制 Live2D 切换表情
@@ -74,8 +74,8 @@ public static class BuiltinTools
 			{
 				string name = RequireString(args, "name");
 				IPetActions pet = Require(deps.Pet, "桌宠尚未加载");
-				pet.PlayExpression(name);
-				return Task.FromResult<object?>(new {success = true, expression = name});
+				bool played = pet.PlayExpression(name);
+				return Task.FromResult<object?>(new {success = played, expression = played ? name : null, available = played ? null : pet.ExpressionNames});
 			});
 
 		// 6. 记住重要事实 / 偏好 (remember 与 addMemory 同体)

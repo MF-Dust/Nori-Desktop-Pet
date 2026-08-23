@@ -69,6 +69,10 @@ public sealed class DesktopSystemInfo(Nori.Core.Configuration.ConfigStore config
 /// <summary>桌宠动作/表情控制适配器</summary>
 public sealed class PetActionsAdapter(Func<Nori.Desktop.Live2D.PetRuntime?> runtime) : IPetActions
 {
+	public IReadOnlyList<string> MotionNames => runtime()?.MotionGroups.SelectMany(group => group.Names).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() ?? [];
+
+	public IReadOnlyList<string> ExpressionNames => runtime()?.Expressions ?? [];
+
 	public bool PlayMotionByName(string name)
 	{
 		Nori.Desktop.Live2D.PetRuntime? pet = runtime();
@@ -76,9 +80,9 @@ public sealed class PetActionsAdapter(Func<Nori.Desktop.Live2D.PetRuntime?> runt
 		return pet.PlayMotionByName(name);
 	}
 
-	public void PlayExpression(string name)
+	public bool PlayExpression(string name)
 	{
-		runtime()?.PlayExpression(name);
+		return runtime()?.PlayExpression(name) ?? false;
 	}
 }
 
