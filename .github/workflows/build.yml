@@ -1,239 +1,84 @@
-# 手动触发的多平台构建工作流
-#
-# 用法: Actions → Build → Run workflow → 选择平台 (all / windows / linux / macos)
-#
-# 说明:
-# - 前端只在 Ubuntu 上构建一次, 产物 (dist/) 通过 artifact 分发给各平台任务;
-#   Nori.Desktop.csproj 会把 ../dist/** 作为 wwwroot 打进发布目录。
-# - Live2D Cubism Core 原生库由 csproj 按 RID 打包
-#   (win-x64.dll / linux-x64.so / osx dylib)。
-# - 发布参数与 app/desktop/publish.bat 一致 (默认框架依赖模式),
-#   可通过 self_contained 输入切换为自包含运行时。
-# - 已知限制: 主界面三个 WebView 窗口依赖 Microsoft WebView2 运行时 (仅 Windows 提供);
-#   linux/macos 产物可编译分发、原生桌宠窗口 (pet) 不依赖 WebView2,
-#   但完整应用流程目前仅在 Windows 上验证过。
-name: Build
+name: build
 
 on:
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      platform:
-        description: "构建平台"
-        type: choice
-        required: true
-        default: all
-        options:
-          - all
-          - windows
-          - linux
-          - macos
-      self_contained:
-        description: "自包含 .NET 运行时 (否则目标机需自行安装)"
-        type: boolean
-        required: false
-        default: false
 
-permissions:
-  contents: read
-
+# 四道门: pnpm build / pnpm test / dotnet build / dotnet test, 三平台各跑一遍
 jobs:
-  # ---------- 前端 (构建一次, 各平台共用) ----------
-  frontend:
-    name: Frontend (web bundle)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: app/desktop/pnpm-lock.yaml
-
-      - name: Install dependencies
-        working-directory: app/desktop
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend (vue-tsc + vite)
-        working-directory: app/desktop
-        run: pnpm build
-
-      - name: Upload web bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: app/desktop/dist/
-          retention-days: 7
-
-  # ---------- Windows ----------
-  build-windows:
-    name: Native (win-x64)
-    needs: frontend
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
-    runs-on: windows-latest
-    env:
-      RID: win-x64
-      SELF_CONTAINED_ARGS: --self-contained false
-    steps:
-      - name: Resolve self-contained flag
-        if: ${{ inputs.self_contained }}
-        shell: bash
-        run: echo "SELF_CONTAINED_ARGS=--self-contained true" >> "$GITHUB_ENV"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET 10 SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Download web bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: app/desktop/dist
-
-      # 参数与 publish.bat 保持一致; 单文件/ReadyToRun 关闭, 不生成 pdb
-      - name: Publish (${{ env.RID }})
-        working-directory: app/desktop
-        run: >
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj
-          -c Release
-          -r ${{ env.RID }}
-          ${{ env.SELF_CONTAINED_ARGS }}
-          -p:PublishSingleFile=false
-          -p:PublishReadyToRun=false
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -o bin/publish/${{ env.RID }}
-
-      - name: Remove pdb files
-        working-directory: app/desktop/bin/publish/${{ env.RID }}
-        shell: bash
-        run: find . -name "*.pdb" -delete
-
-      - name: Upload artifact (${{ env.RID }})
-        uses: actions/upload-artifact@v4
-        with:
-          name: nori-${{ env.RID }}
-          path: app/desktop/bin/publish/${{ env.RID }}/
-          retention-days: 14
-
-  # ---------- Linux ----------
-  build-linux:
-    name: Native (linux-x64)
-    needs: frontend
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'linux' }}
-    runs-on: ubuntu-latest
-    env:
-      RID: linux-x64
-      SELF_CONTAINED_ARGS: --self-contained false
-    steps:
-      - name: Resolve self-contained flag
-        if: ${{ inputs.self_contained }}
-        shell: bash
-        run: echo "SELF_CONTAINED_ARGS=--self-contained true" >> "$GITHUB_ENV"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET 10 SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Download web bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: app/desktop/dist
-
-      - name: Publish (${{ env.RID }})
-        working-directory: app/desktop
-        run: >
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj
-          -c Release
-          -r ${{ env.RID }}
-          ${{ env.SELF_CONTAINED_ARGS }}
-          -p:PublishSingleFile=false
-          -p:PublishReadyToRun=false
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -o bin/publish/${{ env.RID }}
-
-      - name: Remove pdb files
-        working-directory: app/desktop/bin/publish/${{ env.RID }}
-        shell: bash
-        run: find . -name "*.pdb" -delete
-
-      - name: Upload artifact (${{ env.RID }})
-        uses: actions/upload-artifact@v4
-        with:
-          name: nori-${{ env.RID }}
-          path: app/desktop/bin/publish/${{ env.RID }}/
-          retention-days: 14
-
-  # ---------- macOS (x64 + Apple Silicon 双架构) ----------
-  build-macos:
-    name: Native (${{ matrix.rid }})
-    needs: frontend
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
-    runs-on: macos-latest
+  desktop:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        rid: [osx-x64, osx-arm64]
-    env:
-      SELF_CONTAINED_ARGS: --self-contained false
-    steps:
-      - name: Resolve self-contained flag
-        if: ${{ inputs.self_contained }}
-        shell: bash
-        run: echo "SELF_CONTAINED_ARGS=--self-contained true" >> "$GITHUB_ENV"
+        include:
+          - os: windows-latest
+            name: windows
+            rid: win-x64
+          - os: ubuntu-latest
+            name: linux
+            rid: linux-x64
+          - os: macos-14
+            name: macos
+            rid: osx-arm64
 
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET 10 SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Download web bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: app/desktop/dist
-
-      - name: Publish (${{ matrix.rid }})
+    defaults:
+      run:
         working-directory: app/desktop
-        run: >
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj
-          -c Release
-          -r ${{ matrix.rid }}
-          ${{ env.SELF_CONTAINED_ARGS }}
-          -p:PublishSingleFile=false
-          -p:PublishReadyToRun=false
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -o bin/publish/${{ matrix.rid }}
 
-      - name: Remove pdb files
-        working-directory: app/desktop/bin/publish/${{ matrix.rid }}
-        shell: bash
-        run: find . -name "*.pdb" -delete
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Upload artifact (${{ matrix.rid }})
-        uses: actions/upload-artifact@v4
+      # WebKitGTK: Linux 上 NativeWebView 的原生依赖 (无它 dotnet build 仍能过, 运行期才需要)
+      - name: 安装 Linux 原生依赖
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-0 libgtk-3-0
+
+      - uses: pnpm/action-setup@v4
         with:
-          name: nori-${{ matrix.rid }}
-          path: app/desktop/bin/publish/${{ matrix.rid }}/
-          retention-days: 14
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/desktop/pnpm-lock.yaml
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 前端门 · 类型检查与构建
+        run: pnpm build
+
+      - name: 前端门 · 单元测试
+        run: pnpm test
+
+      - name: 后端门 · 构建
+        run: dotnet build --configuration Release
+
+      - name: 后端门 · 单元测试
+        run: dotnet test --configuration Release --no-build
+
+      # 发布冒烟: 只验证 publish 能产出可执行文件, 不做运行
+      - name: 发布冒烟 (Windows)
+        if: matrix.name == 'windows'
+        shell: bash
+        run: |
+          dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r ${{ matrix.rid }} \
+            --self-contained false -o bin/ci-publish
+          test -f bin/ci-publish/Nori.Desktop.exe
+
+      - name: 发布冒烟 (Linux / macOS)
+        if: matrix.name != 'windows'
+        run: |
+          chmod +x publish.sh
+          ./publish.sh ${{ matrix.rid }}
+          test -f "bin/publish/${{ matrix.rid }}/app/Nori.Desktop"

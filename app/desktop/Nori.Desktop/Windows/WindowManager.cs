@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Nori.Core.Assets;
@@ -16,7 +18,11 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 	private readonly AssetServer _assetServer = assetServer;
 	private readonly IClassicDesktopStyleApplicationLifetime _lifetime = lifetime;
 	private readonly Dictionary<string, Window> _windows = [];
+	private readonly ConcurrentDictionary<string, bool> _visible = new();
 	private PetWindow? _petWindow;
+
+	/// <inheritdoc />
+	public event Action<string, bool>? VisibilityChanged;
 
 	/// <summary>
 	/// 建好全部窗口 (不显示)
@@ -48,8 +54,32 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 				};
 				_windows[definition.Label] = window;
 			}
+
+			TrackVisibility(definition.Label, _windows[definition.Label]);
 		}
 	}
+
+	/// <summary>
+	/// 跟踪一个窗口的可见性
+	///
+	/// 直接监听 IsVisibleProperty, 无论是托盘切换、命令调用还是窗口自己 Hide,
+	/// 缓存与事件都不会漏.
+	/// </summary>
+	private void TrackVisibility(string label, Window window)
+	{
+		_visible[label] = window.IsVisible;
+		window.PropertyChanged += (_, args) =>
+		{
+			if (args.Property != Visual.IsVisibleProperty) return;
+			bool visible = window.IsVisible;
+			if (_visible.TryGetValue(label, out bool previous) && previous == visible) return;
+			_visible[label] = visible;
+			VisibilityChanged?.Invoke(label, visible);
+		};
+	}
+
+	/// <inheritdoc />
+	public bool IsWindowVisible(string label) => _visible.TryGetValue(label, out bool visible) && visible;
 
 	/// <summary>
 	/// 按标签取窗口, 不存在返回 null
@@ -101,6 +131,7 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		if (window is NoriWindow nw) nw.AllowClose = true;
 		else if (window is PetWindow pw) pw.AllowClose = true;
 		window.Close();
+		if (_visible.TryUpdate(label, false, true)) VisibilityChanged?.Invoke(label, false);
 	}
 
 	/// <summary>

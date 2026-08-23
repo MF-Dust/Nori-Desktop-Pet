@@ -1,27 +1,28 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+	<!-- 公共编译口径见 ../Directory.Build.props -->
 	<PropertyGroup>
-		<OutputType>WinExe</OutputType>
-		<TargetFramework>net10.0</TargetFramework>
-		<Nullable>enable</Nullable>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<LangVersion>latest</LangVersion>
+		<!-- Windows 上用 WinExe 隐藏控制台窗口; Linux/macOS 上 Exe 才是正常的 GUI 入口 -->
+		<OutputType Condition="'$(NoriIsWindowsBuild)' == 'true'">WinExe</OutputType>
+		<OutputType Condition="'$(NoriIsWindowsBuild)' != 'true'">Exe</OutputType>
 		<RootNamespace>Nori.Desktop</RootNamespace>
 		<AssemblyName>Nori.Desktop</AssemblyName>
-		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-		<ApplicationManifest>app.manifest</ApplicationManifest>
-		<ApplicationIcon>Assets/icon.ico</ApplicationIcon>
-		<Version>0.1.0</Version>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<!-- OPENAI001/MEAI001: 预览版 AI SDK 的实验性 API 标记 -->
 		<NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
+		<!-- NativeControlHost 需要这份 manifest 声明受支持的 OS, 否则 WebView 启动即失败 (仅 Windows 有意义) -->
+		<ApplicationManifest Condition="'$(NoriIsWindowsBuild)' == 'true'">app.manifest</ApplicationManifest>
+		<ApplicationIcon Condition="'$(NoriIsWindowsBuild)' == 'true'">Assets/icon.ico</ApplicationIcon>
+		<Version>0.1.0</Version>
 	</PropertyGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Avalonia" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+		<!-- 跨平台原生 WebView: Windows→WebView2, macOS→WKWebView, Linux→WebKitGTK -->
 		<PackageReference Include="Avalonia.Controls.WebView" Version="12.1.0" />
-		<PackageReference Include="NAudio" Version="2.2.1" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -31,10 +32,25 @@
 
 	<ItemGroup>
 		<!-- Cubism Core 原生库: 按 RID 只打包当前目标平台的一份 -->
-		<None Include="../Live2D/native/win-x64/Live2DCubismCore.dll" Link="Live2DCubismCore.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == ''" />
-		<None Include="../Live2D/native/linux-x64/libLive2DCubismCore.so" Link="libLive2DCubismCore.so" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'linux-x64'" />
-		<None Include="../Live2D/native/macos/libLive2DCubismCore.dylib" Link="libLive2DCubismCore.dylib" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or '$(RuntimeIdentifier)' == 'osx-arm64'" />
+		<None Include="../Live2D/native/win-x64/Live2DCubismCore.dll" Link="Live2DCubismCore.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'win-x64' Or ('$(RuntimeIdentifier)' == '' And '$(NoriIsWindowsBuild)' == 'true')" />
+		<None Include="../Live2D/native/linux-x64/libLive2DCubismCore.so" Link="libLive2DCubismCore.so" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'linux-x64' Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Linux')))" />
+		<None Include="../Live2D/native/macos/libLive2DCubismCore.dylib" Link="libLive2DCubismCore.dylib" CopyToOutputDirectory="PreserveNewest" Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or '$(RuntimeIdentifier)' == 'osx-arm64' Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('OSX')))" />
 	</ItemGroup>
+
+	<!--
+		缺少目标平台的 Cubism Core 原生库时构建期就报错
+
+		否则要等到运行时才炸 DllNotFoundException, 排查成本高得多。
+		linux-arm64 官方 SDK 暂未提供, 需要自备后放到 Live2D/native/linux-arm64/。
+	-->
+	<Target Name="NoriCheckCubismCore" BeforeTargets="Build">
+		<Error Condition="'$(RuntimeIdentifier)' == 'linux-arm64' And !Exists('../Live2D/native/linux-arm64/libLive2DCubismCore.so')"
+			Text="缺少 linux-arm64 的 Cubism Core 原生库: 请把 libLive2DCubismCore.so 放到 Live2D/native/linux-arm64/" />
+		<Error Condition="'$(RuntimeIdentifier)' == 'linux-x64' And !Exists('../Live2D/native/linux-x64/libLive2DCubismCore.so')"
+			Text="缺少 linux-x64 的 Cubism Core 原生库: Live2D/native/linux-x64/libLive2DCubismCore.so" />
+		<Error Condition="($(RuntimeIdentifier.StartsWith('osx'))) And !Exists('../Live2D/native/macos/libLive2DCubismCore.dylib')"
+			Text="缺少 macOS 的 Cubism Core 原生库: Live2D/native/macos/libLive2DCubismCore.dylib" />
+	</Target>
 
 	<ItemGroup>
 		<AvaloniaResource Include="Assets/**" />

@@ -237,6 +237,54 @@ public sealed class PetGlControl : OpenGlControlBase
 		return result;
 	}
 
+	/// <summary>
+	/// 把当前 alpha 掩码转成「可点击矩形集合」(客户端逻辑像素)
+	///
+	/// Windows 走 WM_NCHITTEST 逐点判定, 不需要这个;
+	/// macOS / Linux 没有等价钩子, 只能把掩码整体交给系统 (X11 输入形状 / 行为切换)。
+	/// 按行做游程合并, 矩形数量因此可控 (掩码本身只有 96x128)。
+	/// </summary>
+	public List<(int X, int Y, int Width, int Height)> BuildHitRegions(double clientWidth, double clientHeight)
+	{
+		List<(int X, int Y, int Width, int Height)> regions = [];
+		if (clientWidth <= 0 || clientHeight <= 0) return regions;
+
+		double cellWidth = clientWidth / MaskWidth;
+		double cellHeight = clientHeight / MaskHeight;
+
+		lock (_maskLock)
+		{
+			for (int row = 0; row < MaskHeight; row++)
+			{
+				int runStart = -1;
+				for (int col = 0; col <= MaskWidth; col++)
+				{
+					bool hit = false;
+					if (col < MaskWidth)
+					{
+						int index = row * MaskWidth + col;
+						hit = (_maskBits[index >> 3] & (1 << (index & 7))) != 0;
+					}
+
+					if (hit && runStart < 0)
+					{
+						runStart = col;
+					}
+					else if (!hit && runStart >= 0)
+					{
+						int x = (int)Math.Floor(runStart * cellWidth);
+						int y = (int)Math.Floor(row * cellHeight);
+						int width = (int)Math.Ceiling((col - runStart) * cellWidth);
+						int height = (int)Math.Ceiling(cellHeight);
+						regions.Add((x, y, Math.Max(1, width), Math.Max(1, height)));
+						runStart = -1;
+					}
+				}
+			}
+		}
+		return regions;
+	}
+
 	private void StartRenderLoop()
 	{
 		if (_renderLoopRunning) return;

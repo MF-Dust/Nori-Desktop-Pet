@@ -17,7 +17,13 @@ public static class TrayMenu
 	/// <summary>
 	/// 挂上托盘图标与菜单
 	/// </summary>
-	public static void Install(Application application, AppServices services)
+	/// <summary>
+	/// 装载托盘图标
+	///
+	/// 返回是否成功: 部分 Linux 桌面环境没有 StatusNotifier/AppIndicator, 托盘会静默不出现,
+	/// 此时把 SupportsTray 置 false, 由前端在主窗内提供常驻入口与退出按钮。
+	/// </summary>
+	public static bool Install(Application application, AppServices services)
 	{
 		services.Logger.Write(LogSource.Backend, "info", "初始化托盘菜单");
 
@@ -47,8 +53,18 @@ public static class TrayMenu
 		// 左键点击直接开主界面, 不弹菜单
 		tray.Clicked += (_, _) => ShowMain(services);
 
-		TrayIcon.SetIcons(application, [tray]);
+		try
+		{
+			TrayIcon.SetIcons(application, [tray]);
+		}
+		catch (Exception exception)
+		{
+			// 托盘不是必需品: 失败只记日志, 由前端补一个内建入口
+			services.Logger.Write(LogSource.Backend, "warn", $"托盘不可用, 将由主界面提供入口: {exception.Message}");
+			return false;
+		}
 		services.Logger.Write(LogSource.Backend, "info", "托盘菜单初始化完成");
+		return true;
 	}
 
 	/// <summary>

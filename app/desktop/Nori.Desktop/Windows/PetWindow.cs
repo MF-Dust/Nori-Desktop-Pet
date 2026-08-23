@@ -7,6 +7,7 @@ using Avalonia.Platform;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Nori.Core.Live2D;
+using Nori.Core.Logging;
 using Nori.Core.Platform;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Live2D;
@@ -17,7 +18,8 @@ namespace Nori.Desktop.Windows;
 /// 原生桌宠窗口
 ///
 /// 承载 PetGlControl 并接管桌宠的全部交互：
-/// - 逐像素 alpha 穿透（WM_NCHITTEST 返回 HTTRANSPARENT）
+/// - 逐像素 alpha 穿透: Windows 走 WM_NCHITTEST 逐点判定; macOS/Linux(X11) 用 alpha 掩码
+///   经 IPlatformWindowServices 设置输入形状/穿透开关; Wayland 无此能力, 降级为整窗可点
 /// - 左键拖拽移动窗口 + 坐标持久化（阈值 4px）
 /// - 左键点击触发动作与表情判定
 /// - 深海微光配色原生右键菜单（打开主界面 / 随机动作 / 重置位置 / 隐藏桌宠 / 退出）
@@ -37,7 +39,11 @@ public sealed class PetWindow : Window
 	private readonly PetGlControl _glControl;
 	private readonly Win32Properties.CustomWndProcHookCallback _wndProcHook;
 	private readonly DispatcherTimer _cursorTrackingTimer;
+	/// <summary>非 Windows 平台的穿透同步 (Windows 由 WM_NCHITTEST 逐点判定, 不需要)</summary>
+	private readonly DispatcherTimer? _hitShapeTimer;
 	private ContextMenu? _contextMenu;
+	/// <summary>上一次推给系统的穿透状态, 避免重复调用</summary>
+	private bool? _lastClickThrough;
 
 	// 拖拽状态
 	private bool _isDragPending;
@@ -93,6 +99,13 @@ public sealed class PetWindow : Window
 		};
 		_cursorTrackingTimer.Tick += OnCursorTrackingTick;
 
+		// 非 Windows: 按 alpha 掩码 ~10Hz 同步一次输入形状 (与掩码采样频率同量级)
+		if (!OperatingSystem.IsWindows() && PlatformServices.Current.Capabilities.SupportsHitThrough)
+		{
+			_hitShapeTimer = new DispatcherTimer {Interval = TimeSpan.FromMilliseconds(100)};
+			_hitShapeTimer.Tick += OnHitShapeTick;
+		}
+
 		Opened += OnOpened;
 		Closed += OnClosed;
 	}
@@ -108,12 +121,14 @@ public sealed class PetWindow : Window
 		if (change.GetNewValue<bool>())
 		{
 			_glControl.ResumeRenderLoop();
-			_cursorTrackingTimer.Start();
+			if (PlatformServices.Current.Capabilities.SupportsGlobalCursor) _cursorTrackingTimer.Start();
+			_hitShapeTimer?.Start();
 		}
 		else
 		{
 			_glControl.PauseRenderLoop();
 			_cursorTrackingTimer.Stop();
+			_hitShapeTimer?.Stop();
 		}
 	}
 
@@ -124,12 +139,79 @@ public sealed class PetWindow : Window
 			Win32Properties.AddWndProcHookCallback(this, _wndProcHook);
 		}
 		RestoreWindowPosition();
-		_cursorTrackingTimer.Start();
+		ApplyTopmost();
+		if (PlatformServices.Current.Capabilities.SupportsGlobalCursor) _cursorTrackingTimer.Start();
+		_hitShapeTimer?.Start();
+	}
+
+	/// <summary>
+	/// 应用置顶策略
+	///
+	/// Avalonia 的 Topmost 在 Windows/X11 上够用; macOS 需要额外把窗口提到
+	/// NSFloatingWindowLevel, 否则会被全屏应用盖住。
+	/// </summary>
+	private void ApplyTopmost()
+	{
+		if (!PlatformServices.Current.Capabilities.SupportsTopmost) return;
+		Topmost = true;
+		if (OperatingSystem.IsMacOS() && PlatformServices.Current is MacPlatformServices mac)
+		{
+			try
+			{
+				mac.SetFloatingLevel(TryGetPlatformHandle()?.Handle ?? 0);
+			}
+			catch (Exception exception) when (exception is PlatformNotSupportedException or InvalidOperationException or EntryPointNotFoundException)
+			{
+				_services.Logger.Write(LogSource.Backend, "warn", $"设置桌宠置顶层级失败: {exception.Message}");
+			}
+		}
+	}
+
+	/// <summary>
+	/// 非 Windows 的穿透同步: 用 alpha 掩码更新输入形状
+	///
+	/// X11 支持真正的输入形状 (逐像素近似); 其他平台退化为
+	/// 「光标在模型上就接收事件, 否则整窗穿透」。
+	/// </summary>
+	private void OnHitShapeTick(object? sender, EventArgs e)
+	{
+		nint handle = TryGetPlatformHandle()?.Handle ?? 0;
+		if (handle == 0) return;
+
+		try
+		{
+			if (OperatingSystem.IsLinux() && PlatformServices.Current is LinuxPlatformServices linux)
+			{
+				linux.SetInputShape(handle, _glControl.BuildHitRegions(Bounds.Width, Bounds.Height));
+				return;
+			}
+
+			// macOS: 按当前光标位置决定整窗是否接收事件
+			if (!PlatformServices.Current.Capabilities.SupportsGlobalCursor) return;
+			var (cursorX, cursorY) = PlatformServices.Current.GetCursorPosition();
+			double scale = RenderScaling > 0 ? RenderScaling : 1.0;
+			double clientX = (cursorX - Position.X) / scale;
+			double clientY = (cursorY - Position.Y) / scale;
+			bool inside = clientX >= 0 && clientX < Bounds.Width && clientY >= 0 && clientY < Bounds.Height;
+			bool through = !(inside && _glControl.IsPointOnModel(clientX, clientY));
+			if (_contextMenu is {IsOpen: true}) through = false;
+
+			if (_lastClickThrough == through) return;
+			_lastClickThrough = through;
+			PlatformServices.Current.SetClickThrough(handle, through);
+		}
+		catch (Exception exception) when (exception is PlatformNotSupportedException or InvalidOperationException or EntryPointNotFoundException or DllNotFoundException)
+		{
+			// 穿透是增强项: 失败就停掉同步并保持整窗可点, 绝不打断渲染
+			_hitShapeTimer?.Stop();
+			_services.Logger.Write(LogSource.Backend, "warn", $"桌宠穿透同步失败, 已降级为整窗可点: {exception.Message}");
+		}
 	}
 
 	private void OnClosed(object? sender, EventArgs e)
 	{
 		_cursorTrackingTimer.Stop();
+		_hitShapeTimer?.Stop();
 		if (OperatingSystem.IsWindows())
 		{
 			Win32Properties.RemoveWndProcHookCallback(this, _wndProcHook);
@@ -252,6 +334,7 @@ public sealed class PetWindow : Window
 
 		try
 		{
+			if (!PlatformServices.Current.Capabilities.SupportsGlobalCursor) return;
 			var (screenCursorX, screenCursorY) = PlatformServices.Current.GetCursorPosition();
 			double scale = RenderScaling > 0 ? RenderScaling : 1.0;
 			double clientX = (screenCursorX - Position.X) / scale;

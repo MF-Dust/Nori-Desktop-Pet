@@ -110,10 +110,10 @@ public sealed class VoiceService(HttpClient httpClient, ConfigStore config, IAud
 	// ---- 录音识别 ----
 
 	/// <summary>开始录音</summary>
-	public void StartListening()
+	public async Task StartListeningAsync(CancellationToken cancellationToken = default)
 	{
-		IMicrophoneRecorder? recorder = recorderFactory() ?? throw new InvalidOperationException("麦克风录音后端不可用");
-		recorder.Start();
+		IMicrophoneRecorder recorder = recorderFactory() ?? throw new InvalidOperationException("麦克风录音后端不可用");
+		await recorder.StartAsync(cancellationToken);
 	}
 
 	/// <summary>结束录音并经 Whisper 识别返回文本</summary>
@@ -121,11 +121,11 @@ public sealed class VoiceService(HttpClient httpClient, ConfigStore config, IAud
 	{
 		IMicrophoneRecorder? recorder = recorderFactory() ?? throw new InvalidOperationException("麦克风录音后端不可用");
 		if (!recorder.IsRecording) return "";
-		byte[] wav = recorder.Stop();
-		if (wav.Length == 0) return "";
+		byte[] audio = await recorder.StopAsync(cancellationToken);
+		if (audio.Length == 0) return "";
 
 		// stt_provider=whisper 或未显式配置时都走 Whisper (唯一的云端 STT 路径)
-		return await new WhisperSttProvider(httpClient, config).TranscribeAsync(wav, cancellationToken);
+		return await new WhisperSttProvider(httpClient, config).TranscribeAsync(audio, cancellationToken);
 	}
 
 	// ---- 迁移检测 ----

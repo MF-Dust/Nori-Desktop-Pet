@@ -35,6 +35,17 @@ public interface IWindowManager
 	/// <summary>切换桌宠显示状态</summary>
 	void TogglePet();
 
+	/// <summary>
+	/// 窗口当前是否可见 (缓存值, 可在任意线程读取)
+	///
+	/// Avalonia 的 Window.IsVisible 只能在 UI 线程安全读取, 快照构建不在 UI 线程,
+	/// 因此显隐状态由窗口调度缓存一份供快照使用.
+	/// </summary>
+	bool IsWindowVisible(string label);
+
+	/// <summary>窗口显隐变化 (label, 是否可见); 托盘切换桌宠也会触发</summary>
+	event Action<string, bool>? VisibilityChanged;
+
 	/// <summary>向所有 WebView2 窗口广播事件</summary>
 	void Broadcast(string name, object? payload);
 

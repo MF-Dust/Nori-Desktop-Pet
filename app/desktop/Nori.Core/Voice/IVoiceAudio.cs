@@ -27,10 +27,13 @@ public interface ITtsProvider
 }
 
 /// <summary>
-/// 原生音频播放接口 (Desktop 侧以 NAudio 实现)
+/// 原生音频播放接口
 ///
 /// 播放期间通过 VolumeSampled 输出 0~1 音量采样驱动桌宠口型,
-/// SpeakingChanged 通知说话状态变化。
+/// PlayingChanged 通知说话状态变化。
+///
+/// 实现已从 NAudio 换成 WebView 内的 WebAudio (三平台一套代码),
+/// 因此这里的语义是“把音频交给播放宿主并等待其播完”。
 /// </summary>
 public interface IAudioPlayback : IDisposable
 {
@@ -51,15 +54,17 @@ public interface IAudioPlayback : IDisposable
 }
 
 /// <summary>
-/// 麦克风录音接口 (Desktop 侧以 NAudio 实现)
+/// 麦克风录音接口
+///
+/// 全部异步: WebView 录音需要等前端回传音频, 绝不能在 UI 线程上同步阻塞。
 /// </summary>
 public interface IMicrophoneRecorder : IDisposable
 {
-	/// <summary>开始录制 (16kHz 单声道 WAV)</summary>
-	void Start();
+	/// <summary>开始录制</summary>
+	Task StartAsync(CancellationToken cancellationToken = default);
 
-	/// <summary>停止录制并返回完整 WAV 字节</summary>
-	byte[] Stop();
+	/// <summary>停止录制并返回完整音频字节 (wav / webm, 由录音端决定)</summary>
+	Task<byte[]> StopAsync(CancellationToken cancellationToken = default);
 
 	/// <summary>是否正在录制</summary>
 	bool IsRecording { get; }

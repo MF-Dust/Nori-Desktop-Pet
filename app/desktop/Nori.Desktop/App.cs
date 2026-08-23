@@ -80,13 +80,20 @@ public sealed class App : Application
 		CrashReporter.AttachLogger(logger); // 兜底日志与应用共用同一个写入器
 		logger.Write(LogSource.Backend, "info", "日志系统初始化完成");
 
-		// WebView2 运行时缺失时给个能看懂的提示, 而不是弹四个空白窗口
-		DetailedWebViewAdapterInfo adapter = WebViewAdapterInfo.GetAdapterInfo(WebViewAdapterType.WebView2);
-		logger.Write(LogSource.Backend, "info", $"WebView2: installed={adapter.IsInstalled} version={adapter.Version}");
+		// WebView 运行时缺失时给个能看懂的提示, 而不是弹几个空白窗口。
+		// 三平台各自的原生引擎: Windows→WebView2, macOS→WKWebView, Linux→WebKitGTK
+		(WebViewAdapterType adapterType, string engineName, string installHint) = OperatingSystem.IsWindows()
+			? (WebViewAdapterType.WebView2, "WebView2", "请安装 Microsoft Edge WebView2 Evergreen Runtime 后重试。")
+			: OperatingSystem.IsMacOS()
+				? (WebViewAdapterType.WkWebView, "WKWebView", "系统 WebKit 组件异常, 请确认 macOS 版本受支持。")
+				: (WebViewAdapterType.WebKitGtk, "WebKitGTK", "请安装 WebKitGTK 运行时 (Debian/Ubuntu: libwebkit2gtk-4.1-0; Fedora: webkit2gtk4.1)。");
+
+		DetailedWebViewAdapterInfo adapter = WebViewAdapterInfo.GetAdapterInfo(adapterType);
+		logger.Write(LogSource.Backend, "info", $"{engineName}: installed={adapter.IsInstalled} version={adapter.Version}");
 		if (!adapter.IsInstalled)
 		{
-			logger.Write(LogSource.Backend, "error", $"WebView2 运行时不可用: {adapter.UnavailableReason}");
-			CrashReporter.ReportStartupFatal("缺少 Microsoft Edge WebView2 运行时", "Nori 需要 WebView2 运行时才能显示界面。\n请安装 Microsoft Edge WebView2 Evergreen Runtime 后重试。");
+			logger.Write(LogSource.Backend, "error", $"{engineName} 运行时不可用: {adapter.UnavailableReason}");
+			CrashReporter.ReportStartupFatal($"缺少 {engineName} 运行时", $"Nori 需要 {engineName} 才能显示界面。{Environment.NewLine}{installHint}");
 			return;
 		}
 
@@ -160,7 +167,8 @@ public sealed class App : Application
 			services.Runtime = runtime;
 			runtime.Start();
 
-			TrayMenu.Install(this, services);
+			// 托盘失败 (常见于部分 Linux 桌面) 时前端要显示内建入口
+			runtime.TrayAvailable = TrayMenu.Install(this, services);
 
 			// 首次启动显示向导, 否则直接进初始化窗口
 			bool firstRun = config.IsFirstRun();

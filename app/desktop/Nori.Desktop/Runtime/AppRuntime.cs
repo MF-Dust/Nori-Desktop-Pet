@@ -39,7 +39,8 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	private readonly ConcurrentDictionary<string, AgentSessionState> _sessions = new();
 	private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new();
-	private readonly NativeAudioPlayback? _playback;
+	private readonly WebViewAudioPlayback _playback;
+	private readonly WebViewMicrophoneRecorder _recorder;
 
 	public AppServices Services { get; }
 
@@ -62,6 +63,27 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	private int _snapshotVersion = 1;
 
+	private int _initStartPending;
+
+	/// <summary>
+	/// 托盘是否真的可用
+	///
+	/// 由 App 在装载托盘后回填; 不可用时前端在主窗内显示常驻入口与退出按钮。
+	/// </summary>
+	public bool TrayAvailable { get; set; } = true;
+
+	/// <summary>
+	/// 标记“初始化开始”已发生
+	///
+	/// 首启路径下 init 窗口隐藏启动, 向导完成时广播的 nori:init-start 有可能早于
+	/// init 页面订阅 (WebView 加载比广播慢), 事件就会永久丢失 —— 页面卡在转圈.
+	/// 因此额外留一个标志供页面就绪时回放.
+	/// </summary>
+	public void MarkInitStartPending() => Interlocked.Exchange(ref _initStartPending, 1);
+
+	/// <summary>取走并清除“初始化开始”标志 (只能被消费一次)</summary>
+	public bool ConsumeInitStartPending() => Interlocked.Exchange(ref _initStartPending, 0) == 1;
+
 	public AppRuntime(AppServices services)
 	{
 		Services = services;
@@ -76,12 +98,19 @@ public sealed class AppRuntime : IAsyncDisposable
 			reminderStore, config, services.Logger,
 			GetIdleSecondsSafe);
 
-		NativeAudioPlayback? playback = OperatingSystem.IsWindows() ? new NativeAudioPlayback() : null;
+		// 音频与录音下沉到 main 窗口的 WebAudio / MediaRecorder: 三平台一套代码, 不再依赖 NAudio
+		MediaExchange media = services.Assets?.Media ?? new MediaExchange();
+		Func<string, string> mediaUrl = services.Assets is {} assets
+			? assets.MediaUrl
+			: _ => throw new InvalidOperationException("资源服务未启动, 音频端点不可用");
+		AudioHostChannel channel = new(() => services.Windows?.GetNoriWindow(WindowLabels.Main));
+		WebViewAudioPlayback playback = new(media, mediaUrl, channel);
+		WebViewMicrophoneRecorder recorder = new(media, mediaUrl, channel);
 		_playback = playback;
-		Voice = new VoiceService(services.Http, config, playback, () =>
-			OperatingSystem.IsWindows() && !VoiceRetired() ? new NativeMicrophoneRecorder() : null);
+		_recorder = recorder;
+		Voice = new VoiceService(services.Http, config, playback, () => VoiceRetired() ? null : recorder);
 
-		Tools = BuildToolRegistry(playback is not null);
+		Tools = BuildToolRegistry(true);
 		Engine = new AgentEngine(
 			services.Http,
 			config,
@@ -93,6 +122,13 @@ public sealed class AppRuntime : IAsyncDisposable
 			pet: new PetActionsAdapter(() => services.PetRuntime),
 			motionNames: () => FlattenMotionNames(),
 			expressionNames: () => services.PetRuntime?.Expressions ?? []);
+
+		// 窗口显隐变化 (含托盘切换桌宠) 直接作废快照, 主界面的桌宠状态因此不会陈旧
+		if (services.Windows is not null)
+		{
+			services.Windows.VisibilityChanged += (label, _) =>
+				InvalidateSnapshot(label == WindowLabels.Pet ? "pet" : "windows");
+		}
 	}
 
 	// ===================================================================
@@ -132,41 +168,36 @@ public sealed class AppRuntime : IAsyncDisposable
 		Proactive.Message += message => Dispatcher.UIThread.Post(() => OnProactiveMessage(message));
 		Proactive.Start();
 
-		// 口型同步: 播放音量采样直驱原生桌宠嘴型
-		if (_playback is not null)
+		// 口型同步: 前端回传的播放音量采样直驱原生桌宠嘴型
+		_playback.VolumeSampled += level =>
 		{
-			_playback.VolumeSampled += level =>
+			try
 			{
-				try
-				{
-					Services.PetRuntime?.SetMouthOpen((float)level, true);
-				}
-				catch
-				{
-					/* 桌宠未加载时忽略 */
-				}
-			};
-			_playback.PlayingChanged += playing =>
+				Services.PetRuntime?.SetMouthOpen((float)level, true);
+			}
+			catch
 			{
-				try
-				{
-					Services.PetRuntime?.SetMouthOpen(0, playing);
-				}
-				catch
-				{
-					/* 桌宠未加载时忽略 */
-				}
-			};
-		}
+				/* 桌宠未加载时忽略 */
+			}
+		};
+		_playback.PlayingChanged += playing =>
+		{
+			try
+			{
+				Services.PetRuntime?.SetMouthOpen(0, playing);
+			}
+			catch
+			{
+				/* 桌宠未加载时忽略 */
+			}
+		};
 
-		if (_playback is not null)
-		{
-			Voice.VolumeChanged += v => _playback.SetDeviceVolume(v);
-			_playback.SetDeviceVolume(Voice.GetVolume());
-		}
+		Voice.VolumeChanged += volume => _playback.SetDeviceVolume(volume);
+		_playback.SetDeviceVolume(Voice.GetVolume());
 
 		DetectLegacyVoiceConfig();
 		_ = RefreshMcpToolsAsync();
+
 		InvalidateSnapshot("all");
 	}
 
@@ -496,6 +527,17 @@ public sealed class AppRuntime : IAsyncDisposable
 	}
 
 	// ===================================================================
+	// 前端音频宿主回报
+	// ===================================================================
+
+	/// <summary>前端回报一段音频播放结束 (或失败)</summary>
+	public void ReportPlaybackFinished(string token, string? error) =>
+		_playback.ReportPlaybackFinished(token, error);
+
+	/// <summary>前端回报实时播放音量 (0~1), 驱动桌宠口型</summary>
+	public void ReportAudioLevel(double level) => _playback.ReportLevel(level);
+
+	// ===================================================================
 	// UI 状态快照
 	// ===================================================================
 
@@ -527,11 +569,12 @@ public sealed class AppRuntime : IAsyncDisposable
 		return new
 		{
 			version = SnapshotVersion,
-			app = new {appVersion = config.GetStringOr("app_version", "0.1.0"), platform = "windows"},
+			app = new {appVersion = config.GetStringOr("app_version", "0.1.0"), platform = PlatformOsName()},
 			general = new
 			{
 				language = config.GetStringOr("language", "zh-CN"),
 				petAutoSummon = ParseBoolFlag(config.GetStringOr("pet_auto_summon", "true")) ?? true,
+				sidebarCollapsed = ParseBoolFlag(config.GetStringOr("ui_sidebar_collapsed", "")) ?? false,
 			},
 			ai = new
 			{
@@ -548,6 +591,20 @@ public sealed class AppRuntime : IAsyncDisposable
 				items = models,
 				scale = ReadFloat(config, $"l2d_scale_{selectedModel}") ?? ReadFloat(config, "l2d_scale") ?? 1.0,
 				expressions = ModelExpressions(selectedModel),
+			},
+			pet = new
+			{
+				visible = Services.Windows.IsWindowVisible(WindowLabels.Pet),
+			},
+			platform = new
+			{
+				os = PlatformOsName(),
+				sessionType = Nori.Core.Platform.PlatformServices.Current.Session.ToString().ToLowerInvariant(),
+				supportsGlobalCursor = Nori.Core.Platform.PlatformServices.Current.Capabilities.SupportsGlobalCursor,
+				supportsWindowDrag = Nori.Core.Platform.PlatformServices.Current.Capabilities.SupportsWindowDrag,
+				supportsHitThrough = Nori.Core.Platform.PlatformServices.Current.Capabilities.SupportsHitThrough,
+				supportsTopmost = Nori.Core.Platform.PlatformServices.Current.Capabilities.SupportsTopmost,
+				supportsTray = Nori.Core.Platform.PlatformServices.Current.Capabilities.SupportsTray && TrayAvailable,
 			},
 			behaviors = new
 			{
@@ -615,6 +672,15 @@ public sealed class AppRuntime : IAsyncDisposable
 			mcpServersCount = McpServerCount(),
 			emotion = new {type = Emotion.CurrentType},
 		};
+	}
+
+	/// <summary>当前操作系统名 (前端按它决定平台相关文案)</summary>
+	private static string PlatformOsName()
+	{
+		if (OperatingSystem.IsWindows()) return "windows";
+		if (OperatingSystem.IsMacOS()) return "macos";
+		if (OperatingSystem.IsLinux()) return "linux";
+		return "unknown";
 	}
 
 	/// <summary>已知模型目录 (展示名由前端静态目录映射)</summary>
@@ -731,6 +797,8 @@ public sealed class AppRuntime : IAsyncDisposable
 
 		Proactive.Dispose();
 		Emotion.Dispose();
+		// Voice.Dispose 会逆向释放 _playback; 录音票据要单独作废
+		_recorder.Dispose();
 		Voice.Dispose();
 		return ValueTask.CompletedTask;
 	}

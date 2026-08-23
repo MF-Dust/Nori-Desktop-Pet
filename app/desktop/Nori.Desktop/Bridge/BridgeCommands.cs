@@ -84,6 +84,13 @@ public sealed class BridgeCommands
 				Runtime.InvalidateSnapshot("models");
 			})),
 
+		// invoke("init_ready") → {initStartPending}
+		// init 页面订阅完 nori:init-start 后调用; 返回 true 说明广播已先于订阅发生, 页面应直接跑初始化
+		"init_ready" => RequireLabel(source, WindowLabels.Init, () => new
+		{
+			initStartPending = Runtime.ConsumeInitStartPending(),
+		}),
+
 		// invoke("get_init_config")
 		"get_init_config" => _services.Config.GetInitConfig(),
 
@@ -144,12 +151,13 @@ public sealed class BridgeCommands
 				Runtime.InvalidateSnapshot("voice");
 			})),
 
-		// invoke("settings_update_general", {language?, petAutoSummon?})
+		// invoke("settings_update_general", {language?, petAutoSummon?, sidebarCollapsed?})
 		"settings_update_general" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
 			Run(() =>
 			{
 				UpdateOptionalConfig(args, "language", ConfigStore.KeyLanguage);
 				UpdateBoolConfig(args, "petAutoSummon", "pet_auto_summon");
+				UpdateBoolConfig(args, "sidebarCollapsed", "ui_sidebar_collapsed");
 				Runtime.InvalidateSnapshot("general");
 			})),
 
@@ -366,11 +374,19 @@ public sealed class BridgeCommands
 		"tts_stop" => RequireMain(source, () => Run(Runtime.Voice.Stop)),
 
 		// invoke("stt_start")
-		"stt_start" => RequireMain(source, () =>
-			Run(() => Runtime.Voice.StartListening())),
+		"stt_start" => await SttStartAsync(source),
 
 		// invoke("stt_stop") → {text}
 		"stt_stop" => await SttStopAsync(source),
+
+		// ---- 前端音频宿主回报 (WebAudio / MediaRecorder 下沉后的反向通道) ----
+		// invoke("audio_playback_finished", {token, error?})
+		"audio_playback_finished" => RequireMain(source, () =>
+			Run(() => Runtime.ReportPlaybackFinished(Str(args, "token"), OptionalStr(args, "error")))),
+
+		// invoke("audio_level", {level: 0.42})
+		"audio_level" => RequireMain(source, () =>
+			Run(() => Runtime.ReportAudioLevel(Num(args, "level")))),
 
 		// ---- 桌宠 Live2D 原生控制 ----
 		// invoke("pet_play_motion", {name?})
@@ -538,6 +554,13 @@ public sealed class BridgeCommands
 		return null;
 	}
 
+	private async Task<object?> SttStartAsync(IBridgeSource source)
+	{
+		RequireMainVoid(source);
+		await Runtime.Voice.StartListeningAsync();
+		return null;
+	}
+
 	private async Task<object?> SttStopAsync(IBridgeSource source)
 	{
 		RequireMainVoid(source);
@@ -643,6 +666,9 @@ public sealed class BridgeCommands
 		_services.Config.MarkFirstRunCompleted();
 		_services.Config.MarkInitialized();
 		_services.Logger.Write(LogSource.Backend, "info", "首次初始化完成");
+
+		// 先置位再广播: init 页面就绪晚于广播时可经 init_ready 回放, 不会卡在转圈
+		Runtime.MarkInitStartPending();
 
 		await OnUi(() =>
 		{

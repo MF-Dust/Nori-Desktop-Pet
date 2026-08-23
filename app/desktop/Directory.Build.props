@@ -1,0 +1,31 @@
+<Project>
+
+	<!--
+		全项目统一的编译口径
+
+		只放各工程都认的通用项: 目标框架、可空、隐式 using、语言版本, 以及
+		「当前构建是否面向 Windows」这个开关。
+		TreatWarningsAsErrors / NoWarn 留给各 csproj 自己声明 —— Live2DCSharpSDK.*
+		是外部移植代码, 不能跟着我们的严格口径走。
+		Android head 将来加进来时, 在这里按 TargetFramework 条件分流即可。
+	-->
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<LangVersion>latest</LangVersion>
+	</PropertyGroup>
+
+	<!--
+		当前构建是否面向 Windows
+
+		未指定 RuntimeIdentifier 时按宿主机判断; 指定了就看 RID 前缀。
+		Windows 专属的 manifest / 图标 / 控制台隐藏都靠这个开关分流。
+	-->
+	<PropertyGroup>
+		<NoriIsWindowsBuild Condition="'$(RuntimeIdentifier)' == ''">$([MSBuild]::IsOSPlatform('Windows'))</NoriIsWindowsBuild>
+		<NoriIsWindowsBuild Condition="'$(RuntimeIdentifier)' != '' AND $(RuntimeIdentifier.StartsWith('win'))">true</NoriIsWindowsBuild>
+		<NoriIsWindowsBuild Condition="'$(NoriIsWindowsBuild)' == ''">false</NoriIsWindowsBuild>
+	</PropertyGroup>
+
+</Project>

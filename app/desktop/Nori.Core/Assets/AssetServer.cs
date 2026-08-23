@@ -24,6 +24,13 @@ public sealed record AssetServerOptions
 
 	/// <summary>开发模式下的固定端口</summary>
 	public int DevPort { get; init; } = 14201;
+
+	/// <summary>
+	/// 一次性媒体交换所 (TTS 下发 / 录音上传)
+	///
+	/// 不传则自建一个; 宿主侧需要拿到同一个实例, 因此一般由调用方注入。
+	/// </summary>
+	public Nori.Core.Voice.MediaExchange? Media { get; init; }
 }
 
 /// <summary>
@@ -33,6 +40,7 @@ public sealed class AssetServer : IAsyncDisposable
 {
 	private const string AppSegment = "app";
 	private const string AssetSegment = "nori-assets";
+	private const string MediaSegment = "media";
 
 	private readonly WebApplication _app;
 	private readonly AssetServerOptions _options;
@@ -41,20 +49,28 @@ public sealed class AssetServer : IAsyncDisposable
 
 	public string Origin { get; }
 
+	/// <summary>一次性媒体交换所</summary>
+	public Nori.Core.Voice.MediaExchange Media { get; }
+
 	public string AppUrl => _options.DevMode ? "http://localhost:1420/index.html" : $"{Origin}{Prefix}/{AppSegment}/index.html";
 
-	private AssetServer(WebApplication app, AssetServerOptions options, string prefix, string origin)
+	/// <summary>按 token 拼出媒体端点 URL (下载与上传同一地址, 区分在 HTTP 方法)</summary>
+	public string MediaUrl(string token) => $"{Origin}{Prefix}/{MediaSegment}/{token}";
+
+	private AssetServer(WebApplication app, AssetServerOptions options, string prefix, string origin, Nori.Core.Voice.MediaExchange media)
 	{
 		_app = app;
 		_options = options;
 		Prefix = prefix;
 		Origin = origin;
+		Media = media;
 	}
 
 	/// <summary>启动服务, 返回可用的实例。</summary>
 	public static async Task<AssetServer> StartAsync(AssetServerOptions options, CancellationToken cancellationToken = default)
 	{
 		string prefix = options.DevMode ? string.Empty : "/" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+		Nori.Core.Voice.MediaExchange media = options.Media ?? new Nori.Core.Voice.MediaExchange();
 		WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
 		builder.Logging.ClearProviders();
 		builder.WebHost.ConfigureKestrel(kestrel =>
@@ -82,6 +98,56 @@ public sealed class AssetServer : IAsyncDisposable
 				return;
 			}
 			await next();
+		});
+
+		// 一次性媒体端点: GET 取走待播音频, POST 接收前端录音
+		// 注意: 要排在静态文件中间件之前, 否则会被 404 兑底接走
+		PathString mediaPath = new($"{prefix}/{MediaSegment}");
+		app.Use(async (context, next) =>
+		{
+			string path = context.Request.Path.Value ?? "";
+			string mediaPathValue = mediaPath.Value ?? string.Empty;
+			if (mediaPathValue.Length == 0 || !path.StartsWith(mediaPathValue + "/", StringComparison.Ordinal))
+			{
+				await next();
+				return;
+			}
+
+			string token = path[(mediaPathValue.Length + 1)..].Trim('/');
+			if (token.Length is 0 or > 64 || !token.All(char.IsAsciiLetterOrDigit))
+			{
+				await Fail(context);
+				return;
+			}
+
+			if (HttpMethods.IsGet(context.Request.Method))
+			{
+				if (!media.TryTakeAudio(token, out byte[] data, out string mime))
+				{
+					await Fail(context);
+					return;
+				}
+				context.Response.ContentType = mime;
+				context.Response.ContentLength = data.Length;
+				context.Response.Headers.CacheControl = "no-store";
+				await context.Response.Body.WriteAsync(data, context.RequestAborted);
+				return;
+			}
+
+			if (HttpMethods.IsPost(context.Request.Method))
+			{
+				using MemoryStream buffer = new();
+				await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
+				if (!media.TryCompleteUpload(token, buffer.ToArray()))
+				{
+					await Fail(context);
+					return;
+				}
+				context.Response.StatusCode = StatusCodes.Status204NoContent;
+				return;
+			}
+
+			context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
 		});
 		app.UseDefaultFiles(new DefaultFilesOptions
 		{
@@ -172,7 +238,7 @@ public sealed class AssetServer : IAsyncDisposable
 		string origin = app.Urls.FirstOrDefault(url => url.StartsWith("http://", StringComparison.Ordinal))
 			?? throw new InvalidOperationException("资源服务未能绑定到回环地址");
 		origin = origin.Replace("//localhost:", "//127.0.0.1:", StringComparison.Ordinal).TrimEnd('/');
-		return new AssetServer(app, options, prefix, origin);
+		return new AssetServer(app, options, prefix, origin, media);
 	}
 
 	private static async Task Fail(HttpContext context)

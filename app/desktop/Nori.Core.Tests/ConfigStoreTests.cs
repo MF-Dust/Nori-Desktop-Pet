@@ -1,5 +1,6 @@
 using Nori.Core.Configuration;
 using Nori.Core.Data;
+using Nori.Core.Security;
 
 namespace Nori.Core.Tests;
 
@@ -12,10 +13,18 @@ public class ConfigStoreTests : IDisposable
 	private readonly NoriDatabase _database;
 	private readonly ConfigStore _config;
 
+	/// <summary>测试用主密钥: 固定值, 不碰用户真实数据目录</summary>
+	private sealed class FixedKeyStore : ISecretKeyStore
+	{
+		private readonly byte[] _key = Enumerable.Range(0, SecretKeyStore.KeySize).Select(index => (byte)index).ToArray();
+		public byte[] LoadOrCreate() => _key;
+		public bool IsFileFallback => true;
+	}
+
 	public ConfigStoreTests()
 	{
 		_database = NoriDatabase.Open(_path);
-		_config = new ConfigStore(_database);
+		_config = new ConfigStore(_database, new FixedKeyStore());
 		_config.InitDefaults("0.1.0");
 		_config.EnsureSchemaVersion();
 	}
@@ -182,15 +191,42 @@ public class ConfigStoreTests : IDisposable
 		Assert.NotNull(value);
 		Assert.Equal(plainKey, value.ToStorage());
 
-		// 检查底层 SQLite 数据库是否已加密存储 (以 enc:dpapi: 开头)
+		// 底层 SQLite 里必须是新格式密文, 且不含明文 (三平台一致)
 		using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
 		connection.Open();
 		using var cmd = connection.CreateCommand();
 		cmd.CommandText = "SELECT value FROM config WHERE key = 'llm_api_key'";
 		string rawInDb = (string)cmd.ExecuteScalar()!;
-		if (OperatingSystem.IsWindows())
-		{
-			Assert.StartsWith("enc:dpapi:", rawInDb, StringComparison.Ordinal);
-		}
+		Assert.StartsWith(SecretProtector.Prefix, rawInDb, StringComparison.Ordinal);
+		Assert.DoesNotContain(plainKey, rawInDb, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void 换了主密钥的密文读不出明文而不是崩掉()
+	{
+		const string plainKey = "sk-rotate-me";
+		_config.Set("llm_api_key", new ConfigValue.Text(plainKey));
+		string cipher = _config.RawValue("llm_api_key");
+
+		// 另一把密钥的 store 读同一条记录: 拿不到明文, 但也不能抛
+		ConfigStore other = new(_database, new WrongKeyStore());
+		string readBack = other.GetStringOr("llm_api_key", "");
+		Assert.NotEqual(plainKey, readBack);
+		Assert.Equal(cipher, readBack);
+		Assert.True(ConfigStore.IsUnreadableSecret(readBack));
+	}
+
+	[Fact]
+	public void 非敏感键不加密()
+	{
+		_config.Set("llm_model", new ConfigValue.Text("gpt-x"));
+		Assert.Equal("gpt-x", _config.RawValue("llm_model"));
+	}
+
+	private sealed class WrongKeyStore : ISecretKeyStore
+	{
+		private readonly byte[] _key = Enumerable.Repeat((byte)0xAB, SecretKeyStore.KeySize).ToArray();
+		public byte[] LoadOrCreate() => _key;
+		public bool IsFileFallback => true;
 	}
 }

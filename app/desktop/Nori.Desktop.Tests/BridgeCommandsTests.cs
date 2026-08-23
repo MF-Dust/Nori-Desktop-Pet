@@ -33,6 +33,9 @@ public class BridgeCommandsTests : IDisposable
 	private sealed class FakeWindowManager : IWindowManager
 	{
 		public List<(string Name, object? Payload)> Broadcasts { get; } = [];
+		private readonly Dictionary<string, bool> _visible = [];
+
+		public event Action<string, bool>? VisibilityChanged;
 
 		public Window? Get(string? label) => null;
 		public NoriWindow? GetNoriWindow(string? label) => null;
@@ -41,20 +44,21 @@ public class BridgeCommandsTests : IDisposable
 		public void CreateAll(NoriBridge bridge, AppServices services)
 		{
 		}
-		public void Show(string label)
-		{
-		}
+		public void Show(string label) => SetVisible(label, true);
 
-		public void Hide(string label)
-		{
-		}
+		public void Hide(string label) => SetVisible(label, false);
 
-		public void Close(string label)
-		{
-		}
+		public void Close(string label) => SetVisible(label, false);
 
-		public void TogglePet()
+		public void TogglePet() => SetVisible(WindowLabels.Pet, !IsWindowVisible(WindowLabels.Pet));
+
+		public bool IsWindowVisible(string label) => _visible.TryGetValue(label, out bool visible) && visible;
+
+		private void SetVisible(string label, bool visible)
 		{
+			if (IsWindowVisible(label) == visible) return;
+			_visible[label] = visible;
+			VisibilityChanged?.Invoke(label, visible);
 		}
 
 		public void Broadcast(string name, object? payload) => Broadcasts.Add((name, payload));
@@ -254,5 +258,60 @@ public class BridgeCommandsTests : IDisposable
 			await Assert.ThrowsAsync<InvalidOperationException>(() =>
 				commands.InvokeAsync(new FakeBridgeSource("main"), cmd, Args(new {key = "x"})));
 		}
+	}
+
+	// ---- 初始化握手与窗口状态 ----
+
+	[Fact]
+	public async Task init_ready只允许init窗口且标志只能取一次()
+	{
+		BridgeCommands commands = CreateCommands();
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource("main"), "init_ready", Args(new { })));
+
+		// 尚未发生时为 false
+		string before = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("init"), "init_ready", Args(new { })));
+		Assert.Contains("\"initStartPending\":false", before, StringComparison.Ordinal);
+
+		_runtime.MarkInitStartPending();
+		string first = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("init"), "init_ready", Args(new { })));
+		string second = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("init"), "init_ready", Args(new { })));
+
+		Assert.Contains("\"initStartPending\":true", first, StringComparison.Ordinal);
+		Assert.Contains("\"initStartPending\":false", second, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 快照包含桌宠可见性与侧边栏折叠态()
+	{
+		BridgeCommands commands = CreateCommands();
+
+		string hidden = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
+		Assert.Contains("\"pet\":{\"visible\":false}", hidden, StringComparison.Ordinal);
+		Assert.Contains("\"sidebarCollapsed\":false", hidden, StringComparison.Ordinal);
+
+		_windows.Show(WindowLabels.Pet);
+		await commands.InvokeAsync(new FakeBridgeSource("main"), "settings_update_general", Args(new {sidebarCollapsed = true}));
+
+		string shown = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
+		Assert.Contains("\"pet\":{\"visible\":true}", shown, StringComparison.Ordinal);
+		Assert.Contains("\"sidebarCollapsed\":true", shown, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void 桌宠显隐变化作废快照()
+	{
+		// 广播本体走 Dispatcher.UIThread, 单测无 UI 循环, 因此只验证版本递增与快照投影
+		int before = _runtime.SnapshotVersion;
+
+		_windows.TogglePet();
+
+		Assert.True(_runtime.SnapshotVersion > before);
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Pet));
 	}
 }

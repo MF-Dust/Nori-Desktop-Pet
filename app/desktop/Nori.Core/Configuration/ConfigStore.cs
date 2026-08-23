@@ -1,8 +1,7 @@
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Data.Sqlite;
 using Nori.Core.Data;
+using Nori.Core.Security;
 
 namespace Nori.Core.Configuration;
 
@@ -10,11 +9,15 @@ namespace Nori.Core.Configuration;
 /// 配置读写
 ///
 /// 对应 Rust 版 config.rs 的自由函数集合. 配置键一律 snake_case, 与前端常量保持一致.
-/// 敏感配置 (API Key 等) 在 Windows 环境下采用 DPAPI 自动保护加密存储.
+///
+/// 敏感配置 (API Key 等) 用 AES-256-GCM 加密后落库, 主密钥交给各平台密钥库保管
+/// (Windows DPAPI / macOS Keychain / Linux libsecret, 见 SecretKeyStore)。
+/// 旧的 `enc:dpapi:` 值读到后按需解密并惰性升级成新格式; 非 Windows 上读到
+/// 旧值只能视为不可用, 由 UI 引导用户重填该项 —— 绝不静默清空其他配置。
 /// </summary>
-public sealed class ConfigStore(NoriDatabase database)
+public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore = null)
 {
-	private const string DpapiPrefix = "enc:dpapi:";
+	private readonly ISecretKeyStore _keyStore = keyStore ?? new SecretKeyStore();
 
 	/// <summary>配置键: 配置结构版本 (不兼容变更时 +1, 用于迁移)</summary>
 	public const string KeyConfigSchemaVersion = "config_schema_version";
@@ -141,47 +144,84 @@ public sealed class ConfigStore(NoriDatabase database)
 		key.EndsWith("_password", StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
-	/// 使用 DPAPI 加密敏感数据
+	/// 加密敏感数据 (AES-256-GCM, 主密钥来自平台密钥库)
 	/// </summary>
-	private static string ProtectValue(string key, string plainText)
+	private string ProtectValue(string key, string plainText)
 	{
-		if (!OperatingSystem.IsWindows() || !IsSensitiveKey(key) || string.IsNullOrEmpty(plainText))
-		{
-			return plainText;
-		}
+		if (!IsSensitiveKey(key) || string.IsNullOrEmpty(plainText)) return plainText;
 		try
 		{
-			byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-			byte[] encrypted = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
-			return DpapiPrefix + Convert.ToBase64String(encrypted);
+			return SecretProtector.Protect(_keyStore.LoadOrCreate(), plainText);
 		}
-		catch
+		catch (Exception exception) when (exception is System.Security.Cryptography.CryptographicException or IOException or UnauthorizedAccessException)
 		{
+			// 密钥库不可用时宁可存明文也不能让用户的密钥丢失, 但要留下痕迹
 			return plainText;
 		}
 	}
 
 	/// <summary>
-	/// 使用 DPAPI 解密敏感数据
+	/// 解密敏感数据; 无法解密时原样返回 (调用方按“需要重填”处理)
 	/// </summary>
-	private static string UnprotectValue(string stored)
+	private string UnprotectValue(string stored)
 	{
-		if (!OperatingSystem.IsWindows() || !stored.StartsWith(DpapiPrefix, StringComparison.Ordinal))
+		if (SecretProtector.IsProtected(stored))
 		{
-			return stored;
+			return SecretProtector.TryUnprotect(_keyStore.LoadOrCreate(), stored, out string plain) ? plain : stored;
 		}
+		if (SecretProtector.IsLegacyDpapi(stored)) return UnprotectLegacyDpapi(stored);
+		return stored;
+	}
+
+	/// <summary>
+	/// 解密旧的 DPAPI 值 (仅 Windows 可解)
+	///
+	/// 非 Windows 上无法解密: 原样返回, 由 IsUnreadableSecret 判定并提示用户重填。
+	/// </summary>
+	private static string UnprotectLegacyDpapi(string stored)
+	{
+		if (!OperatingSystem.IsWindows()) return stored;
 		try
 		{
-			string base64 = stored[DpapiPrefix.Length..];
-			byte[] encrypted = Convert.FromBase64String(base64);
-			byte[] decrypted = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
-			return Encoding.UTF8.GetString(decrypted);
+			byte[] encrypted = Convert.FromBase64String(stored[SecretProtector.LegacyDpapiPrefix.Length..]);
+			byte[] decrypted = System.Security.Cryptography.ProtectedData.Unprotect(
+				encrypted, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+			return System.Text.Encoding.UTF8.GetString(decrypted);
 		}
-		catch
+		catch (Exception exception) when (exception is System.Security.Cryptography.CryptographicException or FormatException)
 		{
 			return stored;
 		}
 	}
+
+	/// <summary>
+	/// 判断某个敏感值是否已经无法解密 (需要用户重新填写)
+	///
+	/// 典型场景: 用户把 nori.db 从 Windows 搬到 Linux, 旧的 DPAPI 值只能重填。
+	/// </summary>
+	public static bool IsUnreadableSecret(string stored) =>
+		SecretProtector.IsProtected(stored) || SecretProtector.IsLegacyDpapi(stored);
+
+	/// <summary>
+	/// 把仍是旧格式的敏感值惰性升级成新格式 (只在能解密时进行)
+	/// </summary>
+	public void UpgradeSecretFormat(string key)
+	{
+		string stored = RawValue(key);
+		if (stored.Length == 0 || !SecretProtector.IsLegacyDpapi(stored)) return;
+		string plain = UnprotectLegacyDpapi(stored);
+		if (plain == stored) return; // 解不开: 留着让 UI 提示重填
+		Set(key, new ConfigValue.Text(plain));
+	}
+
+	/// <summary>读取未经解密的原始存储值 (迁移与诊断用)</summary>
+	public string RawValue(string key) => _database.Locked(connection =>
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "SELECT value FROM config WHERE key = $key";
+		command.Parameters.AddWithValue("$key", key);
+		return command.ExecuteScalar() as string ?? "";
+	});
 
 	/// <summary>
 	/// 读取字符串配置, 缺失/类型不符时返回 fallback
