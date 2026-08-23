@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nori.Core.Configuration;
+using ModelContextProtocol.Client;
 
 namespace Nori.Core.Mcp;
 
@@ -16,7 +17,9 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	private readonly ConfigStore _configStore = configStore;
 	private readonly ConcurrentDictionary<string, OfficialMcpConnection> _activeClients = new();
 	private readonly ConcurrentDictionary<string, McpServerStatusInfo> _serverStatuses = new();
+	private readonly ConcurrentBag<Task> _backgroundTasks = new();
 	private readonly SemaphoreSlim _lock = new(1, 1);
+	private readonly CancellationTokenSource _lifetimeCts = new();
 	private bool _disposed;
 
 	/// <summary>
@@ -283,11 +286,11 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		{
 			if (config.Enabled && config.AutoConnect)
 			{
-				_ = Task.Run(async () =>
+				Task task = Task.Run(async () =>
 				{
 					try
 					{
-						await _lock.WaitAsync();
+						await _lock.WaitAsync(_lifetimeCts.Token);
 						try
 						{
 							await ConnectServerInternalAsync(config);
@@ -297,11 +300,15 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 							_lock.Release();
 						}
 					}
+					catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+					{
+					}
 					catch
 					{
 						/* 异步自启失败已记录在状态中 */
 					}
-				});
+				}, _lifetimeCts.Token);
+				_backgroundTasks.Add(task);
 			}
 		}
 		await Task.CompletedTask;
@@ -311,14 +318,25 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	{
 		if (_disposed) return;
 		_disposed = true;
+		_lifetimeCts.Cancel();
+		try
+		{
+			await Task.WhenAll(_backgroundTasks.ToArray());
+		}
+		catch
+		{
+			// Exit cancellation must not block other resource cleanup.
+		}
 
 		foreach ((string _, OfficialMcpConnection client) in _activeClients)
 		{
-			await client.DisposeAsync();
+			try { await client.DisposeAsync(); }
+			catch { /* Transport closure during exit is expected. */ }
 		}
 		_activeClients.Clear();
 		_serverStatuses.Clear();
 		_lock.Dispose();
+		_lifetimeCts.Dispose();
 	}
 
 	private async Task<McpServerStatusInfo> ConnectServerInternalAsync(McpServerConfig config)
@@ -360,7 +378,8 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 		{
 			if (client is not null)
 			{
-				await client.DisposeAsync();
+				try { await client.DisposeAsync(); }
+				catch { /* Keep the original connection error. */ }
 			}
 
 			McpServerStatusInfo errorStatus = new()
@@ -368,11 +387,23 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 				ServerId = config.Id,
 				Name = config.Name,
 				Status = "error",
-				ErrorMessage = exception.Message,
+				ErrorMessage = DescribeConnectionError(exception),
 			};
 			_serverStatuses[config.Id] = errorStatus;
 			return errorStatus;
 		}
+	}
+
+	private static string DescribeConnectionError(Exception exception)
+	{
+		ClientTransportClosedException? transport = exception as ClientTransportClosedException
+			?? (exception as AggregateException)?.Flatten().InnerExceptions.OfType<ClientTransportClosedException>().FirstOrDefault();
+		if (transport?.Details is StdioClientCompletionDetails stdio)
+		{
+			string stderr = stdio.StandardErrorTail is not {Count: > 0} ? "" : $" stderr: {string.Join(" | ", stdio.StandardErrorTail)}";
+			return $"MCP 进程已退出 (code={stdio.ExitCode?.ToString() ?? "unknown"}).{stderr}";
+		}
+		return exception.Message;
 	}
 
 	private List<McpServerConfig> LoadConfigs()

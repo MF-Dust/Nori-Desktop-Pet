@@ -357,6 +357,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				sessionId,
 				toolName = name,
 				result = ToJsonNode(result),
+				success = error is null,
 				error,
 			}),
 			OnUsage = usage => PostAgentEvent(session.SourceLabel, new

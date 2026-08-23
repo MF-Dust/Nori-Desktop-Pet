@@ -232,7 +232,7 @@ export type AgentEventPayload =
 	| {type: "state"; sessionId?: string | null; state: AgentState}
 	| {type: "chunk"; sessionId: string; chunk: string}
 	| {type: "tool-executing"; sessionId: string; toolName: string; arguments?: Record<string, unknown>}
-	| {type: "tool-executed"; sessionId: string; toolName: string; result?: unknown; error?: string}
+	| {type: "tool-executed"; sessionId: string; toolName: string; result?: unknown; success: boolean; error?: string}
 	| ({type: "usage"; sessionId: string} & UsageMetrics)
 	| {type: "complete"; sessionId: string; message: {text: string; emotion?: string; expression?: string; action?: string}}
 	| {type: "cancelled"; sessionId: string}

@@ -11,8 +11,6 @@ namespace Nori.Core.Mcp;
 /// </summary>
 internal sealed class OfficialMcpConnection : IAsyncDisposable
 {
-	private const string ProtocolVersion = "2025-11-25";
-
 	private readonly ModelContextProtocol.Client.McpClient _client;
 	private bool _connected = true;
 
@@ -36,10 +34,9 @@ internal sealed class OfficialMcpConnection : IAsyncDisposable
 		IClientTransport transport = CreateTransport(config, httpClient);
 		try
 		{
-			McpClientOptions options = new()
-			{
-				ProtocolVersion = ProtocolVersion,
-			};
+			// Leave ProtocolVersion unset so SDK 2.2 can probe the server and
+			// downgrade to the newest version it actually supports.
+			McpClientOptions options = new();
 
 			ModelContextProtocol.Client.McpClient client = await ModelContextProtocol.Client.McpClient.CreateAsync(
 				transport,
@@ -53,7 +50,8 @@ internal sealed class OfficialMcpConnection : IAsyncDisposable
 		{
 			if (transport is IAsyncDisposable disposable)
 			{
-				await disposable.DisposeAsync();
+				try { await disposable.DisposeAsync(); }
+				catch { /* Preserve the original connection failure. */ }
 			}
 			throw;
 		}
@@ -147,9 +145,24 @@ internal sealed class OfficialMcpConnection : IAsyncDisposable
 		if (!_connected) return;
 		_connected = false;
 
-		await _client.DisposeAsync();
+		try
+		{
+			await _client.DisposeAsync();
+		}
+		catch (ClientTransportClosedException)
+		{
+			// Transport closure is an expected shutdown path.
+		}
+		catch (AggregateException exception) when (exception.Flatten().InnerExceptions.All(IsExpectedClose))
+		{
+			// The SDK may wrap expected session closure in AggregateException.
+		}
 		GC.SuppressFinalize(this);
 	}
+
+	private static bool IsExpectedClose(Exception exception) =>
+		exception is ClientTransportClosedException
+			|| (exception is AggregateException aggregate && aggregate.Flatten().InnerExceptions.All(IsExpectedClose));
 
 	private static IClientTransport CreateTransport(McpServerConfig config, HttpClient httpClient)
 	{

@@ -910,6 +910,7 @@ public sealed class BridgeCommands
 	{
 		RequireMainVoid(source);
 		object result = await _services.Mcp.SaveServerAsync(ParseMcpConfig(args));
+		await Runtime.RefreshMcpToolsAsync();
 		InvalidateMcpSnapshot();
 		return result;
 	}
@@ -918,6 +919,7 @@ public sealed class BridgeCommands
 	{
 		RequireMainVoid(source);
 		bool deleted = await _services.Mcp.DeleteServerAsync(Str(args, "id"));
+		await Runtime.RefreshMcpToolsAsync();
 		InvalidateMcpSnapshot();
 		return deleted;
 	}
@@ -925,13 +927,19 @@ public sealed class BridgeCommands
 	private async Task<object?> McpConnectServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await _services.Mcp.ConnectServerAsync(Str(args, "id"));
+		object result = await _services.Mcp.ConnectServerAsync(Str(args, "id"));
+		await Runtime.RefreshMcpToolsAsync();
+		InvalidateMcpSnapshot();
+		return result;
 	}
 
 	private async Task<object?> McpDisconnectServerAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return await _services.Mcp.DisconnectServerAsync(Str(args, "id"));
+		object result = await _services.Mcp.DisconnectServerAsync(Str(args, "id"));
+		await Runtime.RefreshMcpToolsAsync();
+		InvalidateMcpSnapshot();
+		return result;
 	}
 
 	private async Task<object?> McpTestServerAsync(IBridgeSource source, JsonElement args)

@@ -173,6 +173,7 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			case "tool-executed": {
 				if (payload.sessionId !== activeSessionId) return
 				executingTool.value = ""
+				if (!payload.success && payload.error) errorMsg.value = payload.error
 				break
 			}
 			case "usage": {
