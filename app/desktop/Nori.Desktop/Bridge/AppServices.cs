@@ -4,6 +4,7 @@ using Nori.Core.Configuration;
 using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Resources;
+using Nori.Core.Telemetry;
 using Nori.Desktop.Live2D;
 using Nori.Desktop.Windows;
 
@@ -25,6 +26,9 @@ public sealed class AppServices : IAsyncDisposable
 
 	/// <summary>日志</summary>
 	public required FileLogger Logger { get; init; }
+
+	/// <summary>错误与性能遥测; 未装配时为空实现</summary>
+	public ITelemetry Telemetry { get; set; } = NoopTelemetry.Instance;
 
 	/// <summary>资源管理</summary>
 	public required ResourceManager Resources { get; init; }
@@ -76,6 +80,8 @@ public sealed class AppServices : IAsyncDisposable
 
 	public async ValueTask DisposeAsync()
 	{
+		await Telemetry.FlushAsync(TimeSpan.FromSeconds(1));
+		Telemetry.Dispose();
 		await Mcp.DisposeAsync();
 		if (Assets is not null) await Assets.DisposeAsync();
 		if (_publicHttp is not null && !ReferenceEquals(_publicHttp, Http)) _publicHttp.Dispose();

@@ -2,6 +2,7 @@ packages:
   - "."
 
 allowBuilds:
+  '@sentry/cli': true
   esbuild: true
 
 # 安全覆盖: pixi-live2d-display 错误地把 gh-pages 声明为依赖,

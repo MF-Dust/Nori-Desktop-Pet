@@ -36,6 +36,7 @@ export type {
 	PetState,
 	PlatformState,
 	ProactiveState,
+	TelemetryState,
 	ReminderDto,
 	SkillDto,
 	ToolDto,
@@ -180,7 +181,7 @@ export const RUNTIME = {
 	}>): Promise<void> {
 		return invoke<void>("settings_update_voice", patch)
 	},
-	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean; sidebarCollapsed: boolean}>): Promise<void> {
+	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean; sidebarCollapsed: boolean; telemetryEnabled: boolean}>): Promise<void> {
 		return invoke<void>("settings_update_general", patch)
 	},
 	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {

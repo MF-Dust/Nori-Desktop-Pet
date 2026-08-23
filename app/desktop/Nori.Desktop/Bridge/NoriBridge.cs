@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Avalonia.Threading;
 using Nori.Core.Logging;
+using Nori.Core.Telemetry;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Bridge;
@@ -57,6 +58,7 @@ public sealed class NoriBridge(AppServices services)
 	private async Task HandleInvokeAsync(NoriWindow source, BridgeMessage message)
 	{
 		string cmd = message.Cmd ?? "";
+		using ITelemetryTransaction transaction = _services.Telemetry.StartTransaction($"bridge.{cmd}");
 		try
 		{
 			object? value = await _services.Commands.InvokeAsync(source, cmd, message.Args);
@@ -64,6 +66,7 @@ public sealed class NoriBridge(AppServices services)
 		}
 		catch (Exception exception)
 		{
+			_services.Telemetry.CaptureException(exception, $"bridge.{cmd}");
 			// 命令错误一律以可读字符串回给前端展示, 与 Rust 版 Result<T, String> 等价
 			_services.Logger.Write(LogSource.Backend, "error", $"命令执行失败: {cmd}: {exception.Message}");
 			source.PostResult(message.Id, null, exception.Message);

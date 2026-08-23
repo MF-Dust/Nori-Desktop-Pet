@@ -3,6 +3,7 @@ import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
+import {feedback} from "../../services/feedback"
 import AppCard from "../ui/AppCard.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
@@ -10,7 +11,17 @@ import AppSwitchRow from "../ui/AppSwitchRow.vue"
 const currentLang = ref("zh-CN")
 const autoSummon = ref(true)
 const appVersion = ref("0.1.0")
+const telemetryEnabled = ref(true)
+const telemetryAvailable = ref(false)
 const TEXT = computed(() => useLanguages().views.main.general)
+const TELEMETRY_DESC = computed(() => {
+	if (!telemetryAvailable.value) return TEXT.value.telemetry.unavailable
+	return telemetryEnabled.value ? TEXT.value.telemetry.enabledDesc : TEXT.value.telemetry.disabled
+})
+const TELEMETRY_STATUS = computed(() => {
+	if (!telemetryAvailable.value) return TEXT.value.telemetry.unavailable
+	return telemetryEnabled.value ? TEXT.value.telemetry.statusEnabled : TEXT.value.telemetry.statusDisabled
+})
 
 let synced = false
 onMounted(async () => {
@@ -20,6 +31,8 @@ onMounted(async () => {
 	synced = true
 	currentLang.value = SNAPSHOT.general.language
 	autoSummon.value = SNAPSHOT.general.petAutoSummon
+	telemetryEnabled.value = SNAPSHOT.telemetry.enabled
+	telemetryAvailable.value = SNAPSHOT.telemetry.available
 	appVersion.value = SNAPSHOT.app.appVersion
 })
 
@@ -33,6 +46,17 @@ const onLanguageChange = (lang: string) => {
 const onAutoSummonChange = (val: boolean) => {
 	autoSummon.value = val
 	void RUNTIME.updateGeneral({petAutoSummon: val})
+}
+
+const onTelemetryChange = async (val: boolean) => {
+	const PREVIOUS = telemetryEnabled.value
+	telemetryEnabled.value = val
+	try {
+		await RUNTIME.updateGeneral({telemetryEnabled: val})
+	} catch (error) {
+		telemetryEnabled.value = PREVIOUS
+		feedback.error(TEXT.value.telemetry.saveFailed, error)
+	}
 }
 </script>
 
@@ -92,7 +116,19 @@ const onAutoSummonChange = (val: boolean) => {
 				</AppSwitchRow>
 			</AppCard>
 
-			<!-- 3. 应用关于信息 -->
+			<!-- 3. 错误遥测与隐私 -->
+			<AppCard :title="TEXT.telemetry.title" icon="info">
+				<AppSwitchRow :title="TEXT.telemetry.enabled" :desc="TELEMETRY_DESC">
+					<n-switch
+						:value="telemetryEnabled"
+						:disabled="!telemetryAvailable"
+						@update:value="(val: boolean) => onTelemetryChange(val)"
+					/>
+				</AppSwitchRow>
+				<span class="text-hint">{{ TELEMETRY_STATUS }}</span>
+			</AppCard>
+
+			<!-- 4. 应用关于信息 -->
 			<AppCard :title="TEXT.about.title" icon="info">
 				<div class="flex flex-col">
 					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">

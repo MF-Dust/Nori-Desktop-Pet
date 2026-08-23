@@ -1,12 +1,16 @@
 name: build
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      include_runtime:
+        description: "是否打包 .NET Runtime"
+        required: true
+        default: false
+        type: boolean
 
-# 四道门: pnpm build / pnpm test / dotnet build / dotnet test, 三平台各跑一遍
+# 四道门: pnpm build / pnpm test / dotnet build / dotnet test.
+# 自动 push / PR 构建由维护者改为手动触发, 避免每次提交都消耗三平台构建额度。
 jobs:
   desktop:
     name: ${{ matrix.name }}
@@ -67,18 +71,22 @@ jobs:
       - name: 后端门 · 单元测试
         run: dotnet test --configuration Release --no-build
 
-      # 发布冒烟: 只验证 publish 能产出可执行文件, 不做运行
+      # 发布冒烟: 只验证 publish 能产出可执行文件, 按输入可切换 Runtime 打包模式
       - name: 发布冒烟 (Windows)
         if: matrix.name == 'windows'
         shell: bash
         run: |
+          if [ "${{ inputs.include_runtime }}" = "true" ]; then mode=self-contained; else mode=framework-dependent; fi
+          echo "发布模式: $mode"
           dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r ${{ matrix.rid }} \
-            --self-contained false -o bin/ci-publish
+            --self-contained "${{ inputs.include_runtime }}" -o bin/ci-publish
           test -f bin/ci-publish/Nori.Desktop.exe
 
       - name: 发布冒烟 (Linux / macOS)
         if: matrix.name != 'windows'
         run: |
+          if [ "${{ inputs.include_runtime }}" = "true" ]; then mode=self-contained; else mode=framework-dependent; fi
+          echo "发布模式: $mode"
           chmod +x publish.sh
-          ./publish.sh ${{ matrix.rid }}
+          NORI_SKIP_FRONTEND=1 NORI_INCLUDE_RUNTIME="${{ inputs.include_runtime }}" ./publish.sh ${{ matrix.rid }}
           test -f "bin/publish/${{ matrix.rid }}/app/Nori.Desktop"

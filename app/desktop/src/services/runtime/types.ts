@@ -52,6 +52,12 @@ export interface PlatformState {
 	supportsTray: boolean
 }
 
+/** 遥测状态 (不包含 DSN 或任何用户身份) */
+export interface TelemetryState {
+	enabled: boolean
+	available: boolean
+}
+
 /** AI 大脑状态 (秘密已脱敏) */
 export interface AiState {
 	configured: boolean
@@ -168,6 +174,7 @@ export interface UiSnapshot {
 	version: number
 	app: AppInfo
 	general: GeneralState
+	telemetry: TelemetryState
 	ai: AiState
 	models: ModelsState
 	pet: PetState

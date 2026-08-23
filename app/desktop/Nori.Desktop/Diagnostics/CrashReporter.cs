@@ -11,6 +11,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Nori.Core.Logging;
+using Nori.Core.Telemetry;
 
 namespace Nori.Desktop.Diagnostics;
 
@@ -29,6 +30,7 @@ namespace Nori.Desktop.Diagnostics;
 public static class CrashReporter
 {
 	private static FileLogger? _logger;
+	private static ITelemetry _telemetry = NoopTelemetry.Instance;
 	private static IClassicDesktopStyleApplicationLifetime? _lifetime;
 	private static Window? _crashWindow;
 
@@ -56,6 +58,9 @@ public static class CrashReporter
 	/// </summary>
 	public static void AttachLogger(FileLogger logger) => _logger = logger;
 
+	/// <summary>挂接遥测器; 未挂接时使用空实现。</summary>
+	public static void AttachTelemetry(ITelemetry telemetry) => _telemetry = telemetry ?? NoopTelemetry.Instance;
+
 	/// <summary>
 	/// 安全的 fire-and-forget: 后台任务失败只记日志, 不崩进程也不弹窗.
 	/// 取代裸的 <c>_ = SomeAsync()</c>, 让异常在发生当下就有上下文地落盘,
@@ -69,6 +74,7 @@ public static class CrashReporter
 		}
 		catch (Exception exception)
 		{
+			_telemetry.CaptureException(exception, "background_task");
 			WriteLogSafe($"{what} 失败: {exception.Message}");
 		}
 	}
@@ -81,12 +87,17 @@ public static class CrashReporter
 	/// false 表示运行期兜底: 关闭窗口可继续运行</param>
 	public static void Report(Exception exception, bool critical = false)
 	{
+		_telemetry.CaptureException(exception, critical ? "startup_failure" : "unhandled_exception", critical, critical);
 		WriteLogSafe(critical ? $"致命异常: {exception}" : $"未处理异常: {exception}");
 
 		// Avalonia 还没起来 (极早期启动失败): 无法展示任何窗口, 记完日志只能退出
 		if (Application.Current is null || _lifetime is null)
 		{
-			if (critical) Environment.Exit(1);
+			if (critical)
+			{
+				FlushTelemetrySafe();
+				Environment.Exit(1);
+			}
 			return;
 		}
 
@@ -110,7 +121,11 @@ public static class CrashReporter
 		}
 		finally
 		{
-			if (critical) Environment.Exit(1);
+			if (critical)
+			{
+				FlushTelemetrySafe();
+				Environment.Exit(1);
+			}
 		}
 	}
 
@@ -121,10 +136,12 @@ public static class CrashReporter
 	/// <param name="message">给用户看的中文说明</param>
 	public static void ReportStartupFatal(string title, string message)
 	{
+		_telemetry.CaptureException(new InvalidOperationException(title), "startup_fatal", unhandled: true, crashed: true);
 		WriteLogSafe($"启动失败: {title}: {message}");
 
 		if (Application.Current is null || _lifetime is null)
 		{
+			FlushTelemetrySafe();
 			Environment.Exit(1);
 			return;
 		}
@@ -150,6 +167,7 @@ public static class CrashReporter
 		}
 		finally
 		{
+			FlushTelemetrySafe();
 			Environment.Exit(1);
 		}
 	}
@@ -192,6 +210,7 @@ public static class CrashReporter
 	private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
 	{
 		e.SetObserved(); // 已记录即视为已观察, 避免反复触发
+		_telemetry.CaptureException(e.Exception, "unobserved_task");
 		WriteLogSafe($"未观察的任务异常 (延迟至 GC 才暴露): {e.Exception}");
 	}
 
@@ -353,7 +372,11 @@ public static class CrashReporter
 			_crashWindow = null;
 			closed.TrySetResult();
 			// 启动期致命路径保留原 ShowFatal 的"关窗即退出"语义; 用户已点过重启/退出则不再干预
-			if (critical && !resolved) _lifetime?.Shutdown(1);
+			if (critical && !resolved)
+			{
+				FlushTelemetrySafe();
+				_lifetime?.Shutdown(1);
+			}
 		};
 
 		_crashWindow = window;
@@ -372,6 +395,17 @@ public static class CrashReporter
 	/// <summary>
 	/// 兜底专用写日志: 日志器不可用时尽力自建一个, 再失败也只能放弃
 	/// </summary>
+	private static void FlushTelemetrySafe()
+	{
+		try
+		{
+			_telemetry.FlushAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+		}
+		catch
+		{
+		}
+	}
+
 	private static void WriteLogSafe(string message)
 	{
 		try

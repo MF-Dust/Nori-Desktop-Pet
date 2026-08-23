@@ -67,6 +67,14 @@ export default () => {
 					title: t("components.firstRun.ready.title"),
 					desc: t("components.firstRun.ready.desc"),
 					initDesc: t("components.firstRun.ready.initDesc"),
+					telemetry: {
+						title: t("components.firstRun.ready.telemetry.title"),
+						description: t("components.firstRun.ready.telemetry.description"),
+						enabled: t("components.firstRun.ready.telemetry.enabled"),
+						disabled: t("components.firstRun.ready.telemetry.disabled"),
+						unavailable: t("components.firstRun.ready.telemetry.unavailable"),
+						saveFailed: t("components.firstRun.ready.telemetry.saveFailed"),
+					},
 					summary: {
 						language: t("components.firstRun.ready.summary.language"),
 						languageValue: t("components.firstRun.ready.summary.languageValue"),
@@ -402,6 +410,16 @@ export default () => {
 						title: t("views.main.general.startup.title"),
 						autoSummon: t("views.main.general.startup.autoSummon"),
 						autoSummonDesc: t("views.main.general.startup.autoSummonDesc"),
+					},
+					telemetry: {
+						title: t("views.main.general.telemetry.title"),
+						enabled: t("views.main.general.telemetry.enabled"),
+						enabledDesc: t("views.main.general.telemetry.enabledDesc"),
+						disabled: t("views.main.general.telemetry.disabled"),
+						unavailable: t("views.main.general.telemetry.unavailable"),
+						statusEnabled: t("views.main.general.telemetry.statusEnabled"),
+						statusDisabled: t("views.main.general.telemetry.statusDisabled"),
+						saveFailed: t("views.main.general.telemetry.saveFailed"),
 					},
 					about: {
 						title: t("views.main.general.about.title"),

@@ -7,6 +7,7 @@
  */
 import type {App} from "vue"
 import {invoke} from "../host/invoke"
+import {CaptureError} from "../telemetry"
 
 /** 同一首行消息最多转发的次数, 防止渲染循环类错误刷爆日志文件 */
 const MAX_REPEAT = 5
@@ -47,15 +48,18 @@ const forward = async (message: string): Promise<void> => {
 export const installErrorHandlers = (app: App): void => {
 	// Vue 组件内的渲染/生命周期/事件处理器异常
 	app.config.errorHandler = (error, _instance, info) => {
+		CaptureError(error, "vue.error")
 		void forward(`[vue:${info}] ${formatError(error)}`)
 	}
 	// errorHandler 覆盖不到的同步脚本错误与资源加载失败
 	window.addEventListener("error", (event) => {
+		CaptureError(event.error instanceof Error ? event.error : new Error("window error"), "window.error")
 		const DETAIL = event.error instanceof Error ? `\n${formatError(event.error)}` : ""
 		void forward(`[window.onerror] ${event.message} @ ${event.filename}:${event.lineno}:${event.colno}${DETAIL}`)
 	})
 	// 未处理的 Promise 拒绝
 	window.addEventListener("unhandledrejection", (event) => {
+		CaptureError(event.reason, "promise.rejection")
 		void forward(`[unhandledrejection] ${formatError(event.reason)}`)
 	})
 }

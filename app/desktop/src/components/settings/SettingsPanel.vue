@@ -70,7 +70,7 @@ const TAB_GROUPS = computed<TabGroup[]>(() => [
 	{
 		title: GROUP_I18N.value.system,
 		tabs: [
-			{key: "general", label: I18N.value.general, icon: "settings", keywords: "general language startup 常规 语言 启动"},
+			{key: "general", label: I18N.value.general, icon: "settings", keywords: "general language startup telemetry privacy 常规 语言 启动 遥测 隐私 诊断"},
 			{key: "debug", label: I18N.value.debug, icon: "terminal", keywords: "debug log diagnostic 调试 日志 诊断 崩溃"},
 			{key: "about", label: I18N.value.about, icon: "info", keywords: "about license version 关于 声明 版本 协议"},
 		],

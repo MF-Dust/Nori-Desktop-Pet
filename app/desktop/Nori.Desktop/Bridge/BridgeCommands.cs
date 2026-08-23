@@ -151,14 +151,16 @@ public sealed class BridgeCommands
 				Runtime.InvalidateSnapshot("voice");
 			})),
 
-		// invoke("settings_update_general", {language?, petAutoSummon?, sidebarCollapsed?})
+		// invoke("settings_update_general", {language?, petAutoSummon?, sidebarCollapsed?, telemetryEnabled?})
 		"settings_update_general" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
 			Run(() =>
 			{
 				UpdateOptionalConfig(args, "language", ConfigStore.KeyLanguage);
 				UpdateBoolConfig(args, "petAutoSummon", "pet_auto_summon");
 				UpdateBoolConfig(args, "sidebarCollapsed", "ui_sidebar_collapsed");
-				Runtime.InvalidateSnapshot("general");
+				UpdateBoolConfig(args, "telemetryEnabled", ConfigStore.KeyTelemetryEnabled);
+				_services.Telemetry.Configure(_services.Config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+				Runtime.InvalidateSnapshot("general", "telemetry");
 			})),
 
 		// invoke("settings_update_proactive", {idleEnabled?, idleMinutes?, dailyGreeting?})

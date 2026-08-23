@@ -1,11 +1,43 @@
 <script setup lang="ts">
-import {computed} from "vue"
+import {computed, onMounted, ref} from "vue"
+import {RUNTIME} from "../../services/runtime"
+import {feedback} from "../../services/feedback"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import logo from "../../assets/images/logo.png"
 import Icon from "../Icon.vue"
+import AppSwitchRow from "../ui/AppSwitchRow.vue"
 import type {IconName} from "../../services/icon"
 
 const I18N = computed(() => useLanguages().components.firstRun.ready)
+const telemetryEnabled = ref(true)
+const telemetryAvailable = ref(false)
+const TELEMETRY_DESC = computed(() => {
+	if (!telemetryAvailable.value) return I18N.value.telemetry.unavailable
+	return telemetryEnabled.value ? I18N.value.telemetry.enabled : I18N.value.telemetry.disabled
+})
+
+onMounted(async () => {
+	try {
+		await RUNTIME.init()
+		const SNAPSHOT = RUNTIME.snapshot.value
+		if (!SNAPSHOT) return
+		telemetryEnabled.value = SNAPSHOT.telemetry.enabled
+		telemetryAvailable.value = SNAPSHOT.telemetry.available
+	} catch (error) {
+		feedback.error(I18N.value.telemetry.saveFailed, error)
+	}
+})
+
+const onTelemetryChange = async (value: boolean) => {
+	const PREVIOUS = telemetryEnabled.value
+	telemetryEnabled.value = value
+	try {
+		await RUNTIME.updateGeneral({telemetryEnabled: value})
+	} catch (error) {
+		telemetryEnabled.value = PREVIOUS
+		feedback.error(I18N.value.telemetry.saveFailed, error)
+	}
+}
 
 // 就绪摘要 (语言/形象/AI 三项)
 const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() => [
@@ -44,6 +76,16 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 					</span>
 				</div>
 			</template>
+		</div>
+
+		<div class="w-full max-w-[44rem] px-4 py-3 surface-card text-left">
+			<AppSwitchRow :title="I18N.telemetry.title" :desc="TELEMETRY_DESC">
+				<n-switch
+					:value="telemetryEnabled"
+					:disabled="!telemetryAvailable"
+					@update:value="(value: boolean) => onTelemetryChange(value)"
+				/>
+			</AppSwitchRow>
 		</div>
 
 		<span class="chip">

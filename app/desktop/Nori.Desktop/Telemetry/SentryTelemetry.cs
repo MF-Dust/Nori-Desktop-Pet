@@ -1,0 +1,261 @@
+using PlatformOperatingSystem = System.OperatingSystem;
+using Nori.Core.Telemetry;
+using Sentry;
+using Sentry.Protocol;
+
+namespace Nori.Desktop.Telemetry;
+
+/// <summary>
+/// Native Sentry 客户端。
+///
+/// 只有发布构建注入 Native DSN 且用户开关打开时才初始化 SDK。所有事件在 SDK 的
+/// BeforeSend 边界再次清空请求、用户、面包屑和异常正文, 避免聊天/密钥从异常链路泄露。
+/// </summary>
+public sealed class SentryTelemetry : ITelemetry
+{
+	private readonly object _gate = new();
+	private readonly string _dsn;
+	private readonly string _release;
+	private readonly string _environment;
+	private IDisposable? _sdk;
+	private bool _disposed;
+	private bool _enabled;
+
+	public SentryTelemetry(string? dsn, string? release, string? environment)
+	{
+		_dsn = dsn?.Trim() ?? string.Empty;
+		_release = release?.Trim() ?? string.Empty;
+		_environment = string.IsNullOrWhiteSpace(environment) ? "production" : environment.Trim();
+	}
+
+	public bool IsAvailable => _dsn.Length > 0;
+
+	public bool IsEnabled
+	{
+		get
+		{
+			lock (_gate) return _enabled;
+		}
+	}
+
+	/// <summary>按用户偏好开关 SDK。</summary>
+	public void Configure(bool enabled)
+	{
+		lock (_gate)
+		{
+			if (_disposed) return;
+			bool shouldEnable = enabled && IsAvailable;
+			if (_enabled == shouldEnable) return;
+
+			CloseLocked();
+			if (!shouldEnable) return;
+
+			try
+			{
+				_sdk = SentrySdk.Init(options => ConfigureOptions(options));
+				_enabled = _sdk is not null;
+			}
+			catch
+			{
+				// 遥测不能影响应用启动与业务功能; 初始化失败保持空状态。
+				_sdk = null;
+				_enabled = false;
+			}
+		}
+	}
+
+	public void CaptureException(Exception exception, string operation, bool unhandled = false, bool crashed = false)
+	{
+		if (exception is null) return;
+		lock (_gate)
+		{
+			if (!_enabled || _disposed) return;
+			string normalizedOperation = TelemetrySanitizer.NormalizeOperation(operation);
+			try
+			{
+				SentrySdk.CaptureException(exception, unhandled, crashed, scope =>
+				{
+					scope.SetTag("operation", normalizedOperation);
+				});
+			}
+			catch
+			{
+				// 上报失败不能递归进入崩溃兜底。
+			}
+		}
+	}
+
+	public ITelemetryTransaction StartTransaction(string operation)
+	{
+		lock (_gate)
+		{
+			if (!_enabled || _disposed) return NoopTransaction.Instance;
+			try
+			{
+				ITransactionTracer transaction = SentrySdk.StartTransaction(
+					TelemetrySanitizer.NormalizeOperation(operation),
+					"nori.operation");
+				return new TransactionHandle(transaction);
+			}
+			catch
+			{
+				return NoopTransaction.Instance;
+			}
+		}
+	}
+
+	public async Task FlushAsync(TimeSpan timeout)
+	{
+		try
+		{
+			bool enabled;
+			lock (_gate) enabled = _enabled && !_disposed;
+			if (enabled) await SentrySdk.FlushAsync(timeout).ConfigureAwait(false);
+		}
+		catch
+		{
+			// 退出阶段不再抛出遥测异常。
+		}
+	}
+
+	public void Dispose()
+	{
+		lock (_gate)
+		{
+			if (_disposed) return;
+			_disposed = true;
+			CloseLocked();
+		}
+	}
+
+	private void ConfigureOptions(SentryOptions options)
+	{
+		options.Dsn = _dsn;
+		options.Release = string.IsNullOrWhiteSpace(_release) ? null : _release;
+		options.Environment = _environment;
+		options.IsGlobalModeEnabled = true;
+		options.SendDefaultPii = false;
+		options.IsEnvironmentUser = false;
+		options.SampleRate = 1.0f;
+		options.TracesSampleRate = 0.25;
+		options.ProfilesSampleRate = 0.0;
+		options.EnableLogs = false;
+		options.EnableMetrics = false;
+		options.AutoSessionTracking = false;
+		options.MaxBreadcrumbs = 0;
+		options.ShutdownTimeout = TimeSpan.FromSeconds(1);
+		options.FlushTimeout = TimeSpan.FromSeconds(1);
+		options.DefaultTags.Add("runtime", "native");
+		options.DefaultTags.Add("os", OperatingSystemName());
+		options.DefaultTags.Add("session_type", SessionType());
+		options.TracePropagationTargets.Clear();
+		options.SetBeforeSend(ScrubEvent);
+		options.SetBeforeSendTransaction(ScrubTransaction);
+		options.SetBeforeBreadcrumb(DropBreadcrumb);
+	}
+
+	private SentryEvent ScrubEvent(SentryEvent current, SentryHint hint)
+	{
+		current.Request = null!;
+		current.User = null!;
+		current.Contexts?.Clear();
+		if (current.Extra is IDictionary<string, object> extra) extra.Clear();
+		current.Message = null!;
+		current.ServerName = null!;
+		current.TransactionName = TelemetrySanitizer.NormalizeOperation(current.TransactionName);
+		if (current.Tags is not null)
+		{
+			foreach (string key in current.Tags.Keys.ToArray()) current.UnsetTag(key);
+		}
+		current.SetTag("runtime", "native");
+		current.SetTag("os", OperatingSystemName());
+		current.SetTag("session_type", SessionType());
+		if (current.SentryExceptions is not null)
+		{
+			foreach (SentryException exception in current.SentryExceptions)
+			{
+				exception.Value = TelemetrySanitizer.SanitizeExceptionValue(current.Exception);
+			}
+		}
+		return current;
+	}
+
+	private Sentry.SentryTransaction? ScrubTransaction(Sentry.SentryTransaction current, SentryHint hint)
+	{
+		current.Request = null!;
+		current.User = null!;
+		current.Contexts?.Clear();
+		if (current.Data is IDictionary<string, object> data) data.Clear();
+		current.Description = null!;
+		if (current.Tags is not null)
+		{
+			foreach (string key in current.Tags.Keys.ToArray()) current.UnsetTag(key);
+		}
+		current.SetTag("runtime", "native");
+		current.SetTag("os", OperatingSystemName());
+		current.SetTag("session_type", SessionType());
+		return current;
+	}
+
+	private static Breadcrumb? DropBreadcrumb(Breadcrumb breadcrumb, SentryHint hint) => null;
+
+	private void CloseLocked()
+	{
+		_enabled = false;
+		try
+		{
+			_sdk?.Dispose();
+		}
+		catch
+		{
+		}
+		finally
+		{
+			_sdk = null;
+		}
+	}
+
+	private static string OperatingSystemName() =>
+		PlatformOperatingSystem.IsWindows() ? "windows" :
+		PlatformOperatingSystem.IsMacOS() ? "macos" :
+		PlatformOperatingSystem.IsLinux() ? "linux" : "unknown";
+
+	private static string SessionType()
+	{
+		if (PlatformOperatingSystem.IsWindows()) return "windows";
+		if (PlatformOperatingSystem.IsMacOS()) return "macos";
+		string session = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE")?.Trim().ToLowerInvariant() ?? "";
+		return session switch
+		{
+			"x11" => "x11",
+			"wayland" => "wayland",
+			_ => "unknown",
+		};
+	}
+
+	private sealed class TransactionHandle(ITransactionTracer transaction) : ITelemetryTransaction
+	{
+		private int _finished;
+
+		public void Dispose()
+		{
+			if (Interlocked.Exchange(ref _finished, 1) != 0) return;
+			try
+			{
+				transaction.Finish();
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	private sealed class NoopTransaction : ITelemetryTransaction
+	{
+		public static readonly NoopTransaction Instance = new();
+
+		public void Dispose()
+		{
+		}
+	}
+}

@@ -576,6 +576,11 @@ public sealed class AppRuntime : IAsyncDisposable
 				petAutoSummon = ParseBoolFlag(config.GetStringOr("pet_auto_summon", "true")) ?? true,
 				sidebarCollapsed = ParseBoolFlag(config.GetStringOr("ui_sidebar_collapsed", "")) ?? false,
 			},
+			telemetry = new
+			{
+				enabled = config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true),
+				available = Services.Telemetry.IsAvailable,
+			},
 			ai = new
 			{
 				configured = baseUrl.Length > 0 && hasApiKey && model.Length > 0,

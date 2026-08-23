@@ -63,6 +63,14 @@ export default {
 				title: "准备就绪",
 				desc: "点击「开始」完成初始化，Nori 期待与你见面。",
 				initDesc: "🐾 初始化只需几秒",
+				telemetry: {
+					title: "错误与性能遥测",
+					description: "仅发送脱敏错误、固定操作名和性能指标, 不包含聊天内容、密钥或请求正文",
+					enabled: "发送匿名诊断数据",
+					disabled: "已关闭诊断数据发送",
+					unavailable: "当前构建未配置 Sentry, 此开关不可用",
+					saveFailed: "保存遥测设置失败",
+				},
 				summary: {
 					language: "界面语言",
 					languageValue: "已偏好配置",
@@ -398,6 +406,16 @@ export default {
 					title: "启动与运行行为",
 					autoSummon: "启动时自动唤出桌宠",
 					autoSummonDesc: "软件启动完成后自动在桌面上显示 Nori 桌宠窗口",
+				},
+				telemetry: {
+					title: "诊断与隐私",
+					enabled: "发送匿名诊断数据",
+					enabledDesc: "帮助我们发现崩溃与性能问题, 不会发送聊天内容、提示词、密钥或请求正文",
+					disabled: "已关闭诊断数据发送",
+					unavailable: "当前构建未配置 Sentry, 不会发送远程数据",
+					statusEnabled: "当前已启用",
+					statusDisabled: "当前已关闭",
+					saveFailed: "保存遥测设置失败",
 				},
 				about: {
 					title: "应用与环境信息",

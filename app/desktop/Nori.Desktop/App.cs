@@ -12,8 +12,10 @@ using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Network;
 using Nori.Core.Resources;
+using Nori.Core.Telemetry;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Diagnostics;
+using Nori.Desktop.Telemetry;
 using Nori.Desktop.Tray;
 using Nori.Desktop.Windows;
 
@@ -99,9 +101,13 @@ public sealed class App : Application
 
 		NoriDatabase database = NoriDatabase.Open();
 		ConfigStore config = new(database);
-		config.InitDefaults(AppVersion());
+		SentryTelemetry telemetry = new(SentryBuildConfig.NativeDsn, SentryBuildConfig.Release, SentryBuildConfig.Environment);
+		telemetry.Configure(config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+		CrashReporter.AttachTelemetry(telemetry);
+		using ITelemetryTransaction startupTransaction = telemetry.StartTransaction("app.startup");
 		try
 		{
+			config.InitDefaults(AppVersion());
 			config.EnsureSchemaVersion();
 		}
 		catch (InvalidOperationException exception)
@@ -138,6 +144,7 @@ public sealed class App : Application
 			Database = database,
 			Config = config,
 			Logger = logger,
+			Telemetry = telemetry,
 			Resources = new ResourceManager(),
 			Chat = new ChatService(http, database, config),
 			Memory = new Nori.Core.Memory.MemoryStore(database),

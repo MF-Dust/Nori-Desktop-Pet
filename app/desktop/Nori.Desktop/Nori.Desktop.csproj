@@ -14,7 +14,12 @@
 		<!-- NativeControlHost 需要这份 manifest 声明受支持的 OS, 否则 WebView 启动即失败 (仅 Windows 有意义) -->
 		<ApplicationManifest Condition="'$(NoriIsWindowsBuild)' == 'true'">app.manifest</ApplicationManifest>
 		<ApplicationIcon Condition="'$(NoriIsWindowsBuild)' == 'true'">Assets/icon.ico</ApplicationIcon>
-		<Version>0.1.0</Version>
+		<Version Condition="'$(Version)' == ''">0.1.0</Version>
+		<!-- 发布构建可通过 -p:NoriSentry* 或同名环境变量把非秘密 DSN/release 编译进应用。 -->
+		<NoriSentryDsnNative Condition="'$(NoriSentryDsnNative)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_SENTRY_DSN_NATIVE'))</NoriSentryDsnNative>
+		<NoriSentryRelease Condition="'$(NoriSentryRelease)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_SENTRY_RELEASE'))</NoriSentryRelease>
+		<NoriSentryEnvironment Condition="'$(NoriSentryEnvironment)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_SENTRY_ENVIRONMENT'))</NoriSentryEnvironment>
+		<NoriSentryEnvironment Condition="'$(NoriSentryEnvironment)' == ''">production</NoriSentryEnvironment>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -23,6 +28,7 @@
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
 		<!-- 跨平台原生 WebView: Windows→WebView2, macOS→WKWebView, Linux→WebKitGTK -->
 		<PackageReference Include="Avalonia.Controls.WebView" Version="12.1.0" />
+		<PackageReference Include="Sentry" Version="6.9.0" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -44,12 +50,9 @@
 		linux-arm64 官方 SDK 暂未提供, 需要自备后放到 Live2D/native/linux-arm64/。
 	-->
 	<Target Name="NoriCheckCubismCore" BeforeTargets="Build">
-		<Error Condition="'$(RuntimeIdentifier)' == 'linux-arm64' And !Exists('../Live2D/native/linux-arm64/libLive2DCubismCore.so')"
-			Text="缺少 linux-arm64 的 Cubism Core 原生库: 请把 libLive2DCubismCore.so 放到 Live2D/native/linux-arm64/" />
-		<Error Condition="'$(RuntimeIdentifier)' == 'linux-x64' And !Exists('../Live2D/native/linux-x64/libLive2DCubismCore.so')"
-			Text="缺少 linux-x64 的 Cubism Core 原生库: Live2D/native/linux-x64/libLive2DCubismCore.so" />
-		<Error Condition="($(RuntimeIdentifier.StartsWith('osx'))) And !Exists('../Live2D/native/macos/libLive2DCubismCore.dylib')"
-			Text="缺少 macOS 的 Cubism Core 原生库: Live2D/native/macos/libLive2DCubismCore.dylib" />
+		<Error Condition="'$(RuntimeIdentifier)' == 'linux-arm64' And !Exists('../Live2D/native/linux-arm64/libLive2DCubismCore.so')" Text="缺少 linux-arm64 的 Cubism Core 原生库: 请把 libLive2DCubismCore.so 放到 Live2D/native/linux-arm64/" />
+		<Error Condition="'$(RuntimeIdentifier)' == 'linux-x64' And !Exists('../Live2D/native/linux-x64/libLive2DCubismCore.so')" Text="缺少 linux-x64 的 Cubism Core 原生库: Live2D/native/linux-x64/libLive2DCubismCore.so" />
+		<Error Condition="($(RuntimeIdentifier.StartsWith('osx'))) And !Exists('../Live2D/native/macos/libLive2DCubismCore.dylib')" Text="缺少 macOS 的 Cubism Core 原生库: Live2D/native/macos/libLive2DCubismCore.dylib" />
 	</Target>
 
 	<ItemGroup>
@@ -60,5 +63,30 @@
 		<!-- 前端构建产物: 生产模式由 AssetServer 从这里提供 -->
 		<Content Include="../dist/**" LinkBase="wwwroot" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../dist')" />
 	</ItemGroup>
+
+	<!--
+		Sentry DSN 是公有项目标识, 但不应写入仓库。发布时由 CI 通过 MSBuild 属性注入到中间生成文件;
+		没有 DSN 时生成空字符串, SentryTelemetry 不创建客户端也不会联网。
+	-->
+	<Target Name="NoriGenerateSentryBuildConfig" BeforeTargets="CoreCompile">
+		<PropertyGroup>
+			<NoriSentryGeneratedDir>$(IntermediateOutputPath)Generated</NoriSentryGeneratedDir>
+			<NoriSentryGeneratedFile>$(NoriSentryGeneratedDir)SentryBuildConfig.g.cs</NoriSentryGeneratedFile>
+		</PropertyGroup>
+		<ItemGroup>
+			<NoriSentryBuildConfigLines Include="namespace Nori.Desktop.Telemetry%3B" />
+			<NoriSentryBuildConfigLines Include="internal static class SentryBuildConfig" />
+			<NoriSentryBuildConfigLines Include="{" />
+			<NoriSentryBuildConfigLines Include="&#x09;public const string NativeDsn = &quot;$(NoriSentryDsnNative)&quot;%3B" />
+			<NoriSentryBuildConfigLines Include="&#x09;public const string Release = &quot;$(NoriSentryRelease)&quot;%3B" />
+			<NoriSentryBuildConfigLines Include="&#x09;public const string Environment = &quot;$(NoriSentryEnvironment)&quot;%3B" />
+			<NoriSentryBuildConfigLines Include="}" />
+		</ItemGroup>
+		<MakeDir Directories="$(NoriSentryGeneratedDir)" />
+		<WriteLinesToFile File="$(NoriSentryGeneratedFile)" Lines="@(NoriSentryBuildConfigLines)" Overwrite="true" />
+		<ItemGroup>
+			<Compile Include="$(NoriSentryGeneratedFile)" />
+		</ItemGroup>
+	</Target>
 
 </Project>

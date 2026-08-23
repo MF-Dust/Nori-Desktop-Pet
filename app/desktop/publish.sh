@@ -12,8 +12,19 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="Nori.Desktop"
-APP_VERSION="0.1.0"
+APP_VERSION="${NORI_VERSION:-0.1.0}"
 BUNDLE_ID="cn.erhio.noriDesktopPet"
+
+# 发布默认 framework-dependent; 手动 CI 可通过 NORI_INCLUDE_RUNTIME=1 打包 .NET Runtime。
+SELF_CONTAINED="false"
+case "${NORI_INCLUDE_RUNTIME:-0}" in
+	1 | true | TRUE | yes) SELF_CONTAINED="true" ;;
+esac
+SKIP_FRONTEND="${NORI_SKIP_FRONTEND:-0}"
+KEEP_SYMBOLS="${NORI_KEEP_SYMBOLS:-0}"
+case "$KEEP_SYMBOLS" in
+	true | TRUE | yes) KEEP_SYMBOLS="1" ;;
+esac
 
 detect_rid() {
 	local os arch
@@ -91,8 +102,12 @@ if [ ${#RIDS[@]} -eq 0 ]; then
 	RIDS=("$(detect_rid)")
 fi
 
-echo "[1/2] 构建前端 (pnpm build)..."
-pnpm build
+if [ "$SKIP_FRONTEND" = "1" ]; then
+	echo "[1/2] 跳过前端构建, 使用现有 dist/"
+else
+	echo "[1/2] 构建前端 (pnpm build)..."
+	pnpm build
+fi
 
 for rid in "${RIDS[@]}"; do
 	case "$rid" in
@@ -101,15 +116,26 @@ for rid in "${RIDS[@]}"; do
 	esac
 
 	publish_dir="bin/publish/$rid/app"
-	echo "[2/2] 发布 $APP_NAME ($rid, framework-dependent)..."
+	mode="framework-dependent"
+	if [ "$SELF_CONTAINED" = "true" ]; then mode="self-contained"; fi
+	echo "[2/2] 发布 $APP_NAME ($rid, $mode)..."
 	rm -rf "bin/publish/$rid"
-	dotnet publish "$APP_NAME/$APP_NAME.csproj" \
-		-c Release -r "$rid" --self-contained false \
-		-p:PublishSingleFile=false -p:PublishReadyToRun=false \
-		-p:DebugType=None -p:DebugSymbols=false \
-		-o "$publish_dir"
+	publish_args=(
+		-c Release -r "$rid" --self-contained "$SELF_CONTAINED"
+		-p:Version="$APP_VERSION"
+		-p:NoriSentryDsnNative="${NORI_SENTRY_DSN_NATIVE:-}"
+		-p:NoriSentryRelease="${NORI_SENTRY_RELEASE:-}"
+		-p:NoriSentryEnvironment="${NORI_SENTRY_ENVIRONMENT:-production}"
+		-p:PublishSingleFile=false -p:PublishReadyToRun=false
+	)
+	if [ "$KEEP_SYMBOLS" = "1" ]; then
+		publish_args+=("-p:DebugType=portable" "-p:DebugSymbols=true")
+	else
+		publish_args+=("-p:DebugType=None" "-p:DebugSymbols=false")
+	fi
+	dotnet publish "$APP_NAME/$APP_NAME.csproj" "${publish_args[@]}" -o "$publish_dir"
 
-	find "$publish_dir" -name "*.pdb" -delete
+	if [ "$KEEP_SYMBOLS" != "1" ]; then find "$publish_dir" -name "*.pdb" -delete; fi
 
 	case "$rid" in
 		osx-*) make_macos_bundle "$rid" "$publish_dir" ;;

@@ -43,6 +43,9 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	/// <summary>配置键: 首次初始化是否已完成</summary>
 	public const string KeyFirstRunCompleted = "first_run_completed";
 
+	/// <summary>配置键: 是否允许发送脱敏错误遥测</summary>
+	public const string KeyTelemetryEnabled = "telemetry_enabled";
+
 	/// <summary>配置键: 桌宠窗口 X 坐标</summary>
 	public const string KeyPetWindowX = "pet_window_x";
 
@@ -229,6 +232,23 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	public string GetStringOr(string key, string fallback) => ConfigValue.AsStringOr(Get(key), fallback);
 
 	/// <summary>
+	/// 读取布尔配置, 兼容历史上可能写入的 0/1 与 true/false 字符串。
+	/// </summary>
+	public bool GetBoolOr(string key, bool fallback)
+	{
+		ConfigValue? value = Get(key);
+		if (value is ConfigValue.Boolean boolean) return boolean.Value;
+		string raw = ConfigValue.AsStringOr(value, "");
+		return raw switch
+		{
+			"1" => true,
+			"0" => false,
+			_ when bool.TryParse(raw, out bool parsed) => parsed,
+			_ => fallback,
+		};
+	}
+
+	/// <summary>
 	/// 初始化默认配置: 只补缺失项, 不覆盖用户已有配置.
 	/// 先完成版本迁移, 再插入 language 默认值, 这样旧 app_language 不会被系统语言默认值抢先覆盖.
 	/// </summary>
@@ -245,6 +265,7 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 				(KeyLanguage, new ConfigValue.Text(SystemLanguage())),
 				(KeySelectedModel, new ConfigValue.Text(DefaultModel)),
 				(KeyFirstRunCompleted, new ConfigValue.Boolean(false)),
+				(KeyTelemetryEnabled, new ConfigValue.Boolean(true)),
 			];
 			foreach ((string key, ConfigValue value) in defaults)
 			{

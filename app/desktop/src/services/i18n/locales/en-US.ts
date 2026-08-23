@@ -63,6 +63,14 @@ export default {
 				title: "All Set!",
 				desc: "Click Start to initialize. Nori is looking forward to meeting you.",
 				initDesc: "🐾 Initialization only takes a few seconds",
+				telemetry: {
+					title: "Error & Performance Telemetry",
+					description: "Only scrubbed errors, fixed operation names and performance metrics are sent; chat content, keys and request bodies are excluded",
+					enabled: "Send anonymous diagnostics",
+					disabled: "Diagnostic data sending is off",
+					unavailable: "Sentry is not configured in this build, so this switch is unavailable",
+					saveFailed: "Failed to save telemetry settings",
+				},
 				summary: {
 					language: "UI language",
 					languageValue: "Preference saved",
@@ -398,6 +406,16 @@ export default {
 					title: "Startup & Runtime Behavior",
 					autoSummon: "Summon the pet on startup",
 					autoSummonDesc: "Show Nori on the desktop automatically after startup",
+				},
+				telemetry: {
+					title: "Diagnostics & Privacy",
+					enabled: "Send anonymous diagnostics",
+					enabledDesc: "Help us find crashes and performance issues; chat content, prompts, keys and request bodies are never sent",
+					disabled: "Diagnostic data sending is off",
+					unavailable: "Sentry is not configured in this build; no remote data will be sent",
+					statusEnabled: "Currently enabled",
+					statusDisabled: "Currently disabled",
+					saveFailed: "Failed to save telemetry settings",
 				},
 				about: {
 					title: "Application & Environment",

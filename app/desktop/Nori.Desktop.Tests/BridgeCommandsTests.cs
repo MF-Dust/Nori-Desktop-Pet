@@ -304,6 +304,21 @@ public class BridgeCommandsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task 快照包含遥测状态且通用设置可即时关闭()
+	{
+		BridgeCommands commands = CreateCommands();
+		string before = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
+		Assert.Contains("\"telemetry\":{\"enabled\":true,\"available\":false}", before, StringComparison.Ordinal);
+
+		await commands.InvokeAsync(new FakeBridgeSource("main"), "settings_update_general", Args(new {telemetryEnabled = false}));
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+		string after = JsonSerializer.Serialize(
+			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
+		Assert.Contains("\"telemetry\":{\"enabled\":false,\"available\":false}", after, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public void 桌宠显隐变化作废快照()
 	{
 		// 广播本体走 Dispatcher.UIThread, 单测无 UI 循环, 因此只验证版本递增与快照投影

@@ -49,6 +49,7 @@ public class ConfigStoreTests : IDisposable
 		Assert.Equal("0.1.0", _config.GetStringOr(ConfigStore.KeyAppVersion, ""));
 		Assert.NotEqual("", _config.GetStringOr(ConfigStore.KeyInstalledAt, ""));
 		Assert.True(_config.Exists(ConfigStore.KeyLanguage));
+		Assert.True(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, false));
 	}
 
 	[Fact]
