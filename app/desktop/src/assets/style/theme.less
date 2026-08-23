@@ -1,6 +1,12 @@
 // ============================================================
-// Nori Desktop Pet — 全局设计规范
-// 配色参考先导页面设计规范: 深邃海洋赛博科技与青绿微光
+// Nori Desktop Pet — 全局样式底座
+//
+// 组件样式一律走 UnoCSS 原子类 (uno.config.ts 的 shortcuts 与本文件同源)。
+// 这里只保留三类无法原子化的东西:
+//   1. 基础重置与根字号 (1rem = 10px)
+//   2. :root 设计令牌 (与 src/assets/style/tokens.ts 逐条一致, 由测试看守)
+//   3. 关键帧、滚动条与 Vue 过渡类
+// 配色: 深邃海洋赛博科技与青绿微光 (色相不变)
 // ============================================================
 
 // ---------- 基础重置 ----------
@@ -36,94 +42,46 @@ h1, h2, h3, h4, h5, h6 {
 	font-weight: 600;
 }
 
-// ---------- 品牌与主题色彩 ----------
-@nori-teal: #5eead4; // 品牌主色(青绿)
-@nori-teal-bright: #7de3ff; // 高光青(强调/光晕)
-@nori-teal-soft: #7fd4e8; // 柔青(次级强调)
+button, input, textarea, select {
+	font-family: inherit;
+}
 
-// 深色背景层级 (由浅到深)
-@bg-base: #05070a; // 全局最底
-@bg-abyss: #050e1a; // 深渊底色
-@bg-deep: #081a2e; // 中深层
-@bg-panel: #0f2d47; // 面板层/渐变顶
-
-// 玻璃拟态表面
-@bg-card: rgba(10, 28, 44, 0.55);
-@bg-card-hover: rgba(16, 46, 72, 0.72);
-@bg-card-active: rgba(22, 58, 90, 0.85);
-@bg-glass: rgba(8, 24, 38, 0.75);
-@bg-glass-modal: rgba(5, 16, 28, 0.92);
-
-// 文字
-@text-primary: #ecf8ff; // 主文字(亮白偏蓝)
-@text-body: #cfdde5; // 正文
-@text-muted: #7e94a3; // 次要(灰蓝)
-@text-faint: #596f7e; // 弱化/提示
-
-// 边框 / 分隔
-@line-subtle: rgba(125, 227, 255, 0.12);
-@line-strong: rgba(125, 227, 255, 0.28);
-@line-glow: rgba(94, 234, 212, 0.45);
-
-// 状态色
-@success: #20e090;
-@warning: #f1b24a;
-@danger: #fb3c44;
-
-// 光晕
-@glow-teal: rgba(125, 227, 255, 0.45);
-@glow-teal-soft: rgba(125, 227, 255, 0.18);
-@glow-teal-strong: rgba(94, 234, 212, 0.65);
-
-// 圆角 / 阴影
-@radius-xs: 0.4rem;
-@radius-sm: 0.8rem;
-@radius-md: 1.2rem;
-@radius-lg: 1.6rem;
-@radius-pill: 99.9rem;
-@shadow-soft: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.35);
-@shadow-glow: 0 0 2rem rgba(125, 227, 255, 0.2);
-
-// ---------- CSS 变量 (供组件运行时使用) ----------
+// ---------- 设计令牌 (单一色源: src/assets/style/tokens.ts) ----------
 :root {
-	--nori-teal: @nori-teal;
-	--nori-teal-bright: @nori-teal-bright;
-	--nori-teal-soft: @nori-teal-soft;
-
-	--bg-base: @bg-base;
-	--bg-abyss: @bg-abyss;
-	--bg-deep: @bg-deep;
-	--bg-panel: @bg-panel;
-	--bg-card: @bg-card;
-	--bg-card-hover: @bg-card-hover;
-	--bg-card-active: @bg-card-active;
-	--bg-glass: @bg-glass;
-	--bg-glass-modal: @bg-glass-modal;
-
-	--text-primary: @text-primary;
-	--text-body: @text-body;
-	--text-muted: @text-muted;
-	--text-faint: @text-faint;
-
-	--line-subtle: @line-subtle;
-	--line-strong: @line-strong;
-	--line-glow: @line-glow;
-
-	--success: @success;
-	--warning: @warning;
-	--danger: @danger;
-
-	--glow-teal: @glow-teal;
-	--glow-teal-soft: @glow-teal-soft;
-	--glow-teal-strong: @glow-teal-strong;
-
-	--radius-xs: @radius-xs;
-	--radius-sm: @radius-sm;
-	--radius-md: @radius-md;
-	--radius-lg: @radius-lg;
-	--radius-pill: @radius-pill;
-	--shadow-soft: @shadow-soft;
-	--shadow-glow: @shadow-glow;
+	--nori-teal: #5eead4;
+	--nori-teal-bright: #7de3ff;
+	--nori-teal-soft: #7fd4e8;
+	--bg-base: #05070a;
+	--bg-abyss: #050e1a;
+	--bg-deep: #081a2e;
+	--bg-panel: #0f2d47;
+	--bg-card: rgba(10, 28, 44, 0.55);
+	--bg-card-hover: rgba(16, 46, 72, 0.72);
+	--bg-card-active: rgba(22, 58, 90, 0.85);
+	--bg-glass: rgba(8, 24, 38, 0.75);
+	--bg-glass-modal: rgba(5, 16, 28, 0.92);
+	--text-primary: #ecf8ff;
+	--text-body: #cfdde5;
+	--text-muted: #9db2c0;
+	--text-faint: #8398a8;
+	--line-subtle: rgba(125, 227, 255, 0.12);
+	--line-strong: rgba(125, 227, 255, 0.28);
+	--line-glow: rgba(94, 234, 212, 0.45);
+	--success: #20e090;
+	--warning: #f1b24a;
+	--danger: #fb3c44;
+	--danger-text: #ff6b72;
+	--glow-teal: rgba(125, 227, 255, 0.45);
+	--glow-teal-soft: rgba(125, 227, 255, 0.18);
+	--glow-teal-strong: rgba(94, 234, 212, 0.65);
+	--radius-xs: 0.4rem;
+	--radius-sm: 0.8rem;
+	--radius-md: 1.2rem;
+	--radius-lg: 1.6rem;
+	--radius-pill: 99.9rem;
+	--shadow-soft: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.35);
+	--shadow-glow: 0 0 2rem rgba(125, 227, 255, 0.2);
+	--shadow-window: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65);
 }
 
 // ---------- 现代化暗色发光滚动条 ----------
@@ -148,173 +106,7 @@ h1, h2, h3, h4, h5, h6 {
 	}
 }
 
-// ---------- 通用工具类 ----------
-// 窗口根容器 (无边框窗口的标准画布)
-.window-root {
-	width: 100vw;
-	height: 100vh;
-	background: linear-gradient(160deg, @bg-panel 0%, @bg-deep 50%, @bg-abyss 100%);
-	border-radius: var(--radius-lg);
-	overflow: hidden;
-	user-select: none;
-	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65), inset 0 0 0 0.1rem var(--line-subtle);
-}
-
-// 青绿文字高光与柔光
-.glow-teal {
-	color: var(--text-primary);
-	text-shadow: 0 0 1.6rem @glow-teal, 0 0 4rem @glow-teal-soft;
-}
-
-// 玻璃卡片容器
-.glass-panel {
-	background: var(--bg-card);
-	backdrop-filter: blur(1.2rem);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.25);
-	transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		border-color: var(--line-strong);
-		box-shadow: 0 0.8rem 2.6rem rgba(0, 0, 0, 0.35), 0 0 1.4rem var(--glow-teal-soft);
-	}
-}
-
-// ---------- 通用按钮与交互组件样式 ----------
-
-// 主按钮 (青绿渐变)
-.btn-primary {
-	padding: 0.85rem 2rem;
-	border: none;
-	border-radius: var(--radius-sm);
-	font-size: 1.3rem;
-	font-family: inherit;
-	font-weight: 600;
-	cursor: pointer;
-	color: #03121a;
-	background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 0.7rem;
-	box-shadow: 0 0.4rem 1.6rem var(--glow-teal-soft);
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-	position: relative;
-	overflow: hidden;
-
-	&:hover:not(:disabled) {
-		transform: translateY(-0.15rem);
-		box-shadow: 0 0.6rem 2.2rem var(--glow-teal-strong);
-		filter: brightness(1.06);
-	}
-
-	&:active:not(:disabled) {
-		transform: translateY(0.05rem) scale(0.98);
-	}
-
-	&:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-		filter: grayscale(0.5);
-	}
-}
-
-// 次要/幽灵按钮
-.btn-ghost {
-	padding: 0.8rem 1.6rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	font-size: 1.25rem;
-	font-family: inherit;
-	font-weight: 500;
-	cursor: pointer;
-	color: var(--text-body);
-	background: rgba(255, 255, 255, 0.04);
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 0.6rem;
-	transition: all 0.2s ease;
-
-	&:hover:not(:disabled) {
-		color: var(--text-primary);
-		background: rgba(125, 227, 255, 0.1);
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-		transform: translateY(-0.1rem);
-	}
-
-	&:active:not(:disabled) {
-		transform: translateY(0) scale(0.98);
-	}
-
-	&:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-}
-
-// 危险按钮
-.btn-danger {
-	padding: 0.75rem 1.5rem;
-	border: 0.1rem solid rgba(251, 60, 68, 0.35);
-	border-radius: var(--radius-sm);
-	font-size: 1.2rem;
-	font-family: inherit;
-	font-weight: 500;
-	cursor: pointer;
-	color: var(--danger);
-	background: rgba(251, 60, 68, 0.08);
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 0.6rem;
-	transition: all 0.2s ease;
-
-	&:hover:not(:disabled) {
-		background: rgba(251, 60, 68, 0.18);
-		border-color: rgba(251, 60, 68, 0.6);
-		box-shadow: 0 0 1.2rem rgba(251, 60, 68, 0.25);
-		transform: translateY(-0.1rem);
-	}
-
-	&:active:not(:disabled) {
-		transform: translateY(0) scale(0.98);
-	}
-}
-
-// 窗口控制关闭按钮
-.close-btn {
-	width: 2.8rem;
-	height: 2.8rem;
-	border: none;
-	border-radius: 50%;
-	background-color: transparent;
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.15s ease;
-
-	&:hover {
-		background-color: rgba(251, 60, 68, 0.18);
-		color: var(--danger);
-	}
-
-	&:active {
-		transform: scale(0.92);
-	}
-}
-
-.close-icon {
-	width: 1.4rem;
-	height: 1.4rem;
-}
-
-// ---------- 常用微动效 ----------
-// 呼吸动画 (logo / 形象 呼吸效果)
+// ---------- 关键帧 ----------
 @keyframes breathe {
 	0%, 100% {
 		transform: scale(1);
@@ -326,7 +118,6 @@ h1, h2, h3, h4, h5, h6 {
 	}
 }
 
-// 旋转动画 (加载图标)
 @keyframes rotate {
 	from {
 		transform: rotate(0deg);
@@ -336,7 +127,6 @@ h1, h2, h3, h4, h5, h6 {
 	}
 }
 
-// 光芒脉冲
 @keyframes glow-pulse {
 	0%, 100% {
 		opacity: 0.3;
@@ -348,7 +138,6 @@ h1, h2, h3, h4, h5, h6 {
 	}
 }
 
-// 柔和脉冲
 @keyframes pulse-soft {
 	0% {
 		box-shadow: 0 0 0 0 rgba(32, 224, 144, 0.4);
@@ -361,11 +150,134 @@ h1, h2, h3, h4, h5, h6 {
 	}
 }
 
+@keyframes bubble-fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(0.5rem) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
 .spin {
 	animation: rotate 1s linear infinite;
 }
 
-// 通用页面切换过渡
+.animate-breathe {
+	animation: breathe 2.4s ease-in-out infinite;
+}
+
+.animate-glow-pulse {
+	animation: glow-pulse 2.5s ease-in-out infinite;
+}
+
+.animate-pulse-soft {
+	animation: pulse-soft 1.2s infinite;
+}
+
+.animate-bubble-in {
+	animation: bubble-fade-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+// ---------- 聊天气泡内的 Markdown 排版 ----------
+// v-html 生成的内容无法用原子类修饰, 因此这里给一套全局排版 (色值全走令牌)
+.chat-markdown {
+	> :first-child {
+		margin-top: 0;
+	}
+
+	> :last-child {
+		margin-bottom: 0;
+	}
+
+	p {
+		margin: 0.4rem 0;
+	}
+
+	h1, h2, h3, h4, h5, h6 {
+		margin: 0.8rem 0 0.4rem;
+		font-size: 1.4rem;
+		line-height: 1.4;
+	}
+
+	ul, ol {
+		margin: 0.4rem 0;
+		padding-left: 1.8rem;
+	}
+
+	li {
+		margin: 0.2rem 0;
+	}
+
+	code {
+		padding: 0.1rem 0.4rem;
+		border-radius: var(--radius-xs);
+		background: rgba(0, 0, 0, 0.35);
+		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		font-size: 1.2rem;
+		color: var(--nori-teal-bright);
+	}
+
+	pre {
+		margin: 0.8rem 0;
+		padding: 1rem 1.4rem;
+		border-radius: var(--radius-sm);
+		border: 0.1rem solid var(--line-subtle);
+		background: rgba(4, 12, 22, 0.75);
+		box-shadow: inset 0 0 1.2rem rgba(0, 0, 0, 0.4);
+		overflow-x: auto;
+
+		code {
+			padding: 0;
+			background: transparent;
+			color: var(--text-body);
+			line-height: 1.6;
+		}
+	}
+
+	blockquote {
+		margin: 0.8rem 0;
+		padding: 0.4rem 0 0.4rem 1.2rem;
+		border-left: 0.3rem solid var(--nori-teal-soft);
+		background: rgba(125, 227, 255, 0.04);
+		border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+		color: var(--text-muted);
+	}
+
+	table {
+		margin: 0.6rem 0;
+		border-collapse: collapse;
+		font-size: 1.2rem;
+	}
+
+	th, td {
+		padding: 0.4rem 0.8rem;
+		border: 0.1rem solid var(--line-subtle);
+		text-align: left;
+	}
+
+	th {
+		background: rgba(255, 255, 255, 0.04);
+		color: var(--text-primary);
+	}
+
+	a {
+		color: var(--nori-teal-bright);
+		text-decoration: underline;
+		text-underline-offset: 0.2rem;
+		cursor: pointer;
+	}
+
+	hr {
+		margin: 0.8rem 0;
+		border: none;
+		border-top: 0.1rem solid var(--line-subtle);
+	}
+}
+
+// ---------- Vue 过渡类 (无法用原子类表达, 全局保留) ----------
 .tab-fade-enter-active,
 .tab-fade-leave-active {
 	transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -379,4 +291,53 @@ h1, h2, h3, h4, h5, h6 {
 .tab-fade-leave-to {
 	opacity: 0;
 	transform: translateY(-0.6rem);
+}
+
+.page-next-enter-active,
+.page-next-leave-active,
+.page-prev-enter-active,
+.page-prev-leave-active {
+	transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.page-next-enter-from {
+	opacity: 0;
+	transform: translateX(3rem) scale(0.98);
+}
+
+.page-next-leave-to {
+	opacity: 0;
+	transform: translateX(-3rem) scale(0.98);
+}
+
+.page-prev-enter-from {
+	opacity: 0;
+	transform: translateX(-3rem) scale(0.98);
+}
+
+.page-prev-leave-to {
+	opacity: 0;
+	transform: translateX(3rem) scale(0.98);
+}
+
+// 纯淡入淡出 (蒙版菜单 / 整页面板)
+.fade-enter-active,
+.fade-leave-active {
+	transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+	opacity: 0;
+}
+
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+	transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-scale-enter-from,
+.fade-scale-leave-to {
+	opacity: 0;
+	transform: scale(0.9);
 }

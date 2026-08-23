@@ -1,0 +1,21 @@
+<script setup lang="ts">
+/**
+ * 骨架占位 (异步面板加载中)
+ */
+withDefaults(defineProps<{
+	rows?: number
+}>(), {
+	rows: 3,
+})
+</script>
+
+<template>
+	<div class="flex flex-col gap-3 p-4" aria-hidden="true">
+		<div
+			v-for="row in rows"
+			:key="row"
+			class="h-8 rounded-sm bg-white/4 animate-pulse"
+			:style="{width: `${100 - row * 8}%`}"
+		/>
+	</div>
+</template>
