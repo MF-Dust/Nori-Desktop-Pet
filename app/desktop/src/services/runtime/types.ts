@@ -19,6 +19,37 @@ export interface AppInfo {
 export interface GeneralState {
 	language: string
 	petAutoSummon: boolean
+	/** 主界面侧边栏是否折叠 */
+	sidebarCollapsed: boolean
+}
+
+/** 桌宠窗口状态 (宿主显隐的唯一真相, 托盘切换后同样同步) */
+export interface PetState {
+	visible: boolean
+}
+
+/** 运行会话类型 (Linux 下区分 x11 / wayland) */
+export type SessionType = "windows" | "macos" | "x11" | "wayland" | "unknown"
+
+/**
+ * 平台能力
+ *
+ * 前端一切与平台相关的 UI 都由这些标志驱动: 不支持就明确禁用并给出说明,
+ * 不再靠 try/catch 静默吞掉 PlatformNotSupportedException。
+ */
+export interface PlatformState {
+	os: "windows" | "macos" | "linux" | "unknown"
+	sessionType: SessionType
+	/** 能否读取窗口外的全局光标 (眼神跟随) */
+	supportsGlobalCursor: boolean
+	/** 能否从 HTML 标题栏发起原生窗口拖动 */
+	supportsWindowDrag: boolean
+	/** 能否做逐像素点击空透 */
+	supportsHitThrough: boolean
+	/** 能否置顶窗口 */
+	supportsTopmost: boolean
+	/** 系统托盘是否可用 */
+	supportsTray: boolean
 }
 
 /** AI 大脑状态 (秘密已脱敏) */
@@ -139,6 +170,8 @@ export interface UiSnapshot {
 	general: GeneralState
 	ai: AiState
 	models: ModelsState
+	pet: PetState
+	platform: PlatformState
 	behaviors: BehaviorsState
 	voice: VoiceState
 	embedding: EmbeddingState

@@ -297,6 +297,13 @@ export const icon = {
 			"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
 		]
 	},
+	// 搜索
+	search: {
+		stroke: [
+			"M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z",
+			"m21 21-4.35-4.35"
+		]
+	},
 } satisfies Record<string, IconData>
 
 /**
@@ -308,3 +315,15 @@ export type IconName = keyof typeof icon
  * 所有图标名称
  */
 export const allIcons = Object.keys(icon) as IconName[]
+
+/**
+ * 把任意字符串收敛为已知图标名
+ *
+ * 技能/MCP 等外部数据会带一个任意 icon 字段, 直接丢给 <Icon> 会在取
+ * icon[name] 时得到 undefined 并抛错, 把整个设置页拖崩 —— 这里统一兑底。
+ *
+ * @param raw 外部传入的图标名
+ * @param fallback 兑底图标 (默认 sparkles)
+ */
+export const resolveIconName = (raw: string | null | undefined, fallback: IconName = "sparkles"): IconName =>
+	raw != null && raw in icon ? raw as IconName : fallback

@@ -14,6 +14,7 @@ import type {
 	McpServerStatusInfo,
 	MemoryItem,
 	ModelMeta,
+	PlatformState,
 	UiSnapshot,
 } from "./types"
 
@@ -32,6 +33,8 @@ export type {
 	ModelItem,
 	ModelMeta,
 	ModelsState,
+	PetState,
+	PlatformState,
 	ProactiveState,
 	ReminderDto,
 	SkillDto,
@@ -46,9 +49,20 @@ const SNAPSHOT = ref<UiSnapshot | null>(null)
 
 let bootstrap: Promise<void> | null = null
 
+/** 上一次见到的语言, 用于跳窗口同步语言切换 */
+let lastLanguage: string | null = null
+const languageHandlers = new Set<(language: string) => void>()
+
 async function refresh(): Promise<void> {
 	try {
 		SNAPSHOT.value = await invoke<UiSnapshot>("ui_get_snapshot")
+		const LANGUAGE = SNAPSHOT.value?.general.language
+		if (LANGUAGE && LANGUAGE !== lastLanguage) {
+			const FIRST = lastLanguage === null
+			lastLanguage = LANGUAGE
+			// 首次拉取不回放 (main.ts 已经用它初始化 i18n), 只处理后续变更
+			if (!FIRST) for (const handler of languageHandlers) handler(LANGUAGE)
+		}
 	} catch (error) {
 		console.error("获取 UI 快照失败:", error)
 	}
@@ -80,6 +94,23 @@ export const RUNTIME = {
 	/** 手动刷新快照 */
 	refresh,
 
+	/**
+	 * 当前平台能力 (快照未到位时给最保守的假设)
+	 *
+	 * 组件不要自己猜平台: 拖拽手柄、穿透开关、眼神跟随这类 UI 全部看这里。
+	 */
+	platform(): PlatformState {
+		return SNAPSHOT.value?.platform ?? {
+			os: "unknown",
+			sessionType: "unknown",
+			supportsGlobalCursor: false,
+			supportsWindowDrag: false,
+			supportsHitThrough: false,
+			supportsTopmost: false,
+			supportsTray: false,
+		}
+	},
+
 	// ------------------------------------------------------------------
 	// 事件订阅
 	// ------------------------------------------------------------------
@@ -92,6 +123,16 @@ export const RUNTIME = {
 	/** 主动交互消息 (挂机关怀/日程问候/提醒触发) */
 	onProactiveMessage(handler: (text: string) => void): Promise<UnlistenFn> {
 		return listen<{text: string}>("nori:proactive-message", ({payload}) => handler(payload.text))
+	},
+
+	/**
+	 * 语言变更 (任一窗口改了语言后, 每个窗口都靠它重放 setLanguage)
+	 *
+	 * 返回取消注册的函数
+	 */
+	onLanguageChanged(handler: (language: string) => void): () => void {
+		languageHandlers.add(handler)
+		return () => languageHandlers.delete(handler)
 	},
 
 	// ------------------------------------------------------------------
@@ -139,7 +180,7 @@ export const RUNTIME = {
 	}>): Promise<void> {
 		return invoke<void>("settings_update_voice", patch)
 	},
-	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean}>): Promise<void> {
+	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean; sidebarCollapsed: boolean}>): Promise<void> {
 		return invoke<void>("settings_update_general", patch)
 	},
 	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {
@@ -174,6 +215,16 @@ export const RUNTIME = {
 	},
 	completeFirstRun(): Promise<void> {
 		return invoke<void>("complete_first_run")
+	},
+
+	/**
+	 * init 窗口就绪握手
+	 *
+	 * 返回 initStartPending=true 说明向导已经广播过 nori:init-start (早于本页订阅),
+	 * 调用方应直接执行初始化流程, 不能再等事件
+	 */
+	initReady(): Promise<{initStartPending: boolean}> {
+		return invoke<{initStartPending: boolean}>("init_ready")
 	},
 	importLocalModel(): Promise<string[] | null> {
 		return invoke<string[] | null>("model_import_local", {resourceType: "live2d"})

@@ -3,7 +3,9 @@ import App from "./App.vue"
 import router from "./services/router"
 import useLanguage, {i18n} from "./services/i18n"
 import {installErrorHandlers} from "./services/error"
+// 顺序重要: 先基座与令牌, 再原子类 (同名声明时原子类赢)
 import "./assets/style/theme.less"
+import "virtual:uno.css"
 
 const APP = createApp(App)
 

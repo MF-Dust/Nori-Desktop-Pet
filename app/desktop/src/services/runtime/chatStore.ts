@@ -22,8 +22,11 @@ export interface PendingApproval {
 
 /**
  * 创建聊天会话 store (每个 ChatView 实例独立)
+ *
+ * @param options.watchdogMs 一轮会话无任何事件的容忍上限, 超时后复位并报错 (0 = 关闭)
  */
-export function createChatStore() {
+export function createChatStore(options: {watchdogMs?: number} = {}) {
+	const WATCHDOG_MS = options.watchdogMs ?? 120_000
 	const bubbles = ref<ChatBubble[]>([])
 	const sending = ref(false)
 	const agentState = ref<AgentState>("idle")
@@ -32,14 +35,36 @@ export function createChatStore() {
 	const errorMsg = ref("")
 	const pendingApprovals = ref<PendingApproval[]>([])
 	const hasMoreHistory = ref(false)
+	const loadingHistory = ref(false)
 
 	let activeSessionId: string | null = null
 	let oldestLoadedId = 0
 	let placeholderKey = ""
 	let unlisten: (() => void) | null = null
+	let watchdogTimer: ReturnType<typeof setTimeout> | null = null
+
+	/** 看门狗: 后端事件丢了时不能让输入框永久锁在“发送中” */
+	function armWatchdog(): void {
+		if (WATCHDOG_MS <= 0) return
+		clearWatchdog()
+		watchdogTimer = setTimeout(() => {
+			watchdogTimer = null
+			if (!sending.value) return
+			errorMsg.value = "会话超时: 未收到后端响应"
+			const SESSION = activeSessionId
+			finishTurn(true)
+			if (SESSION) void RUNTIME.cancelChat(SESSION).catch(() => {})
+		}, WATCHDOG_MS)
+	}
+
+	function clearWatchdog(): void {
+		if (watchdogTimer) clearTimeout(watchdogTimer)
+		watchdogTimer = null
+	}
 
 	/** 首屏加载最近一页历史 (服务端已规范化) */
 	async function loadRecent(pageSize = 50): Promise<void> {
+		loadingHistory.value = true
 		try {
 			const page = await RUNTIME.historyPage(pageSize)
 			bubbles.value = page.map((row) => ({key: String(row.id), role: row.role, content: row.content}))
@@ -47,22 +72,29 @@ export function createChatStore() {
 			oldestLoadedId = page.length > 0 ? page[0].id : 0
 		} catch (error) {
 			console.error("加载聊天历史失败:", error)
+		} finally {
+			loadingHistory.value = false
 		}
 	}
 
 	/** 向上翻页加载更早的历史 */
 	async function loadOlder(pageSize = 50): Promise<ChatBubble[]> {
-		if (!hasMoreHistory.value || oldestLoadedId <= 0) return []
-		const page = await RUNTIME.historyPage(pageSize, oldestLoadedId)
-		if (page.length === 0) {
-			hasMoreHistory.value = false
-			return []
+		if (!hasMoreHistory.value || oldestLoadedId <= 0 || loadingHistory.value) return []
+		loadingHistory.value = true
+		try {
+			const page = await RUNTIME.historyPage(pageSize, oldestLoadedId)
+			if (page.length === 0) {
+				hasMoreHistory.value = false
+				return []
+			}
+			oldestLoadedId = page[0].id
+			hasMoreHistory.value = page.length >= pageSize
+			const older = page.map((row) => ({key: String(row.id), role: row.role, content: row.content}))
+			bubbles.value = [...older, ...bubbles.value]
+			return older
+		} finally {
+			loadingHistory.value = false
 		}
-		oldestLoadedId = page[0].id
-		hasMoreHistory.value = page.length >= pageSize
-		const older = page.map((row) => ({key: String(row.id), role: row.role, content: row.content}))
-		bubbles.value = [...older, ...bubbles.value]
-		return older
 	}
 
 	/** 发送一条用户消息 */
@@ -78,6 +110,7 @@ export function createChatStore() {
 
 		try {
 			activeSessionId = await RUNTIME.startChat(trimmed)
+			armWatchdog()
 		} catch (error) {
 			errorMsg.value = String(error)
 			removePlaceholderIfEmpty()
@@ -97,6 +130,7 @@ export function createChatStore() {
 		await RUNTIME.clearChat().catch(() => {})
 		bubbles.value = []
 		metrics.value = null
+		errorMsg.value = ""
 		oldestLoadedId = 0
 		hasMoreHistory.value = false
 	}
@@ -116,6 +150,8 @@ export function createChatStore() {
 
 	/** 处理一条后端 Agent 事件 */
 	function handleEvent(payload: AgentEventPayload): void {
+		// 任何属于当前会话的事件都重新上弦看门狗
+		if (sending.value) armWatchdog()
 		switch (payload.type) {
 			case "chunk": {
 				if (payload.sessionId !== activeSessionId) return
@@ -178,6 +214,7 @@ export function createChatStore() {
 	}
 
 	function finishTurn(cancelled = false): void {
+		clearWatchdog()
 		removePlaceholderIfEmpty()
 		if (cancelled) agentState.value = "idle"
 		sending.value = false
@@ -195,6 +232,7 @@ export function createChatStore() {
 	}
 
 	function dispose(): void {
+		clearWatchdog()
 		if (activeSessionId) {
 			void RUNTIME.cancelChat(activeSessionId).catch(() => {})
 			activeSessionId = null
@@ -216,6 +254,7 @@ export function createChatStore() {
 		errorMsg,
 		pendingApprovals,
 		hasMoreHistory,
+		loadingHistory,
 		loadRecent,
 		loadOlder,
 		send,

@@ -1,5 +1,6 @@
 import {defineConfig} from "vite"
 import vue from "@vitejs/plugin-vue"
+import UnoCSS from "unocss/vite"
 import Components from "unplugin-vue-components/vite"
 import {NaiveUiResolver} from "unplugin-vue-components/resolvers"
 
@@ -10,6 +11,8 @@ const HOST_ASSET_PORT = 14201
 export default defineConfig(async () => ({
 	plugins: [
 		vue(),
+		// 原子样式引擎 (配置在 uno.config.ts, 不带 reset)
+		UnoCSS(),
 		Components({
 			resolvers: [NaiveUiResolver()],
 			dts: true,

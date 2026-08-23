@@ -1,4 +1,4 @@
-import {beforeEach, describe, expect, it, vi} from "vitest"
+import {afterEach, beforeEach, describe, expect, it, vi} from "vitest"
 import {createChatStore} from "../../src/services/runtime/chatStore"
 import type {ApprovalRequestDto} from "../../src/services/runtime"
 
@@ -48,6 +48,42 @@ describe("runtime 聊天状态投影", () => {
 		await store.decideApproval("approval-1", true)
 		expect(store.pendingApprovals.value).toHaveLength(0)
 		expect(invokeMock).toHaveBeenCalledWith("approval_respond", {requestId: "approval-1", approved: true})
+		store.dispose()
+	})
+})
+
+describe("runtime 会话看门狗", () => {
+	beforeEach(() => {
+		invokeMock.mockClear()
+		vi.useFakeTimers()
+	})
+
+	afterEach(() => vi.useRealTimers())
+
+	it("后端事件丢失时超时复位并取消会话", async () => {
+		const store = createChatStore({watchdogMs: 1000})
+		await store.send("你好")
+		expect(store.sending.value).toBe(true)
+
+		await vi.advanceTimersByTimeAsync(1001)
+
+		expect(store.sending.value).toBe(false)
+		expect(store.errorMsg.value).toContain("超时")
+		expect(invokeMock).toHaveBeenCalledWith("chat_cancel", {sessionId: "session-a"})
+		store.dispose()
+	})
+
+	it("持续收到事件时不会误判超时", async () => {
+		const store = createChatStore({watchdogMs: 1000})
+		await store.send("你好")
+
+		for (let i = 0; i < 3; i += 1) {
+			await vi.advanceTimersByTimeAsync(700)
+			store.handleEvent({type: "chunk", sessionId: "session-a", chunk: "."})
+		}
+
+		expect(store.sending.value).toBe(true)
+		expect(store.errorMsg.value).toBe("")
 		store.dispose()
 	})
 })
