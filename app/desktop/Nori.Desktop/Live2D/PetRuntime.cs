@@ -38,6 +38,20 @@ public sealed class PetRuntime
 	/// <summary>行为上下文逐帧复用, 避免渲染热路径上每帧分配</summary>
 	private readonly BehaviorContext _behaviorContext = new();
 	private readonly Random _random = new();
+	private readonly Lock _qualityGate = new();
+	private readonly Lock _metricsGate = new();
+	private Live2DRenderSettings _renderSettings = Live2DRenderSettings.Normalize("arg-nori");
+	private RenderQualityPolicy _qualityPolicy = new(
+		Live2DRenderSettings.Normalize("arg-nori"),
+		Live2DPowerSource.Ac);
+	private readonly Queue<double> _frameTimesMs = new();
+	private readonly Queue<double> _maskTimesMs = new();
+	private const int MetricsWindowSize = 120;
+	private int _droppedFrames;
+	private bool _shadowApplied;
+	private bool _offscreenRendering;
+	private bool _renderVisible;
+	private int _appliedMaskBufferSize;
 
 	private LAppDelegateOpenGL? _app;
 	private AvaloniaGlApi? _gl;
@@ -76,7 +90,27 @@ public sealed class PetRuntime
 	public bool LipSyncEnabled { get; set; } = true;
 	public bool BeatSyncEnabled { get; set; }
 	public bool ClickInteraction { get; set; } = true;
-	public int MaxFps { get; set; }
+	public float RenderScale { get; private set; } = Live2DRenderSettings.DefaultRenderScale;
+	public string QualityMode { get; private set; } = Live2DRenderSettings.DefaultQualityMode;
+	public int MaxFps { get; private set; }
+
+	/// <summary>当前质量策略的有效目标 FPS。</summary>
+	public int EffectiveFps
+	{
+		get { lock (_qualityGate) return _qualityPolicy.Current.EffectiveFps; }
+	}
+
+	/// <summary>当前质量策略的有效渲染倍率。</summary>
+	public float EffectiveRenderScale
+	{
+		get { lock (_qualityGate) return _qualityPolicy.Current.EffectiveRenderScale; }
+	}
+
+	/// <summary>当前质量策略快照。</summary>
+	public RenderQualityDecision QualityDecision
+	{
+		get { lock (_qualityGate) return _qualityPolicy.Current; }
+	}
 
 	public event Action? ModelChanged;
 	public event Action? ModelLoadRequested;
@@ -119,6 +153,31 @@ public sealed class PetRuntime
 		? _expressionStore.AllGroupNames()
 		: _expressionStore.AllNames();
 
+	/// <summary>给快照与诊断使用的滚动渲染指标。</summary>
+	public PetRenderMetrics RenderMetrics
+	{
+		get
+		{
+			lock (_metricsGate)
+			{
+				RenderQualityDecision quality = QualityDecision;
+				return new PetRenderMetrics
+				{
+					EffectiveQuality = quality.EffectiveQuality,
+					EffectiveFps = quality.EffectiveFps,
+					EffectiveRenderScale = quality.EffectiveRenderScale,
+					FrameTimeP95Ms = Percentile(_frameTimesMs, 0.95),
+					MaskCostP95Ms = Percentile(_maskTimesMs, 0.95),
+					DroppedFrames = _droppedFrames,
+					ShadowRequested = ShadowEnabled,
+					ShadowApplied = _shadowApplied,
+					OffscreenRendering = _offscreenRendering,
+					Visible = _renderVisible,
+				};
+			}
+		}
+	}
+
 	/// <summary>
 	/// Cubism SDK 日志落到应用自己的文件日志
 	///
@@ -135,6 +194,51 @@ public sealed class PetRuntime
 		{
 			// 日志本身失败时保持静默, 绝不允许把异常带回渲染线程
 		}
+	}
+
+	/// <summary>记录渲染线程的帧耗时与命中掩码耗时。</summary>
+	public void RecordRenderMetrics(double frameTimeMs, double maskCostMs)
+	{
+		if (frameTimeMs > 0 && double.IsFinite(frameTimeMs))
+		{
+			lock (_metricsGate) AddMetric(_frameTimesMs, frameTimeMs);
+			lock (_qualityGate) _qualityPolicy.ObserveFrame(frameTimeMs);
+		}
+		if (maskCostMs > 0 && double.IsFinite(maskCostMs))
+		{
+			lock (_metricsGate) AddMetric(_maskTimesMs, maskCostMs);
+		}
+	}
+
+	/// <summary>记录调度器因已有请求未完成而跳过的帧。</summary>
+	public void RecordDroppedFrame()
+	{
+		lock (_metricsGate) _droppedFrames++;
+	}
+
+	/// <summary>记录当前渲染后端能力，失败时不把配置伪装成已生效。</summary>
+	public void SetRenderSurfaceState(bool offscreenRendering, bool shadowApplied, bool visible)
+	{
+		lock (_metricsGate)
+		{
+			_offscreenRendering = offscreenRendering;
+			_shadowApplied = shadowApplied;
+			_renderVisible = visible;
+		}
+	}
+
+	private static void AddMetric(Queue<double> values, double value)
+	{
+		values.Enqueue(value);
+		while (values.Count > MetricsWindowSize) values.Dequeue();
+	}
+
+	private static double Percentile(IEnumerable<double> values, double percentile)
+	{
+		double[] ordered = values.OrderBy(value => value).ToArray();
+		if (ordered.Length == 0) return 0;
+		int index = Math.Clamp((int)Math.Ceiling(ordered.Length * percentile) - 1, 0, ordered.Length - 1);
+		return Math.Round(ordered[index], 2);
 	}
 
 	public void OnGlInit(LAppDelegateOpenGL app, AvaloniaGlApi gl)
@@ -167,18 +271,37 @@ public sealed class PetRuntime
 
 	public void LoadConfigs()
 	{
-		UserScale = ParseFloatConfig($"l2d_scale_{_currentModelId}", ParseFloatConfig("l2d_scale", 1.0f));
-		Opacity = ParseFloatConfig("l2d_opacity", 1.0f);
+		float userScale = ParseFloatConfig($"l2d_scale_{_currentModelId}", ParseFloatConfig("l2d_scale", 1.0f));
+		float opacity = ParseFloatConfig(ModelConfigKey("l2d_opacity"), ParseFloatConfig("l2d_opacity", Live2DRenderSettings.DefaultOpacity));
+		bool shadow = ParseBoolConfig(ModelConfigKey("l2d_shadow"), ParseBoolConfig("l2d_shadow", true));
+		float renderScale = ParseFloatConfig(ModelConfigKey("l2d_render_scale"), ParseFloatConfig("l2d_render_scale", Live2DRenderSettings.DefaultRenderScale));
+		string qualityMode = ReadModelConfig("l2d_quality_mode", ReadConfig("l2d_quality_mode", Live2DRenderSettings.DefaultQualityMode));
+		int maxFps = (int)ParseFloatConfig(ModelConfigKey("l2d_max_fps"), ParseFloatConfig("l2d_max_fps", Live2DRenderSettings.DefaultMaxFps));
+
+		Live2DRenderSettings settings = Live2DRenderSettings.Normalize(
+			_currentModelId,
+			opacity,
+			shadow,
+			renderScale,
+			qualityMode,
+			maxFps);
+		_renderSettings = settings;
+		UserScale = Math.Clamp(userScale, 0.1f, 2.0f);
+		Opacity = settings.Opacity;
+		ShadowEnabled = settings.ShadowEnabled;
+		RenderScale = settings.RenderScale;
+		QualityMode = Live2DRenderSettings.QualityModeToStorage(settings.QualityMode);
+		MaxFps = settings.MaxFps;
+		lock (_qualityGate) _qualityPolicy.Update(settings, PowerSourceDetector.Detect());
+
 		AutoBlinkEnabled = ParseBoolConfig("l2d_auto_blink", true);
 		EyeTrackingEnabled = ParseBoolConfig("l2d_eye_tracking", true);
 		IdleEyeAnimationEnabled = ParseBoolConfig("l2d_idle_eye_animation", true);
 		IdleAnimationEnabled = ParseBoolConfig("l2d_idle_animation", true);
 		ExpressionEnabled = ParseBoolConfig("l2d_expression_enabled", true);
-		ShadowEnabled = ParseBoolConfig("l2d_shadow", true);
 		LipSyncEnabled = ParseBoolConfig("l2d_lip_sync", true);
 		BeatSyncEnabled = ParseBoolConfig("l2d_beat_sync", false);
 		ClickInteraction = ParseBoolConfig("l2d_click_interaction", true);
-		MaxFps = (int)ParseFloatConfig("l2d_max_fps", 0.0f);
 		LoadInteractionConfig();
 	}
 
@@ -215,6 +338,16 @@ public sealed class PetRuntime
 	/// 必须走 AsStringOr. 另外 ConfigStore 读取时会重新推断类型, 存进去的 "1" / "0" 会变成
 	/// 布尔再还原成 "true" / "false", 所以这里要一并接住 (与前端 parseNumber 的处境相同).
 	/// </summary>
+	private string ModelConfigKey(string baseKey) => $"{baseKey}_{_currentModelId}";
+
+	private string ReadConfig(string key, string fallback) => _services.Config.GetStringOr(key, fallback);
+
+	private string ReadModelConfig(string baseKey, string fallback)
+	{
+		string modelValue = _services.Config.GetStringOr(ModelConfigKey(baseKey), "");
+		return modelValue.Length > 0 ? modelValue : fallback;
+	}
+
 	private float ParseFloatConfig(string key, float fallback)
 	{
 		string raw = _services.Config.GetStringOr(key, "");
@@ -360,18 +493,10 @@ public sealed class PetRuntime
 			_currentModel.CustomValueUpdate = true;
 			_currentModel.ValueUpdate = OnModelValueUpdate;
 
-			// 高画质渲染配置
-			//
 			// UseHighPrecisionMask 必须保持关闭: 打开后 SDK 会对每一个被蒙版裁剪的部件
-			// 单独把整张蒙版缓冲清空并重画一遍 (CubismRenderer_OpenGLES2.DoDrawModel),
-			// 2048x2048 x 几十个部件 x 60fps 的填充率足以把 GPU 打满。
-			// 关闭后所有蒙版每帧只渲染一次, 画质由缓冲尺寸保证即可。
-			if (_currentModel.Renderer is CubismRenderer_OpenGLES2 renderer)
-			{
-				renderer.SetClippingMaskBufferSize(2048, 2048);
-				renderer.Anisotropy = 16.0f;
-				renderer.UseHighPrecisionMask = false;
-			}
+			// 单独把整张蒙版缓冲清空并重画一遍, 质量策略只调整缓冲尺寸与过滤等级。
+			_appliedMaskBufferSize = 0;
+			ApplyRenderQualityOnGlThread();
 
 			// 提交预解析的动作组与表情定义 (同步, 无 I/O)
 			_motionGroups = [.. prepared.MotionGroups];
@@ -388,6 +513,28 @@ public sealed class PetRuntime
 			// 加载失败时不清空工作现场之外的状态; 下一帧继续用旧数据渲染
 			_services.Logger.Write(LogSource.Backend, "error", $"加载 Live2D 模型失败 [{prepared.ModelId}]: {exception.Message}");
 		}
+	}
+
+	/// <summary>在 GL 上下文中应用质量策略到 Cubism renderer。</summary>
+	public void ApplyRenderQualityOnGlThread()
+	{
+		if (_currentModel?.Renderer is not CubismRenderer_OpenGLES2 renderer) return;
+		RenderQualityDecision decision = QualityDecision;
+		int maskSize = decision.QualityLevel switch
+		{
+			>= 2 => 2048,
+			1 => 1536,
+			_ => 1024,
+		};
+		maskSize = Math.Clamp((int)Math.Round(maskSize * Math.Min(1.0f, decision.EffectiveRenderScale)), 512, 2048);
+		if (_appliedMaskBufferSize != maskSize)
+		{
+			renderer.SetClippingMaskBufferSize(maskSize, maskSize);
+			_appliedMaskBufferSize = maskSize;
+		}
+		renderer.Anisotropy = decision.QualityLevel >= 2 ? 16.0f : decision.QualityLevel == 1 ? 8.0f : 4.0f;
+		renderer.UseHighPrecisionMask = false;
+		renderer.SetModelColor(1.0f, 1.0f, 1.0f, Opacity);
 	}
 
 	private void OnModelValueUpdate(LAppModel model)
@@ -451,6 +598,7 @@ public sealed class PetRuntime
 		ConsumePreparedIfReady();
 
 		if (_currentModel is null) return;
+		ApplyRenderQualityOnGlThread();
 
 		// LAppModel.Update() 读的是 LAppPal.DeltaTime。这里没有走 LAppDelegate.Run(),
 		// 不显式写入的话它永远是 0, 动作队列 / 物理 / 呼吸会全部冻结在首帧。
@@ -715,23 +863,29 @@ public sealed class PetRuntime
 	/// </summary>
 	public void ApplyConfigDelete(string key)
 	{
+		if (key == "selected_model")
+		{
+			if (ConfigStore.DefaultModel != _currentModelId) RequestModelLoad(ConfigStore.DefaultModel);
+			return;
+		}
+		if (key is "l2d_opacity" or "l2d_quality_mode" or "l2d_render_scale" or "l2d_max_fps" or "l2d_shadow"
+			|| key == ModelConfigKey("l2d_opacity")
+			|| key == ModelConfigKey("l2d_quality_mode")
+			|| key == ModelConfigKey("l2d_render_scale")
+			|| key == ModelConfigKey("l2d_max_fps")
+			|| key == ModelConfigKey("l2d_shadow"))
+		{
+			LoadConfigs();
+			return;
+		}
+
 		switch (key)
 		{
-			case "selected_model":
-				if (ConfigStore.DefaultModel != _currentModelId) RequestModelLoad(ConfigStore.DefaultModel);
-				break;
-			case "l2d_opacity":
-				Opacity = 1.0f;
-				break;
-			case "l2d_max_fps":
-				MaxFps = 0;
-				break;
 			case "l2d_auto_blink": AutoBlinkEnabled = true; break;
 			case "l2d_eye_tracking": EyeTrackingEnabled = true; break;
 			case "l2d_idle_eye_animation": IdleEyeAnimationEnabled = true; break;
 			case "l2d_idle_animation": IdleAnimationEnabled = true; break;
 			case "l2d_expression_enabled": ExpressionEnabled = true; break;
-			case "l2d_shadow": ShadowEnabled = true; break;
 			case "l2d_lip_sync": LipSyncEnabled = true; break;
 			case "l2d_beat_sync": BeatSyncEnabled = false; break;
 			case "l2d_click_interaction": ClickInteraction = true; break;
@@ -771,9 +925,48 @@ public sealed class PetRuntime
 			return;
 		}
 
-		if (key == "l2d_opacity")
+		if (key == "l2d_opacity" || key == ModelConfigKey("l2d_opacity"))
 		{
-			if (ParseFloat(value) is { } opacity) Opacity = Math.Clamp(opacity, 0.0f, 1.0f);
+			if (ParseFloat(value) is { } opacity)
+			{
+				Opacity = Math.Clamp(opacity, Live2DRenderSettings.MinOpacity, Live2DRenderSettings.MaxOpacity);
+				RefreshRenderSettings();
+			}
+			return;
+		}
+
+		if (key == "l2d_render_scale" || key == ModelConfigKey("l2d_render_scale"))
+		{
+			if (ParseFloat(value) is { } scale)
+			{
+				RenderScale = Math.Clamp(scale, Live2DRenderSettings.MinRenderScale, Live2DRenderSettings.MaxRenderScale);
+				RefreshRenderSettings();
+			}
+			return;
+		}
+
+		if (key == "l2d_quality_mode" || key == ModelConfigKey("l2d_quality_mode"))
+		{
+			QualityMode = Live2DRenderSettings.QualityModeToStorage(
+				Live2DRenderSettings.ParseQualityMode(value) ?? Live2DQualityMode.Adaptive);
+			RefreshRenderSettings();
+			return;
+		}
+
+		if (key == "l2d_shadow" || key == ModelConfigKey("l2d_shadow"))
+		{
+			if (ParseBool(value) is { } shadow) ShadowEnabled = shadow;
+			RefreshRenderSettings();
+			return;
+		}
+
+		if (key == "l2d_max_fps" || key == ModelConfigKey("l2d_max_fps"))
+		{
+			if (ParseFloat(value) is { } fps)
+			{
+				MaxFps = Math.Clamp((int)fps, 0, Live2DRenderSettings.MaxExplicitFps);
+				RefreshRenderSettings();
+			}
 			return;
 		}
 
@@ -784,12 +977,27 @@ public sealed class PetRuntime
 			case "l2d_idle_eye_animation" when ParseBool(value) is { } v: IdleEyeAnimationEnabled = v; break;
 			case "l2d_idle_animation" when ParseBool(value) is { } v: IdleAnimationEnabled = v; break;
 			case "l2d_expression_enabled" when ParseBool(value) is { } v: ExpressionEnabled = v; break;
-			case "l2d_shadow" when ParseBool(value) is { } v: ShadowEnabled = v; break;
 			case "l2d_lip_sync" when ParseBool(value) is { } v: LipSyncEnabled = v; break;
 			case "l2d_beat_sync" when ParseBool(value) is { } v: BeatSyncEnabled = v; break;
 			case "l2d_click_interaction" when ParseBool(value) is { } v: ClickInteraction = v; break;
-			case "l2d_max_fps" when ParseFloat(value) is { } v: MaxFps = (int)v; break;
 			default: break;
 		}
+	}
+
+	private void RefreshRenderSettings()
+	{
+		_renderSettings = Live2DRenderSettings.Normalize(
+			_currentModelId,
+			Opacity,
+			ShadowEnabled,
+			RenderScale,
+			QualityMode,
+			MaxFps);
+		Opacity = _renderSettings.Opacity;
+		ShadowEnabled = _renderSettings.ShadowEnabled;
+		RenderScale = _renderSettings.RenderScale;
+		QualityMode = Live2DRenderSettings.QualityModeToStorage(_renderSettings.QualityMode);
+		MaxFps = _renderSettings.MaxFps;
+		lock (_qualityGate) _qualityPolicy.Update(_renderSettings, PowerSourceDetector.Detect());
 	}
 }

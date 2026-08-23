@@ -857,6 +857,13 @@ public sealed class AppRuntime : IAsyncDisposable
 		});
 
 		string selectedModel = config.GetStringOr("selected_model", ConfigStore.DefaultModel);
+		float modelOpacity = ReadFloat(config, $"l2d_opacity_{selectedModel}") ?? ReadFloat(config, "l2d_opacity") ?? 1.0f;
+		float modelRenderScale = ReadFloat(config, $"l2d_render_scale_{selectedModel}") ?? ReadFloat(config, "l2d_render_scale") ?? 2.0f;
+		bool modelShadow = ParseBoolFlag(ReadModelString(config, "l2d_shadow", selectedModel, "true")) ?? true;
+		string modelQualityMode = ReadModelString(config, "l2d_quality_mode", selectedModel, "adaptive");
+		int modelMaxFps = (int)(ReadFloat(config, $"l2d_max_fps_{selectedModel}") ?? ReadFloat(config, "l2d_max_fps") ?? 0);
+		Live2DRenderSettings modelRenderSettings = Live2DRenderSettings.Normalize(
+			selectedModel, modelOpacity, modelShadow, modelRenderScale, modelQualityMode, modelMaxFps);
 
 		Nori.Core.Memory.MemorySettings memorySettings = Memory.Settings;
 		(int activeMemories, int atomCount, int archivedMemories, int totalMemories) = Memory.GetOverview();
@@ -896,6 +903,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			pet = new
 			{
 				visible = Services.Windows.IsWindowVisible(WindowLabels.Pet),
+				renderMetrics = Services.PetRuntime?.RenderMetrics,
 			},
 			platform = new
 			{
@@ -916,11 +924,13 @@ public sealed class AppRuntime : IAsyncDisposable
 				idleAnimation = ParseBoolFlag(config.GetStringOr("l2d_idle_animation", "true")) ?? true,
 				expressionEnabled = ParseBoolFlag(config.GetStringOr("l2d_expression_enabled", "true")) ?? true,
 				lipSync = ParseBoolFlag(config.GetStringOr("l2d_lip_sync", "true")) ?? true,
-				shadow = ParseBoolFlag(config.GetStringOr("l2d_shadow", "true")) ?? true,
+				shadow = modelRenderSettings.ShadowEnabled,
 				beatSync = ParseBoolFlag(config.GetStringOr("l2d_beat_sync", "")) ?? false,
 				aiInteraction = ParseBoolFlag(config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false,
-				renderScale = ReadFloat(config, "l2d_render_scale") ?? 2.0,
-				maxFps = (int)(ReadFloat(config, "l2d_max_fps") ?? 0),
+				opacity = modelRenderSettings.Opacity,
+				renderScale = modelRenderSettings.RenderScale,
+				qualityMode = Live2DRenderSettings.QualityModeToStorage(modelRenderSettings.QualityMode),
+				maxFps = modelRenderSettings.MaxFps,
 			},
 			memory = new
 			{
@@ -1113,6 +1123,12 @@ public sealed class AppRuntime : IAsyncDisposable
 		_ when raw.Equals("false", StringComparison.OrdinalIgnoreCase) => false,
 		_ => null,
 	};
+
+	private static string ReadModelString(ConfigStore config, string baseKey, string modelId, string fallback)
+	{
+		string modelValue = config.GetStringOr($"{baseKey}_{modelId}", "");
+		return modelValue.Length > 0 ? modelValue : config.GetStringOr(baseKey, fallback);
+	}
 
 	private static float? ReadFloat(ConfigStore config, string key)
 	{

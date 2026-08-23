@@ -226,10 +226,18 @@ public sealed class BridgeCommands
 			string dir = _services.Resources.ResourceDir(ResourceType.Live2D, modelId);
 			Nori.Core.Live2D.Model3MetaInfo meta = Nori.Core.Live2D.Model3Meta.Read(dir);
 			float? scale = ReadFloatConfig($"l2d_scale_{modelId}") ?? ReadFloatConfig("l2d_scale") ?? 1f;
+			float? opacity = ReadFloatConfig($"l2d_opacity_{modelId}") ?? ReadFloatConfig("l2d_opacity") ?? 1f;
+			float? renderScale = ReadFloatConfig($"l2d_render_scale_{modelId}") ?? ReadFloatConfig("l2d_render_scale") ?? 2f;
+			string qualityMode = _services.Config.GetStringOr($"l2d_quality_mode_{modelId}", _services.Config.GetStringOr("l2d_quality_mode", "adaptive"));
+			bool shadow = _services.Config.GetBoolOr($"l2d_shadow_{modelId}", _services.Config.GetBoolOr("l2d_shadow", true));
 			return new
 			{
 				modelId,
 				scale,
+				opacity,
+				renderScale,
+				qualityMode,
+				shadow,
 				expressions = meta.Expressions,
 				motions = meta.Motions.Select(group => new {group = group.Group, names = group.Names}),
 				interactions = ReadInteractionConfig(modelId),
@@ -485,7 +493,7 @@ public sealed class BridgeCommands
 			message = entry.Message,
 		}).ToArray()),
 		"clear_recent_logs" => RequireMain(source, () => Run(_services.Logger.ClearRecentLogs)),
-		"get_diagnostic_info" => RequireMain(source, DiagnosticInfo.Build),
+		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime)),
 		"open_log_folder" => RequireMain(source, () => Run(OpenLogFolder)),
 		"run_gc_collect" => RequireMain(source, RunGcCollect),
 		"debug_crash_test" => RequireMain(source, () => Run(() => DebugCrashTest(Str(args, "mode")))),
@@ -865,6 +873,22 @@ public sealed class BridgeCommands
 		{
 			ApplyDisplayKey($"l2d_scale_{modelId}", scaleElem.GetRawText());
 		}
+		if (args.TryGetProperty("opacity", out JsonElement opacityElem) && opacityElem.ValueKind == JsonValueKind.Number)
+		{
+			ApplyDisplayKey($"l2d_opacity_{modelId}", opacityElem.GetRawText());
+		}
+		if (args.TryGetProperty("renderScale", out JsonElement renderScaleElem) && renderScaleElem.ValueKind == JsonValueKind.Number)
+		{
+			ApplyDisplayKey($"l2d_render_scale_{modelId}", renderScaleElem.GetRawText());
+		}
+		if (args.TryGetProperty("qualityMode", out JsonElement qualityElem) && qualityElem.ValueKind == JsonValueKind.String)
+		{
+			ApplyDisplayKey($"l2d_quality_mode_{modelId}", qualityElem.GetString() ?? "adaptive");
+		}
+		if (args.TryGetProperty("shadow", out JsonElement shadowElem) && shadowElem.ValueKind is JsonValueKind.True or JsonValueKind.False)
+		{
+			ApplyDisplayKey($"l2d_shadow_{modelId}", shadowElem.GetBoolean() ? "1" : "0");
+		}
 		if (args.TryGetProperty("expressions", out JsonElement expElem) && expElem.ValueKind == JsonValueKind.Array)
 		{
 			ApplyDisplayKey($"l2d_expression_{modelId}", expElem.GetRawText());
@@ -895,6 +919,8 @@ public sealed class BridgeCommands
 		SetBehaviorKey(args, "beatSync", "l2d_beat_sync");
 		SetBehaviorKey(args, "aiInteraction", PetInteractionConfig.AiEnabledKey);
 		SetBehaviorKey(args, "renderScale", "l2d_render_scale");
+		SetBehaviorKey(args, "qualityMode", "l2d_quality_mode");
+		SetBehaviorKey(args, "opacity", "l2d_opacity");
 		SetBehaviorKey(args, "maxFps", "l2d_max_fps");
 		await Task.CompletedTask;
 		Runtime.InvalidateSnapshot("behaviors");
@@ -1257,7 +1283,10 @@ public sealed class BridgeCommands
 			lipSync = pet?.LipSyncEnabled ?? true,
 			beatSync = pet?.BeatSyncEnabled ?? false,
 			clickInteraction = pet?.ClickInteraction ?? true,
+			renderScale = pet?.RenderScale ?? Live2DRenderSettings.DefaultRenderScale,
+			qualityMode = pet?.QualityMode ?? Live2DRenderSettings.DefaultQualityMode,
 			maxFps = pet?.MaxFps ?? 0,
+			render = pet?.RenderMetrics,
 		};
 	}
 

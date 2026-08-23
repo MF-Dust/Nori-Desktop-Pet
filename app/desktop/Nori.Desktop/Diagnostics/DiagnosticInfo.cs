@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Nori.Core.Data;
+using Nori.Desktop.Live2D;
 
 namespace Nori.Desktop.Diagnostics;
 
@@ -15,9 +16,13 @@ public static class DiagnosticInfo
 	/// <summary>
 	/// 构建诊断信息字典 (键为英文 snake_case 便于检索, 值为可读文本)
 	/// </summary>
-	public static Dictionary<string, string> Build()
+	public static Dictionary<string, string> Build() => Build(null);
+
+	/// <summary>构建诊断信息并附带当前桌宠渲染指标。</summary>
+	public static Dictionary<string, string> Build(PetRuntime? pet)
 	{
 		string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1.0";
+		PetRenderMetrics? render = pet?.RenderMetrics;
 		long dbBytes = FileSizeOrDefault(AppPaths.DatabasePath);
 		return new Dictionary<string, string>
 		{
@@ -32,6 +37,13 @@ public static class DiagnosticInfo
 			["log_dir"] = AppPaths.LogDir,
 			["database_path"] = AppPaths.DatabasePath,
 			["database_size"] = dbBytes < 0 ? "不存在" : FormatSize(dbBytes),
+			["live2d_effective_quality"] = render?.EffectiveQuality ?? "unknown",
+			["live2d_effective_fps"] = render?.EffectiveFps.ToString() ?? "0",
+			["live2d_render_scale"] = render?.EffectiveRenderScale.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "0",
+			["live2d_frame_time_p95_ms"] = render?.FrameTimeP95Ms.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "0",
+			["live2d_mask_cost_p95_ms"] = render?.MaskCostP95Ms.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) ?? "0",
+			["live2d_dropped_frames"] = render?.DroppedFrames.ToString() ?? "0",
+			["live2d_shadow_applied"] = render?.ShadowApplied.ToString() ?? "false",
 		};
 	}
 

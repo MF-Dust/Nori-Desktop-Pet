@@ -147,11 +147,24 @@ public class CubismRenderer_OpenGLES2 : CubismRenderer
         // インスタンス破棄前にレンダーテクスチャの数を保存
         int renderTextureCount = _clippingManager.RenderTextureCount;
 
+        foreach (var surface in _offscreenFrameBuffers)
+        {
+            surface.DestroyOffscreenSurface();
+        }
+        _offscreenFrameBuffers.Clear();
+
         _clippingManager = new CubismClippingManager_OpenGLES2(GL);
 
         _clippingManager.SetClippingMaskBufferSize(width, height);
-
         _clippingManager.Initialize(Model, renderTextureCount);
+
+        for (int i = 0; i < renderTextureCount; ++i)
+        {
+            var offscreenSurface = new CubismOffscreenSurface_OpenGLES2(GL);
+            offscreenSurface.CreateOffscreenSurface((int)_clippingManager.ClippingMaskBufferSize.X, (int)_clippingManager.ClippingMaskBufferSize.Y);
+            // 即使平台 FBO 不可用也保留槽位, 避免裁剪管理器的索引与数组错位。
+            _offscreenFrameBuffers.Add(offscreenSurface);
+        }
     }
 
     /// <summary>
@@ -429,6 +442,27 @@ public class CubismRenderer_OpenGLES2 : CubismRenderer
     public override void Dispose()
     {
         Shader.ReleaseShaderProgram();
+        foreach (var surface in _offscreenFrameBuffers)
+        {
+            surface.DestroyOffscreenSurface();
+        }
+        _offscreenFrameBuffers.Clear();
+
+        if (VertexBuffer != 0)
+        {
+            GL.DeleteBuffer(VertexBuffer);
+            VertexBuffer = 0;
+        }
+        if (IndexBuffer != 0)
+        {
+            GL.DeleteBuffer(IndexBuffer);
+            IndexBuffer = 0;
+        }
+        if (VertexArray != 0)
+        {
+            GL.DeleteVertexArray(VertexArray);
+            VertexArray = 0;
+        }
     }
 
     public int GetBindedTextureId(int textureId)

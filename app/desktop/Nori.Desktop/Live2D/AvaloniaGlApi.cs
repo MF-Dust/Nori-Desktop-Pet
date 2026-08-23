@@ -30,6 +30,7 @@ public sealed class AvaloniaGlApi(OpenGlControlBase control, GlInterface gl) : O
 	public delegate void Func11(int a, int b, float c);
 	public delegate void Func12(int a, float b, float c, float d, float e);
 	public delegate void GlReadPixelsFunc(int x, int y, int width, int height, int format, int type, nint pixels);
+	public delegate int GlCheckFramebufferStatusFunc(int target);
 
 	public Func1 GLBlendFunc = Marshal.GetDelegateForFunctionPointer<Func1>(gl.GetProcAddress("glBlendFunc"));
 	public Func2 GLBlendFuncSeparate = Marshal.GetDelegateForFunctionPointer<Func2>(gl.GetProcAddress("glBlendFuncSeparate"));
@@ -49,6 +50,7 @@ public sealed class AvaloniaGlApi(OpenGlControlBase control, GlInterface gl) : O
 	public Func12 GLUniform4f = Marshal.GetDelegateForFunctionPointer<Func12>(gl.GetProcAddress("glUniform4f"));
 	public Func5 GLValidateProgram = Marshal.GetDelegateForFunctionPointer<Func5>(gl.GetProcAddress("glValidateProgram"));
 	public GlReadPixelsFunc GLReadPixels = Marshal.GetDelegateForFunctionPointer<GlReadPixelsFunc>(gl.GetProcAddress("glReadPixels"));
+	public GlCheckFramebufferStatusFunc GLCheckFramebufferStatus = Marshal.GetDelegateForFunctionPointer<GlCheckFramebufferStatusFunc>(gl.GetProcAddress("glCheckFramebufferStatus"));
 
 	public override void GetWindowSize(out int w, out int h)
 	{
@@ -150,8 +152,11 @@ public sealed class AvaloniaGlApi(OpenGlControlBase control, GlInterface gl) : O
 
 	public override void Viewport(int x, int y, int w, int h) => gl.Viewport(x, y, w, h);
 	public override int GenBuffer() => gl.GenBuffer();
+	public override void DeleteBuffer(int buffer) => gl.DeleteBuffer(buffer);
 	public override void BufferData(int type, int v1, nint v2, int type1) => gl.BufferData(type, v1, v2, type1);
 	public override int GenVertexArray() => gl.GenVertexArray();
+	public override void DeleteVertexArray(int vertexArray) => gl.DeleteVertexArray(vertexArray);
 	public override void BindVertexArray(int vertexArray) => gl.BindVertexArray(vertexArray);
+	public override int CheckFramebufferStatus(int target) => GLCheckFramebufferStatus(target);
 	public override void ValidateProgram(int index) => GLValidateProgram(index);
 }

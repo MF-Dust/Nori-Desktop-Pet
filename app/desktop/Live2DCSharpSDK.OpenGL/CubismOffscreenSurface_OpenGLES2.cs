@@ -125,14 +125,32 @@ public class CubismOffscreenSurface_OpenGLES2(OpenGLApi gl) : CubismOffscreenSur
         gl.GetIntegerv(gl.GL_FRAMEBUFFER_BINDING, out int tmpFramebufferObject);
 
         int ret = gl.GenFramebuffer();
+        if (ret == 0)
+        {
+            gl.BindTexture(gl.GL_TEXTURE_2D, 0);
+            if (!_isColorBufferInherited && ColorBuffer != 0)
+            {
+                gl.DeleteTexture(ColorBuffer);
+                ColorBuffer = 0;
+            }
+            return false;
+        }
+
         gl.BindFramebuffer(gl.GL_FRAMEBUFFER, ret);
         gl.FramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, ColorBuffer, 0);
+        int status = gl.CheckFramebufferStatus(gl.GL_FRAMEBUFFER);
         gl.BindFramebuffer(gl.GL_FRAMEBUFFER, tmpFramebufferObject);
 
         RenderTexture = ret;
 
         BufferWidth = displayBufferWidth;
         BufferHeight = displayBufferHeight;
+
+        if (status != gl.GL_FRAMEBUFFER_COMPLETE)
+        {
+            DestroyOffscreenSurface();
+            return false;
+        }
 
         // 成功
         return true;
@@ -154,6 +172,9 @@ public class CubismOffscreenSurface_OpenGLES2(OpenGLApi gl) : CubismOffscreenSur
             gl.DeleteFramebuffer(RenderTexture);
             RenderTexture = 0;
         }
+
+        BufferWidth = 0;
+        BufferHeight = 0;
     }
 
     /// <summary>

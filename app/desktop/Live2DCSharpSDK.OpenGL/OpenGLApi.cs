@@ -64,6 +64,7 @@ public abstract class OpenGLApi
     public readonly int GL_FRAMEBUFFER_BINDING = 0x8CA6;
     public readonly int GL_COLOR_ATTACHMENT0 = 0x8CE0;
     public readonly int GL_FRAMEBUFFER = 0x8D40;
+    public readonly int GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
 
     public abstract void Viewport(int x, int y, int w, int h);
     public abstract void ClearColor(float r, float g, float b, float a);
@@ -121,7 +122,10 @@ public abstract class OpenGLApi
     public abstract void ClearDepthf(float data);
     public abstract int GetError();
     public abstract int GenBuffer();
+    public abstract void DeleteBuffer(int buffer);
     public abstract void BufferData(int type, int v1, nint v2, int type1);
     public abstract int GenVertexArray();
+    public abstract void DeleteVertexArray(int vertexArray);
     public abstract void BindVertexArray(int vertexArray);
+    public abstract int CheckFramebufferStatus(int target);
 }

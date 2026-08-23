@@ -160,6 +160,7 @@ public sealed class PetWindow : Window
 		}
 		RestoreWindowPosition();
 		ApplyTopmost();
+		_glControl.ResumeRenderLoop();
 		if (PlatformServices.Current.Capabilities.SupportsGlobalCursor) _cursorTrackingTimer.Start();
 		_hitShapeTimer?.Start();
 	}
@@ -230,6 +231,7 @@ public sealed class PetWindow : Window
 
 	private void OnClosed(object? sender, EventArgs e)
 	{
+		_glControl.PauseRenderLoop();
 		_speechOverlay.ClearText();
 		_cursorTrackingTimer.Stop();
 		_hitShapeTimer?.Stop();
