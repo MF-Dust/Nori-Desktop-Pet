@@ -4,6 +4,7 @@ import useLanguages from "../../services/i18n/useLanguages"
 import {
 	clampNormalizedRect,
 	containerToModelNormalizedPoint,
+	findHitRegion,
 	modelNormalizedToContainerRect,
 	normalizeRectFromPoints,
 	type Point2D,
@@ -145,7 +146,10 @@ const onBackgroundPointerDown = (event: PointerEvent) => {
 // 区域本体指针按下 (移动模式或非编辑模式点击)
 const onRegionPointerDown = (region: InteractionRegion, event: PointerEvent) => {
 	if (!props.editing) {
-		emit("regionClick", region)
+		// DOM 的绘制顺序不代表运行时命中优先级；重叠区域必须重新按最小面积解析。
+		const NORM_POINT = pointerToNorm(event)
+		const HIT_REGION = NORM_POINT ? findHitRegion(props.regions, NORM_POINT) : null
+		emit("regionClick", HIT_REGION ?? region)
 		return
 	}
 	if (event.button !== 0) return
@@ -320,7 +324,7 @@ onBeforeUnmount(() => {
 <template>
 	<div
 		ref="overlayRef"
-		class="absolute inset-0 select-none overflow-hidden"
+		class="absolute inset-0 z-10 select-none overflow-hidden"
 		:class="editing ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'"
 		tabindex="0"
 		:aria-label="I18N.title"
@@ -364,7 +368,7 @@ onBeforeUnmount(() => {
 					<span
 						class="text-xs px-1 py-0.2 rounded-pill font-600"
 						:class="item.region.reactionMode === 'ai'
-							? 'bg-purple-500/25 text-purple-200 border border-purple-400/40'
+							? 'bg-warning/15 text-warning border border-warning/40'
 							: 'bg-nori-teal-soft/30 text-nori-teal-bright border border-nori-teal-soft/40'"
 					>
 						{{ item.region.reactionMode === 'ai' ? I18N.modeAi : I18N.modeLocal }}

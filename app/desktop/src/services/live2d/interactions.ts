@@ -211,7 +211,7 @@ export const findHitRegion = (
 
 	if (hits.length === 0) return null
 
-	// 面积最小优先；若面积相同则后声明的优先（上层覆盖）
+	// 面积最小优先；面积相同保持配置列表顺序，与原生运行时一致。
 	hits.sort((a, b) => a.area - b.area)
 	return hits[0].region
 }

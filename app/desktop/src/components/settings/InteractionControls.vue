@@ -2,6 +2,7 @@
 import {computed} from "vue"
 import useLanguages from "../../services/i18n/useLanguages"
 import {validateRegionBindings} from "../../services/live2d/interactions"
+import {RUNTIME} from "../../services/runtime"
 import type {
 	InteractionAction,
 	InteractionActionMode,
@@ -42,6 +43,7 @@ const emit = defineEmits<{
 
 const I18N = computed(() => useLanguages().views.main.model.interactions)
 const MODEL_I18N = computed(() => useLanguages().views.main.model)
+const AI_CONFIGURED = computed(() => Boolean(RUNTIME.snapshot.value?.ai.configured))
 
 // 当前选中的区域对象
 const selectedRegion = computed(() =>
@@ -107,16 +109,16 @@ const updateSelectedField = <K extends keyof InteractionRegion>(key: K, value: I
 
 // 修改反应模式 (local / ai)
 const onReactionModeChange = (mode: InteractionReactionMode) => {
+	if (mode === "ai" && !AI_CONFIGURED.value) return
 	updateSelectedField("reactionMode", mode)
 }
 
 // 修改动作模式 (none / random / selected)
 const onMotionModeChange = (mode: InteractionActionMode) => {
 	if (!selectedRegion.value) return
-	const nextMotion: InteractionAction = {
-		...selectedRegion.value.motion,
-		mode,
-	}
+	const nextMotion: InteractionAction = mode === "selected"
+		? {mode}
+		: {mode}
 	// 切换到 selected 时若未设置 group 且有可用动作组，默认选中第一个
 	if (mode === "selected" && !nextMotion.group && props.availableMotions.length > 0) {
 		nextMotion.group = props.availableMotions[0].group
@@ -153,10 +155,9 @@ const onMotionNameChange = (name: string) => {
 // 修改表情模式 (none / random / selected)
 const onExpressionModeChange = (mode: InteractionActionMode) => {
 	if (!selectedRegion.value) return
-	const nextExpression: InteractionAction = {
-		...selectedRegion.value.expression,
-		mode,
-	}
+	const nextExpression: InteractionAction = mode === "selected"
+		? {mode}
+		: {mode}
 	// 切换到 selected 时若未设置 name 且有可用表情，默认选中第一个
 	if (mode === "selected" && !nextExpression.name && props.availableExpressions.length > 0) {
 		nextExpression.name = props.availableExpressions[0]
@@ -261,7 +262,7 @@ const onExpressionNameChange = (name: string) => {
 				<span>{{ r.name || I18N.defaultRegionName }}</span>
 				<span
 					class="px-1 py-0.2 rounded-pill text-xs font-500"
-					:class="r.reactionMode === 'ai' ? 'bg-purple-500/20 text-purple-300' : 'bg-nori-teal-soft/20 text-nori-teal-bright'"
+					:class="r.reactionMode === 'ai' ? 'bg-warning/12 text-warning' : 'bg-nori-teal-soft/20 text-nori-teal-bright'"
 				>
 					{{ r.reactionMode === 'ai' ? I18N.modeAi : I18N.modeLocal }}
 				</span>
@@ -339,14 +340,17 @@ const onExpressionNameChange = (name: string) => {
 					<button
 						type="button"
 						class="p-3 rounded-sm border text-left transition-all duration-200 focus-ring cursor-pointer flex flex-col gap-1"
-						:class="selectedRegion.reactionMode === 'ai'
-							? 'border-purple-400 bg-purple-500/18 shadow-[0_0_1.2rem_rgba(168,85,247,0.2)]'
-							: 'border-line-subtle bg-white/3 hover:bg-white/6'"
+						:class="!AI_CONFIGURED
+							? 'border-line-subtle bg-white/2 opacity-55 cursor-not-allowed'
+							: selectedRegion.reactionMode === 'ai'
+								? 'border-warning bg-warning/12 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/3 hover:bg-white/6'"
+						:disabled="!AI_CONFIGURED"
 						@click="onReactionModeChange('ai')"
 					>
 						<div class="flex items-center justify-between">
 							<span class="text-sm font-600 text-text-primary">{{ I18N.modeAi }}</span>
-							<Icon v-if="selectedRegion.reactionMode === 'ai'" name="sparkles" class="text-purple-300" :size="14"/>
+							<Icon v-if="selectedRegion.reactionMode === 'ai'" name="sparkles" class="text-warning" :size="14"/>
 						</div>
 						<span class="text-xs text-text-muted">{{ I18N.modeAiDesc }}</span>
 					</button>
@@ -356,10 +360,10 @@ const onExpressionNameChange = (name: string) => {
 			<!-- AI 兜底说明 (仅在 AI 模式下展示) -->
 			<div
 				v-if="selectedRegion.reactionMode === 'ai'"
-				class="p-3 rounded-sm border border-purple-400/30 bg-purple-500/10 flex flex-col gap-1 text-left"
+				class="p-3 rounded-sm border border-warning/35 bg-warning/10 flex flex-col gap-1 text-left"
 			>
-				<span class="text-xs font-600 text-purple-200">{{ I18N.aiFallbackTitle }}</span>
-				<span class="text-xs text-purple-200/80">{{ I18N.aiFallbackDesc }}</span>
+				<span class="text-xs font-600 text-warning">{{ I18N.aiFallbackTitle }}</span>
+				<span class="text-xs text-text-muted">{{ I18N.aiFallbackDesc }}</span>
 			</div>
 
 			<!-- 动作配置 -->

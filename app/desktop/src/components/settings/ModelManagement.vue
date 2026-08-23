@@ -193,13 +193,13 @@ const onWindowResize = () => {
 const savePreviewScale = (): void => {
 	const MODEL = adjustFor.value
 	if (!MODEL) return
-	void RUNTIME.setModelDisplay(MODEL, {scale: pvScale.value}).catch(error => console.error("保存预览缩放失败:", error))
+	void RUNTIME.setModelDisplay(MODEL, {scale: pvScale.value}).catch(error => feedback.error(I18N.value.previewFailed, error))
 }
 
 const savePreviewExpressions = (list: string[]): void => {
 	const MODEL = adjustFor.value
 	if (!MODEL) return
-	void RUNTIME.setModelDisplay(MODEL, {expressions: list}).catch(error => console.error("保存预览表情失败:", error))
+	void RUNTIME.setModelDisplay(MODEL, {expressions: list}).catch(error => feedback.error(I18N.value.previewFailed, error))
 }
 
 // 预览播放表情
@@ -313,7 +313,7 @@ const openAdjust = async (model: ModelInfo) => {
 		availableMotions.value = META.motions ?? []
 		availableExpressions.value = META.expressions ?? []
 	} catch (error) {
-		console.error("读取模型显示与互动配置失败:", error)
+		feedback.error(I18N.value.previewFailed, error)
 		pvScale.value = 1
 		previewExpressionList.value = []
 		interactionsConfig.value = createDefaultInteractionConfig()
@@ -477,7 +477,7 @@ const closeAdjust = () => {
 				<div ref="showcaseRef" class="relative absolute top-[5.6rem] left-6 w-[34rem] h-[50rem] z-201">
 					<!-- 互动区域编辑蒙版 (覆盖在 Pixi 画布上方) -->
 					<InteractionRegionOverlay
-						v-if="previewReady"
+						v-if="previewReady && adjustTab === 'interactions'"
 						:regions="interactionsConfig.regions"
 						:selected-id="selectedRegionId"
 						:model-viewport="modelViewport"
