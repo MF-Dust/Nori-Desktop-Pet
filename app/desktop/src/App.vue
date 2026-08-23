@@ -1,13 +1,35 @@
 <script setup lang="ts">
-import {onMounted} from "vue"
+import {computed, onMounted, ref} from "vue"
 import {useRouter} from "vue-router"
 import {getCurrentWindowLabel, navigateToOwnWindow} from "./services/window"
 import {RUNTIME} from "./services/runtime"
 import useLanguage from "./services/i18n"
 import {naiveDarkTheme, naiveThemeOverrides} from "./assets/style/naiveTheme"
 import FeedbackHost from "./components/ui/FeedbackHost.vue"
+import AppButton from "./components/ui/AppButton.vue"
+import Icon from "./components/Icon.vue"
+import useLanguages from "./services/i18n/useLanguages.ts"
+import {errorText} from "./services/feedback"
 
 const ROUTER = useRouter()
+const I18N = computed(() => useLanguages().components.ui.state)
+const retryingBootstrap = ref(false)
+const bootstrapErrorText = computed(() => {
+	const ERROR = RUNTIME.bootstrapError.value
+	return ERROR ? errorText(ERROR) : ""
+})
+
+const retryBootstrap = async (): Promise<void> => {
+	if (retryingBootstrap.value) return
+	retryingBootstrap.value = true
+	try {
+		await RUNTIME.retryInit()
+	} catch {
+		// 错误原因已写入 RUNTIME.bootstrapError, 由兜底页继续展示。
+	} finally {
+		retryingBootstrap.value = false
+	}
+}
 
 onMounted(async () => {
 	// 窗口导航: 按当前窗口 label 跳转到对应页面 (纯浏览器调试时跳过)
@@ -31,8 +53,28 @@ RUNTIME.onLanguageChanged((language) => {
 		<NMessageProvider>
 			<NDialogProvider>
 				<NNotificationProvider>
-					<FeedbackHost/>
-					<RouterView/>
+					<main
+						v-if="RUNTIME.bootstrapError.value"
+						class="w-100vw h-100vh flex items-center justify-center bg-bg-abyss p-6"
+						role="alert"
+						aria-live="assertive"
+					>
+						<section class="w-full max-w-[48rem] flex flex-col items-center gap-4 rounded-lg border border-danger/35 bg-bg-card/90 p-6 text-center shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.55)]">
+							<span class="flex h-12 w-12 items-center justify-center rounded-full bg-danger/12 text-danger-text">
+								<Icon name="alert" :size="24"/>
+							</span>
+							<h1 class="m-0 text-xl font-700 text-text-primary">{{ I18N.bootstrapTitle }}</h1>
+							<p class="m-0 text-base text-text-body">{{ I18N.bootstrapDesc }}</p>
+							<p v-if="bootstrapErrorText" class="m-0 max-w-full break-words text-sm text-danger-text" role="status">{{ bootstrapErrorText }}</p>
+							<AppButton variant="primary" icon="refresh" :loading="retryingBootstrap" @click="retryBootstrap">
+								{{ retryingBootstrap ? I18N.bootstrapRetrying : I18N.retry }}
+							</AppButton>
+						</section>
+					</main>
+					<template v-else>
+						<FeedbackHost/>
+						<RouterView/>
+					</template>
 				</NNotificationProvider>
 			</NDialogProvider>
 		</NMessageProvider>

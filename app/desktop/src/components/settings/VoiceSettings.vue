@@ -2,6 +2,7 @@
 import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
 import {feedback} from "../../services/feedback"
+import {useSnapshotField} from "../../composables/useSnapshotField"
 import useLanguages from "../../services/i18n/useLanguages"
 import {useDebouncedSave} from "../../composables/useDebouncedSave"
 import Icon from "../Icon.vue"
@@ -18,58 +19,137 @@ const VOICE = computed(() => SNAPSHOT.value?.voice)
 const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(I18N.value.saveFailed, error)})
 
 // 全局音量 (0 ~ 100)
-const volume = ref(100)
+const volumeField = useSnapshotField(snapshot => Math.round(snapshot.voice.volume * 100), 100)
+const volume = volumeField.value
 
 // TTS 配置 (云端路径: openai / custom / gpt_sovits)
 type TtsProvider = "openai" | "custom" | "gpt_sovits"
-const ttsProvider = ref<TtsProvider>("openai")
-const ttsBaseUrl = ref("")
+const ttsProviderField = useSnapshotField(snapshot => {
+	const VALUE = snapshot.voice.ttsProvider
+	return (["openai", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
+}, "openai" as TtsProvider)
+const ttsProvider = ttsProviderField.value
+const ttsBaseUrlField = useSnapshotField(snapshot => snapshot.voice.ttsBaseUrl, "")
+const ttsBaseUrl = ttsBaseUrlField.value
 const ttsApiKeyInput = ref("")
-const ttsVoice = ref("nova")
-const ttsSpeed = ref(1.0)
-const ttsAutoPlay = ref(true)
+const ttsVoiceField = useSnapshotField(snapshot => snapshot.voice.ttsVoice || "nova", "nova")
+const ttsVoice = ttsVoiceField.value
+const ttsSpeedField = useSnapshotField(snapshot => snapshot.voice.ttsSpeed, 1)
+const ttsSpeed = ttsSpeedField.value
+const ttsAutoPlayField = useSnapshotField(snapshot => snapshot.voice.ttsAutoPlay, true)
+const ttsAutoPlay = ttsAutoPlayField.value
 const isSpeakingTest = ref(false)
 const isSpeaking = computed(() => VOICE.value?.speaking ?? false)
 
 // GPT-SoVITS 配置
-const gptsovitsBaseUrl = ref("http://127.0.0.1:9880")
-const gptsovitsRefAudio = ref("")
-const gptsovitsPromptText = ref("")
-const gptsovitsPromptLang = ref("zh")
+const gptsovitsBaseUrlField = useSnapshotField(snapshot => snapshot.voice.gptsovitsBaseUrl, "http://127.0.0.1:9880")
+const gptsovitsBaseUrl = gptsovitsBaseUrlField.value
+const gptsovitsRefAudioField = useSnapshotField(snapshot => snapshot.voice.gptsovitsRefAudio, "")
+const gptsovitsRefAudio = gptsovitsRefAudioField.value
+const gptsovitsPromptTextField = useSnapshotField(snapshot => snapshot.voice.gptsovitsPromptText, "")
+const gptsovitsPromptText = gptsovitsPromptTextField.value
+const gptsovitsPromptLangField = useSnapshotField(snapshot => snapshot.voice.gptsovitsPromptLang, "zh")
+const gptsovitsPromptLang = gptsovitsPromptLangField.value
 
 // STT (仅 Whisper 云端识别)
-const sttBaseUrl = ref("")
+const sttBaseUrlField = useSnapshotField(snapshot => snapshot.voice.sttBaseUrl, "")
+const sttBaseUrl = sttBaseUrlField.value
 const sttApiKeyInput = ref("")
 
-let synced = false
 onMounted(async () => {
 	await RUNTIME.init()
-	syncFromSnapshot()
 })
 
-const syncFromSnapshot = () => {
-	const V = VOICE.value
-	if (!V || synced) return
-	synced = true
-	volume.value = Math.round(V.volume * 100)
-	if (["openai", "custom", "gpt_sovits"].includes(V.ttsProvider)) {
-		ttsProvider.value = V.ttsProvider as TtsProvider
-	}
-	ttsBaseUrl.value = V.ttsBaseUrl
-	ttsVoice.value = V.ttsVoice || "nova"
-	ttsSpeed.value = V.ttsSpeed
-	ttsAutoPlay.value = V.ttsAutoPlay
-	gptsovitsBaseUrl.value = V.gptsovitsBaseUrl
-	gptsovitsRefAudio.value = V.gptsovitsRefAudio
-	gptsovitsPromptText.value = V.gptsovitsPromptText
-	gptsovitsPromptLang.value = V.gptsovitsPromptLang
-	sttBaseUrl.value = V.sttBaseUrl
+type EditableVoiceField = {
+	touch: () => void
+	blur: () => void
+	reset: () => void
+	commit: () => void
+}
+
+const saveVoiceField = (key: string, field: EditableVoiceField, task: () => Promise<void>): void => {
+	field.touch()
+	field.blur()
+	SAVE.save(key, async () => {
+		try {
+			await task()
+			field.commit()
+		} catch (error) {
+			field.reset()
+			throw error
+		}
+	})
+}
+
+const saveVoiceFieldNow = (key: string, field: EditableVoiceField, task: () => Promise<void>): void => {
+	field.touch()
+	field.blur()
+	void SAVE.saveNow(key, async () => {
+		try {
+			await task()
+			field.commit()
+		} catch (error) {
+			field.reset()
+			throw error
+		}
+	})
 }
 
 // 音量修改 (滑块连续拖动, 防抖提交)
 const onVolumeChange = (value: number) => {
 	volume.value = value
-	SAVE.save("volume", () => RUNTIME.updateVoice({volume: String(value / 100)}))
+	saveVoiceField("volume", volumeField, () => RUNTIME.updateVoice({volume: String(value / 100)}))
+}
+
+const onTtsProviderChange = (value: TtsProvider) => {
+	ttsProvider.value = value
+	saveVoiceFieldNow("ttsProvider", ttsProviderField, () => RUNTIME.updateVoice({ttsProvider: value}))
+}
+
+const onTtsBaseUrlBlur = () => saveVoiceField("tts_base_url", ttsBaseUrlField, () => RUNTIME.updateVoice({ttsBaseUrl: ttsBaseUrl.value.trim()}))
+const onTtsVoiceBlur = () => saveVoiceField("tts_voice", ttsVoiceField, () => RUNTIME.updateVoice({ttsVoice: ttsVoice.value.trim()}))
+const onGptBaseUrlBlur = () => saveVoiceField("gptsovits_url", gptsovitsBaseUrlField, () => RUNTIME.updateVoice({gptsovitsBaseUrl: gptsovitsBaseUrl.value.trim()}))
+const onGptRefAudioBlur = () => saveVoiceField("gptsovits_ref", gptsovitsRefAudioField, () => RUNTIME.updateVoice({gptsovitsRefAudio: gptsovitsRefAudio.value.trim()}))
+const onGptPromptTextBlur = () => saveVoiceField("gptsovits_text", gptsovitsPromptTextField, () => RUNTIME.updateVoice({gptsovitsPromptText: gptsovitsPromptText.value.trim()}))
+const onGptPromptLangBlur = () => saveVoiceField("gptsovits_lang", gptsovitsPromptLangField, () => RUNTIME.updateVoice({gptsovitsPromptLang: gptsovitsPromptLang.value.trim()}))
+const onSttBaseUrlBlur = () => saveVoiceField("stt_base_url", sttBaseUrlField, () => RUNTIME.updateVoice({sttBaseUrl: sttBaseUrl.value.trim(), sttProvider: "whisper"}))
+
+const onTtsApiKeyBlur = () => {
+	const VALUE = ttsApiKeyInput.value.trim()
+	ttsApiKeyInput.value = ""
+	if (!VALUE) return
+	SAVE.save("tts_api_key", async () => {
+		try {
+			await RUNTIME.updateVoice({ttsApiKey: VALUE})
+		} catch (error) {
+			ttsApiKeyInput.value = VALUE
+			throw error
+		}
+	})
+}
+
+const onSttApiKeyBlur = () => {
+	const VALUE = sttApiKeyInput.value.trim()
+	sttApiKeyInput.value = ""
+	if (!VALUE) return
+	SAVE.save("stt_api_key", async () => {
+		try {
+			await RUNTIME.updateVoice({sttApiKey: VALUE})
+		} catch (error) {
+			sttApiKeyInput.value = VALUE
+			throw error
+		}
+	})
+}
+
+const onTtsSpeedChange = (value: number) => {
+	ttsSpeed.value = value
+	saveVoiceField("tts_speed", ttsSpeedField, () => RUNTIME.updateVoice({ttsSpeed: String(value)}))
+}
+
+const onTtsAutoPlayChange = (value: boolean) => {
+	ttsAutoPlay.value = value
+	saveVoiceFieldNow("tts_auto_play", ttsAutoPlayField, () => RUNTIME.updateVoice({ttsAutoPlay: value}))
 }
 
 // 关闭旧浏览器语音配置提示
@@ -149,7 +229,7 @@ const testVoice = async () => {
 								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
 						>
 							<input v-model="ttsProvider" type="radio" value="openai" class="sr-only"
-								@change="SAVE.saveNow('ttsProvider', () => RUNTIME.updateVoice({ttsProvider: 'openai'}))"/>
+								@change="onTtsProviderChange('openai')"/>
 							{{ I18N.tts.providerOpenai }}
 						</label>
 						<label
@@ -160,7 +240,7 @@ const testVoice = async () => {
 								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
 						>
 							<input v-model="ttsProvider" type="radio" value="custom" class="sr-only"
-								@change="SAVE.saveNow('ttsProvider', () => RUNTIME.updateVoice({ttsProvider: 'custom'}))"/>
+								@change="onTtsProviderChange('custom')"/>
 							{{ I18N.tts.providerCustom }}
 						</label>
 						<label
@@ -171,7 +251,7 @@ const testVoice = async () => {
 								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
 						>
 							<input v-model="ttsProvider" type="radio" value="gpt_sovits" class="sr-only"
-								@change="SAVE.saveNow('ttsProvider', () => RUNTIME.updateVoice({ttsProvider: 'gpt_sovits'}))"/>
+								@change="onTtsProviderChange('gpt_sovits')"/>
 							{{ I18N.tts.providerGptSovits }}
 						</label>
 					</div>
@@ -184,7 +264,9 @@ const testVoice = async () => {
 							v-model="ttsBaseUrl"
 							class="input-base"
 							placeholder="https://api.openai.com/v1"
-							@blur="SAVE.save('tts_base_url', () => RUNTIME.updateVoice({ttsBaseUrl: ttsBaseUrl.trim()}))"
+							@focus="ttsBaseUrlField.focus"
+							@input="ttsBaseUrlField.touch"
+							@blur="onTtsBaseUrlBlur"
 						/>
 					</label>
 
@@ -195,11 +277,7 @@ const testVoice = async () => {
 							type="password"
 							class="input-base"
 							placeholder="sk-..."
-							@blur="() => {
-								const VALUE = ttsApiKeyInput.trim()
-								ttsApiKeyInput = ''
-								if (VALUE) SAVE.save('tts_api_key', () => RUNTIME.updateVoice({ttsApiKey: VALUE}))
-							}"
+							@blur="onTtsApiKeyBlur"
 						/>
 					</label>
 				</template>
@@ -211,7 +289,9 @@ const testVoice = async () => {
 							v-model="gptsovitsBaseUrl"
 							class="input-base"
 							placeholder="http://127.0.0.1:9880"
-							@blur="SAVE.save('gptsovits_url', () => RUNTIME.updateVoice({gptsovitsBaseUrl: gptsovitsBaseUrl.trim()}))"
+							@focus="gptsovitsBaseUrlField.focus"
+							@input="gptsovitsBaseUrlField.touch"
+							@blur="onGptBaseUrlBlur"
 						/>
 					</label>
 
@@ -221,7 +301,9 @@ const testVoice = async () => {
 							v-model="gptsovitsRefAudio"
 							class="input-base"
 							placeholder="E:/GPT-SoVITS/reference.wav"
-							@blur="SAVE.save('gptsovits_ref', () => RUNTIME.updateVoice({gptsovitsRefAudio: gptsovitsRefAudio.trim()}))"
+							@focus="gptsovitsRefAudioField.focus"
+							@input="gptsovitsRefAudioField.touch"
+							@blur="onGptRefAudioBlur"
 						/>
 					</label>
 
@@ -232,7 +314,9 @@ const testVoice = async () => {
 								v-model="gptsovitsPromptText"
 								class="input-base"
 								:placeholder="I18N.gptSovits.promptTextPlaceholder"
-								@blur="SAVE.save('gptsovits_text', () => RUNTIME.updateVoice({gptsovitsPromptText: gptsovitsPromptText.trim()}))"
+								@focus="gptsovitsPromptTextField.focus"
+								@input="gptsovitsPromptTextField.touch"
+								@blur="onGptPromptTextBlur"
 							/>
 						</label>
 						<label class="field w-[10rem] shrink-0">
@@ -241,7 +325,9 @@ const testVoice = async () => {
 								v-model="gptsovitsPromptLang"
 								class="input-base"
 								placeholder="zh / ja / en"
-								@blur="SAVE.save('gptsovits_lang', () => RUNTIME.updateVoice({gptsovitsPromptLang: gptsovitsPromptLang.trim()}))"
+								@focus="gptsovitsPromptLangField.focus"
+								@input="gptsovitsPromptLangField.touch"
+								@blur="onGptPromptLangBlur"
 							/>
 						</label>
 					</div>
@@ -254,7 +340,9 @@ const testVoice = async () => {
 							v-model="ttsVoice"
 							class="input-base"
 							placeholder="nova, alloy, shimmer..."
-							@blur="SAVE.save('tts_voice', () => RUNTIME.updateVoice({ttsVoice: ttsVoice.trim()}))"
+							@focus="ttsVoiceField.focus"
+							@input="ttsVoiceField.touch"
+							@blur="onTtsVoiceBlur"
 						/>
 					</label>
 
@@ -266,10 +354,7 @@ const testVoice = async () => {
 							:max="2.0"
 							:step="0.1"
 							:format-tooltip="(v: number) => `${v}x`"
-							@update:value="(v: number) => {
-								ttsSpeed = v
-								SAVE.save('tts_speed', () => RUNTIME.updateVoice({ttsSpeed: String(v)}))
-							}"
+							@update:value="onTtsSpeedChange"
 						/>
 					</div>
 				</div>
@@ -278,10 +363,7 @@ const testVoice = async () => {
 					<AppSwitchRow :title="I18N.tts.autoPlay" :desc="I18N.tts.autoPlayDesc">
 						<n-switch
 							:value="ttsAutoPlay"
-							@update:value="(v: boolean) => {
-								ttsAutoPlay = v
-								void SAVE.saveNow('tts_auto_play', () => RUNTIME.updateVoice({ttsAutoPlay: v}))
-							}"
+							@update:value="onTtsAutoPlayChange"
 						/>
 					</AppSwitchRow>
 				</div>
@@ -313,7 +395,9 @@ const testVoice = async () => {
 						v-model="sttBaseUrl"
 						class="input-base"
 						placeholder="https://api.openai.com/v1"
-						@blur="SAVE.save('stt_base_url', () => RUNTIME.updateVoice({sttBaseUrl: sttBaseUrl.trim(), sttProvider: 'whisper'}))"
+						@focus="sttBaseUrlField.focus"
+						@input="sttBaseUrlField.touch"
+						@blur="onSttBaseUrlBlur"
 					/>
 				</label>
 
@@ -324,11 +408,7 @@ const testVoice = async () => {
 						type="password"
 						class="input-base"
 						placeholder="sk-..."
-						@blur="() => {
-							const VALUE = sttApiKeyInput.trim()
-							sttApiKeyInput = ''
-							if (VALUE) SAVE.save('stt_api_key', () => RUNTIME.updateVoice({sttApiKey: VALUE}))
-						}"
+						@blur="onSttApiKeyBlur"
 					/>
 				</label>
 			</AppCard>

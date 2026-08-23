@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import {computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
-import {useDialog} from "naive-ui"
+import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useTextareaAutosize} from "@vueuse/core"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
 import AppChip from "./ui/AppChip.vue"
 import AppEmpty from "./ui/AppEmpty.vue"
 import AppButton from "./ui/AppButton.vue"
-import {RUNTIME, type ApprovalRequestDto} from "../services/runtime"
+import AppModal from "./ui/AppModal.vue"
+import {RUNTIME} from "../services/runtime"
 import {createChatStore} from "../services/runtime/chatStore"
 import {renderMarkdown} from "../services/chat/markdown"
 import {splitAssistantMessage} from "../services/chat/split"
@@ -29,10 +29,9 @@ const currentModel = computed(() => {
 
 // 聊天状态机 (业务在后端, 这里只渲染投影)
 const CHAT = createChatStore()
-const {bubbles, sending, executingTool, metrics, errorMsg, agentState} = CHAT
+const {bubbles, sending, executingTool, metrics, errorMsg, failedInput, statusCode, pendingApprovals, agentState} = CHAT
 
 const listRef = ref<HTMLElement>()
-const DIALOG = useDialog()
 const copiedBubbleKey = ref<string | null>(null)
 
 // 输入框自适应高度 (1 行起, 最多 10rem)
@@ -60,6 +59,7 @@ interface DisplayBubble {
 	isFirstInGroup: boolean
 }
 
+const MAX_RENDERED_BUBBLES = 500
 const MARKDOWN_CACHE = new Map<string, string>()
 const markdownFor = (key: string, content: string): string => {
 	const CACHE_KEY = `${key}:${content}`
@@ -73,8 +73,11 @@ const markdownFor = (key: string, content: string): string => {
 
 const displayBubbles = computed<DisplayBubble[]>(() => {
 	const LIST: DisplayBubble[] = []
-	const LAST_INDEX = bubbles.value.length - 1
-	bubbles.value.forEach((msg, index) => {
+	const SOURCE = bubbles.value.length > MAX_RENDERED_BUBBLES
+		? bubbles.value.slice(-MAX_RENDERED_BUBBLES)
+		: bubbles.value
+	const LAST_INDEX = SOURCE.length - 1
+	SOURCE.forEach((msg, index) => {
 		if (msg.role !== "assistant") {
 			LIST.push({key: msg.key, role: msg.role, content: msg.content, isFirstInGroup: true})
 			return
@@ -98,10 +101,11 @@ const unreadCount = ref(0)
 
 const scrollToBottom = async (smooth = true) => {
 	await nextTick()
+	const REDUCED_MOTION = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
 	if (listRef.value) {
 		listRef.value.scrollTo({
 			top: listRef.value.scrollHeight,
-			behavior: smooth ? "smooth" : "auto",
+			behavior: smooth && !REDUCED_MOTION ? "smooth" : "auto",
 		})
 	}
 	isScrolledUp.value = false
@@ -140,6 +144,15 @@ const stateText = computed(() => {
 	if (agentState.value === "streaming" || sending.value) return I18N.value.sending
 	return ""
 })
+const statusText = computed(() => {
+	if (statusCode.value === "cancelled") return I18N.value.cancelled
+	if (statusCode.value === "approval-timeout") return I18N.value.approvalTimeout
+	return ""
+})
+
+watch(failedInput, value => {
+	if (value && !input.value.trim()) input.value = value
+})
 
 // 格式化数字与速度
 const formatNum = (value?: number) => (typeof value === "number" ? value.toLocaleString() : "0")
@@ -148,41 +161,18 @@ const tokensPerSecond = computed(() => {
 	return Math.round((metrics.value.completionTokens / (metrics.value.durationMs / 1000)) * 10) / 10
 })
 
-// 逐调用工具授权
-const shownApprovalIds = new Set<string>()
-const activeApproval = computed<ApprovalRequestDto | null>(() => {
-	for (const pending of CHAT.pendingApprovals.value) {
-		if (!shownApprovalIds.has(pending.request.requestId)) return pending.request
-	}
-	return null
+// 逐调用工具授权: 队列首项使用 AppModal 展示, 倒计时由 store 每秒更新。
+const activeApproval = computed(() => pendingApprovals.value[0] ?? null)
+const approvalVisible = computed({
+	get: () => activeApproval.value !== null,
+	set: (value: boolean) => {
+		if (value || !activeApproval.value) return
+		void CHAT.decideApproval(activeApproval.value.request.requestId, false).catch(error => {
+			feedback.error(I18N.value.cancelFailed, error)
+		})
+	},
 })
-
-let dialogShownFor: string | null = null
-const showApprovalDialogIfAny = () => {
-	const REQUEST = activeApproval.value
-	if (!REQUEST || dialogShownFor === REQUEST.requestId) return
-	dialogShownFor = REQUEST.requestId
-	shownApprovalIds.add(REQUEST.requestId)
-	DIALOG.warning({
-		title: I18N.value.approvalTitle,
-		content: () => h("div", [
-			h("p", {class: "m-0 mb-2 text-base text-nori-teal-bright"},
-				`${REQUEST.toolName}${REQUEST.description ? ` — ${REQUEST.description}` : ""}`),
-			h("pre", {class: "m-0 max-h-[16rem] overflow-auto p-2.5 rounded-sm bg-white/5 text-sm leading-relaxed whitespace-pre-wrap mono"},
-				JSON.stringify(REQUEST.arguments ?? {}, null, 2)),
-		]),
-		positiveText: I18N.value.approve,
-		negativeText: I18N.value.deny,
-		closable: true,
-		onPositiveClick: () => void CHAT.decideApproval(REQUEST.requestId, true),
-		onNegativeClick: () => void CHAT.decideApproval(REQUEST.requestId, false),
-		onClose: () => void CHAT.decideApproval(REQUEST.requestId, false),
-		onMaskClick: () => void CHAT.decideApproval(REQUEST.requestId, false),
-	})
-}
-
-// 授权弹窗由待决队列驱动 (原来是 200ms 常驻轮询, 白燃 CPU)
-watch(() => CHAT.pendingApprovals.value.length, () => showApprovalDialogIfAny())
+const approvalSeconds = computed(() => activeApproval.value?.remainingSeconds.value ?? 0)
 
 // 历史翻页
 const loadOlderHistory = async () => {
@@ -228,10 +218,13 @@ onMounted(async () => {
 	await RUNTIME.init()
 	unlistenAgent = await CHAT.connect()
 	if (RUNTIME.snapshot.value?.ai.configured) {
-		await CHAT.loadRecent()
-		await scrollToBottom(false)
+		try {
+			await CHAT.loadRecent()
+			await scrollToBottom(false)
+		} catch (error) {
+			feedback.error(I18N.value.loadEarlierFailed, error)
+		}
 	}
-	showApprovalDialogIfAny()
 })
 
 onBeforeUnmount(() => {
@@ -265,8 +258,13 @@ const handleKeyDown = (event: KeyboardEvent) => {
 }
 
 // 停止当前生成
-const stopGeneration = () => {
-	void CHAT.abort()
+const stopGeneration = async () => {
+	try {
+		await CHAT.abort()
+		feedback.info(I18N.value.cancelled)
+	} catch (error) {
+		feedback.error(I18N.value.cancelFailed, error)
+	}
 }
 
 // 清空当前对话历史
@@ -276,6 +274,13 @@ const clearChatHistory = async () => {
 	} catch (error) {
 		feedback.error(I18N.value.clearFailed, error)
 	}
+}
+
+const retryLast = async () => {
+	if (!failedInput.value) return
+	input.value = failedInput.value
+	await CHAT.retryLast()
+	await scrollToBottom(true)
 }
 
 // ---- 语音输入状态机: idle → recording → transcribing → idle ----
@@ -378,7 +383,7 @@ const toggleVoiceInput = async () => {
 						<span
 							class="mono"
 							:class="metrics && metrics.totalTokens > 0 ? 'text-nori-teal-bright font-600' : 'text-text-body'"
-						>{{ metrics ? formatNum(metrics.totalTokens) : "0" }} tok</span>
+						>{{ metrics ? formatNum(metrics.totalTokens) : "0" }} {{ I18N.tokens }}</span>
 						<span v-if="metrics && metrics.durationMs > 0" class="mono text-text-faint">({{ tokensPerSecond }} t/s)</span>
 					</span>
 
@@ -516,10 +521,19 @@ const toggleVoiceInput = async () => {
 			</Transition>
 
 			<p
+				v-if="statusText"
+				class="shrink-0 m-0 px-4 py-1.5 text-xs text-text-muted bg-white/3 border-t border-line-subtle"
+				role="status"
+			>{{ statusText }}</p>
+
+			<div
 				v-if="errorMsg"
-				class="shrink-0 m-0 px-4 py-1.5 text-xs text-danger-text bg-danger/10 border-t border-danger/20"
+				class="shrink-0 flex items-center justify-between gap-3 m-0 px-4 py-1.5 text-xs text-danger-text bg-danger/10 border-t border-danger/20"
 				role="alert"
-			>{{ errorMsg }}</p>
+			>
+				<span class="min-w-0 break-words">{{ errorMsg }}</span>
+				<AppButton v-if="failedInput" size="sm" icon="refresh" @click="retryLast">{{ I18N.retryLast }}</AppButton>
+			</div>
 
 			<!-- 底部输入控制台 (自适应多行, Enter 发送, Shift+Enter 换行) -->
 			<div class="relative shrink-0 flex items-end gap-3 px-4.5 py-3.5 border-t border-line-subtle bg-bg-deep/85 backdrop-blur-[1.4rem]">

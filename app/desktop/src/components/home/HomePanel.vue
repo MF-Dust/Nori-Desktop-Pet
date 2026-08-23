@@ -29,6 +29,14 @@ const aiProvider = computed(() => SNAPSHOT.value?.ai.provider ?? "")
 const aiModel = computed(() => SNAPSHOT.value?.ai.model ?? "")
 const enabledSkillsCount = computed(() => SNAPSHOT.value?.enabledSkillsCount ?? 0)
 const enabledToolsCount = computed(() => (SNAPSHOT.value?.tools ?? []).filter(tool => tool.enabled).length)
+const ENGINE_TEXT = computed(() => {
+	switch (SNAPSHOT.value?.platform.os) {
+		case "windows": return I18N.value.system.engineWindows
+		case "macos": return I18N.value.system.engineMacos
+		case "linux": return I18N.value.system.engineLinux
+		default: return I18N.value.system.engineUnknown
+	}
+})
 
 // ---- 快捷动作提示反馈 ----
 const motionFeedback = ref(false)
@@ -312,7 +320,7 @@ onMounted(() => {
 				<span class="opacity-30">/</span>
 				<span class="flex items-center">
 					<span>{{ I18N.system.webview }}:</span>
-					<span class="ml-1 text-text-muted">Avalonia + WebView2</span>
+					<span class="ml-1 text-text-muted">{{ ENGINE_TEXT }}</span>
 				</span>
 				<span class="opacity-30">/</span>
 				<span class="inline-flex items-center gap-1.5 text-success font-500">

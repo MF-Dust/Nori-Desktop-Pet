@@ -4,7 +4,7 @@
  * 订阅后端 Agent 事件并维护气泡列表/状态/指标/待决授权队列。
  * 业务真相在后端: 这里只做事件到 UI 投影的转换, 不落库、不解析历史。
  */
-import {ref} from "vue"
+import {ref, type Ref} from "vue"
 import {RUNTIME, type ApprovalRequestDto, type AgentEventPayload, type AgentState, type UsageMetrics} from "./index"
 
 /** 聊天气泡 */
@@ -18,6 +18,7 @@ export interface ChatBubble {
 export interface PendingApproval {
 	request: ApprovalRequestDto
 	resolve: (approved: boolean) => void
+	remainingSeconds: Ref<number>
 }
 
 /**
@@ -25,23 +26,28 @@ export interface PendingApproval {
  *
  * @param options.watchdogMs 一轮会话无任何事件的容忍上限, 超时后复位并报错 (0 = 关闭)
  */
-export function createChatStore(options: {watchdogMs?: number} = {}) {
+export function createChatStore(options: {watchdogMs?: number; approvalTimeoutMs?: number} = {}) {
 	const WATCHDOG_MS = options.watchdogMs ?? 120_000
+	const APPROVAL_TIMEOUT_MS = options.approvalTimeoutMs ?? 30_000
 	const bubbles = ref<ChatBubble[]>([])
 	const sending = ref(false)
 	const agentState = ref<AgentState>("idle")
 	const executingTool = ref("")
 	const metrics = ref<UsageMetrics | null>(null)
 	const errorMsg = ref("")
+	const failedInput = ref("")
+	const statusCode = ref<"idle" | "cancelled" | "timeout" | "approval-timeout">("idle")
 	const pendingApprovals = ref<PendingApproval[]>([])
 	const hasMoreHistory = ref(false)
 	const loadingHistory = ref(false)
 
 	let activeSessionId: string | null = null
+	let activeInput = ""
 	let oldestLoadedId = 0
 	let placeholderKey = ""
 	let unlisten: (() => void) | null = null
 	let watchdogTimer: ReturnType<typeof setTimeout> | null = null
+	const approvalTimers = new Map<string, ReturnType<typeof setInterval>>()
 
 	/** 看门狗: 后端事件丢了时不能让输入框永久锁在“发送中” */
 	function armWatchdog(): void {
@@ -51,8 +57,9 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			watchdogTimer = null
 			if (!sending.value) return
 			errorMsg.value = "会话超时: 未收到后端响应"
+			statusCode.value = "timeout"
 			const SESSION = activeSessionId
-			finishTurn(true)
+			finishTurn(true, true)
 			if (SESSION) void RUNTIME.cancelChat(SESSION).catch(() => {})
 		}, WATCHDOG_MS)
 	}
@@ -72,6 +79,8 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			oldestLoadedId = page.length > 0 ? page[0].id : 0
 		} catch (error) {
 			console.error("加载聊天历史失败:", error)
+			errorMsg.value = String(error)
+			throw error
 		} finally {
 			loadingHistory.value = false
 		}
@@ -103,6 +112,9 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 		if (!trimmed || sending.value) return
 
 		errorMsg.value = ""
+		statusCode.value = "idle"
+		failedInput.value = ""
+		activeInput = trimmed
 		sending.value = true
 		placeholderKey = `pending-${Date.now()}`
 		bubbles.value.push({key: `user-${Date.now()}`, role: "user", content: trimmed})
@@ -113,32 +125,62 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			armWatchdog()
 		} catch (error) {
 			errorMsg.value = String(error)
+			failedInput.value = trimmed
 			removePlaceholderIfEmpty()
 			sending.value = false
 			activeSessionId = null
+			activeInput = ""
 		}
+	}
+
+	/** 重试最近一次失败或被取消的输入 */
+	async function retryLast(): Promise<void> {
+		if (!failedInput.value || sending.value) return
+		await send(failedInput.value)
 	}
 
 	/** 中止当前会话 */
 	async function abort(): Promise<void> {
 		if (!activeSessionId) return
-		await RUNTIME.cancelChat(activeSessionId).catch(() => {})
+		try {
+			await RUNTIME.cancelChat(activeSessionId)
+		} catch (error) {
+			errorMsg.value = String(error)
+			throw error
+		}
 	}
 
-	/** 清空对话 */
+	/** 清空对话: 后端成功后才清空本地投影 */
 	async function clear(): Promise<void> {
-		await RUNTIME.clearChat().catch(() => {})
+		await RUNTIME.clearChat()
 		bubbles.value = []
 		metrics.value = null
 		errorMsg.value = ""
+		failedInput.value = ""
+		statusCode.value = "idle"
 		oldestLoadedId = 0
 		hasMoreHistory.value = false
 	}
 
+	function clearApprovalTimer(requestId: string): void {
+		const TIMER = approvalTimers.get(requestId)
+		if (TIMER) clearInterval(TIMER)
+		approvalTimers.delete(requestId)
+	}
+
 	/** 对授权请求作出决定 */
-	async function decideApproval(requestId: string, approved: boolean): Promise<void> {
+	async function decideApproval(requestId: string, approved: boolean, timedOut = false): Promise<void> {
+		const ITEM = pendingApprovals.value.find(item => item.request.requestId === requestId)
+		if (!ITEM) return
+		clearApprovalTimer(requestId)
 		pendingApprovals.value = pendingApprovals.value.filter(item => item.request.requestId !== requestId)
-		await RUNTIME.respondApproval(requestId, approved).catch(() => {})
+		if (timedOut) statusCode.value = "approval-timeout"
+		try {
+			await RUNTIME.respondApproval(requestId, approved)
+		} catch (error) {
+			errorMsg.value = String(error)
+			throw error
+		}
 	}
 
 	function removePlaceholderIfEmpty(): void {
@@ -184,10 +226,22 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			}
 			case "approval-request": {
 				if (payload.sessionId !== activeSessionId) return
+				if (pendingApprovals.value.some(item => item.request.requestId === payload.requestId)) return
+				const REMAINING = ref(Math.max(1, Math.ceil(APPROVAL_TIMEOUT_MS / 1000)))
 				pendingApprovals.value.push({
 					request: payload,
 					resolve: (approved) => void decideApproval(payload.requestId, approved),
+					remainingSeconds: REMAINING,
 				})
+				const TIMER = setInterval(() => {
+					const NEXT = REMAINING.value - 1
+					REMAINING.value = Math.max(0, NEXT)
+					if (NEXT <= 0) {
+						clearApprovalTimer(payload.requestId)
+						void decideApproval(payload.requestId, false, true).catch(error => console.error("工具授权超时响应失败:", error))
+					}
+				}, 1000)
+				approvalTimers.set(payload.requestId, TIMER)
 				agentState.value = "waiting_approval"
 				break
 			}
@@ -202,25 +256,28 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			}
 			case "cancelled": {
 				if (payload.sessionId !== activeSessionId) return
-				finishTurn(true)
+				statusCode.value = "cancelled"
+				finishTurn(true, true)
 				break
 			}
 			case "error": {
 				if (payload.sessionId !== activeSessionId) return
 				errorMsg.value = payload.error
-				finishTurn(true)
+				finishTurn(true, true)
 				break
 			}
 		}
 	}
 
-	function finishTurn(cancelled = false): void {
+	function finishTurn(cancelled = false, restoreInput = false): void {
 		clearWatchdog()
 		removePlaceholderIfEmpty()
+		if (restoreInput && activeInput) failedInput.value = activeInput
 		if (cancelled) agentState.value = "idle"
 		sending.value = false
 		executingTool.value = ""
 		activeSessionId = null
+		activeInput = ""
 	}
 
 	/** 订阅后端事件; 组件卸载时调用返回的清理函数 */
@@ -239,6 +296,7 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 			activeSessionId = null
 		}
 		for (const pending of pendingApprovals.value) {
+			clearApprovalTimer(pending.request.requestId)
 			void RUNTIME.respondApproval(pending.request.requestId, false).catch(() => {})
 		}
 		pendingApprovals.value = []
@@ -253,12 +311,15 @@ export function createChatStore(options: {watchdogMs?: number} = {}) {
 		executingTool,
 		metrics,
 		errorMsg,
+		failedInput,
+		statusCode,
 		pendingApprovals,
 		hasMoreHistory,
 		loadingHistory,
 		loadRecent,
 		loadOlder,
 		send,
+		retryLast,
 		abort,
 		clear,
 		decideApproval,

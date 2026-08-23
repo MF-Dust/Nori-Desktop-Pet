@@ -277,6 +277,18 @@ button, input, textarea, select {
 	}
 }
 
+// ---------- 尊重系统的减少动态效果偏好 ----------
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+
 // ---------- Vue 过渡类 (无法用原子类表达, 全局保留) ----------
 .tab-fade-enter-active,
 .tab-fade-leave-active {

@@ -253,20 +253,45 @@ const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(I18N.val
 
 const numberValue = (event: Event) => Number((event.target as HTMLInputElement).value)
 
-const saveMemorySetting = <T>(key: string, field: {touch: () => void; commit: () => void}, value: T) => {
+type EditableMemoryField = {
+	value: {value: unknown}
+	touch: () => void
+	blur: () => void
+	reset: () => void
+	commit: () => void
+}
+
+const saveMemorySetting = <T>(key: string, field: EditableMemoryField, value: T) => {
 	field.touch()
+	field.blur()
 	SAVE.save(key, async () => {
-		await RUNTIME.memoryUpdateSettings({[key]: value} as Partial<MemorySettings>)
-		field.commit()
+		try {
+			await RUNTIME.memoryUpdateSettings({[key]: value} as Partial<MemorySettings>)
+			field.commit()
+		} catch (error) {
+			field.reset()
+			throw error
+		}
 	})
 }
 
-const saveEmbedding = (key: string, field: {blur: () => void; commit: () => void}, task: () => Promise<void>) => {
+const saveEmbedding = (key: string, field: EditableMemoryField, task: () => Promise<void>) => {
+	field.touch()
 	field.blur()
 	SAVE.save(key, async () => {
-		await task()
-		field.commit()
+		try {
+			await task()
+			field.commit()
+		} catch (error) {
+			field.reset()
+			throw error
+		}
 	})
+}
+
+const updateNumberField = (field: EditableMemoryField, event: Event): void => {
+	field.value.value = numberValue(event)
+	field.touch()
 }
 
 // 保存维数: 留空表示用模型默认; 非正整数一律回退为空
@@ -519,14 +544,14 @@ const clearAll = async () => {
 
 			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.advanced.title" icon="settings">
 				<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-					<AppField :label="I18N.advanced.reflectionRounds"><input :value="reflectionRoundsField.value" type="number" min="1" max="32" class="input-base" @focus="reflectionRoundsField.focus" @input="reflectionRoundsField.touch" @blur="saveMemorySetting('reflectionRounds', reflectionRoundsField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.reflectionMinChars"><input :value="reflectionMinCharsField.value" type="number" min="100" max="20000" class="input-base" @focus="reflectionMinCharsField.focus" @input="reflectionMinCharsField.touch" @blur="saveMemorySetting('reflectionMinChars', reflectionMinCharsField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.recallTopK"><input :value="recallTopKField.value" type="number" min="1" max="20" class="input-base" @focus="recallTopKField.focus" @input="recallTopKField.touch" @blur="saveMemorySetting('recallTopK', recallTopKField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.keywordTopK"><input :value="keywordTopKField.value" type="number" min="1" max="100" class="input-base" @focus="keywordTopKField.focus" @input="keywordTopKField.touch" @blur="saveMemorySetting('keywordTopK', keywordTopKField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.vectorTopK"><input :value="vectorTopKField.value" type="number" min="1" max="100" class="input-base" @focus="vectorTopKField.focus" @input="vectorTopKField.touch" @blur="saveMemorySetting('vectorTopK', vectorTopKField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.rrfK"><input :value="rrfKField.value" type="number" min="1" max="500" class="input-base" @focus="rrfKField.focus" @input="rrfKField.touch" @blur="saveMemorySetting('rrfK', rrfKField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.minSimilarity"><input :value="minSimilarityField.value" type="number" min="0" max="1" step="0.01" class="input-base" @focus="minSimilarityField.focus" @input="minSimilarityField.touch" @blur="saveMemorySetting('minSimilarity', minSimilarityField, numberValue($event))"/></AppField>
-					<AppField :label="I18N.advanced.archiveThreshold"><input :value="archiveThresholdField.value" type="number" min="0" max="1" step="0.01" class="input-base" @focus="archiveThresholdField.focus" @input="archiveThresholdField.touch" @blur="saveMemorySetting('archiveThreshold', archiveThresholdField, numberValue($event))"/></AppField>
+					<AppField :label="I18N.advanced.reflectionRounds"><input :value="reflectionRoundsField.value" type="number" min="1" max="32" class="input-base" @focus="reflectionRoundsField.focus" @input="updateNumberField(reflectionRoundsField, $event)" @blur="saveMemorySetting('reflectionRounds', reflectionRoundsField, reflectionRoundsField.value)"/></AppField>
+					<AppField :label="I18N.advanced.reflectionMinChars"><input :value="reflectionMinCharsField.value" type="number" min="100" max="20000" class="input-base" @focus="reflectionMinCharsField.focus" @input="updateNumberField(reflectionMinCharsField, $event)" @blur="saveMemorySetting('reflectionMinChars', reflectionMinCharsField, reflectionMinCharsField.value)"/></AppField>
+					<AppField :label="I18N.advanced.recallTopK"><input :value="recallTopKField.value" type="number" min="1" max="20" class="input-base" @focus="recallTopKField.focus" @input="updateNumberField(recallTopKField, $event)" @blur="saveMemorySetting('recallTopK', recallTopKField, recallTopKField.value)"/></AppField>
+					<AppField :label="I18N.advanced.keywordTopK"><input :value="keywordTopKField.value" type="number" min="1" max="100" class="input-base" @focus="keywordTopKField.focus" @input="updateNumberField(keywordTopKField, $event)" @blur="saveMemorySetting('keywordTopK', keywordTopKField, keywordTopKField.value)"/></AppField>
+					<AppField :label="I18N.advanced.vectorTopK"><input :value="vectorTopKField.value" type="number" min="1" max="100" class="input-base" @focus="vectorTopKField.focus" @input="updateNumberField(vectorTopKField, $event)" @blur="saveMemorySetting('vectorTopK', vectorTopKField, vectorTopKField.value)"/></AppField>
+					<AppField :label="I18N.advanced.rrfK"><input :value="rrfKField.value" type="number" min="1" max="500" class="input-base" @focus="rrfKField.focus" @input="updateNumberField(rrfKField, $event)" @blur="saveMemorySetting('rrfK', rrfKField, rrfKField.value)"/></AppField>
+					<AppField :label="I18N.advanced.minSimilarity"><input :value="minSimilarityField.value" type="number" min="0" max="1" step="0.01" class="input-base" @focus="minSimilarityField.focus" @input="updateNumberField(minSimilarityField, $event)" @blur="saveMemorySetting('minSimilarity', minSimilarityField, minSimilarityField.value)"/></AppField>
+					<AppField :label="I18N.advanced.archiveThreshold"><input :value="archiveThresholdField.value" type="number" min="0" max="1" step="0.01" class="input-base" @focus="archiveThresholdField.focus" @input="updateNumberField(archiveThresholdField, $event)" @blur="saveMemorySetting('archiveThreshold', archiveThresholdField, archiveThresholdField.value)"/></AppField>
 				</div>
 				<div class="grid grid-cols-2 gap-2 md:grid-cols-4">
 					<AppChip :tone="knowledgeEnabledField.value ? 'success' : 'warning'" class="cursor-pointer" @click="saveMemorySetting('knowledgeEnabled', knowledgeEnabledField, !knowledgeEnabledField.value)">{{ I18N.advanced.knowledge }}: {{ knowledgeEnabledField.value ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>

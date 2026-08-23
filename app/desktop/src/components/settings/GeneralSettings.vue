@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from "vue"
+import {computed, onMounted} from "vue"
 import {RUNTIME} from "../../services/runtime"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {useSnapshotField} from "../../composables/useSnapshotField"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
 import {feedback} from "../../services/feedback"
@@ -8,13 +10,24 @@ import AppCard from "../ui/AppCard.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
 
-const currentLang = ref("zh-CN")
-const autoSummon = ref(true)
-const appVersion = ref("0.1.0")
-const telemetryEnabled = ref(true)
-const telemetryConsent = ref<"unset" | "granted" | "denied">("unset")
-const telemetryAvailable = ref(false)
+const currentLangField = useSnapshotField(snapshot => snapshot.general.language, "zh-CN")
+const autoSummonField = useSnapshotField(snapshot => snapshot.general.petAutoSummon, true)
+const telemetryEnabledField = useSnapshotField(snapshot => snapshot.telemetry.enabled, false)
+const currentLang = currentLangField.value
+const autoSummon = autoSummonField.value
+const telemetryEnabled = telemetryEnabledField.value
+const appVersion = computed(() => RUNTIME.snapshot.value?.app.appVersion ?? "0.1.0")
+const telemetryAvailable = computed(() => RUNTIME.snapshot.value?.telemetry.available ?? false)
+const telemetryConsent = computed(() => RUNTIME.snapshot.value?.telemetry.consent ?? "unset")
 const TEXT = computed(() => useLanguages().views.main.general)
+const ENGINE_TEXT = computed(() => {
+	switch (RUNTIME.snapshot.value?.platform.os) {
+		case "windows": return TEXT.value.about.engineWindows
+		case "macos": return TEXT.value.about.engineMacos
+		case "linux": return TEXT.value.about.engineLinux
+		default: return TEXT.value.about.engineUnknown
+	}
+})
 const TELEMETRY_DESC = computed(() => {
 	if (!telemetryAvailable.value) return TEXT.value.telemetry.unavailable
 	if (telemetryConsent.value === "unset") return TEXT.value.telemetry.pending
@@ -26,43 +39,64 @@ const TELEMETRY_STATUS = computed(() => {
 	return telemetryEnabled.value ? TEXT.value.telemetry.statusEnabled : TEXT.value.telemetry.statusDisabled
 })
 
-let synced = false
-onMounted(async () => {
-	await RUNTIME.init()
-	const SNAPSHOT = RUNTIME.snapshot.value
-	if (!SNAPSHOT || synced) return
-	synced = true
-	currentLang.value = SNAPSHOT.general.language
-	autoSummon.value = SNAPSHOT.general.petAutoSummon
-	telemetryConsent.value = SNAPSHOT.telemetry.consent
-	telemetryEnabled.value = SNAPSHOT.telemetry.consent !== "denied"
-	telemetryAvailable.value = SNAPSHOT.telemetry.available
-	appVersion.value = SNAPSHOT.app.appVersion
+const SAVE = useDebouncedSave({
+	onError: (key, error) => {
+		if (key === "language") currentLangField.reset()
+		if (key === "petAutoSummon") autoSummonField.reset()
+		if (key === "telemetryEnabled") telemetryEnabledField.reset()
+		feedback.error(TEXT.value.telemetry.saveFailed, error)
+	},
+
 })
 
-// 切换语言: 本地立即生效, 持久化交给后端 (其他窗口经广播刷新)
+// 切换语言: 本地立即生效, 失败时回滚到快照语言。
 const onLanguageChange = (lang: string) => {
 	currentLang.value = lang
-	void useLanguage.setLanguage(lang)
-	void RUNTIME.updateGeneral({language: lang})
+	currentLangField.touch()
+	void SAVE.saveNow("language", async () => {
+		try {
+			await useLanguage.setLanguage(lang)
+			await RUNTIME.updateGeneral({language: lang})
+			currentLangField.commit()
+		} catch (error) {
+			currentLangField.reset()
+			await useLanguage.setLanguage(currentLang.value)
+			throw error
+		}
+	})
 }
 
 const onAutoSummonChange = (val: boolean) => {
 	autoSummon.value = val
-	void RUNTIME.updateGeneral({petAutoSummon: val})
+	autoSummonField.touch()
+	void SAVE.saveNow("petAutoSummon", async () => {
+		try {
+			await RUNTIME.updateGeneral({petAutoSummon: val})
+			autoSummonField.commit()
+		} catch (error) {
+			autoSummonField.reset()
+			throw error
+		}
+	})
 }
 
-const onTelemetryChange = async (val: boolean) => {
-	const PREVIOUS = telemetryEnabled.value
+const onTelemetryChange = (val: boolean) => {
 	telemetryEnabled.value = val
-	try {
-		await RUNTIME.updateGeneral({telemetryEnabled: val})
-		telemetryConsent.value = val ? "granted" : "denied"
-	} catch (error) {
-		telemetryEnabled.value = PREVIOUS
-		feedback.error(TEXT.value.telemetry.saveFailed, error)
-	}
+	telemetryEnabledField.touch()
+	void SAVE.saveNow("telemetryEnabled", async () => {
+		try {
+			await RUNTIME.updateGeneral({telemetryEnabled: val})
+			telemetryEnabledField.commit()
+		} catch (error) {
+			telemetryEnabledField.reset()
+			throw error
+		}
+	})
 }
+
+onMounted(() => {
+	void RUNTIME.init().catch(error => feedback.error(TEXT.value.telemetry.saveFailed, error))
+})
 </script>
 
 <template>
@@ -142,11 +176,11 @@ const onTelemetryChange = async (val: boolean) => {
 					</div>
 					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
 						<span class="text-sm text-text-muted">{{ TEXT.about.license }}</span>
-						<span class="text-sm text-text-primary mono">GPL-3.0 License</span>
+						<span class="text-sm text-text-primary mono">{{ TEXT.about.licenseValue }}</span>
 					</div>
 					<div class="flex items-center justify-between gap-3 py-2">
 						<span class="text-sm text-text-muted">{{ TEXT.about.renderer }}</span>
-						<span class="text-sm text-text-primary mono">Avalonia UI + Microsoft WebView2</span>
+						<span class="text-sm text-text-primary mono">{{ ENGINE_TEXT }}</span>
 					</div>
 				</div>
 			</AppCard>

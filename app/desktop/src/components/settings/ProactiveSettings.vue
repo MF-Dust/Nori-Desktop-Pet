@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {useSnapshotField} from "../../composables/useSnapshotField"
 import {feedback} from "../../services/feedback"
 import {i18n} from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
@@ -11,11 +13,14 @@ import AppSwitchRow from "../ui/AppSwitchRow.vue"
 
 const TEXT = computed(() => useLanguages().views.main.proactive)
 
-// 主动交互配置 (快照为真相)
-const idleEnabled = computed(() => RUNTIME.snapshot.value?.proactive.idleEnabled ?? true)
-const dailyGreeting = computed(() => RUNTIME.snapshot.value?.proactive.dailyGreeting ?? true)
-const idleMinutes = ref(15)
-let syncedIdle = false
+// 主动交互配置: 快照驱动且保留本地脏字段。
+const idleEnabledField = useSnapshotField(snapshot => snapshot.proactive.idleEnabled, true)
+const dailyGreetingField = useSnapshotField(snapshot => snapshot.proactive.dailyGreeting, true)
+const idleMinutesField = useSnapshotField(snapshot => snapshot.proactive.idleMinutes, 15)
+const idleEnabled = idleEnabledField.value
+const dailyGreeting = dailyGreetingField.value
+const idleMinutes = idleMinutesField.value
+const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(TEXT.value.reminders.addFailed, error)})
 
 // 提醒列表
 interface ReminderView {
@@ -23,7 +28,11 @@ interface ReminderView {
 	content: string
 	triggerTime: number
 }
-const reminders = ref<ReminderView[]>([])
+const reminders = computed<ReminderView[]>(() => (RUNTIME.snapshot.value?.proactive.reminders ?? []).map(item => ({
+	id: item.id,
+	content: item.content,
+	triggerTime: item.triggerTime,
+})))
 
 // 新建提醒输入
 const newReminderText = ref("")
@@ -36,35 +45,59 @@ const REMINDER_OPTIONS = computed(() => [
 	{label: `2 ${TEXT.value.hoursLater}`, value: 120},
 ])
 
-const syncReminders = () => {
-	const LIST = RUNTIME.snapshot.value?.proactive.reminders ?? []
-	reminders.value = LIST.map(item => ({id: item.id, content: item.content, triggerTime: item.triggerTime}))
-	if (!syncedIdle) {
-		syncedIdle = true
-		idleMinutes.value = RUNTIME.snapshot.value?.proactive.idleMinutes ?? 15
-	}
-}
-
 onMounted(async () => {
 	await RUNTIME.init()
-	syncReminders()
 })
+
+const saveProactiveField = (key: string, field: {touch: () => void; blur: () => void; reset: () => void; commit: () => void}, task: () => Promise<void>): void => {
+	field.touch()
+	field.blur()
+	void SAVE.saveNow(key, async () => {
+		try {
+			await task()
+			field.commit()
+		} catch (error) {
+			field.reset()
+			throw error
+		}
+	})
+}
+
+const onIdleEnabledChange = (value: boolean) => {
+	idleEnabled.value = value
+	saveProactiveField("idleEnabled", idleEnabledField, () => RUNTIME.updateProactive({idleEnabled: value}))
+}
+
+const onDailyGreetingChange = (value: boolean) => {
+	dailyGreeting.value = value
+	saveProactiveField("dailyGreeting", dailyGreetingField, () => RUNTIME.updateProactive({dailyGreeting: value}))
+}
+
+const onIdleMinutesChange = (value: number) => {
+	idleMinutes.value = value
+	saveProactiveField("idleMinutes", idleMinutesField, () => RUNTIME.updateProactive({idleMinutes: value}))
+}
 
 // 手动创建提醒
 const createReminder = async () => {
 	if (!newReminderText.value.trim()) return
-	await RUNTIME.reminderAdd(newReminderText.value.trim(), newReminderMinutes.value)
-		.catch(error => feedback.error(TEXT.value.reminders.addFailed, error))
-	newReminderText.value = ""
-	await RUNTIME.refresh()
-	syncReminders()
+	try {
+		await RUNTIME.reminderAdd(newReminderText.value.trim(), newReminderMinutes.value)
+		await RUNTIME.refresh()
+		newReminderText.value = ""
+	} catch (error) {
+		feedback.error(TEXT.value.reminders.addFailed, error)
+	}
 }
 
 // 取消提醒
 const cancelReminder = async (id: string) => {
-	await RUNTIME.reminderCancel(id).catch(error => feedback.error(TEXT.value.reminders.cancelFailed, error))
-	await RUNTIME.refresh()
-	syncReminders()
+	try {
+		await RUNTIME.reminderCancel(id)
+		await RUNTIME.refresh()
+	} catch (error) {
+		feedback.error(TEXT.value.reminders.cancelFailed, error)
+	}
 }
 </script>
 
@@ -78,7 +111,7 @@ const cancelReminder = async (id: string) => {
 				<AppSwitchRow :title="TEXT.idle.enabled" :desc="TEXT.idle.enabledDesc">
 					<n-switch
 						:value="idleEnabled"
-						@update:value="(val: boolean) => RUNTIME.updateProactive({idleEnabled: val})"
+						@update:value="onIdleEnabledChange"
 					/>
 				</AppSwitchRow>
 
@@ -101,7 +134,7 @@ const cancelReminder = async (id: string) => {
 								type="radio"
 								:value="min"
 								class="sr-only"
-								@change="RUNTIME.updateProactive({idleMinutes: min})"
+								@change="onIdleMinutesChange(min)"
 							/>
 							{{ min }} {{ TEXT.minutes }}
 						</label>
@@ -114,7 +147,7 @@ const cancelReminder = async (id: string) => {
 				<AppSwitchRow :title="TEXT.daily.enabled" :desc="TEXT.daily.enabledDesc">
 					<n-switch
 						:value="dailyGreeting"
-						@update:value="(val: boolean) => RUNTIME.updateProactive({dailyGreeting: val})"
+						@update:value="onDailyGreetingChange"
 					/>
 				</AppSwitchRow>
 			</AppCard>
@@ -131,7 +164,7 @@ const cancelReminder = async (id: string) => {
 					<n-select
 						v-model:value="newReminderMinutes"
 						:options="REMINDER_OPTIONS"
-						style="width: 14rem;"
+						class="w-[14rem]"
 					/>
 					<n-button type="primary" :disabled="!newReminderText.trim()" @click="createReminder">
 						{{ TEXT.reminders.add }}

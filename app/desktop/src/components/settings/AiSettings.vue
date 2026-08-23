@@ -2,6 +2,7 @@
 import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {useSnapshotField} from "../../composables/useSnapshotField"
 import {feedback, errorText} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
@@ -21,12 +22,19 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 	google: "https://generativelanguage.googleapis.com/v1beta",
 }
 
-// 本地编辑缓冲 (快照为真相, 输入防抖后提交)
-const provider = ref<ProviderKey>("openai")
-const baseUrl = ref("")
+// 本地编辑缓冲: 未编辑字段跟随快照, 正在编辑或脏字段保持本地值。
+const providerField = useSnapshotField(snapshot => {
+	const VALUE = snapshot.ai.provider
+	return (PROVIDER_OPTIONS as string[]).includes(VALUE) ? VALUE as ProviderKey : "openai"
+}, "openai" as ProviderKey)
+const baseUrlField = useSnapshotField(snapshot => snapshot.ai.baseUrl, "")
+const modelField = useSnapshotField(snapshot => snapshot.ai.model, "")
+const personaField = useSnapshotField(snapshot => snapshot.ai.persona, "")
+const provider = providerField.value
+const baseUrl = baseUrlField.value
 const apiKeyInput = ref("")
-const model = ref("")
-const persona = ref("")
+const model = modelField.value
+const persona = personaField.value
 const hasApiKey = computed(() => RUNTIME.snapshot.value?.ai.hasApiKey ?? false)
 const apiKeyPlaceholder = computed(() => {
 	if (hasApiKey.value) return I18N.value.apiKeySavedHint
@@ -46,21 +54,8 @@ const loading = ref(false)
 const models = ref<string[]>([])
 const errorMsg = ref("")
 
-// 从快照同步到本地编辑态 (仅初始化一次, 避免覆盖正在输入的内容)
-let synced = false
-const syncFromSnapshot = () => {
-	const AI = RUNTIME.snapshot.value?.ai
-	if (!AI || synced) return
-	synced = true
-	if ((PROVIDER_OPTIONS as string[]).includes(AI.provider)) provider.value = AI.provider as ProviderKey
-	baseUrl.value = AI.baseUrl
-	model.value = AI.model
-	persona.value = AI.persona
-}
-
 onMounted(async () => {
 	await RUNTIME.init()
-	syncFromSnapshot()
 })
 
 // 保存辅助: 每个 key 独立防抖 timer + 卸载 flush (规范要求)
@@ -70,20 +65,46 @@ const failText = (key: string): string => {
 	if (key === "model") return I18N.value.modelSaveFailed
 	return I18N.value.saveFailed
 }
-const SAVE = useDebouncedSave({onError: (key, error) => feedback.error(failText(key), error)})
+const SAVE = useDebouncedSave({
+	onError: (key, error) => feedback.error(failText(key), error),
+})
+
+const saveField = (key: string, field: {touch: () => void; blur: () => void; reset: () => void; commit: () => void}, task: () => Promise<void>): void => {
+	field.touch()
+	field.blur()
+	SAVE.save(key, async () => {
+		try {
+			await task()
+			field.commit()
+		} catch (error) {
+			field.reset()
+			throw error
+		}
+	})
+}
 
 const onBaseUrlChange = () => {
-	if (!baseUrl.value.trim()) return
-	SAVE.save("baseUrl", () => RUNTIME.updateAi({baseUrl: baseUrl.value.trim()}))
+	if (!baseUrl.value.trim()) {
+		baseUrlField.reset()
+		return
+	}
+	saveField("baseUrl", baseUrlField, () => RUNTIME.updateAi({baseUrl: baseUrl.value.trim()}))
 }
 const onApiKeyChange = () => {
 	const VALUE = apiKeyInput.value.trim()
 	apiKeyInput.value = ""
 	if (!VALUE) return
-	SAVE.save("apiKey", () => RUNTIME.updateAi({apiKey: VALUE}))
+	SAVE.save("apiKey", async () => {
+		try {
+			await RUNTIME.updateAi({apiKey: VALUE})
+		} catch (error) {
+			apiKeyInput.value = VALUE
+			throw error
+		}
+	})
 }
 const onPersonaChange = () => {
-	SAVE.save("persona", () => RUNTIME.updateAi({persona: persona.value}))
+	saveField("persona", personaField, () => RUNTIME.updateAi({persona: persona.value}))
 }
 
 // 切换 Provider: 默认地址联动 + 立即保存
@@ -93,15 +114,37 @@ const onProviderChange = () => {
 	if (!baseUrl.value || IS_ANY_DEFAULT) {
 		baseUrl.value = CURRENT_DEF
 	}
+	providerField.touch()
+	baseUrlField.touch()
 	models.value = []
 	model.value = ""
-	void SAVE.saveNow("provider", () => RUNTIME.updateAi({provider: provider.value, baseUrl: baseUrl.value}))
+	void SAVE.saveNow("provider", async () => {
+		try {
+			await RUNTIME.updateAi({provider: provider.value, baseUrl: baseUrl.value})
+			providerField.commit()
+			baseUrlField.commit()
+		} catch (error) {
+			providerField.reset()
+			baseUrlField.reset()
+			throw error
+		}
+	})
 }
 
 // 选中模型直接保存
 const onSelectModel = (value: string) => {
 	if (!value) return
-	void SAVE.saveNow("model", () => RUNTIME.updateAi({model: value}))
+	model.value = value
+	modelField.touch()
+	void SAVE.saveNow("model", async () => {
+		try {
+			await RUNTIME.updateAi({model: value})
+			modelField.commit()
+		} catch (error) {
+			modelField.reset()
+			throw error
+		}
+	})
 }
 
 // 获取模型按钮 (密钥只在本次调用中发往后端, 不回显)
@@ -164,13 +207,15 @@ const modelOptions = computed(() => {
 				/>
 			</div>
 
-			<AppField :label="I18N.apiBaseUrl" :state="SAVE.stateOf('baseUrl')">
+			<AppField :label="I18N.apiBaseUrl" :state="SAVE.stateOf('baseUrl')" :error="SAVE.errorOf('baseUrl')">
 				<input
 					v-model="baseUrl"
 					class="input-base"
 					type="text"
 					:placeholder="baseUrlPlaceholder"
 					spellcheck="false"
+					@focus="baseUrlField.focus"
+					@input="baseUrlField.touch"
 					@blur="onBaseUrlChange"
 				/>
 			</AppField>
@@ -209,12 +254,14 @@ const modelOptions = computed(() => {
 				</div>
 			</div>
 
-			<AppField :label="I18N.persona" :state="SAVE.stateOf('persona')">
+			<AppField :label="I18N.persona" :state="SAVE.stateOf('persona')" :error="SAVE.errorOf('persona')">
 				<textarea
 					v-model="persona"
 					class="input-base resize-y leading-relaxed"
 					rows="4"
 					:placeholder="I18N.personaPlaceholder"
+					@focus="personaField.focus"
+					@input="personaField.touch"
 					@blur="onPersonaChange"
 				/>
 			</AppField>

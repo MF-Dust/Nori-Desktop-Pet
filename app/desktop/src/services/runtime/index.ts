@@ -7,6 +7,7 @@
 import {ref} from "vue"
 import {invoke} from "../host/invoke"
 import {listen, type UnlistenFn} from "../host/event"
+import {feedback} from "../feedback"
 import type {
 	AgentEventPayload,
 	BehaviorsState,
@@ -70,26 +71,96 @@ export type {
 
 /** 全局只读快照 (响应式) */
 const SNAPSHOT = ref<UiSnapshot | null>(null)
+const BOOTSTRAP_ERROR = ref<unknown | null>(null)
+const BOOTSTRAP_LOADING = ref(false)
+const REFRESH_ERROR = ref<unknown | null>(null)
 
 let bootstrap: Promise<void> | null = null
+let bootstrapUnlisten: UnlistenFn | null = null
+let refreshInFlight: Promise<void> | null = null
+let refreshQueued = false
 
 /** 上一次见到的语言, 用于跳窗口同步语言切换 */
 let lastLanguage: string | null = null
 const languageHandlers = new Set<(language: string) => void>()
 
-async function refresh(): Promise<void> {
-	try {
-		SNAPSHOT.value = await invoke<UiSnapshot>("ui_get_snapshot")
-		const LANGUAGE = SNAPSHOT.value?.general.language
-		if (LANGUAGE && LANGUAGE !== lastLanguage) {
-			const FIRST = lastLanguage === null
-			lastLanguage = LANGUAGE
-			// 首次拉取不回放 (main.ts 已经用它初始化 i18n), 只处理后续变更
-			if (!FIRST) for (const handler of languageHandlers) handler(LANGUAGE)
-		}
-	} catch (error) {
-		console.error("获取 UI 快照失败:", error)
+async function refreshCore(): Promise<void> {
+	const NEXT_SNAPSHOT = await invoke<UiSnapshot>("ui_get_snapshot")
+	SNAPSHOT.value = NEXT_SNAPSHOT
+	const LANGUAGE = NEXT_SNAPSHOT.general.language
+	if (LANGUAGE && LANGUAGE !== lastLanguage) {
+		const FIRST = lastLanguage === null
+		lastLanguage = LANGUAGE
+		// 首次拉取不回放 (main.ts 已经用它初始化 i18n), 只处理后续变更
+		if (!FIRST) for (const handler of languageHandlers) handler(LANGUAGE)
 	}
+}
+
+/**
+ * 刷新快照: 同一时间只允许一次请求, 请求期间的后续调用合并为一次尾刷新。
+ * 尾刷新仍由所有等待者等待, 所以调用方不会在过期快照上继续执行。
+ */
+function refresh(): Promise<void> {
+	if (refreshInFlight) {
+		refreshQueued = true
+		return refreshInFlight
+	}
+
+	const RUN = (async () => {
+		let firstError: unknown | null = null
+		try {
+			await refreshCore()
+		} catch (error) {
+			firstError = error
+		}
+
+		if (refreshQueued) {
+			refreshQueued = false
+			try {
+				await refreshCore()
+			} catch (error) {
+				if (firstError === null) firstError = error
+			}
+		}
+
+		if (firstError !== null) throw firstError
+	})()
+
+	let PUBLIC: Promise<void>
+	PUBLIC = RUN.then(
+		() => {
+			REFRESH_ERROR.value = null
+		},
+		error => {
+			REFRESH_ERROR.value = error
+			throw error
+		},
+	).finally(() => {
+		if (refreshInFlight === PUBLIC) refreshInFlight = null
+	})
+	refreshInFlight = PUBLIC
+	return PUBLIC
+}
+
+const startBootstrap = (): Promise<void> => {
+	BOOTSTRAP_LOADING.value = true
+	BOOTSTRAP_ERROR.value = null
+	const RUN = (async () => {
+		await refresh()
+		bootstrapUnlisten = await listen<{version: number; topics: string[]}>("nori:state-changed", () => {
+			void refresh().catch(error => {
+				// 广播刷新不能产生未处理拒绝, 同时必须让用户知道状态可能已过期。
+				feedback.error("同步运行状态失败", error)
+			})
+		})
+	})()
+	bootstrap = RUN.catch(error => {
+		BOOTSTRAP_ERROR.value = error
+		throw error
+	}).finally(() => {
+		BOOTSTRAP_LOADING.value = false
+	})
+	return bootstrap
 }
 
 /**
@@ -99,24 +170,38 @@ export const RUNTIME = {
 	/** 只读快照 */
 	snapshot: SNAPSHOT,
 
+	/** 首次引导失败原因 (由 App 展示可重试兜底页) */
+	bootstrapError: BOOTSTRAP_ERROR,
+
+	/** 首次引导是否正在执行 */
+	bootstrapLoading: BOOTSTRAP_LOADING,
+
+	/** 最近一次快照刷新失败原因 */
+	refreshError: REFRESH_ERROR,
+
 	/**
 	 * 引导: 拉取首份快照并订阅全局状态变更广播。
 	 * 幂等, 多窗口/多组件可重复调用。
 	 */
-	async init(): Promise<void> {
-		if (!bootstrap) {
-			bootstrap = (async () => {
-				await refresh()
-				await listen<{version: number; topics: string[]}>("nori:state-changed", () => {
-					void refresh()
-				})
-			})()
-		}
-		await bootstrap
+	init(): Promise<void> {
+		return bootstrap ?? startBootstrap()
 	},
 
-	/** 手动刷新快照 */
+	/** 手动刷新快照 (同一时间只发一个请求, 最多补一次尾刷新) */
 	refresh,
+
+	/** 清除失败引导并重新建立快照与事件订阅 */
+	async retryInit(): Promise<void> {
+		if (BOOTSTRAP_LOADING.value && bootstrap) {
+			await bootstrap
+			return
+		}
+		bootstrapUnlisten?.()
+		bootstrapUnlisten = null
+		bootstrap = null
+		BOOTSTRAP_ERROR.value = null
+		await startBootstrap()
+	},
 
 	/**
 	 * 当前平台能力 (快照未到位时给最保守的假设)
