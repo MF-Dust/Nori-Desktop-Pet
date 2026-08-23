@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已有标签时可直接填写，例如 v0.1.0；留空则自动创建"
+        description: "已有标签时可直接填写，例如 v1.0.0-Arona；留空则自动创建"
         required: false
         type: string
       bump:
@@ -16,6 +16,10 @@ on:
           - patch
           - minor
           - major
+      codename:
+        description: "自动递增标签的 Codename，可留空并继承最新标签"
+        required: false
+        type: string
       include_runtime:
         description: "是否打包 .NET Runtime"
         required: true
@@ -46,12 +50,16 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           BUMP: ${{ inputs.bump }}
+          CODENAME: ${{ inputs.codename }}
         run: |
           git fetch --tags --force
+          tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
+          version_pattern='^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
+          codename_pattern='^[A-Za-z0-9][A-Za-z0-9.-]*$'
           tag="$TAG"
           if [ -n "$tag" ]; then
-            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "标签必须匹配 v<major>.<minor>.<patch>: $tag" >&2
+            if [[ ! "$tag" =~ $tag_pattern ]]; then
+              echo "标签必须匹配 v<major>.<minor>.<patch>[-Codename]: $tag" >&2
               exit 1
             fi
             git show-ref --tags --verify --quiet "refs/tags/$tag" || {
@@ -60,27 +68,39 @@ jobs:
             }
             echo "使用已有标签: $tag"
           else
-            latest="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+            latest="$(git tag --list 'v*' | grep -E "$tag_pattern" | sort -V | tail -n1 || true)"
             if [ -z "$latest" ]; then
               initial_version="$(sed -nE 's/.*<Version[^>]*>([0-9]+\.[0-9]+\.[0-9]+)<\/Version>.*/\1/p' app/desktop/Nori.Desktop/Nori.Desktop.csproj | head -n1)"
               initial_version="${initial_version:-0.1.0}"
-              tag="v$initial_version"
+              codename="$CODENAME"
+              if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
+                echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
+                exit 1
+              fi
+              if [ -n "$codename" ]; then tag="v$initial_version-$codename"; else tag="v$initial_version"; fi
               echo "没有历史版本标签, 使用项目初始版本: $tag"
             else
-              if [[ ! "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              if [[ ! "$latest" =~ $version_pattern ]]; then
                 echo "无法解析最新标签: $latest" >&2
                 exit 1
               fi
               major="${BASH_REMATCH[1]}"
               minor="${BASH_REMATCH[2]}"
               patch="${BASH_REMATCH[3]}"
+              latest_suffix="${BASH_REMATCH[4]:-}"
+              codename="$CODENAME"
+              if [ -z "$codename" ] && [ -n "$latest_suffix" ]; then codename="${latest_suffix#-}"; fi
+              if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
+                echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
+                exit 1
+              fi
               case "$BUMP" in
                 major) major=$((major + 1)); minor=0; patch=0 ;;
                 minor) minor=$((minor + 1)); patch=0 ;;
                 patch) patch=$((patch + 1)) ;;
                 *) echo "不支持的递增级别: $BUMP" >&2; exit 1 ;;
               esac
-              tag="v$major.$minor.$patch"
+              if [ -n "$codename" ]; then tag="v$major.$minor.$patch-$codename"; else tag="v$major.$minor.$patch"; fi
             fi
             if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
               echo "目标标签已存在: $tag" >&2
