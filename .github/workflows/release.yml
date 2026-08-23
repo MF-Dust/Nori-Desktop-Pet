@@ -4,9 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的版本标签 (例如 v0.1.0)"
-        required: true
+        description: "已有标签时可直接填写，例如 v0.1.0；留空则自动创建"
+        required: false
         type: string
+      bump:
+        description: "没有填写标签时的版本递增级别"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       include_runtime:
         description: "是否打包 .NET Runtime"
         required: true
@@ -14,39 +23,78 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
-    name: 校验版本标签
+    name: 校验并创建版本标签
     runs-on: ubuntu-latest
     outputs:
+      tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
       mode: ${{ steps.version.outputs.mode }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - id: version
-        name: 校验 v* 标签并生成 release 名称
+        name: 校验或自动创建 v* 标签
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
+          BUMP: ${{ inputs.bump }}
         run: |
+          git fetch --tags --force
           tag="$TAG"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "标签必须匹配 v<major>.<minor>.<patch>: $tag" >&2
-            exit 1
+          if [ -n "$tag" ]; then
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "标签必须匹配 v<major>.<minor>.<patch>: $tag" >&2
+              exit 1
+            fi
+            git show-ref --tags --verify --quiet "refs/tags/$tag" || {
+              echo "标签不存在: $tag" >&2
+              exit 1
+            }
+            echo "使用已有标签: $tag"
+          else
+            latest="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+            if [ -z "$latest" ]; then
+              initial_version="$(sed -nE 's/.*<Version[^>]*>([0-9]+\.[0-9]+\.[0-9]+)<\/Version>.*/\1/p' app/desktop/Nori.Desktop/Nori.Desktop.csproj | head -n1)"
+              initial_version="${initial_version:-0.1.0}"
+              tag="v$initial_version"
+              echo "没有历史版本标签, 使用项目初始版本: $tag"
+            else
+              if [[ ! "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                echo "无法解析最新标签: $latest" >&2
+                exit 1
+              fi
+              major="${BASH_REMATCH[1]}"
+              minor="${BASH_REMATCH[2]}"
+              patch="${BASH_REMATCH[3]}"
+              case "$BUMP" in
+                major) major=$((major + 1)); minor=0; patch=0 ;;
+                minor) minor=$((minor + 1)); patch=0 ;;
+                patch) patch=$((patch + 1)) ;;
+                *) echo "不支持的递增级别: $BUMP" >&2; exit 1 ;;
+              esac
+              tag="v$major.$minor.$patch"
+            fi
+            if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
+              echo "目标标签已存在: $tag" >&2
+              exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "chore: release $tag"
+            git push origin "$tag"
+            echo "已创建并推送标签: $tag"
           fi
-          git show-ref --tags --verify --quiet "refs/tags/$tag" || {
-            echo "标签不存在: $tag" >&2
-            exit 1
-          }
           version="${tag#v}"
           if [ "${{ inputs.include_runtime }}" = "true" ]; then mode=self-contained; else mode=framework-dependent; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release=nori@$version" >> "$GITHUB_OUTPUT"
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
@@ -72,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.tag }}
 
       - name: 检查 Sentry Secrets
         shell: bash
@@ -122,7 +170,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.tag }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -175,7 +223,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.tag }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -299,7 +347,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate.outputs.tag }}
 
       - uses: actions/setup-dotnet@v4
         with:

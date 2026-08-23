@@ -52,7 +52,7 @@ DSN 是 Sentry 项目标识，不是鉴权令牌；`SENTRY_AUTH_TOKEN` 只用于
 - `false`：framework-dependent，默认行为，目标机需要安装 .NET 10 Runtime。
 - `true`：self-contained，把 .NET Runtime 一起放入发布目录，包体更大但不要求目标机预装 .NET Runtime。
 
-正式发布使用同样是手动触发的 `release.yml`，还需要输入一个已经存在的 `v<major>.<minor>.<patch>` 标签，例如 `v0.1.0`。它只创建 Sentry release 并上传 Actions artifacts，不创建 GitHub Release。Web 构建只做一次并上传 hidden source map；三平台再复用同一份 `dist` 发布。
+正式发布使用同样是手动触发的 `release.yml`。`tag` 可以填写一个已经存在的 `v<major>.<minor>.<patch>` 标签；留空时，工作流会读取最新标签，按 `bump` 输入的 `patch` / `minor` / `major` 自动创建并推送新标签，然后继续正式发布。仓库没有历史标签时，首次使用项目当前初始版本（默认 `v0.1.0`）创建标签。它只创建 Sentry release 并上传 Actions artifacts，不创建 GitHub Release。Web 构建只做一次并上传 hidden source map；三平台再复用同一份 `dist` 发布。
 
 两种模式都仍然需要目标系统提供 WebView2/WebKitGTK、Live2D Cubism Core 等现有平台依赖。
 
