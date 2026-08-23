@@ -156,7 +156,7 @@ public class BackendRuntimeModuleTests : IDisposable
 		ToolRegistry restored = new();
 		restored.Register(MakeTool("a", "safe", () => Task.FromResult<object?>(null)));
 		restored.RestoreDisabled(registry.DisabledNames());
-		Assert.Empty(restored.ListEnabled().Where(tool => tool.Name == "a"));
+		Assert.DoesNotContain(restored.ListEnabled(), tool => tool.Name == "a");
 	}
 
 	[Fact]
@@ -178,7 +178,7 @@ public class BackendRuntimeModuleTests : IDisposable
 		foreach (string name in new[]
 		         {
 			         "getTime", "getDate", "getSystemInfo", "playMotion", "setExpression",
-			         "remember", "addMemory", "searchMemory", "setEmotion", "setReminder",
+			         "remember", "addMemory", "searchMemory", "forgetMemory", "setEmotion", "setReminder",
 			         "listReminders", "getClipboardText", "setClipboardText", "openUrl",
 			         "getBatteryStatus", "searchWeb", "anySearch", "getWeather", "calculate", "fetchWebPage",
 		         })
@@ -366,7 +366,7 @@ public class BackendRuntimeModuleTests : IDisposable
 	// ---- 语音停用策略 ----
 
 	[Fact]
-	public void 已停用的浏览器语音提供商给出明确错误()
+	public async Task 已停用的浏览器语音提供商给出明确错误()
 	{
 		_config.Set("tts_provider", new ConfigValue.Text("web_speech"));
 		VoiceService voice = new(new HttpClient(), _config, playback: null, () => null);
@@ -375,7 +375,7 @@ public class BackendRuntimeModuleTests : IDisposable
 
 		try
 		{
-			voice.SynthesizeAsync("hi").GetAwaiter().GetResult();
+			await voice.SynthesizeAsync("hi");
 			Assert.Fail("应当抛出停用提示");
 		}
 		catch (InvalidOperationException error)
