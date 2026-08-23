@@ -24,9 +24,13 @@ const expressionEnabled = ref(true)
 const lipSync = ref(true)
 const shadow = ref(true)
 const beatSync = ref(false)
+const aiInteraction = ref(false)
 const renderScale = ref(2)
 const maxFps = ref(0)
 const modelScale = ref(1)
+
+// 是否已配置 AI (未配置时禁用 AI 互动开关)
+const aiConfigured = computed(() => Boolean(RUNTIME.snapshot.value?.ai.configured))
 
 // 保存辅助: 每个字段独立防抖 timer + 卸载 flush (规范要求)
 const SAVE = useDebouncedSave({
@@ -54,6 +58,13 @@ const expressionEnabledToggle = makeToggle("expressionEnabled", expressionEnable
 const lipSyncToggle = makeToggle("lipSync", lipSync)
 const shadowToggle = makeToggle("shadow", shadow)
 const beatSyncToggle = makeToggle("beatSync", beatSync)
+const aiInteractionToggle = computed({
+	get: () => aiInteraction.value && aiConfigured.value,
+	set: (value: boolean) => {
+		aiInteraction.value = value
+		saveBehavior("aiInteraction", value)
+	},
+})
 
 onMounted(async () => {
 	await RUNTIME.init()
@@ -68,6 +79,7 @@ onMounted(async () => {
 		lipSync.value = BEHAVIOR.lipSync
 		shadow.value = BEHAVIOR.shadow
 		beatSync.value = BEHAVIOR.beatSync
+		aiInteraction.value = BEHAVIOR.aiInteraction ?? false
 		renderScale.value = BEHAVIOR.renderScale
 		maxFps.value = BEHAVIOR.maxFps
 	}
@@ -115,6 +127,16 @@ const fpsOptions = computed(() => [
 				:desc="I18N.clickInteractionDesc"
 			>
 				<n-switch v-model:value="clickInteractionToggle"/>
+			</AppSwitchRow>
+
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.aiInteraction"
+				:desc="aiConfigured ? I18N.aiInteractionDesc : I18N.aiInteractionDisabledDesc"
+				:disabled="!aiConfigured"
+			>
+				<n-switch v-model:value="aiInteractionToggle" :disabled="!aiConfigured"/>
 			</AppSwitchRow>
 
 			<AppSwitchRow
