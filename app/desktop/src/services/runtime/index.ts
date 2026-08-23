@@ -14,7 +14,9 @@ import type {
 	McpServerStatusInfo,
 	MemoryAtom,
 	MemoryItem,
+	MemoryIndexStatus,
 	MemoryListPage,
+	MemoryOverview,
 	MemoryRecallDebug,
 	MemorySettings,
 	MemorySource,
@@ -36,7 +38,9 @@ export type {
 	McpServerStatusInfo,
 	MemoryAtom,
 	MemoryItem,
+	MemoryIndexStatus,
 	MemoryListPage,
+	MemoryOverview,
 	MemoryRecallDebug,
 	MemorySettings,
 	MemorySource,
@@ -282,8 +286,8 @@ export const RUNTIME = {
 	memoryClear(): Promise<void> {
 		return invoke<void>("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
 	},
-	memoryOverview(): Promise<unknown> {
-		return invoke("memory_overview")
+	memoryOverview(): Promise<MemoryOverview> {
+		return invoke<MemoryOverview>("memory_overview")
 	},
 	memoryAtoms(memoryId?: number, status?: string, limit = 50, offset = 0): Promise<MemoryAtom[]> {
 		return invoke<MemoryAtom[]>("memory_atom_list", {memoryId, status, limit, offset})
@@ -291,11 +295,11 @@ export const RUNTIME = {
 	memorySearch(keyword: string, limit = 20): Promise<MemoryItem[]> {
 		return invoke<MemoryItem[]>("memory_search_hybrid", {keyword, limit})
 	},
-	memoryKnowledgeStatus(): Promise<unknown> {
-		return invoke("memory_knowledge_status")
+	memoryKnowledgeStatus(): Promise<MemoryIndexStatus> {
+		return invoke<MemoryIndexStatus>("memory_knowledge_status")
 	},
-	memoryKnowledgeReindex(): Promise<unknown> {
-		return invoke("memory_knowledge_reindex")
+	memoryKnowledgeReindex(): Promise<MemoryIndexStatus> {
+		return invoke<MemoryIndexStatus>("memory_knowledge_reindex")
 	},
 	memoryKnowledgeOpen(): Promise<void> {
 		return invoke<void>("memory_knowledge_open")

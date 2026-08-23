@@ -181,7 +181,11 @@ export interface MemoryState {
 	vectorTopK: number
 	rrfK: number
 	minSimilarity: number
+	sourceRetentionThreshold: number
 	archiveThreshold: number
+	knowledgeEnabled: boolean
+	knowledgeWatch: boolean
+	debugRetrieval: boolean
 }
 
 /** 记忆事实原子 */
@@ -370,6 +374,20 @@ export interface MemoryItem {
 	expiresAt?: string
 	supersededBy?: number
 	embeddingFingerprint?: string
+}
+
+/** 记忆总览 */
+export interface MemoryOverview {
+	activeMemories: number
+	atomCount: number
+	archivedMemories: number
+	totalMemories: number
+	knowledgeChunks: number
+	reflectionCursor?: string
+	lastReflection?: string
+	lastMaintenance?: string
+	index: MemoryIndexStatus
+	settings: MemorySettings
 }
 
 /** 分页记忆列表 */
