@@ -17,6 +17,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 	private readonly Lock _gate = new();
 	private FileSystemWatcher? _watcher;
 	private CancellationTokenSource? _watchDebounce;
+	private Task? _watchTask;
 	private MemoryIndexStatus _status = new();
 	private int _disposed;
 
@@ -29,6 +30,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 	}
 
 	public string Path => ResolvePath();
+	public Action? StatusChanged { get; set; }
 	public MemoryIndexStatus Status { get { lock (_gate) return _status; } }
 
 	/// <summary>首次启动复制程序集内置文档，绝不覆盖用户版本。</summary>
@@ -66,20 +68,25 @@ public sealed class KnowledgeService : IAsyncDisposable
 		}
 		string documentHash = Hash(content);
 		KnowledgeDocument? existing = GetDocument(path);
-		if (existing?.ContentHash == documentHash)
+		Dictionary<string, KnowledgeChunkRow> old = GetChunks(existing?.Id).ToDictionary(row => row.ChunkKey, StringComparer.Ordinal);
+		string fingerprint = _memory.ResolveEmbeddingFingerprint();
+		bool keysCurrent = old.Count == chunks.Count && chunks.All(chunk => old.ContainsKey(chunk.ChunkKey));
+		bool embeddingsCurrent = !_memory.EmbeddingConfigured
+			|| old.Count == chunks.Count && old.Values.All(row => row.Embedding is not null && row.EmbeddingFingerprint == fingerprint);
+		if (existing?.ContentHash == documentHash && keysCurrent && embeddingsCurrent)
 		{
-			SetStatus(new MemoryIndexStatus {State = MemoryIndexState.Ready, Processed = chunks.Count, Total = chunks.Count});
+			SetStatus(new MemoryIndexStatus {State = old.Values.Any(row => row.Embedding is null) ? MemoryIndexState.Partial : MemoryIndexState.Ready, Processed = chunks.Count, Total = chunks.Count});
 			return Status;
 		}
 
 		SetStatus(new MemoryIndexStatus {State = MemoryIndexState.Rebuilding, Total = chunks.Count});
-		Dictionary<string, KnowledgeChunkRow> old = GetChunks(existing?.Id).ToDictionary(row => row.ChunkKey, StringComparer.Ordinal);
 		Dictionary<string, string?> embeddings = [];
-		string fingerprint = _memory.ResolveEmbeddingFingerprint();
 		foreach (MarkdownChunker.Chunk chunk in chunks)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			if (old.TryGetValue(chunk.ChunkKey, out KnowledgeChunkRow? previous) && previous.ContentHash == chunk.ContentHash)
+			if (old.TryGetValue(chunk.ChunkKey, out KnowledgeChunkRow? previous)
+				&& previous.ContentHash == chunk.ContentHash
+				&& (!_memory.EmbeddingConfigured || previous.EmbeddingFingerprint == fingerprint))
 			{
 				embeddings[chunk.ChunkKey] = previous.Embedding;
 				continue;
@@ -208,7 +215,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 			_watchDebounce = next;
 		}
 		previous?.Cancel();
-		_ = Task.Run(async () =>
+		_watchTask = Task.Run(async () =>
 		{
 			try
 			{
@@ -312,11 +319,11 @@ public sealed class KnowledgeService : IAsyncDisposable
 	{
 		if (documentId is null) return (IReadOnlyList<KnowledgeChunkRow>)[];
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "SELECT id, chunk_key, content_hash, embedding FROM knowledge_chunks WHERE document_id = $document";
+		command.CommandText = "SELECT id, chunk_key, content_hash, embedding, embedding_fingerprint FROM knowledge_chunks WHERE document_id = $document";
 		AddParameter(command, "$document", documentId.Value);
 		using SqliteDataReader reader = command.ExecuteReader();
 		List<KnowledgeChunkRow> result = [];
-		while (reader.Read()) result.Add(new KnowledgeChunkRow(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
+		while (reader.Read()) result.Add(new KnowledgeChunkRow(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4)));
 		return (IReadOnlyList<KnowledgeChunkRow>)result;
 	});
 
@@ -345,7 +352,12 @@ public sealed class KnowledgeService : IAsyncDisposable
 		return result;
 	}
 
-	private void SetStatus(MemoryIndexStatus status) { lock (_gate) _status = status; }
+	private void SetStatus(MemoryIndexStatus status)
+	{
+		lock (_gate) _status = status;
+		try { StatusChanged?.Invoke(); }
+		catch { }
+	}
 
 	private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 	private static void AddParameter(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
@@ -358,7 +370,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 			|| value.Contains("时间线", StringComparison.Ordinal) || value.Contains("分析", StringComparison.Ordinal)
 			|| value.Contains("碎裂", StringComparison.Ordinal) || value.Contains("真相", StringComparison.Ordinal)
 			|| value.Contains("futum", StringComparison.Ordinal) || value.Contains("弗图姆", StringComparison.Ordinal)
-			|| value.Contains("alephpro", StringComparison.Ordinal) || value.Contains("海", StringComparison.Ordinal);
+			|| value.Contains("alephpro", StringComparison.Ordinal);
 	}
 
 	public async ValueTask DisposeAsync()
@@ -366,13 +378,19 @@ public sealed class KnowledgeService : IAsyncDisposable
 		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 		_watcher?.Dispose();
 		CancellationTokenSource? debounce;
-		lock (_gate) { debounce = _watchDebounce; _watchDebounce = null; }
+		Task? watchTask;
+		lock (_gate) { debounce = _watchDebounce; _watchDebounce = null; watchTask = _watchTask; _watchTask = null; }
 		debounce?.Cancel();
+		if (watchTask is not null)
+		{
+			try { await watchTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+			catch (OperationCanceledException) { }
+			catch (TimeoutException) { }
+		}
 		debounce?.Dispose();
-		await Task.CompletedTask;
 	}
 
 	private sealed record KnowledgeDocument(long Id, string Path, string ContentHash, string UpdatedAt);
-	private sealed record KnowledgeChunkRow(long Id, string ChunkKey, string ContentHash, string? Embedding);
+	private sealed record KnowledgeChunkRow(long Id, string ChunkKey, string ContentHash, string? Embedding, string? EmbeddingFingerprint);
 	private sealed record KnowledgeRow(long Id, string? Heading, string? Subheading, string Content, string? KnowledgeType, KnowledgeAwareness Awareness);
 }

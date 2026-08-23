@@ -27,14 +27,24 @@ public static class DecayCalculator
 		return Math.Exp(-Math.Log(2) * days / Math.Max(0.01, ttl.Value));
 	}
 
-	public static double FinalScore(double rrfScore, MemoryItem item, DateTimeOffset now)
+	public static double TemporalScore(MemoryAtom atom, DateTimeOffset now)
+	{
+		if (atom.Status is MemoryStatus.Superseded or MemoryStatus.Archived or MemoryStatus.Expired) return 0;
+		if (MemoryKindExtensions.Parse(atom.AtomType) == MemoryKind.Identity) return 1;
+		double ttl = atom.TtlDays.GetValueOrDefault(HalfLifeDays(MemoryKindExtensions.Parse(atom.AtomType)));
+		if (double.IsPositiveInfinity(ttl)) return 1;
+		DateTimeOffset reference = ParseDate(atom.LastAccessedAt) ?? ParseDate(atom.LastReinforcedAt) ?? ParseDate(atom.CreatedAt) ?? now;
+		return Math.Exp(-Math.Log(2) * Math.Max(0, (now - reference).TotalDays) / Math.Max(0.01, ttl));
+	}
+
+	public static double FinalScore(double rrfScore, MemoryItem item, DateTimeOffset now, bool applyTemporalDecay = true)
 	{
 		if (rrfScore <= 0 || item.Status is "superseded" or "archived" or "expired") return 0;
 		double importance = 0.75 + Math.Clamp(item.Importance, 0, 1) * 0.5;
 		double confidence = 0.75 + Math.Clamp(item.Confidence, 0, 1) * 0.25;
 		double reinforcement = 1 + Math.Min(item.ReinforcementCount, 10) * 0.05;
 		double dormant = item.Status == "dormant" ? 0.65 : 1;
-		return rrfScore * importance * TemporalScore(item, now) * confidence * reinforcement * dormant;
+		return rrfScore * importance * (applyTemporalDecay ? TemporalScore(item, now) : 1) * confidence * reinforcement * dormant;
 	}
 
 	private static DateTimeOffset? ParseDate(string? value) =>

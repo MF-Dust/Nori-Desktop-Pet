@@ -18,6 +18,7 @@ public sealed class MemoryService
 	private readonly MemoryStore _store;
 	private readonly IEmbeddingAdapter _embedding;
 	private readonly ConfigStore _config;
+	private readonly SemaphoreSlim _reembedGate = new(1, 1);
 
 	public MemoryService(MemoryStore store, IEmbeddingAdapter embedding, ConfigStore config)
 	{
@@ -81,7 +82,10 @@ public sealed class MemoryService
 	{
 		(string baseUrl, _, string model, int? dimensions) = ResolveConfig();
 		string authority = baseUrl.TrimEnd('/');
-		if (Uri.TryCreate(authority, UriKind.Absolute, out Uri? uri)) authority = uri.Authority.ToLowerInvariant();
+		if (Uri.TryCreate(authority, UriKind.Absolute, out Uri? uri))
+		{
+			authority = $"{uri.Scheme.ToLowerInvariant()}://{uri.Authority.ToLowerInvariant()}{uri.AbsolutePath.TrimEnd('/')}";
+		}
 		string input = $"openai-compatible\n{authority}\n{model.Trim()}\n{dimensions?.ToString() ?? ""}";
 		return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
 	}
@@ -134,15 +138,14 @@ public sealed class MemoryService
 		IReadOnlyList<MemorySource>? sources = null,
 		string? embeddingText = null)
 	{
+		if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("记忆内容不能为空", nameof(content));
 		MemoryKind resolvedKind = kind ?? MemoryKindExtensions.Parse(type);
 		double? ttl = DefaultTtl(resolvedKind);
 		float[]? vector = await EmbedAsync(embeddingText ?? canonicalSummary ?? content).ConfigureAwait(false);
 		string? embedding = vector is null ? null : JsonSerializer.Serialize(vector);
-		MemoryItem item = _store.Add(type, content, importance, source, tags, embedding, resolvedKind,
-			canonicalSummary, personaSummary, confidence, ttl, null, vector is null ? null : ResolveEmbeddingFingerprint());
-		_store.AddAtom(item.Id, resolvedKind, canonicalSummary ?? content, importance, confidence, ttl);
-		if (sources is not null) AddSources(item.Id, sources);
-		return item;
+		return _store.AddAggregate(type, content, importance, source, tags, embedding, resolvedKind,
+			canonicalSummary, personaSummary, confidence, ttl, null,
+			vector is null ? null : ResolveEmbeddingFingerprint(), sources);
 	}
 
 	/// <summary>用户或 Agent 明确要求记住时使用的入口，先做同类型精确去重和强化。</summary>
@@ -166,17 +169,31 @@ public sealed class MemoryService
 	public async Task<bool> UpdateAsync(long id, string content, double? importance = null, string? tags = null,
 		MemoryKind? kind = null, string? canonicalSummary = null, string? personaSummary = null, double? confidence = null)
 	{
+		if (string.IsNullOrWhiteSpace(content)) throw new ArgumentException("记忆内容不能为空", nameof(content));
+		MemoryItem? before = _store.Get(id);
+		if (before is null) return false;
+		MemoryKind resolvedKind = kind ?? MemoryKindExtensions.Parse(before.Kind);
 		float[]? vector = await EmbedAsync(canonicalSummary ?? content).ConfigureAwait(false);
-		return _store.Update(id, content, importance, tags, vector is null ? null : JsonSerializer.Serialize(vector), kind,
+		bool updated = _store.Update(id, content, importance, tags, vector is null ? null : JsonSerializer.Serialize(vector), kind,
 			canonicalSummary, personaSummary, confidence, embeddingFingerprint: vector is null ? null : ResolveEmbeddingFingerprint());
+		if (updated)
+		{
+			string oldSummary = before.CanonicalSummary ?? before.Content;
+			MemoryAtom? defaultAtom = _store.GetAtoms(id, null, 100, 0).FirstOrDefault(atom => atom.Content == oldSummary);
+			if (defaultAtom is not null)
+			{
+				_store.UpdateAtom(defaultAtom.Id, canonicalSummary ?? content, resolvedKind, importance, confidence);
+			}
+		}
+		return updated;
 	}
 
 	/// <summary>真正的关键词 + 向量混合检索。</summary>
 	public async Task<IReadOnlyList<MemoryItem>> SearchHybridAsync(string keyword, int limit = 10, CancellationToken cancellationToken = default)
 	{
 		if (!Settings.Enabled) return [];
-		float[]? vector = await EmbedForRecallAsync(keyword, cancellationToken).ConfigureAwait(false);
-		return _store.SearchHybrid(keyword, vector, limit);
+		MemoryContext context = await BuildContextAsync(keyword, [], cancellationToken, false, false, Math.Clamp(limit, 1, 100)).ConfigureAwait(false);
+		return context.Personal;
 	}
 
 	/// <summary>构建分层 MemoryContext，并只强化最终实际注入的记忆。</summary>
@@ -184,40 +201,40 @@ public sealed class MemoryService
 		string userText,
 		IReadOnlyList<(string Role, string Content)> recentMessages,
 		CancellationToken cancellationToken = default,
-		bool includeDebug = false)
+		bool includeDebug = false,
+		bool markAccess = true,
+		int? personalLimitOverride = null)
 	{
 		MemorySettings settings = Settings;
 		if (!settings.Enabled) return new MemoryContext();
 		string expanded = MemoryQueryBuilder.Build(userText, recentMessages);
 		float[]? vector = await EmbedForRecallAsync(expanded, cancellationToken).ConfigureAwait(false);
-		IReadOnlyList<RetrievalHit> keywordHits = _store.SearchKeyword(userText, settings.KeywordTopK);
+		IReadOnlyList<RetrievalHit> keywordHits = _store.SearchKeyword(expanded, settings.KeywordTopK);
 		IReadOnlyList<RetrievalHit> vectorHits = vector is null
 			? []
 			: _store.SearchSemantic(vector, settings.VectorTopK, settings.MinSimilarity)
 			.Select((hit, index) => new RetrievalHit(hit.Item.Id, hit.Similarity, index + 1)).ToList();
-		IReadOnlyList<RetrievalHit> atomHits = _store.SearchAtomKeyword(userText, 10);
-		IReadOnlyList<RetrievalHit> fused = RrfFusion.Fuse([keywordHits, vectorHits], settings.RrfK);
-
+		IReadOnlyList<RetrievalHit> atomHits = _store.SearchAtomKeyword(expanded, 10);
+		IReadOnlyList<RetrievalHit> atomParentHits = atomHits
+			.Select((hit, index) => (Atom: _store.GetAtom(hit.MemoryId), Rank: index + 1))
+			.Where(pair => pair.Atom is not null)
+			.Select(pair => new RetrievalHit(pair.Atom!.ParentMemoryId, 1.0 / pair.Rank, pair.Rank))
+			.ToList();
+		IReadOnlyList<RetrievalHit> fused = RrfFusion.Fuse([keywordHits, vectorHits, atomParentHits], settings.RrfK);
 		Dictionary<long, double> scores = fused.ToDictionary(hit => hit.MemoryId, hit => hit.Score);
-		foreach (RetrievalHit atomHit in atomHits)
-		{
-			MemoryAtom? atom = _store.GetAtom(atomHit.MemoryId);
-			if (atom is null) continue;
-			scores[atom.ParentMemoryId] = scores.GetValueOrDefault(atom.ParentMemoryId) + atomHit.Score;
-		}
 
 		DateTimeOffset now = DateTimeOffset.UtcNow;
 		List<(MemoryItem Item, double Score)> ranked = scores
 			.Select(pair => (Item: _store.Get(pair.Key), Rrf: pair.Value))
 			.Where(pair => pair.Item is not null)
-			.Select(pair => (Item: pair.Item!, Score: DecayCalculator.FinalScore(pair.Rrf, pair.Item!, now)))
+			.Select(pair => (Item: pair.Item!, Score: DecayCalculator.FinalScore(pair.Rrf, pair.Item!, now, settings.DecayEnabled)))
 			.Where(pair => (pair.Item.Status is "active" or "dormant") && pair.Score > 0)
 			.OrderByDescending(pair => pair.Score)
 			.ToList();
 
-		List<MemoryItem> personal = TakeWithinBudget(ranked, settings.RecallTopK, 900);
+		List<MemoryItem> personal = TakeWithinBudget(ranked, personalLimitOverride ?? settings.RecallTopK, 900);
 		long[] injectedIds = personal.Select(item => item.Id).ToArray();
-		_store.MarkAccessed(injectedIds);
+		if (markAccess) _store.MarkAccessed(injectedIds);
 		List<MemoryAtom> atoms = personal.SelectMany(item => _store.GetAtoms(item.Id, MemoryStatus.Active, 3)).ToList();
 		IReadOnlyList<RetrievedKnowledge> knowledge = TakeKnowledgeBudget(Knowledge?.Search(userText, 4) ?? [], 2200);
 		IReadOnlyList<MemoryEcho> echoes = (Knowledge?.SearchEchoes(userText, 2) ?? [])
@@ -259,6 +276,9 @@ public sealed class MemoryService
 	public async Task<int> ReembedAllAsync(CancellationToken cancellationToken = default, bool force = true)
 	{
 		if (!EmbeddingConfigured) return 0;
+		await _reembedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
 		long afterId = 0;
 		int count = 0;
 		string fingerprint = ResolveEmbeddingFingerprint();
@@ -276,6 +296,11 @@ public sealed class MemoryService
 			}
 		}
 		return count;
+		}
+		finally
+		{
+			_reembedGate.Release();
+		}
 	}
 
 	public bool Archive(long id) => _store.Archive(id);
@@ -286,12 +311,6 @@ public sealed class MemoryService
 	public IReadOnlyList<MemoryAtom> GetAtoms(long? parentId = null, MemoryStatus? status = null, int limit = 100, int offset = 0) => _store.GetAtoms(parentId, status, limit, offset);
 	public IReadOnlyList<MemorySource> GetSources(long memoryId) => _store.GetSources(memoryId);
 	public (int Active, int Atoms, int Archived, int Total) GetOverview() => _store.GetOverview();
-
-	private void AddSources(long memoryId, IReadOnlyList<MemorySource> sources)
-	{
-		// Source 表的聚合写入由同一数据库连接锁保护；reflection 窗口通常只有几条消息。
-		_store.AddSources(memoryId, sources);
-	}
 
 	private static string Normalize(string value) => string.Join(' ', value.Trim().ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 

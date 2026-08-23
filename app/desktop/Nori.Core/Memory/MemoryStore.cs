@@ -194,6 +194,109 @@ public sealed class MemoryStore
 		};
 	}
 
+	/// <summary>以一个事务写入 Memory、默认 Atom 和 Source 聚合。</summary>
+	public MemoryItem AddAggregate(
+		string type,
+		string content,
+		double importance = 0.5,
+		string source = "chat",
+		string? tags = null,
+		string? embedding = null,
+		MemoryKind kind = MemoryKind.General,
+		string? canonicalSummary = null,
+		string? personaSummary = null,
+		double confidence = 0.8,
+		double? ttlDays = null,
+		string? expiresAt = null,
+		string? embeddingFingerprint = null,
+		IReadOnlyList<MemorySource>? sources = null)
+	{
+		ValidateScore(importance, nameof(importance));
+		ValidateScore(confidence, nameof(confidence));
+		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+		string storageKind = kind == MemoryKind.General ? MemoryKindExtensions.Parse(type).ToStorage() : kind.ToStorage();
+		long id = _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			using SqliteCommand memory = connection.CreateCommand();
+			memory.Transaction = transaction;
+			memory.CommandText = """
+				INSERT INTO memories
+					(type, content, importance, source, tags, embedding, created_at, updated_at,
+					 kind, canonical_summary, persona_summary, confidence, status, ttl_days, expires_at, embedding_fingerprint)
+				VALUES ($type, $content, $importance, $source, $tags, $embedding, $created_at, $updated_at,
+					 $kind, $canonical_summary, $persona_summary, $confidence, 'active', $ttl_days, $expires_at, $embedding_fingerprint);
+				SELECT last_insert_rowid();
+				""";
+			AddParameter(memory, "$type", type);
+			AddParameter(memory, "$content", content);
+			AddParameter(memory, "$importance", importance);
+			AddParameter(memory, "$source", source);
+			AddParameter(memory, "$tags", tags);
+			AddParameter(memory, "$embedding", embedding);
+			AddParameter(memory, "$created_at", now);
+			AddParameter(memory, "$updated_at", now);
+			AddParameter(memory, "$kind", storageKind);
+			AddParameter(memory, "$canonical_summary", canonicalSummary ?? content);
+			AddParameter(memory, "$persona_summary", personaSummary ?? content);
+			AddParameter(memory, "$confidence", confidence);
+			AddParameter(memory, "$ttl_days", ttlDays);
+			AddParameter(memory, "$expires_at", expiresAt);
+			AddParameter(memory, "$embedding_fingerprint", embeddingFingerprint);
+			long memoryId = Convert.ToInt64(memory.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+			using SqliteCommand atom = connection.CreateCommand();
+			atom.Transaction = transaction;
+			atom.CommandText = """
+				INSERT INTO memory_atoms
+					(parent_memory_id, atom_type, content, importance, confidence, status, created_at, ttl_days, expires_at)
+				VALUES ($parent, $kind, $content, $importance, $confidence, 'active', $created, $ttl, $expires);
+				""";
+			AddParameter(atom, "$parent", memoryId);
+			AddParameter(atom, "$kind", storageKind);
+			AddParameter(atom, "$content", canonicalSummary ?? content);
+			AddParameter(atom, "$importance", importance);
+			AddParameter(atom, "$confidence", confidence);
+			AddParameter(atom, "$created", now);
+			AddParameter(atom, "$ttl", ttlDays);
+			AddParameter(atom, "$expires", expiresAt);
+			atom.ExecuteNonQuery();
+			using SqliteCommand atomIdCommand = connection.CreateCommand();
+			atomIdCommand.Transaction = transaction;
+			atomIdCommand.CommandText = "SELECT last_insert_rowid();";
+			long atomId = Convert.ToInt64(atomIdCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
+
+			if (sources is not null)
+			{
+				foreach (MemorySource sourceRow in sources)
+				{
+					using SqliteCommand sourceCommand = connection.CreateCommand();
+					sourceCommand.Transaction = transaction;
+					sourceCommand.CommandText = "INSERT INTO memory_sources(memory_id, role, content, message_time, sequence) VALUES ($memory, $role, $content, $time, $sequence)";
+					AddParameter(sourceCommand, "$memory", memoryId);
+					AddParameter(sourceCommand, "$role", sourceRow.Role);
+					AddParameter(sourceCommand, "$content", sourceRow.Content);
+					AddParameter(sourceCommand, "$time", sourceRow.MessageTime);
+					AddParameter(sourceCommand, "$sequence", sourceRow.Sequence);
+					sourceCommand.ExecuteNonQuery();
+				}
+			}
+			RefreshMemoryIndex(connection, transaction, memoryId);
+			RefreshAtomIndex(connection, transaction, atomId);
+			transaction.Commit();
+			return memoryId;
+		});
+
+		return new MemoryItem
+		{
+			Id = id, Type = type, Content = content, Importance = importance, Source = source, Tags = tags,
+			Embedding = embedding, CreatedAt = now, UpdatedAt = now, Kind = storageKind,
+			CanonicalSummary = canonicalSummary ?? content, PersonaSummary = personaSummary ?? content,
+			Confidence = confidence, Status = "active", TtlDays = ttlDays, ExpiresAt = expiresAt,
+			EmbeddingFingerprint = embeddingFingerprint,
+		};
+	}
+
 	/// <summary>直接创建一个事实原子。</summary>
 	public MemoryAtom AddAtom(
 		long parentMemoryId,
@@ -245,6 +348,27 @@ public sealed class MemoryStore
 				ExpiresAt = expiresAt,
 				Entities = entities,
 			};
+		});
+	}
+
+	/// <summary>同步默认 Atom，避免编辑父记忆后旧摘要继续参与召回。</summary>
+	public bool UpdateAtom(long atomId, string content, MemoryKind kind, double? importance = null, double? confidence = null)
+	{
+		return _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
+			command.CommandText = "UPDATE memory_atoms SET content = $content, atom_type = $kind, importance = COALESCE($importance, importance), confidence = COALESCE($confidence, confidence) WHERE id = $id";
+			AddParameter(command, "$id", atomId);
+			AddParameter(command, "$content", content);
+			AddParameter(command, "$kind", kind.ToStorage());
+			AddParameter(command, "$importance", importance);
+			AddParameter(command, "$confidence", confidence);
+			bool updated = command.ExecuteNonQuery() > 0;
+			if (updated) RefreshAtomIndex(connection, transaction, atomId);
+			transaction.Commit();
+			return updated;
 		});
 	}
 
@@ -564,6 +688,25 @@ public sealed class MemoryStore
 		return updated;
 	}
 
+	/// <summary>更新单个 Atom 状态并同步 Atom FTS。</summary>
+	public bool SetAtomStatus(long atomId, MemoryStatus status, long? supersededBy = null)
+	{
+		return _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
+			command.CommandText = "UPDATE memory_atoms SET status = $status, superseded_by = $superseded WHERE id = $id";
+			AddParameter(command, "$id", atomId);
+			AddParameter(command, "$status", status.ToStorage());
+			AddParameter(command, "$superseded", supersededBy);
+			bool changed = command.ExecuteNonQuery() > 0;
+			if (changed) RefreshAtomIndex(connection, transaction, atomId);
+			transaction.Commit();
+			return changed;
+		});
+	}
+
 	/// <summary>归档或恢复记忆；Superseded 不允许普通恢复。</summary>
 	public bool Archive(long id) => SetStatus(id, MemoryStatus.Archived);
 
@@ -653,6 +796,12 @@ public sealed class MemoryStore
 				AddParameter(command, "$id", id);
 				AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
 				command.ExecuteNonQuery();
+				using SqliteCommand atoms = connection.CreateCommand();
+				atoms.Transaction = transaction;
+				atoms.CommandText = "UPDATE memory_atoms SET status = 'active', last_accessed_at = $now WHERE parent_memory_id = $id AND status = 'dormant'";
+				AddParameter(atoms, "$id", id);
+				AddParameter(atoms, "$now", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+				atoms.ExecuteNonQuery();
 			}
 			transaction.Commit();
 		});
@@ -663,12 +812,26 @@ public sealed class MemoryStore
 	{
 		return _database.Locked(connection =>
 		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 			using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = transaction;
 			command.CommandText = "UPDATE memories SET reinforcement_count = reinforcement_count + 1, importance = MIN(1.0, importance + $increment), last_reinforced_at = $now, status = 'active' WHERE id = $id AND status <> 'superseded'";
 			AddParameter(command, "$id", id);
 			AddParameter(command, "$increment", Math.Max(0, importanceIncrement));
-			AddParameter(command, "$now", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
-			return command.ExecuteNonQuery() > 0;
+			AddParameter(command, "$now", now);
+			bool updated = command.ExecuteNonQuery() > 0;
+			if (updated)
+			{
+				using SqliteCommand atoms = connection.CreateCommand();
+				atoms.Transaction = transaction;
+				atoms.CommandText = "UPDATE memory_atoms SET status = CASE WHEN status = 'dormant' THEN 'active' ELSE status END, last_reinforced_at = $now WHERE parent_memory_id = $id AND status <> 'superseded'";
+				AddParameter(atoms, "$id", id);
+				AddParameter(atoms, "$now", now);
+				atoms.ExecuteNonQuery();
+			}
+			transaction.Commit();
+			return updated;
 		});
 	}
 
@@ -852,7 +1015,7 @@ public sealed class MemoryStore
 			rebuild.CommandText = """
 				DELETE FROM memories_fts;
 				INSERT INTO memories_fts(memory_id, content, tags)
-				SELECT id, COALESCE(canonical_summary, content) || ' ' || COALESCE(persona_summary, ''), COALESCE(tags, '')
+				SELECT id, COALESCE(content, '') || ' ' || COALESCE(canonical_summary, '') || ' ' || COALESCE(persona_summary, ''), COALESCE(tags, '')
 				FROM memories WHERE status IN ('active', 'dormant');
 				DELETE FROM memory_atoms_fts;
 				INSERT INTO memory_atoms_fts(memory_id, content)
@@ -881,7 +1044,7 @@ public sealed class MemoryStore
 		insert.Transaction = transaction;
 		insert.CommandText = """
 			INSERT INTO memories_fts(memory_id, content, tags)
-			SELECT id, COALESCE(canonical_summary, content) || ' ' || COALESCE(persona_summary, ''), COALESCE(tags, '')
+			SELECT id, COALESCE(content, '') || ' ' || COALESCE(canonical_summary, '') || ' ' || COALESCE(persona_summary, ''), COALESCE(tags, '')
 			FROM memories WHERE id = $id AND status IN ('active', 'dormant')
 			""";
 		AddParameter(insert, "$id", id);

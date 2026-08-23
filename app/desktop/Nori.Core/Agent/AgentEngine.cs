@@ -147,7 +147,12 @@ public sealed class AgentEngine
 				.Distinct(StringComparer.Ordinal)
 				.Take(6)
 				.ToList(),
-			RelatedKnowledge = memoryContext.Knowledge.Select(item => item.Content).ToList(),
+			RelatedKnowledge = memoryContext.Knowledge
+				.Where(item => item.Awareness != KnowledgeAwareness.Recovered)
+				.Select(item => item.Content).ToList(),
+			RecoveredKnowledge = memoryContext.Knowledge
+				.Where(item => item.Awareness == KnowledgeAwareness.Recovered)
+				.Select(item => item.Content).ToList(),
 			MemoryEchoes = memoryContext.Echoes.Select(item => item.Content).ToList(),
 			AvailableMotions = motions,
 			AvailableExpressions = expressions,

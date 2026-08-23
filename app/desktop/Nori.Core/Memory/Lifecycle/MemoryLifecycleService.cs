@@ -27,8 +27,27 @@ public sealed class MemoryLifecycleService
 			if (item.Status == "active" && score < 0.35 && _memory.Store.SetStatus(item.Id, MemoryStatus.Dormant)) changed++;
 			else if (item.Status == "dormant" && settings.ArchiveEnabled && score < settings.ArchiveThreshold && _memory.Store.Archive(item.Id)) changed++;
 		}
+		foreach (MemoryAtom atom in _memory.Store.GetAtoms(null, null, 100000))
+		{
+			if (atom.Status is MemoryStatus.Superseded or MemoryStatus.Archived) continue;
+			if (IsExpired(atom, current))
+			{
+				if (atom.Status != MemoryStatus.Expired && _memory.Store.SetAtomStatus(atom.Id, MemoryStatus.Expired)) changed++;
+				continue;
+			}
+			double score = DecayCalculator.TemporalScore(atom, current);
+			if (atom.Status == MemoryStatus.Active && score < 0.35 && _memory.Store.SetAtomStatus(atom.Id, MemoryStatus.Dormant)) changed++;
+			else if (atom.Status == MemoryStatus.Dormant && settings.ArchiveEnabled && score < settings.ArchiveThreshold && _memory.Store.SetAtomStatus(atom.Id, MemoryStatus.Archived)) changed++;
+		}
 		_memory.Store.SetEngineState("last_maintenance_at", current.ToString("o", CultureInfo.InvariantCulture));
 		return changed;
+	}
+
+	private static bool IsExpired(MemoryAtom atom, DateTimeOffset now)
+	{
+		return !string.IsNullOrWhiteSpace(atom.ExpiresAt)
+			&& DateTimeOffset.TryParse(atom.ExpiresAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTimeOffset expires)
+			&& expires <= now;
 	}
 
 	private static bool IsExpired(MemoryItem item, DateTimeOffset now)

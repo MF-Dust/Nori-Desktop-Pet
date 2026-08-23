@@ -6,15 +6,17 @@ public sealed class ReflectionWorker : IAsyncDisposable
 	private readonly ReflectionQueue _queue;
 	private readonly ReflectionService _service;
 	private readonly Action<Exception>? _onError;
+	private readonly Action? _onCompleted;
 	private readonly CancellationTokenSource _cts = new();
 	private Task? _worker;
 	private int _started;
 
-	public ReflectionWorker(ReflectionQueue queue, ReflectionService service, Action<Exception>? onError = null)
+	public ReflectionWorker(ReflectionQueue queue, ReflectionService service, Action<Exception>? onError = null, Action? onCompleted = null)
 	{
 		_queue = queue;
 		_service = service;
 		_onError = onError;
+		_onCompleted = onCompleted;
 	}
 
 	public void Start()
@@ -35,6 +37,8 @@ public sealed class ReflectionWorker : IAsyncDisposable
 				{
 					if (await _service.ReflectPendingAsync(_cts.Token).ConfigureAwait(false))
 					{
+						try { _onCompleted?.Invoke(); }
+						catch { }
 						// 处理期间可能又有完整轮次进入队列，下一次循环继续检查持久化游标。
 					}
 				}

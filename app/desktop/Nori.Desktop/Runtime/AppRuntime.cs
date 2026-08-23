@@ -101,6 +101,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config);
 		Knowledge = new KnowledgeService(services.Database, Memory, config);
+		Knowledge.StatusChanged = () => InvalidateSnapshot("memory");
 		Memory.Knowledge = Knowledge;
 		Lifecycle = new MemoryLifecycleService(Memory);
 		_reflectionQueue = new ReflectionQueue();
@@ -109,7 +110,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		{
 			try { services.Logger.Write(LogSource.Backend, "warn", $"记忆整理失败: {exception.Message}"); }
 			catch { }
-		});
+		}, () => InvalidateSnapshot("memory"));
 		Skills = new SkillService(config, services.PublicHttp);
 		Emotion = new EmotionManager(config);
 
@@ -189,11 +190,9 @@ public sealed class AppRuntime : IAsyncDisposable
 		Proactive.Start();
 
 		// Knowledge 和 Reflection 都在后台启动；索引或整理失败不能阻塞聊天。
-		Knowledge.EnsureDefaultFile();
-		Knowledge.StartWatcher();
 		_reflectionWorker.Start();
 		_reflectionWorker.TryEnqueue(new ReflectionJob("startup"));
-		TrackBackground(() => Knowledge.ReindexAsync(_lifetimeCts.Token), "Memory.md index");
+		TrackBackground(InitializeKnowledgeAsync, "Memory.md index");
 		TrackBackground(() => Memory.ReembedAllAsync(_lifetimeCts.Token, false), "memory embedding rebuild");
 		TrackBackground(RunMemoryMaintenanceAsync, "memory lifecycle");
 
@@ -694,7 +693,11 @@ public sealed class AppRuntime : IAsyncDisposable
 				vectorTopK = memorySettings.VectorTopK,
 				rrfK = memorySettings.RrfK,
 				minSimilarity = memorySettings.MinSimilarity,
+				sourceRetentionThreshold = memorySettings.SourceRetentionThreshold,
 				archiveThreshold = memorySettings.ArchiveThreshold,
+				knowledgeEnabled = memorySettings.KnowledgeEnabled,
+				knowledgeWatch = memorySettings.KnowledgeWatch,
+				debugRetrieval = memorySettings.DebugRetrieval,
 			},
 			voice = new
 			{
@@ -916,11 +919,27 @@ public sealed class AppRuntime : IAsyncDisposable
 		return task;
 	}
 
+	private async Task InitializeKnowledgeAsync()
+	{
+		Knowledge.EnsureDefaultFile();
+		Knowledge.StartWatcher();
+		await Knowledge.ReindexAsync(_lifetimeCts.Token).ConfigureAwait(false);
+	}
+
+	/// <summary>Embedding 配置变化后重新检查知识和个人记忆向量。</summary>
+	public void QueueEmbeddingRebuild()
+	{
+		TrackBackground(() => Knowledge.ReindexAsync(_lifetimeCts.Token), "Memory.md embedding rebuild");
+		TrackBackground(() => Memory.ReembedAllAsync(_lifetimeCts.Token, false), "memory embedding rebuild");
+		InvalidateSnapshot("memory", "embedding");
+	}
+
 	private async Task RunMemoryMaintenanceAsync()
 	{
 		while (!_lifetimeCts.IsCancellationRequested)
 		{
-			Lifecycle.RunOnce();
+			int changed = Lifecycle.RunOnce();
+			if (changed > 0) InvalidateSnapshot("memory");
 			try { await Task.Delay(TimeSpan.FromHours(6), _lifetimeCts.Token).ConfigureAwait(false); }
 			catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { break; }
 		}

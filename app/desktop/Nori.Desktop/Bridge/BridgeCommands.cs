@@ -182,7 +182,7 @@ public sealed class BridgeCommands
 				UpdateOptionalConfig(args, "baseUrl", "embedding_api_base");
 				UpdateSecretConfig(args, "apiKey", "embedding_api_key");
 				UpdateOptionalConfig(args, "dimensions", "embedding_dimensions");
-				Runtime.InvalidateSnapshot("embedding");
+				Runtime.QueueEmbeddingRebuild();
 			})),
 
 		// invoke("tools_set_enabled", {name: "getTime", enabled: false})
@@ -268,61 +268,61 @@ public sealed class BridgeCommands
 		})),
 
 		// ---- 记忆库 ----
-		// invoke("memory_add", {content, type?, importance?, tags?})
+		/// invoke("memory_add", {content, type?, importance?, tags?})
 		"memory_add" => await MemoryAddAsync(source, args),
 
-		// invoke("memory_list", {limit?})
+		/// invoke("memory_list", {limit?})
 		"memory_list" => await MemoryListAsync(source, args),
 
-		// invoke("memory_update", {id, content, importance?, tags?})
+		/// invoke("memory_update", {id, content, importance?, tags?})
 		"memory_update" => await MemoryUpdateAsync(source, args),
 
-		// invoke("memory_delete", {id, confirmToken: "DELETE_MEMORY"})
+		/// invoke("memory_delete", {id, confirmToken: "DELETE_MEMORY"})
 		"memory_delete" => RequireMain(source, () => HardDeleteMemory(source, args)),
 
-		// invoke("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
+		/// invoke("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
 		"memory_clear" => RequireMain(source, () => ClearMemories(source, args)),
 
-		// invoke("memory_archive", {id})
+		/// invoke("memory_archive", {id})
 		"memory_archive" => RequireMain(source, () => ArchiveMemory(args)),
 
-		// invoke("memory_restore", {id})
+		/// invoke("memory_restore", {id})
 		"memory_restore" => RequireMain(source, () => RestoreMemory(args)),
 
-		// invoke("memory_overview")
+		/// invoke("memory_overview")
 		"memory_overview" => RequireMain(source, MemoryOverview),
 
-		// invoke("memory_list_page", {query?, kind?, status?, limit?, offset?})
+		/// invoke("memory_list_page", {query?, kind?, status?, limit?, offset?})
 		"memory_list_page" => RequireMain(source, () => MemoryListPage(args)),
 
-		// invoke("memory_get", {id})
+		/// invoke("memory_get", {id})
 		"memory_get" => RequireMain(source, () => MemoryGet(args)),
 
-		// invoke("memory_atom_list", {memoryId?, status?, limit?, offset?})
+		/// invoke("memory_atom_list", {memoryId?, status?, limit?, offset?})
 		"memory_atom_list" => RequireMain(source, () => MemoryAtomList(args)),
 
-		// invoke("memory_knowledge_status")
+		/// invoke("memory_knowledge_status")
 		"memory_knowledge_status" => RequireMain(source, () => Runtime.Knowledge.Status),
 
-		// invoke("memory_knowledge_reindex")
+		/// invoke("memory_knowledge_reindex")
 		"memory_knowledge_reindex" => await MemoryKnowledgeReindexAsync(source),
 
-		// invoke("memory_knowledge_open")
+		/// invoke("memory_knowledge_open")
 		"memory_knowledge_open" => RequireMain(source, () => OpenKnowledgeFolder()),
 
-		// invoke("memory_recall_debug", {query})
+		/// invoke("memory_recall_debug", {query})
 		"memory_recall_debug" => await MemoryRecallDebugAsync(source, args),
 
-		// invoke("memory_get_settings")
+		/// invoke("memory_get_settings")
 		"memory_get_settings" => RequireMain(source, () => Runtime.Memory.Settings),
 
-		// invoke("memory_update_settings", {settings: {...}})
+		/// invoke("memory_update_settings", {settings: {...}})
 		"memory_update_settings" => RequireMain(source, () => UpdateMemorySettings(args)),
 
-		// invoke("memory_search_hybrid", {keyword, limit?})
+		/// invoke("memory_search_hybrid", {keyword, limit?})
 		"memory_search_hybrid" => await MemorySearchHybridAsync(source, args),
 
-		// invoke("memory_reembed_all")
+		/// invoke("memory_reembed_all")
 		"memory_reembed_all" => await MemoryReembedAllAsync(source),
 
 		// ---- 技能 ----
@@ -496,10 +496,10 @@ public sealed class BridgeCommands
 		return item;
 	}
 
-	private async Task<object?> MemoryListAsync(IBridgeSource source, JsonElement args)
+	private Task<object?> MemoryListAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		return _services.Memory.GetAll(ClampLimit(OptionalInt(args, "limit"), 50));
+		return Task.FromResult<object?>(_services.Memory.GetAll(ClampLimit(OptionalInt(args, "limit"), 50)));
 	}
 
 	private async Task<object?> MemoryUpdateAsync(IBridgeSource source, JsonElement args)
@@ -592,12 +592,17 @@ public sealed class BridgeCommands
 		string? status = OptionalStr(args, "status");
 		int limit = ClampLimit(OptionalInt(args, "limit"), 50);
 		int offset = Math.Max(0, OptionalInt(args, "offset") ?? 0);
-		IEnumerable<MemoryItem> items = query.Length > 0
-			? Runtime.Memory.Store.Search(query, 10000)
-			: Runtime.Memory.Store.GetAll(10000);
+		IEnumerable<MemoryItem> items = Runtime.Memory.Store.GetAll(100000);
+		if (query.Length > 0)
+		{
+			items = items.Where(item => item.Content.Contains(query, StringComparison.OrdinalIgnoreCase)
+				|| (item.CanonicalSummary?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false)
+				|| (item.PersonaSummary?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false)
+				|| (item.Tags?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+		}
 		if (kind is not null) items = items.Where(item => item.Kind.Equals(MemoryKindExtensions.Parse(kind).ToStorage(), StringComparison.OrdinalIgnoreCase));
 		if (status is not null) items = items.Where(item => item.Status.Equals(status, StringComparison.OrdinalIgnoreCase));
-		List<MemoryItem> filtered = items.ToList();
+		List<MemoryItem> filtered = items.OrderByDescending(item => item.UpdatedAt).ToList();
 		return new {items = filtered.Skip(offset).Take(limit).ToArray(), total = filtered.Count};
 	}
 
@@ -636,7 +641,7 @@ public sealed class BridgeCommands
 		RequireMainVoid(source);
 		string query = Str(args, "query");
 		IReadOnlyList<(string Role, string Content)> recent = AgentHistory.NormalizeRecent(_services.Chat.GetHistory(8, 0));
-		MemoryContext context = await Runtime.Memory.BuildContextAsync(query, recent, CancellationToken.None, true).ConfigureAwait(false);
+		MemoryContext context = await Runtime.Memory.BuildContextAsync(query, recent, CancellationToken.None, true, false).ConfigureAwait(false);
 		return new {trace = context.Debug, personal = context.Personal, atoms = context.Atoms, knowledge = context.Knowledge, echoes = context.Echoes};
 	}
 

@@ -33,11 +33,9 @@ public sealed class MemoryRepository
 		string? embedding = null,
 		string? embeddingFingerprint = null)
 	{
-		MemoryItem item = _store.Add(
+		return _store.AddAggregate(
 			kind.ToStorage(), content, importance, source, tags, embedding, kind,
 			canonicalSummary, personaSummary, confidence, ttlDays, expiresAt, embeddingFingerprint);
-		_store.AddAtom(item.Id, kind, canonicalSummary ?? content, importance, confidence, ttlDays, expiresAt);
-		return item;
 	}
 
 	public MemoryItem? Get(long id) => _store.Get(id);

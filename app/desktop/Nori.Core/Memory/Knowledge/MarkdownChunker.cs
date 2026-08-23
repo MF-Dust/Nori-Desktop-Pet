@@ -59,10 +59,11 @@ public static partial class MarkdownChunker
 		{
 			KnowledgeAwareness awareness = DetectAwareness(section.Content);
 			string knowledgeType = DetectKnowledgeType(section.Content, awareness);
+			int partIndex = 0;
 			foreach (string part in SplitContent(section.Content, 1200, 800))
 			{
 				string content = $"{section.HeadingPath}\n{part}".Trim();
-				string key = StableKey(section.HeadingPath, sequence);
+				string key = StableKey(section.HeadingPath, part, partIndex++);
 				result.Add(new Chunk(key, sequence++, section.Heading, section.Subheading, content, knowledgeType, awareness, Hash(content)));
 			}
 		}
@@ -115,8 +116,8 @@ public static partial class MarkdownChunker
 	private static string DetectKnowledgeType(string content, KnowledgeAwareness awareness) =>
 		content.Contains("[ARCHIVE_RECORD]", StringComparison.Ordinal) ? "archive_record" : awareness.ToStorage();
 
-	private static string StableKey(string headingPath, int sequence) =>
-		$"{sequence:x8}-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(headingPath))).ToLowerInvariant()[..12]}";
+	private static string StableKey(string headingPath, string content, int partIndex) =>
+		$"{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{headingPath}\n{partIndex}\n{content}"))).ToLowerInvariant()[..20]}";
 
 	private static string Hash(string content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
 

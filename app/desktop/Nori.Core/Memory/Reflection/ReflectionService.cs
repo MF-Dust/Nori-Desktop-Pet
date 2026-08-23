@@ -143,6 +143,13 @@ public sealed class ReflectionService
 	private MemoryItem? FindExact(ReflectionFact fact)
 	{
 		string normalized = Normalize(fact.Content);
+		foreach (RetrievalHit hit in _memory.Store.SearchAtomKeyword(fact.Content, 10))
+		{
+			MemoryAtom? atom = _memory.Store.GetAtom(hit.MemoryId);
+			if (atom is null || MemoryKindExtensions.Parse(atom.AtomType) != fact.Kind || Normalize(atom.Content) != normalized) continue;
+			MemoryItem? parent = _memory.Get(atom.ParentMemoryId);
+			if (parent is not null) return parent;
+		}
 		foreach (RetrievalHit hit in _memory.Store.SearchKeyword(fact.Content, 5))
 		{
 			MemoryItem? item = _memory.Get(hit.MemoryId);
