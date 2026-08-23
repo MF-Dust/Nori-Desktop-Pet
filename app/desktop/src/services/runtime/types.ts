@@ -125,6 +125,95 @@ export interface EmbeddingState {
 	hasApiKey: boolean
 }
 
+/** 长期记忆设置快照 */
+export interface MemorySettings {
+	enabled: boolean
+	reflectionEnabled: boolean
+	reflectionRounds: number
+	reflectionMinChars: number
+	recallTopK: number
+	keywordTopK: number
+	vectorTopK: number
+	rrfK: number
+	minSimilarity: number
+	decayEnabled: boolean
+	archiveEnabled: boolean
+	sourceRetentionThreshold: number
+	archiveThreshold: number
+	knowledgeEnabled: boolean
+	knowledgeWatch: boolean
+	debugRetrieval: boolean
+}
+
+/** 知识/向量索引状态 */
+export interface MemoryIndexStatus {
+	state: "ready" | "checking" | "rebuilding" | "partial" | "failed"
+	processed: number
+	total: number
+	lastError?: string
+	lastMaintenanceAt?: string
+	lastReflectionAt?: string
+}
+
+/** 记忆快照 */
+export interface MemoryState {
+	enabled: boolean
+	reflectionEnabled: boolean
+	decayEnabled: boolean
+	archiveEnabled: boolean
+	active: number
+	atoms: number
+	archived: number
+	total: number
+	knowledgePath: string
+	knowledgeChunks: number
+	indexState: MemoryIndexStatus["state"]
+	indexProcessed: number
+	indexTotal: number
+	lastError?: string
+	lastReflection?: string
+	lastMaintenance?: string
+	ftsAvailable: boolean
+	reflectionRounds: number
+	reflectionMinChars: number
+	recallTopK: number
+	keywordTopK: number
+	vectorTopK: number
+	rrfK: number
+	minSimilarity: number
+	archiveThreshold: number
+}
+
+/** 记忆事实原子 */
+export interface MemoryAtom {
+	id: number
+	parentMemoryId: number
+	atomType: string
+	content: string
+	importance: number
+	confidence: number
+	status: string
+	createdAt: string
+	lastAccessedAt?: string
+	lastReinforcedAt?: string
+	ttlDays?: number
+	expiresAt?: string
+	reinforcementCount: number
+	decayType: string
+	entities?: string
+	supersededBy?: number
+}
+
+/** 记忆来源消息 */
+export interface MemorySource {
+	id: number
+	memoryId: number
+	role: string
+	content: string
+	messageTime?: string
+	sequence: number
+}
+
 /** 提醒事项 */
 export interface ReminderDto {
 	id: string
@@ -182,6 +271,7 @@ export interface UiSnapshot {
 	behaviors: BehaviorsState
 	voice: VoiceState
 	embedding: EmbeddingState
+	memory: MemoryState
 	proactive: ProactiveState
 	skills: SkillDto[]
 	enabledSkillsCount: number
@@ -264,8 +354,46 @@ export interface MemoryItem {
 	importance: number
 	source: string
 	tags?: string
+	embedding?: string
 	createdAt: string
 	updatedAt: string
+	kind?: string
+	canonicalSummary?: string
+	personaSummary?: string
+	confidence?: number
+	status?: string
+	accessCount?: number
+	reinforcementCount?: number
+	lastAccessedAt?: string
+	lastReinforcedAt?: string
+	ttlDays?: number
+	expiresAt?: string
+	supersededBy?: number
+	embeddingFingerprint?: string
+}
+
+/** 分页记忆列表 */
+export interface MemoryListPage {
+	items: MemoryItem[]
+	total: number
+}
+
+/** Recall Debugger 结果 */
+export interface MemoryRecallDebug {
+	trace?: {
+		query: string
+		expandedQuery: string
+		keywordHits: {memoryId: number; score: number; rank: number}[]
+		vectorHits: {memoryId: number; score: number; rank: number}[]
+		atomHits: {memoryId: number; score: number; rank: number}[]
+		rrfHits: {memoryId: number; score: number; rank: number}[]
+		filteredIds: number[]
+		injectedIds: number[]
+	}
+	personal: MemoryItem[]
+	atoms: MemoryAtom[]
+	knowledge: {id: number; heading: string; subheading?: string; content: string; awareness: string; knowledgeType?: string; score: number}[]
+	echoes: {content: string; score: number}[]
 }
 
 /** MCP 服务器状态 */

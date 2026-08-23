@@ -12,7 +12,12 @@ import type {
 	BehaviorsState,
 	HistoryMessage,
 	McpServerStatusInfo,
+	MemoryAtom,
 	MemoryItem,
+	MemoryListPage,
+	MemoryRecallDebug,
+	MemorySettings,
+	MemorySource,
 	ModelMeta,
 	PlatformState,
 	UiSnapshot,
@@ -29,7 +34,13 @@ export type {
 	GeneralState,
 	HistoryMessage,
 	McpServerStatusInfo,
+	MemoryAtom,
 	MemoryItem,
+	MemoryListPage,
+	MemoryRecallDebug,
+	MemorySettings,
+	MemorySource,
+	MemoryState,
 	ModelItem,
 	ModelMeta,
 	ModelsState,
@@ -244,23 +255,59 @@ export const RUNTIME = {
 	// 记忆库
 	// ------------------------------------------------------------------
 
-	memoryAdd(content: string, importance = 0.8, tags?: string): Promise<MemoryItem> {
-		return invoke<MemoryItem>("memory_add", {content, importance, tags})
+	memoryAdd(content: string, importance = 0.8, tags?: string, kind?: string): Promise<MemoryItem> {
+		return invoke<MemoryItem>("memory_add", {content, importance, tags, kind})
 	},
 	memoryList(limit = 50): Promise<MemoryItem[]> {
 		return invoke<MemoryItem[]>("memory_list", {limit})
 	},
-	memoryUpdate(id: number, content: string, importance?: number, tags?: string): Promise<boolean> {
-		return invoke<boolean>("memory_update", {id, content, importance, tags})
+	memoryListPage(query?: string, kind?: string, status?: string, limit = 50, offset = 0): Promise<MemoryListPage> {
+		return invoke<MemoryListPage>("memory_list_page", {query, kind, status, limit, offset})
+	},
+	memoryGet(id: number): Promise<{item: MemoryItem; atoms: MemoryAtom[]; sources: MemorySource[]}> {
+		return invoke("memory_get", {id})
+	},
+	memoryUpdate(id: number, content: string, importance?: number, tags?: string, patch?: {kind?: string; canonicalSummary?: string; personaSummary?: string; confidence?: number}): Promise<boolean> {
+		return invoke<boolean>("memory_update", {id, content, importance, tags, ...patch})
+	},
+	memoryArchive(id: number): Promise<boolean> {
+		return invoke<boolean>("memory_archive", {id})
+	},
+	memoryRestore(id: number): Promise<boolean> {
+		return invoke<boolean>("memory_restore", {id})
 	},
 	memoryDelete(id: number): Promise<boolean> {
-		return invoke<boolean>("memory_delete", {id})
+		return invoke<boolean>("memory_delete", {id, confirmToken: "DELETE_MEMORY"})
 	},
 	memoryClear(): Promise<void> {
-		return invoke<void>("memory_clear")
+		return invoke<void>("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
+	},
+	memoryOverview(): Promise<unknown> {
+		return invoke("memory_overview")
+	},
+	memoryAtoms(memoryId?: number, status?: string, limit = 50, offset = 0): Promise<MemoryAtom[]> {
+		return invoke<MemoryAtom[]>("memory_atom_list", {memoryId, status, limit, offset})
 	},
 	memorySearch(keyword: string, limit = 20): Promise<MemoryItem[]> {
 		return invoke<MemoryItem[]>("memory_search_hybrid", {keyword, limit})
+	},
+	memoryKnowledgeStatus(): Promise<unknown> {
+		return invoke("memory_knowledge_status")
+	},
+	memoryKnowledgeReindex(): Promise<unknown> {
+		return invoke("memory_knowledge_reindex")
+	},
+	memoryKnowledgeOpen(): Promise<void> {
+		return invoke<void>("memory_knowledge_open")
+	},
+	memoryRecallDebug(query: string): Promise<MemoryRecallDebug> {
+		return invoke<MemoryRecallDebug>("memory_recall_debug", {query})
+	},
+	memoryGetSettings(): Promise<MemorySettings> {
+		return invoke<MemorySettings>("memory_get_settings")
+	},
+	memoryUpdateSettings(settings: Partial<MemorySettings>): Promise<MemorySettings> {
+		return invoke<MemorySettings>("memory_update_settings", {settings})
 	},
 	memoryReembed(): Promise<number> {
 		return invoke<number>("memory_reembed_all")
