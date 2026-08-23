@@ -35,7 +35,9 @@ public sealed class App : Application
 	private AssetServer? _startupAssets;
 	private Nori.Core.Mcp.McpManager? _startupMcp;
 	private Task? _shutdownTask;
+	private readonly CancellationTokenSource _shutdownCts = new();
 	private int _shutdownStarted;
+	private int _secondInstanceActivationPending;
 
 	public override void Initialize() => Styles.Add(new FluentTheme());
 
@@ -48,6 +50,7 @@ public sealed class App : Application
 			CrashReporter.Register(desktop); // UI 线程与任务级异常兜底
 			desktop.Exit += (_, _) =>
 			{
+				_shutdownCts.Cancel();
 				if (Interlocked.CompareExchange(ref _shutdownStarted, 1, 0) == 0)
 					_shutdownTask = ShutdownAsync();
 				try { _shutdownTask?.GetAwaiter().GetResult(); }
@@ -68,7 +71,11 @@ public sealed class App : Application
 	{
 		try
 		{
-			await StartAsyncCore(desktop);
+			await StartAsyncCore(desktop, _shutdownCts.Token);
+		}
+		catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+		{
+			// 应用在启动完成前退出时, 由 Exit 事件负责清理已创建的资源。
 		}
 		catch (Exception exception)
 		{
@@ -77,8 +84,9 @@ public sealed class App : Application
 		}
 	}
 
-	private async Task StartAsyncCore(IClassicDesktopStyleApplicationLifetime desktop)
+	private async Task StartAsyncCore(IClassicDesktopStyleApplicationLifetime desktop, CancellationToken cancellationToken)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
 		bool devMode = Environment.GetEnvironmentVariable("NORI_DEV") == "1";
 
 		AppPaths.EnsureCreated();
@@ -111,6 +119,7 @@ public sealed class App : Application
 			return;
 		}
 
+		cancellationToken.ThrowIfCancellationRequested();
 		NoriDatabase database = NoriDatabase.Open();
 		_startupDatabase = database;
 		ConfigStore config = new(database);
@@ -141,6 +150,7 @@ public sealed class App : Application
 		{
 			logger.Write(LogSource.Backend, "warn", "已启用 allow_insecure_tls: 出站 HTTPS 不再校验服务器证书, 仅建议对本地/自签名端点使用");
 		}
+		cancellationToken.ThrowIfCancellationRequested();
 		AssetServer assets = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),
@@ -169,6 +179,7 @@ public sealed class App : Application
 			Http = http,
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
+			ShutdownToken = _shutdownCts.Token,
 		};
 		_services = services;
 		_startupDatabase = null;
@@ -180,6 +191,7 @@ public sealed class App : Application
 		// 异步自动连接已启用的 MCP 服务; 后台任务失败只记日志, 不崩进程
 		CrashReporter.Forget(mcp.AutoConnectEnabledAsync(), "MCP 自动连接");
 
+		cancellationToken.ThrowIfCancellationRequested();
 		await Dispatcher.UIThread.InvokeAsync(() =>
 		{
 			services.Windows = new WindowManager(assets, desktop);
@@ -200,11 +212,42 @@ public sealed class App : Application
 			// 首次启动显示向导, 否则直接进初始化窗口
 			bool firstRun = config.IsFirstRun();
 			logger.Write(LogSource.Backend, "info", firstRun ? "首次启动应用" : "应用启动完成");
-			services.Windows.Show(firstRun ? WindowLabels.FirstRun : WindowLabels.Init);
+			if (Interlocked.Exchange(ref _secondInstanceActivationPending, 0) == 1)
+				services.Windows.Show(WindowLabels.Main);
+			else
+				services.Windows.Show(firstRun ? WindowLabels.FirstRun : WindowLabels.Init);
 		});
 	}
 
+	/// <summary>
+	/// 响应第二个实例的激活请求。
+	///
+	/// 单实例监听线程不碰 Avalonia 对象, 这里只把请求切回 UI 线程；窗口尚未装配时
+	/// 先记住请求, 等启动流程创建窗口后再显示 main。
+	/// </summary>
+	internal void ActivateMainWindow()
+	{
+		if (!Dispatcher.UIThread.CheckAccess())
+		{
+			Dispatcher.UIThread.Post(ActivateMainWindow);
+			return;
+		}
+
+		if (_services?.Windows is { } windows)
+		{
+			windows.Show(WindowLabels.Main);
+			return;
+		}
+		Interlocked.Exchange(ref _secondInstanceActivationPending, 1);
+	}
+
 	private async Task ShutdownAsync()
+	{
+		Task cleanup = ShutdownCoreAsync();
+		await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(8))).ConfigureAwait(false);
+	}
+
+	private async Task ShutdownCoreAsync()
 	{
 		try
 		{

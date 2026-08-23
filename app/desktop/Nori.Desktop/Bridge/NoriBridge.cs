@@ -16,7 +16,8 @@ namespace Nori.Desktop.Bridge;
 public sealed class NoriBridge(AppServices services)
 {
 	private readonly AppServices _services = services;
-	private readonly CancellationTokenSource _shutdownCts = new();
+	private readonly CancellationTokenSource _shutdownCts =
+		CancellationTokenSource.CreateLinkedTokenSource(services.ShutdownToken);
 	private readonly ConcurrentDictionary<Task, byte> _pendingInvokes = new();
 	private int _disposed;
 
@@ -64,7 +65,9 @@ public sealed class NoriBridge(AppServices services)
 
 	private void TrackInvoke(NoriWindow source, BridgeMessage message)
 	{
-		Task task = HandleInvokeObservedAsync(source, message);
+		// WebView 消息回调在 UI 线程; 即使某个命令最终是同步实现, 也必须先切到
+		// 后台，避免 SQLite/文件读取等工作占住窗口消息泵。
+		Task task = Task.Run(() => HandleInvokeObservedAsync(source, message), CancellationToken.None);
 		_pendingInvokes.TryAdd(task, 0);
 		_ = task.ContinueWith(
 			completed => _pendingInvokes.TryRemove(completed, out _),
@@ -106,9 +109,13 @@ public sealed class NoriBridge(AppServices services)
 		try
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			object? value = await _services.Commands.InvokeAsync(source, cmd, message.Args);
+			object? value = await _services.Commands.InvokeAsync(source, cmd, message.Args, cancellationToken);
 			cancellationToken.ThrowIfCancellationRequested();
 			source.PostResult(message.Id, value, null);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			// 应用退出时不再向已经关闭的 WebView 回写结果。
 		}
 		catch (Exception exception)
 		{

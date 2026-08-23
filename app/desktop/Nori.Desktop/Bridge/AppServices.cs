@@ -81,6 +81,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>应用业务运行时 (Agent/技能/情绪/提醒/语音), 窗口建好后回填</summary>
 	public Runtime.AppRuntime? Runtime { get; set; }
 
+	/// <summary>应用级取消令牌, 启动退出时取消并传给桥接请求。</summary>
+	public CancellationToken ShutdownToken { get; set; }
+
 	private int _disposed;
 
 	public async ValueTask DisposeAsync()

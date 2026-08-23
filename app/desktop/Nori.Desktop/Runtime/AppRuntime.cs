@@ -1028,7 +1028,7 @@ public sealed class AppRuntime : IAsyncDisposable
 	}
 
 	/// <summary>已知模型目录 (展示名由前端静态目录映射)</summary>
-	private static IReadOnlyList<string> ModelCatalogIds() => ["arg-nori", "nori"];
+	private static IReadOnlyList<string> ModelCatalogIds() => KnownModelIds.All;
 
 	private IReadOnlyList<string> ModelExpressions(string modelId)
 	{

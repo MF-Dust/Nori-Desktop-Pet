@@ -4,7 +4,6 @@ import {RUNTIME} from "../services/runtime"
 import {listen, type UnlistenFn} from "../services/host/event"
 import {getCurrentWindow} from "../services/host/window"
 import useLanguages from "../services/i18n/useLanguages.ts"
-import {closeWindow, showWindow} from "../services/window"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
 import AppButton from "../components/ui/AppButton.vue"
@@ -43,7 +42,7 @@ onBeforeUnmount(() => {
 	clearWatchdog()
 })
 
-// 初始化流程: 后端已完成资源/运行时装配, 这里只负责窗口切换 (重入闸门防止事件与握手重复触发)
+// 初始化流程: 宿主统一负责 main/pet/init 的显隐, 页面只发起一次进入请求。
 const startInitFlow = async (): Promise<void> => {
 	if (started) return
 	started = true
@@ -51,10 +50,7 @@ const startInitFlow = async (): Promise<void> => {
 	timedOut.value = false
 	try {
 		await RUNTIME.init()
-		const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
-		await showWindow("main")
-		await sleep(600)
-		await closeWindow("init")
+		await RUNTIME.initEnterMain()
 	} catch (error) {
 		// 主窗口没能打开时不能静默: 退回超时面板让用户重试
 		started = false

@@ -18,10 +18,10 @@ namespace Nori.Desktop.Tests;
 /// </summary>
 public class BridgeCommandsTests : IDisposable
 {
-	private sealed class FakeBridgeSource(string label) : IBridgeSource
+	private sealed class FakeBridgeSource(string label, bool isVisible = true) : IBridgeSource
 	{
 		public string Label => label;
-		public bool IsVisible => true;
+		public bool IsVisible => isVisible;
 		public Window? Self => null;
 		public List<(string Name, object? Payload)> Events { get; } = [];
 
@@ -334,6 +334,76 @@ public class BridgeCommandsTests : IDisposable
 	}
 
 	// ---- 初始化握手与窗口状态 ----
+
+	private void InstallKnownModel(string modelId)
+	{
+		string directory = _services.Resources.ResourceDir(ResourceType.Live2D, modelId);
+		Directory.CreateDirectory(directory);
+		File.WriteAllText(Path.Combine(directory, $"{modelId}.model3.json"), "{}");
+	}
+
+	[Fact]
+	public async Task complete_first_run要求可见首启窗口和已安装已知模型并原子提交()
+	{
+		InstallKnownModel("nori");
+		BridgeCommands commands = CreateCommands();
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "complete_first_run",
+				Args(new {modelId = "nori", telemetryEnabled = false})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.FirstRun, false), "complete_first_run",
+				Args(new {modelId = "nori", telemetryEnabled = false})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.FirstRun), "complete_first_run",
+				Args(new {modelId = "other", telemetryEnabled = false})));
+		Assert.True(_config.IsFirstRun());
+
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.FirstRun), "complete_first_run",
+			Args(new {modelId = "nori", telemetryEnabled = false}));
+
+		Assert.False(_config.IsFirstRun());
+		Assert.Equal("nori", _config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+		Assert.NotNull(_config.GetInitConfig().InitializedAt);
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Init));
+	}
+
+	[Fact]
+	public async Task init_enter_main只允许可见init并按有效模型和自动召唤切换窗口()
+	{
+		InstallKnownModel("arg-nori");
+		_config.Set(ConfigStore.KeySelectedModel, new ConfigValue.Text("arg-nori"));
+		_config.Set("pet_auto_summon", new ConfigValue.Boolean(true));
+		BridgeCommands commands = CreateCommands();
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "init_enter_main", Args(new { })));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init, false), "init_enter_main", Args(new { })));
+
+		_windows.Show(WindowLabels.Init);
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "init_enter_main", Args(new { }));
+
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Main));
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Pet));
+		Assert.False(_windows.IsWindowVisible(WindowLabels.Init));
+	}
+
+	[Fact]
+	public async Task init_enter_main无效模型时不显示桌宠但仍进入主界面()
+	{
+		_config.Set(ConfigStore.KeySelectedModel, new ConfigValue.Text("other"));
+		_windows.Show(WindowLabels.Init);
+		_windows.Show(WindowLabels.Pet);
+		BridgeCommands commands = CreateCommands();
+
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "init_enter_main", Args(new { }));
+
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Main));
+		Assert.False(_windows.IsWindowVisible(WindowLabels.Pet));
+		Assert.False(_windows.IsWindowVisible(WindowLabels.Init));
+	}
 
 	[Fact]
 	public async Task init_ready只允许init窗口且标志只能取一次()

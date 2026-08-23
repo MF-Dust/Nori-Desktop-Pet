@@ -6,6 +6,7 @@ using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Nori.Core.Data;
+using Nori.Core.Platform;
 using Nori.Desktop.Bridge;
 
 namespace Nori.Desktop.Windows;
@@ -50,7 +51,11 @@ public sealed class NoriWindow : Window, IBridgeSource
 		CanResize = definition.CanResize;
 		Topmost = definition.Topmost;
 		ShowInTaskbar = definition.ShowInTaskbar;
-		WindowDecorations = WindowDecorations.None;
+		// WebView 无法在 Wayland/不支持原生拖动的平台接管标题栏时, 明确退回系统标题栏,
+		// 不留下一个既不能拖也没有任何提示的无边框窗口。
+		WindowDecorations = PlatformServices.Current.Capabilities.SupportsWindowDrag
+			? WindowDecorations.None
+			: WindowDecorations.Full;
 		Background = Brushes.Transparent;
 		TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
 		WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -163,6 +168,11 @@ public sealed class NoriWindow : Window, IBridgeSource
 	private void OnNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
 	{
 		if (!e.IsSuccess) return;
+		if (!Dispatcher.UIThread.CheckAccess())
+		{
+			Dispatcher.UIThread.Post(() => OnNavigationCompleted(sender, e));
+			return;
+		}
 		_ready = true;
 		foreach (string script in _pendingScripts) _ = _webView.InvokeScript(script);
 		_pendingScripts.Clear();

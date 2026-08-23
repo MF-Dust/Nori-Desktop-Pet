@@ -78,6 +78,24 @@ public class ConfigStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void 首次运行完成会原子写入模型遥测和初始化标记()
+	{
+		_config.CompleteFirstRun("nori", false);
+
+		Assert.False(_config.IsFirstRun());
+		Assert.Equal("nori", _config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+		Assert.NotNull(_config.GetInitConfig().InitializedAt);
+	}
+
+	[Fact]
+	public void 首次运行完成拒绝空模型()
+	{
+		Assert.Throws<ArgumentException>(() => _config.CompleteFirstRun("", true));
+		Assert.True(_config.IsFirstRun());
+	}
+
+	[Fact]
 	public void 读写删除与存在性()
 	{
 		Assert.Null(_config.Get("l2d_scale_arg-nori"));

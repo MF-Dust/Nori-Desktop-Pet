@@ -16,6 +16,7 @@ const I18N = computed(() => useLanguages().views.firstRun)
 // 首次运行期间仅保存用于展示/日志的快照信息
 const appVersion = ref("0.1.0")
 const selectedModel = ref("arg-nori")
+const telemetryEnabled = ref(true)
 
 // 步骤名称 (i18n)
 const STEP_LABELS = computed(() => [
@@ -35,7 +36,7 @@ onMounted(async () => {
 
 // 向导状态机 (步进、守卫与提交状态全在 services/firstRun/wizard.ts)
 const WIZARD = createWizard(async () => {
-	await RUNTIME.completeFirstRun()
+	await RUNTIME.completeFirstRun(selectedModel.value, telemetryEnabled.value)
 	await RUNTIME.writeLog("info", `初始化完成 (v${appVersion.value}, model=${selectedModel.value})`)
 })
 
@@ -81,6 +82,10 @@ const onModelError = (message: string) => {
 
 const onModelSelected = (modelId: string) => {
 	selectedModel.value = modelId
+}
+
+const onTelemetryChanged = (enabled: boolean) => {
+	telemetryEnabled.value = enabled
 }
 
 // 关闭窗口
@@ -153,7 +158,7 @@ const finish = async () => {
 					@error="onModelError"
 					@selected="onModelSelected"
 				/>
-				<Ready v-else/>
+				<Ready v-else @telemetry-changed="onTelemetryChanged"/>
 			</Transition>
 		</div>
 

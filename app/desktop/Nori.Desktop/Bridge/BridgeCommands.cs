@@ -57,10 +57,17 @@ public sealed class BridgeCommands
 		?? throw new InvalidOperationException("应用运行时尚未就绪");
 
 	/// <summary>
-	/// 分发一次命令调用
+	/// 分发一次命令调用。
 	/// </summary>
-	public async Task<object?> InvokeAsync(IBridgeSource source, string cmd, JsonElement args) => cmd switch
+	public async Task<object?> InvokeAsync(
+		IBridgeSource source,
+		string cmd,
+		JsonElement args,
+		CancellationToken cancellationToken = default)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
+		object? result = cmd switch
+		{
 		// ---- 应用 ----
 		// invoke("exit_app")
 		"exit_app" => RequireMain(source, () =>
@@ -75,8 +82,8 @@ public sealed class BridgeCommands
 		// invoke("get_system_language")
 		"get_system_language" => ConfigStore.SystemLanguage(),
 
-		// invoke("complete_first_run")
-		"complete_first_run" => await CompleteFirstRunAsync(source),
+		/// invoke("complete_first_run", {modelId: "arg-nori", telemetryEnabled: true})
+		"complete_first_run" => await CompleteFirstRunAsync(source, args, cancellationToken),
 
 		// invoke("first_run_select_model", {modelId: "arg-nori"})
 		"first_run_select_model" => RequireLabel(source, WindowLabels.FirstRun, () =>
@@ -92,6 +99,9 @@ public sealed class BridgeCommands
 		{
 			initStartPending = Runtime.ConsumeInitStartPending(),
 		}),
+
+		/// invoke("init_enter_main")
+		"init_enter_main" => await InitEnterMainAsync(source, cancellationToken),
 
 		// invoke("get_init_config")
 		"get_init_config" => _services.Config.GetInitConfig(),
@@ -217,7 +227,7 @@ public sealed class BridgeCommands
 			})),
 
 		// invoke("model_import_local", {resourceType?: "live2d"})
-		"model_import_local" => await ModelImportLocalAsync(source, args),
+		"model_import_local" => await ModelImportLocalAsync(source, args, cancellationToken),
 
 		// invoke("model_get_meta", {modelId: "arg-nori"})
 		"model_get_meta" => RequireMain(source, () =>
@@ -498,8 +508,11 @@ public sealed class BridgeCommands
 		"run_gc_collect" => RequireMain(source, RunGcCollect),
 		"debug_crash_test" => RequireMain(source, () => Run(() => DebugCrashTest(Str(args, "mode")))),
 
-		_ => throw new InvalidOperationException($"未知的命令: {cmd}"),
-	};
+			_ => throw new InvalidOperationException($"未知的命令: {cmd}"),
+		};
+		cancellationToken.ThrowIfCancellationRequested();
+		return result;
+	}
 
 	/// <summary>main 窗口校验 (无返回值场景)</summary>
 	private static void RequireMainVoid(IBridgeSource source)
@@ -800,10 +813,13 @@ public sealed class BridgeCommands
 		return new {text};
 	}
 
-	private async Task<object?> ModelImportLocalAsync(IBridgeSource source, JsonElement args)
+	private async Task<object?> ModelImportLocalAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
 	{
 		RequireMainVoid(source);
-		return await ImportLocalResourceAsync(source, args);
+		return await ImportLocalResourceAsync(source, args, cancellationToken);
 	}
 
 	/// <summary>读取指定模型的互动配置; 损坏配置按空配置处理并记录日志。</summary>
@@ -955,9 +971,12 @@ public sealed class BridgeCommands
 	private static object? RequireMain(IBridgeSource source, Func<object?> factory) => RequireLabel(source, WindowLabels.Main, factory);
 
 	/// <summary>
-	/// 首次启动完成: 只允许可见的 first-run 窗口调用
+	/// 首次启动完成: 只允许可见的 first-run 窗口调用。
 	/// </summary>
-	private async Task<object?> CompleteFirstRunAsync(IBridgeSource source)
+	private async Task<object?> CompleteFirstRunAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
 	{
 		if (source.Label != WindowLabels.FirstRun)
 		{
@@ -970,13 +989,19 @@ public sealed class BridgeCommands
 			_services.Logger.Write(LogSource.Backend, "warn", "拒绝 complete_first_run: 首次运行窗口不可见");
 			throw new InvalidOperationException("首次运行窗口不可见");
 		}
-		_services.Config.MarkFirstRunCompleted();
-		_services.Config.MarkInitialized();
-		_services.Logger.Write(LogSource.Backend, "info", "首次初始化完成");
+
+		string modelId = RequireKnownInstalledModel(Str(args, "modelId"));
+		bool telemetryEnabled = RequiredBool(args, "telemetryEnabled");
+		cancellationToken.ThrowIfCancellationRequested();
+		// 配置层在单个 SQLite 事务中提交所有首次运行结果, 不能留下半完成状态。
+		_services.Config.CompleteFirstRun(modelId, telemetryEnabled);
+		_services.Telemetry.Configure(telemetryEnabled);
+		_services.Logger.Write(LogSource.Backend, "info", $"首次初始化完成: model={modelId}");
 
 		// 先置位再广播: init 页面就绪晚于广播时可经 init_ready 回放, 不会卡在转圈
 		Runtime.MarkInitStartPending();
 
+		cancellationToken.ThrowIfCancellationRequested();
 		await OnUi(() =>
 		{
 			_services.Windows.Close(WindowLabels.FirstRun);
@@ -986,6 +1011,58 @@ public sealed class BridgeCommands
 			return (object?)null;
 		});
 		return null;
+	}
+
+	/// <summary>
+	/// 初始化页进入主界面: 只允许可见的 init 窗口调用。
+	/// 宿主在这里统一完成 main/pet/init 的切换, 前端不直接调窗口命令。
+	/// </summary>
+	private async Task<object?> InitEnterMainAsync(IBridgeSource source, CancellationToken cancellationToken)
+	{
+		if (source.Label != WindowLabels.Init)
+		{
+			_services.Logger.Write(LogSource.Backend, "warn", $"拒绝 init_enter_main: 来源窗口 label={source.Label}");
+			throw new InvalidOperationException("只能从初始化窗口调用 init_enter_main");
+		}
+		bool visible = await OnUi(() => (object?)source.IsVisible) is true;
+		if (!visible) throw new InvalidOperationException("初始化窗口不可见");
+
+		string? modelId = KnownModelIds.Normalize(_services.Config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+		bool modelValid = modelId is not null && IsKnownInstalledModel(modelId);
+		bool autoSummon = _services.Config.GetBoolOr("pet_auto_summon", true);
+		cancellationToken.ThrowIfCancellationRequested();
+		await OnUi(() =>
+		{
+			_services.Windows.Show(WindowLabels.Main);
+			if (modelValid && autoSummon) _services.Windows.Show(WindowLabels.Pet);
+			else _services.Windows.Hide(WindowLabels.Pet);
+			_services.Windows.Hide(WindowLabels.Init);
+			return (object?)null;
+		});
+		return null;
+	}
+
+	/// <summary>校验已知模型 ID 且确认本地模型资源已安装。</summary>
+	private string RequireKnownInstalledModel(string value)
+	{
+		string modelId = KnownModelIds.Normalize(value)
+			?? throw new InvalidOperationException("只支持 arg-nori 或 nori 模型");
+		if (!IsKnownInstalledModel(modelId)) throw new InvalidOperationException($"模型尚未安装: {modelId}");
+		return modelId;
+	}
+
+	private bool IsKnownInstalledModel(string modelId)
+	{
+		try
+		{
+			return KnownModelIds.Normalize(modelId) is not null
+				&& _services.Resources.IsInstalled(ResourceType.Live2D, modelId);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ResourceException)
+		{
+			_services.Logger.Write(LogSource.Backend, "warn", $"检查模型资源失败 [{modelId}]: {exception.Message}");
+			return false;
+		}
 	}
 
 	// ===================================================================
@@ -1304,8 +1381,12 @@ public sealed class BridgeCommands
 	/// <summary>
 	/// 从本地 ZIP 文件或目录导入资源
 	/// </summary>
-	private async Task<object?> ImportLocalResourceAsync(IBridgeSource source, JsonElement args)
+	private async Task<object?> ImportLocalResourceAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
 		string? filePath = OptionalStr(args, "filePath");
 		if (string.IsNullOrWhiteSpace(filePath))
 		{
@@ -1332,7 +1413,7 @@ public sealed class BridgeCommands
 		}
 
 		ResourceType type = ParseResourceType(OptionalStr(args, "resourceType") ?? "live2d");
-		IReadOnlyList<string> imported = await Task.Run(() => _services.Resources.Import(type, filePath));
+		IReadOnlyList<string> imported = await Task.Run(() => _services.Resources.Import(type, filePath), cancellationToken);
 		_services.Logger.Write(LogSource.Backend, "info", $"成功导入本地资源: {filePath} -> {string.Join(", ", imported)}");
 
 		// 广播资源更新
@@ -1411,9 +1492,12 @@ public sealed class BridgeCommands
 
 	private static async Task<object?> WriteClipboardAsync(IBridgeSource source, string text)
 	{
-		Avalonia.Input.Platform.IClipboard clipboard = await OnUi(() => TopLevel.GetTopLevel(source.Self)?.Clipboard)
-			?? throw new InvalidOperationException("剪贴板不可用");
-		await clipboard.SetTextAsync(text);
+		await OnUiAsync(async () =>
+		{
+			Avalonia.Input.Platform.IClipboard clipboard = TopLevel.GetTopLevel(source.Self)?.Clipboard
+				?? throw new InvalidOperationException("剪贴板不可用");
+			await clipboard.SetTextAsync(text);
+		});
 		return null;
 	}
 
@@ -1483,6 +1567,13 @@ public sealed class BridgeCommands
 			? value.GetString() ?? ""
 			: throw new InvalidOperationException($"缺少参数: {name}");
 
+	private static bool RequiredBool(JsonElement args, string name) =>
+		args.ValueKind == JsonValueKind.Object
+			&& args.TryGetProperty(name, out JsonElement value)
+		&& value.ValueKind is JsonValueKind.True or JsonValueKind.False
+			? value.GetBoolean()
+			: throw new InvalidOperationException($"缺少参数: {name}");
+
 	private static bool? OptionalBool(JsonElement args, string name)
 	{
 		if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value))
@@ -1549,4 +1640,7 @@ public sealed class BridgeCommands
 
 	private static Task<T> OnUi<T>(Func<T> action) =>
 		Dispatcher.UIThread.CheckAccess() ? Task.FromResult(action()) : Dispatcher.UIThread.InvokeAsync(action).GetTask();
+
+	private static Task OnUiAsync(Func<Task> action) =>
+		Dispatcher.UIThread.CheckAccess() ? action() : Dispatcher.UIThread.InvokeAsync(action);
 }

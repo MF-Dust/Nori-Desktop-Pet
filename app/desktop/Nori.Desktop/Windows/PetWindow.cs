@@ -411,6 +411,22 @@ public sealed class PetWindow : Window
 			var pos = e.GetPosition(this);
 			if (!_glControl.IsPointOnModel(pos.X, pos.Y)) return;
 
+			// 桌宠是原生 Avalonia 窗口, 在 Linux/macOS 上优先让窗口管理器接管移动。
+			// 这条路径也覆盖 Wayland: WebView 的标题栏拖动能力不可用时, 原生窗口仍可拖动。
+			if (!OperatingSystem.IsWindows())
+			{
+				try
+				{
+					BeginMoveDrag(e);
+					e.Handled = true;
+					return;
+				}
+				catch (InvalidOperationException exception)
+				{
+					_services.Logger.Write(LogSource.Backend, "warn", $"原生桌宠拖动不可用, 改用手动拖动: {exception.Message}");
+				}
+			}
+
 			_isDragPending = true;
 			_isDragging = false;
 			_hasDragged = false;

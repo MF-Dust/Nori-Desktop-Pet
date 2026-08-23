@@ -217,6 +217,26 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		Set(key, new ConfigValue.Text(plain));
 	}
 
+	/// <summary>
+	/// 在已有事务中写入配置。
+	/// </summary>
+	private void SetInTransaction(
+		SqliteConnection connection,
+		SqliteTransaction transaction,
+		string key,
+		ConfigValue value,
+		bool insertOnly = false)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = insertOnly
+			? "INSERT OR IGNORE INTO config (key, value) VALUES ($key, $value)"
+			: "INSERT INTO config (key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+		command.Parameters.AddWithValue("$key", key);
+		command.Parameters.AddWithValue("$value", ProtectValue(key, value.ToStorage()));
+		command.ExecuteNonQuery();
+	}
+
 	/// <summary>读取未经解密的原始存储值 (迁移与诊断用)</summary>
 	public string RawValue(string key) => _database.Locked(connection =>
 	{
@@ -413,6 +433,35 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	/// 标记首次启动完成
 	/// </summary>
 	public void MarkFirstRunCompleted() => Set(KeyFirstRunCompleted, new ConfigValue.Boolean(true));
+
+	/// <summary>
+	/// 原子提交首次运行向导的最终选择。
+	///
+	/// 模型、遥测开关、首次运行标记与初始化时间必须一起落盘，避免进程在
+	/// 首次运行标记已经写入后崩溃，下一次启动却缺少模型配置。
+	/// </summary>
+	public void CompleteFirstRun(string modelId, bool telemetryEnabled)
+	{
+		if (string.IsNullOrWhiteSpace(modelId)) throw new ArgumentException("模型 ID 不能为空", nameof(modelId));
+
+		_database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			try
+			{
+				SetInTransaction(connection, transaction, KeySelectedModel, new ConfigValue.Text(modelId.Trim()));
+				SetInTransaction(connection, transaction, KeyTelemetryEnabled, new ConfigValue.Boolean(telemetryEnabled));
+				SetInTransaction(connection, transaction, KeyFirstRunCompleted, new ConfigValue.Boolean(true));
+				SetInTransaction(connection, transaction, KeyInitializedAt, new ConfigValue.Text(Now()), insertOnly: true);
+				transaction.Commit();
+			}
+			catch
+			{
+				try { transaction.Rollback(); } catch { }
+				throw;
+			}
+		});
+	}
 
 	/// <summary>
 	/// 记录首次初始化完成时间 (只写一次)

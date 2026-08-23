@@ -9,6 +9,11 @@ import AppSwitchRow from "../ui/AppSwitchRow.vue"
 import type {IconName} from "../../services/icon"
 
 const I18N = computed(() => useLanguages().components.firstRun.ready)
+
+const emit = defineEmits<{
+	telemetryChanged: [enabled: boolean]
+}>()
+
 const telemetryEnabled = ref(true)
 const telemetryAvailable = ref(false)
 const TELEMETRY_DESC = computed(() => {
@@ -23,20 +28,15 @@ onMounted(async () => {
 		if (!SNAPSHOT) return
 		telemetryEnabled.value = SNAPSHOT.telemetry.enabled
 		telemetryAvailable.value = SNAPSHOT.telemetry.available
+		emit("telemetryChanged", telemetryEnabled.value)
 	} catch (error) {
 		feedback.error(I18N.value.telemetry.saveFailed, error)
 	}
 })
 
-const onTelemetryChange = async (value: boolean) => {
-	const PREVIOUS = telemetryEnabled.value
+const onTelemetryChange = (value: boolean) => {
 	telemetryEnabled.value = value
-	try {
-		await RUNTIME.updateGeneral({telemetryEnabled: value})
-	} catch (error) {
-		telemetryEnabled.value = PREVIOUS
-		feedback.error(I18N.value.telemetry.saveFailed, error)
-	}
+	emit("telemetryChanged", value)
 }
 
 // 就绪摘要 (语言/形象/AI 三项)

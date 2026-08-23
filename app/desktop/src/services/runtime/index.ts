@@ -236,8 +236,15 @@ export const RUNTIME = {
 	firstRunSelectModel(modelId: string): Promise<void> {
 		return invoke<void>("first_run_select_model", {modelId})
 	},
-	completeFirstRun(): Promise<void> {
-		return invoke<void>("complete_first_run")
+	completeFirstRun(modelId: string, telemetryEnabled: boolean): Promise<void> {
+		return invoke<void>("complete_first_run", {modelId, telemetryEnabled})
+	},
+
+	/**
+	 * init 窗口把主界面切换交给宿主；宿主会按模型有效性与 pet_auto_summon 决定桌宠显隐。
+	 */
+	initEnterMain(): Promise<void> {
+		return invoke<void>("init_enter_main")
 	},
 
 	/**
