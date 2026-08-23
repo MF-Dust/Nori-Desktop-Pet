@@ -133,7 +133,8 @@ public sealed class AgentEngine
 		string currentEmotion = _emotion.CurrentType;
 		IReadOnlyList<string> motions = _motionNames();
 		IReadOnlyList<string> expressions = _expressionNames();
-		string skillsPrompt = _skills.BuildSkillsPrompt();
+		HashSet<string> availableToolNames = _tools.ListEnabled().Select(tool => tool.Name).ToHashSet(StringComparer.Ordinal);
+		string skillsPrompt = _skills.BuildSkillsPrompt(availableToolNames);
 
 		PromptBuildOptions promptOptions = new()
 		{
@@ -152,10 +153,24 @@ public sealed class AgentEngine
 		[.. AgentHistory.NormalizeRecent(_chat.GetHistory(MaxContextRounds * 2, 0)),
 			("user", userText)];
 
-		ProtocolMessage finalMessage = new("", null, null, null);
+			ProtocolMessage finalMessage = new("", null, null, null);
 		try
 		{
 			ILlmAdapter adapter = LlmClient.CreateAdapter(providerKind, _http);
+			async Task<ToolResult> ExecuteToolAsync(string name, JsonNode? arguments, CancellationToken token)
+			{
+				callbacks.OnToolExecuting?.Invoke(name, arguments);
+				ToolResult result = await _tools.ExecuteAsync(name, arguments, new ToolContext
+				{
+					SessionId = sessionId,
+					CancellationToken = token,
+					Approve = callbacks.RequestApproval is { } approve
+						? request => approve(request)
+						: null,
+				});
+				callbacks.OnToolExecuted?.Invoke(name, result.Result, result.Error);
+				return result;
+			}
 
 			for (int iteration = 0; iteration < _maxToolIterations; iteration++)
 			{
@@ -168,27 +183,52 @@ public sealed class AgentEngine
 				timeout.CancelAfter(TimeSpan.FromSeconds(CallTimeoutSeconds));
 
 				SetState(AgentRunState.Streaming);
-				string raw = await adapter.StreamAsync(
-					baseUrl.TrimEnd('/'),
-					apiKey,
-					model,
-					systemPrompt,
-					[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
-					chunk =>
+				Action<string> onChunk = chunk =>
+				{
+					rawResponseText += chunk;
+					foreach (AgentProtocolItem item in SafePush(parser, chunk))
 					{
-						rawResponseText += chunk;
-						foreach (AgentProtocolItem item in SafePush(parser, chunk))
+						if (item is ProtocolMessage {Text.Length: > 0} message)
 						{
-							if (item is ProtocolMessage {Text.Length: > 0} message)
-							{
-								callbacks.OnTextChunk?.Invoke(message.Text);
-							}
+							callbacks.OnTextChunk?.Invoke(message.Text);
 						}
-					},
-					usage => callbacks.OnUsage?.Invoke(new AgentUsage(
-						usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens,
-						usage.CacheHitRate, usage.DurationMs, usage.Model)),
-					timeout.Token);
+					}
+				};
+				Action<LlmUsageInfo> onUsage = usage => callbacks.OnUsage?.Invoke(new AgentUsage(
+					usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens,
+					usage.CacheHitRate, usage.DurationMs, usage.Model));
+				IReadOnlyList<RegisteredTool> enabledTools = _tools.ListEnabled();
+				string raw;
+				if (adapter is IToolCallingLlmAdapter toolAdapter)
+				{
+					try
+					{
+						raw = await toolAdapter.StreamWithToolsAsync(
+							baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
+							[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
+							enabledTools,
+							(name, arguments) => ExecuteToolAsync(name, arguments, timeout.Token),
+							onChunk, onUsage, timeout.Token);
+					}
+					catch (Exception exception) when (IsToolCallingUnavailable(exception))
+					{
+						// Older OpenAI-compatible endpoints reject the native tools field.
+						// Retry once through the portable Nori JSON protocol.
+						rawResponseText = "";
+						parser = new StreamingJsonParser();
+						raw = await adapter.StreamAsync(
+							baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
+							[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
+							onChunk, onUsage, timeout.Token);
+					}
+				}
+				else
+				{
+					raw = await adapter.StreamAsync(
+						baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
+						[.. working.Select(item => new ChatMessageInput {Role = item.Role, Content = item.Content})],
+						onChunk, onUsage, timeout.Token);
+				}
 
 				cancellationToken.ThrowIfCancellationRequested();
 				SetState(AgentRunState.Streaming);
@@ -225,17 +265,7 @@ public sealed class AgentEngine
 						{
 							hasToolCall = true;
 							SetState(AgentRunState.ToolExecuting);
-							callbacks.OnToolExecuting?.Invoke(call.Name, call.Arguments);
-
-							ToolResult result = await _tools.ExecuteAsync(call.Name, call.Arguments, new ToolContext
-							{
-								SessionId = sessionId,
-								CancellationToken = cancellationToken,
-								Approve = callbacks.RequestApproval is { } approve
-									? request => approve(request)
-									: null,
-							});
-							callbacks.OnToolExecuted?.Invoke(call.Name, result.Result, result.Error);
+							ToolResult result = await ExecuteToolAsync(call.Name, call.Arguments, cancellationToken);
 
 							working.Add(("assistant", SerializeToolCall(call)));
 							working.Add(("user",
@@ -345,6 +375,16 @@ public sealed class AgentEngine
 		{
 			return [];
 		}
+	}
+
+	private static bool IsToolCallingUnavailable(Exception exception)
+	{
+		if (exception is OperationCanceledException) return false;
+		if (exception is NotSupportedException) return true;
+		string message = exception.Message.ToLowerInvariant();
+		return message.Contains("tool", StringComparison.Ordinal)
+			|| message.Contains("function", StringComparison.Ordinal)
+			|| message.Contains("unsupported", StringComparison.Ordinal);
 	}
 }
 

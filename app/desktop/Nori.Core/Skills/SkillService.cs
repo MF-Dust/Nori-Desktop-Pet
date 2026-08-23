@@ -281,7 +281,7 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 	/// <summary>
 	/// 构建注入系统提示词的技能指令集
 	/// </summary>
-	public string BuildSkillsPrompt()
+	public string BuildSkillsPrompt(IReadOnlySet<string>? availableTools = null)
 	{
 		IReadOnlyList<SkillRecord> active = GetEnabled().Where(skill => skill.Enabled).ToList();
 		if (active.Count == 0) return "";
@@ -292,6 +292,13 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 			SkillRecord skill = active[i];
 			lines.Add($"\n=== 技能 {i + 1}：{skill.Name} (v{skill.Version}) ===");
 			if (!string.IsNullOrEmpty(skill.Description)) lines.Add($"简介: {skill.Description}");
+			if (skill.Tools is {Count: > 0})
+			{
+				IEnumerable<string> available = availableTools is null ? skill.Tools : skill.Tools.Where(availableTools.Contains);
+				IEnumerable<string> missing = availableTools is null ? [] : skill.Tools.Where(tool => !availableTools.Contains(tool));
+				lines.Add($"Available tools: {string.Join(", ", available)}");
+				if (missing.Any()) lines.Add($"Unavailable tools: {string.Join(", ", missing)}");
+			}
 			lines.Add(skill.Instructions);
 		}
 		return string.Join("\n", lines);
