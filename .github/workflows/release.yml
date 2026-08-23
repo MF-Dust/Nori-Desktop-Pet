@@ -140,7 +140,7 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT_WEB: ${{ secrets.SENTRY_PROJECT_WEB }}
-      SENTRY_URL: ${{ secrets.SENTRY_URL }}
+      SENTRY_URL: ${{ secrets.SENTRY_URL || 'https://sentry.io' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -190,7 +190,7 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT_NATIVE: ${{ secrets.SENTRY_PROJECT_NATIVE }}
-      SENTRY_URL: ${{ secrets.SENTRY_URL }}
+      SENTRY_URL: ${{ secrets.SENTRY_URL || 'https://sentry.io' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -243,7 +243,7 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT_NATIVE: ${{ secrets.SENTRY_PROJECT_NATIVE }}
-      SENTRY_URL: ${{ secrets.SENTRY_URL }}
+      SENTRY_URL: ${{ secrets.SENTRY_URL || 'https://sentry.io' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -367,7 +367,7 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT_NATIVE: ${{ secrets.SENTRY_PROJECT_NATIVE }}
-      SENTRY_URL: ${{ secrets.SENTRY_URL }}
+      SENTRY_URL: ${{ secrets.SENTRY_URL || 'https://sentry.io' }}
     steps:
       - uses: actions/checkout@v4
         with:
