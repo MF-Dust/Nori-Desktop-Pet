@@ -3,28 +3,26 @@ using System.IO.Compression;
 namespace Nori.Core.Resources;
 
 /// <summary>
-/// ZIP 安全解压
+/// ZIP 安全解压.
 ///
-/// 对应 Rust 版 resource/downloader.rs 的 sanitize_zip_path / extract_zip.
-/// 这是把压缩包安全落到磁盘的入口, 每一条拒绝规则都不要放宽.
+/// 除了路径与符号链接校验, 还限制条目数量、单文件展开大小、总展开大小与压缩比.
+/// 这是把不可信本地压缩包落盘的唯一入口, 拒绝规则不要放宽.
 /// </summary>
 public static class ZipExtractor
 {
+	/// <summary>默认 ZIP 解压上限.</summary>
+	public static ZipExtractionLimits DefaultLimits { get; } = new();
+
 	/// <summary>
-	/// 清理并校验 ZIP 内部路径
-	///
+	/// 清理并校验 ZIP 内部路径.
 	/// ZIP 标准通常用 `/`, 但 Windows 打的包也可能出现 `\`.
-	/// 返回归一化后的相对路径; 目录项或空路径返回空串; 非法路径抛 ResourceException.
 	/// </summary>
 	public static string SanitizePath(string raw)
 	{
 		if (raw.Length == 0) return string.Empty;
 		string normalized = raw.Replace('\\', '/');
-		// Windows UNC 路径 (要先于 Unix 绝对路径判断, 否则会被当成普通绝对路径)
 		if (normalized.StartsWith("//", StringComparison.Ordinal)) throw new ResourceException($"ZIP 包包含 UNC 路径: {raw}");
-		// Unix 绝对路径
 		if (normalized.StartsWith('/')) throw new ResourceException($"ZIP 包包含绝对路径: {raw}");
-		// Windows 盘符
 		if (normalized.Length >= 2 && char.IsAsciiLetter(normalized[0]) && normalized[1] == ':')
 		{
 			throw new ResourceException($"ZIP 包包含 Windows 绝对路径: {raw}");
@@ -41,10 +39,7 @@ public static class ZipExtractor
 	}
 
 	/// <summary>
-	/// 找出所有条目共有的唯一顶层目录
-	///
-	/// 资源包常见地多包一层同名目录 (arg-nori/arg-nori/...). asset.rs 的候选路径只会删段
-	/// 不会加段, 救不了这种包, 所以必须在解压阶段就把这一层剥掉.
+	/// 找出所有条目共有的唯一顶层目录.
 	/// 没有共同顶层目录 (或顶层就是文件) 时返回 null.
 	/// </summary>
 	public static string? FindCommonTopDirectory(IEnumerable<string> entryPaths)
@@ -55,7 +50,6 @@ public static class ZipExtractor
 		{
 			if (path.Length == 0) continue;
 			int slash = path.IndexOf('/');
-			// 顶层就有文件, 不能剥
 			if (slash < 0) return null;
 			string head = path[..slash];
 			if (top is null) top = head;
@@ -65,66 +59,190 @@ public static class ZipExtractor
 		return any ? top : null;
 	}
 
+	/// <summary>使用默认上限安全解压.</summary>
+	public static void Extract(string zipPath, string targetDir) =>
+		Extract(zipPath, targetDir, CancellationToken.None, null);
+
+	/// <summary>使用默认上限安全解压并支持取消.</summary>
+	public static void Extract(string zipPath, string targetDir, CancellationToken cancellationToken) =>
+		Extract(zipPath, targetDir, cancellationToken, null);
+
+	/// <summary>使用自定义上限安全解压.</summary>
+	public static void Extract(string zipPath, string targetDir, ZipExtractionLimits limits) =>
+		Extract(zipPath, targetDir, CancellationToken.None, limits);
+
 	/// <summary>
-	/// 安全解压到目标目录
-	///
-	/// 会自动剥掉多余的唯一顶层目录; 拒绝符号链接条目; 每个文件写入前再校验一次父目录未越界.
+	/// 安全解压到目标目录.
+	/// 会自动剥掉多余的唯一顶层目录; 写入前后都会检查父目录没有链接越界.
 	/// </summary>
-	public static void Extract(string zipPath, string targetDir)
+	public static void Extract(
+		string zipPath,
+		string targetDir,
+		CancellationToken cancellationToken,
+		ZipExtractionLimits? limits)
 	{
-		Directory.CreateDirectory(targetDir);
-		string canonicalTarget = Path.TrimEndingDirectorySeparator(Path.GetFullPath(targetDir));
+		ZipExtractionLimits effectiveLimits = limits ?? DefaultLimits;
+		effectiveLimits.Validate();
+		cancellationToken.ThrowIfCancellationRequested();
 
-		using ZipArchive archive = ZipFile.OpenRead(zipPath);
-
-		// 先扫一遍拿到所有归一化路径, 决定要不要剥顶层目录
-		List<(ZipArchiveEntry Entry, string Path)> entries = [];
-		foreach (ZipArchiveEntry entry in archive.Entries)
+		string canonicalZipPath = Path.GetFullPath(zipPath);
+		if (Path.GetDirectoryName(canonicalZipPath) is null)
 		{
-			string sanitized = SanitizePath(entry.FullName);
-			if (sanitized.Length == 0) continue;
-			entries.Add((entry, sanitized));
+			throw new ResourceException($"ZIP 文件没有父目录: {zipPath}");
 		}
-		string? commonTop = FindCommonTopDirectory(entries
-			.Where(item => item.Entry.Name.Length > 0)
-			.Select(item => item.Path));
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(canonicalZipPath, "ZIP 文件路径包含符号链接或 reparse point");
+		if (!File.Exists(canonicalZipPath)) throw new ResourceException($"ZIP 文件不存在: {zipPath}");
 
-		foreach ((ZipArchiveEntry entry, string sanitized) in entries)
+		string canonicalTarget = ResourcePathSafety.FullPath(targetDir);
+		Directory.CreateDirectory(canonicalTarget);
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(canonicalTarget, "ZIP 目标目录包含符号链接或 reparse point");
+
+		ZipArchive archive;
+		try
 		{
-			string relative = commonTop is null ? sanitized : sanitized[(commonTop.Length + 1)..];
-			if (relative.Length == 0) continue;
+			archive = ZipFile.OpenRead(canonicalZipPath);
+		}
+		catch (InvalidDataException exception)
+		{
+			throw new ResourceException($"ZIP 文件格式无效: {zipPath}", exception);
+		}
 
-			string outPath = Path.GetFullPath(Path.Combine(canonicalTarget, relative.Replace('/', Path.DirectorySeparatorChar)));
-			if (!outPath.StartsWith(canonicalTarget + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+		using (archive)
+		{
+			if (archive.Entries.Count > effectiveLimits.MaxEntryCount)
 			{
-				throw new ResourceException($"ZIP 条目超出目标目录: {entry.FullName}");
+				throw new ResourceException($"ZIP 条目数量超过上限: {effectiveLimits.MaxEntryCount}");
 			}
 
-			// 目录项: ZipArchiveEntry 的目录项 Name 为空
-			if (entry.Name.Length == 0)
+			List<(ZipArchiveEntry Entry, string Path, bool IsDirectory)> entries = [];
+			long totalUncompressed = 0;
+			foreach (ZipArchiveEntry entry in archive.Entries)
 			{
-				Directory.CreateDirectory(outPath);
-				continue;
+				cancellationToken.ThrowIfCancellationRequested();
+				string sanitized = SanitizePath(entry.FullName);
+				if (sanitized.Length == 0) continue;
+				bool isDirectory = entry.Name.Length == 0;
+				if (!isDirectory)
+				{
+					if (entry.Length < 0 || entry.Length > effectiveLimits.MaxSingleFileBytes)
+					{
+						throw new ResourceException($"ZIP 单个文件展开大小超过上限: {entry.FullName}");
+					}
+					try
+					{
+						totalUncompressed = checked(totalUncompressed + entry.Length);
+					}
+					catch (OverflowException exception)
+					{
+						throw new ResourceException("ZIP 总展开大小超过可处理范围", exception);
+					}
+					if (totalUncompressed > effectiveLimits.MaxTotalUncompressedBytes)
+					{
+						throw new ResourceException($"ZIP 总展开大小超过上限: {effectiveLimits.MaxTotalUncompressedBytes}");
+					}
+					if (entry.Length > 0 && (entry.CompressedLength <= 0
+						|| entry.Length / (double)entry.CompressedLength > effectiveLimits.MaxCompressionRatio))
+					{
+						throw new ResourceException($"ZIP 条目压缩比异常: {entry.FullName}");
+					}
+				}
+				entries.Add((entry, sanitized, isDirectory));
 			}
-			if (IsSymlink(entry)) throw new ResourceException($"ZIP 包包含不允许的符号链接: {entry.FullName}");
 
-			string parent = Path.GetDirectoryName(outPath) ?? throw new ResourceException($"ZIP 条目没有父目录: {entry.FullName}");
-			Directory.CreateDirectory(parent);
-			// 对 parent 再做一次校验, 防止已存在的软链接把路径带出目标目录
-			string canonicalParent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(parent));
-			if (!canonicalParent.Equals(canonicalTarget, StringComparison.OrdinalIgnoreCase)
-				&& !canonicalParent.StartsWith(canonicalTarget + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+			string? commonTop = FindCommonTopDirectory(entries
+				.Where(item => !item.IsDirectory)
+				.Select(item => item.Path));
+			HashSet<string> outputPaths = new(OperatingSystem.IsWindows()
+				? StringComparer.OrdinalIgnoreCase
+				: StringComparer.Ordinal);
+
+			foreach ((ZipArchiveEntry entry, string sanitized, bool isDirectory) in entries)
 			{
-				throw new ResourceException($"ZIP 条目超出目标目录: {entry.FullName}");
-			}
+				cancellationToken.ThrowIfCancellationRequested();
+				string relative = StripCommonTop(sanitized, commonTop, entry.FullName);
+				if (relative.Length == 0) continue;
+				string outPath;
+				try
+				{
+					outPath = Path.GetFullPath(Path.Combine(canonicalTarget, relative.Replace('/', Path.DirectorySeparatorChar)));
+				}
+				catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+				{
+					throw new ResourceException($"ZIP 条目路径无效: {entry.FullName}", exception);
+				}
+				ResourcePathSafety.EnsureContained(canonicalTarget, outPath, $"ZIP 条目超出目标目录: {entry.FullName}");
+				if (!outputPaths.Add(outPath)) throw new ResourceException($"ZIP 包含重复条目: {entry.FullName}");
 
-			entry.ExtractToFile(outPath, overwrite: true);
+				if (IsSymlink(entry)) throw new ResourceException($"ZIP 包包含不允许的符号链接: {entry.FullName}");
+				if (isDirectory)
+				{
+					ResourcePathSafety.EnsureNoReparsePoints(canonicalTarget, outPath, $"ZIP 目录包含符号链接或 reparse point: {entry.FullName}");
+					Directory.CreateDirectory(outPath);
+					ResourcePathSafety.EnsureNoReparsePoints(canonicalTarget, outPath, $"ZIP 目录包含符号链接或 reparse point: {entry.FullName}");
+					continue;
+				}
+
+				string parent = Path.GetDirectoryName(outPath)
+					?? throw new ResourceException($"ZIP 条目没有父目录: {entry.FullName}");
+				ResourcePathSafety.EnsureNoReparsePoints(canonicalTarget, parent, $"ZIP 父目录包含符号链接或 reparse point: {entry.FullName}");
+				Directory.CreateDirectory(parent);
+				ResourcePathSafety.EnsureNoReparsePoints(canonicalTarget, parent, $"ZIP 父目录包含符号链接或 reparse point: {entry.FullName}");
+				ExtractFile(entry, outPath, cancellationToken, effectiveLimits);
+			}
 		}
 	}
 
-	/// <summary>
-	/// 判断 ZIP 条目是否是符号链接 (读 unix mode 的 S_IFLNK 位)
-	/// </summary>
+	private static string StripCommonTop(string path, string? commonTop, string originalPath)
+	{
+		if (commonTop is null) return path;
+		if (path.Equals(commonTop, StringComparison.Ordinal)) return string.Empty;
+		string prefix = commonTop + "/";
+		if (!path.StartsWith(prefix, StringComparison.Ordinal))
+		{
+			throw new ResourceException($"ZIP 条目顶层目录不一致: {originalPath}");
+		}
+		return path[prefix.Length..];
+	}
+
+	private static void ExtractFile(
+		ZipArchiveEntry entry,
+		string outPath,
+		CancellationToken cancellationToken,
+		ZipExtractionLimits limits)
+	{
+		try
+		{
+			using Stream input = entry.Open();
+			using FileStream output = new(outPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.SequentialScan);
+			byte[] buffer = new byte[64 * 1024];
+			long copied = 0;
+			while (true)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				int read = input.Read(buffer, 0, buffer.Length);
+				if (read == 0) break;
+				copied = checked(copied + read);
+				if (copied > entry.Length || copied > limits.MaxSingleFileBytes)
+				{
+					throw new ResourceException($"ZIP 条目实际展开大小超过上限: {entry.FullName}");
+				}
+				output.Write(buffer, 0, read);
+			}
+			if (copied != entry.Length)
+			{
+				throw new ResourceException($"ZIP 条目展开长度不匹配: {entry.FullName}");
+			}
+		}
+		catch
+		{
+			try { File.Delete(outPath); }
+			catch (IOException) { }
+			catch (UnauthorizedAccessException) { }
+			throw;
+		}
+	}
+
+	/// <summary>判断 ZIP 条目是否是 Unix 符号链接.</summary>
 	private static bool IsSymlink(ZipArchiveEntry entry)
 	{
 		int mode = entry.ExternalAttributes >> 16;

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Live2DCSharpSDK.Framework.Motion;
 using Nori.Core.Live2D;
+using Nori.Core.Resources;
 using Nori.Desktop.Live2D.Behaviors;
 
 namespace Nori.Desktop.Live2D;
@@ -60,13 +61,18 @@ public static class ModelPreparation
 		long generation,
 		CancellationToken cancellationToken)
 	{
+		if (!SupportedModelIds.IsSupported(modelId))
+		{
+			throw new ResourceException($"不支持的 Live2D 模型 ID: {modelId}");
+		}
 		if (!Directory.Exists(modelDir)) return null;
 
 		string[] model3Files = Directory.GetFiles(modelDir, "*.model3.json", SearchOption.TopDirectoryOnly);
 		if (model3Files.Length == 0) return null;
 
 		cancellationToken.ThrowIfCancellationRequested();
-		string modelJsonPath = model3Files[0];
+		string modelJsonPath = model3Files.OrderBy(path => path, StringComparer.Ordinal).First();
+		Model3ReferenceValidator.Validate(modelDir, modelJsonPath, cancellationToken);
 		string json = await File.ReadAllTextAsync(modelJsonPath, cancellationToken);
 
 		List<MotionGroupInfo> motionGroups = [];
@@ -119,8 +125,7 @@ public static class ModelPreparation
 		foreach (ExpressionRef reference in expressionRefs)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			string filePath = Path.Combine(modelDir, reference.File.Replace('/', Path.DirectorySeparatorChar));
-			if (!File.Exists(filePath)) continue;
+			string filePath = Model3ReferenceValidator.ResolveReferencePath(modelJsonPath, reference.File);
 
 			try
 			{

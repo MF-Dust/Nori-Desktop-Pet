@@ -1,4 +1,5 @@
 using Nori.Core.Live2D;
+using Nori.Core.Resources;
 using Nori.Desktop.Live2D;
 using Nori.Desktop.Live2D.Behaviors;
 
@@ -39,8 +40,7 @@ public class PetModelPreparationTests : IDisposable
 		    },
 		    "Expressions": [
 		      {"Name": "Smile", "File": "expressions/smile.exp3.json"},
-		      {"Name": "Sad", "File": "expressions/sad.exp3.json"},
-		      {"Name": "Missing", "File": "expressions/missing.exp3.json"}
+		      {"Name": "Sad", "File": "expressions/sad.exp3.json"}
 		    ]
 		  }
 		}
@@ -50,6 +50,9 @@ public class PetModelPreparationTests : IDisposable
 	public async Task 有效模型解析动作与表情元数据()
 	{
 		WriteFile("sample.model3.json", MODEL3_JSON);
+		WriteFile("motions/idle_01.motion3.json", "{}");
+		WriteFile("motions/tap_a.motion3.json", "{}");
+		WriteFile("motions/tap_b.motion3.json", "{}");
 		WriteFile("expressions/smile.exp3.json", """
 			{"Type":"Live2D Expression","Parameters":[
 				{"Id":"ParamMouthForm","Value":1,"Blend":"Add"},
@@ -60,10 +63,10 @@ public class PetModelPreparationTests : IDisposable
 			{"Type":"Live2D Expression","Parameters":[{"Id":"ParamTear","Value":1}]}
 			""");
 
-		PreparedModel? prepared = await ModelPreparation.PrepareAsync("sample", _modelDir, generation: 7, CancellationToken.None);
+		PreparedModel? prepared = await ModelPreparation.PrepareAsync("arg-nori", _modelDir, generation: 7, CancellationToken.None);
 
 		Assert.NotNull(prepared);
-		Assert.Equal("sample", prepared.ModelId);
+		Assert.Equal("arg-nori", prepared.ModelId);
 		Assert.Equal(7, prepared.Generation);
 		Assert.Equal("sample.model3.json", prepared.Model3FileName);
 
@@ -74,7 +77,7 @@ public class PetModelPreparationTests : IDisposable
 		MotionGroupInfo tap = prepared.MotionGroups.First(group => group.Group == "TapBody");
 		Assert.Equal(["tap_a", "tap_b"], tap.Names);
 
-		// 表情: 缺失文件被跳过, blend 归一化, 参数值保留
+		// 表情: blend 归一化, 参数值保留
 		Assert.Equal(2, prepared.ExpressionGroups.Count);
 		ExpressionGroupDefinition smile = prepared.ExpressionGroups.First(group => group.Name == "Smile");
 		Assert.Equal(ExpressionBlendMode.Add, smile.Parameters[0].Blend);
@@ -86,13 +89,22 @@ public class PetModelPreparationTests : IDisposable
 	}
 
 	[Fact]
+	public async Task 不支持的模型ID被拒绝()
+	{
+		Directory.CreateDirectory(_modelDir);
+		ResourceException error = await Assert.ThrowsAsync<ResourceException>(() =>
+			ModelPreparation.PrepareAsync("other", _modelDir, 1, CancellationToken.None));
+		Assert.Contains("不支持的 Live2D 模型 ID", error.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public async Task 目录为空或缺少模型定义时返回null()
 	{
 		Directory.CreateDirectory(_modelDir);
-		Assert.Null(await ModelPreparation.PrepareAsync("empty", _modelDir, 1, CancellationToken.None));
+		Assert.Null(await ModelPreparation.PrepareAsync("arg-nori", _modelDir, 1, CancellationToken.None));
 
 		string missing = Path.Combine(_modelDir, "does-not-exist");
-		Assert.Null(await ModelPreparation.PrepareAsync("missing", missing, 1, CancellationToken.None));
+		Assert.Null(await ModelPreparation.PrepareAsync("nori", missing, 1, CancellationToken.None));
 	}
 
 	[Fact]
@@ -106,21 +118,37 @@ public class PetModelPreparationTests : IDisposable
 		await cts.CancelAsync();
 
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(
-			() => ModelPreparation.PrepareAsync("sample", _modelDir, 1, cts.Token));
+			() => ModelPreparation.PrepareAsync("arg-nori", _modelDir, 1, cts.Token));
 	}
 
 	[Fact]
 	public async Task 单个表情文件损坏不影响其余表情()
 	{
 		WriteFile("sample.model3.json", MODEL3_JSON);
+		WriteFile("motions/idle_01.motion3.json", "{}");
+		WriteFile("motions/tap_a.motion3.json", "{}");
+		WriteFile("motions/tap_b.motion3.json", "{}");
 		WriteFile("expressions/smile.exp3.json", "{not valid json");
 		WriteFile("expressions/sad.exp3.json", "{\"Parameters\":[{\"Id\":\"B\",\"Value\":2}]}");
 
-		PreparedModel? prepared = await ModelPreparation.PrepareAsync("sample", _modelDir, 3, CancellationToken.None);
+		PreparedModel? prepared = await ModelPreparation.PrepareAsync("arg-nori", _modelDir, 3, CancellationToken.None);
 
 		Assert.NotNull(prepared);
 		ExpressionGroupDefinition? sad = prepared.ExpressionGroups.FirstOrDefault(group => group.Name == "Sad");
 		Assert.NotNull(sad);
 		Assert.DoesNotContain(prepared.ExpressionGroups, group => group.Name == "Smile");
+	}
+
+	[Theory]
+	[InlineData("../outside.moc3")]
+	[InlineData("C:\\outside.moc3")]
+	public async Task 模型准备拒绝越界引用(string reference)
+	{
+		string escaped = reference.Replace("\\", "\\\\");
+		WriteFile("sample.model3.json", $"{{\"FileReferences\":{{\"Moc\":\"{escaped}\"}}}}");
+
+		ResourceException error = await Assert.ThrowsAsync<ResourceException>(() =>
+			ModelPreparation.PrepareAsync("arg-nori", _modelDir, 1, CancellationToken.None));
+		Assert.Contains("model3.json 引用", error.Message, StringComparison.Ordinal);
 	}
 }

@@ -1,12 +1,13 @@
 using Nori.Core.Data;
+using Nori.Core.Live2D;
 
 namespace Nori.Core.Resources;
 
 /// <summary>
-/// 本地资源管理
+/// 本地 Live2D 资源管理.
 ///
-/// 负责模型资源的本地检查、列表、删除与从本地 ZIP/目录导入。
-/// 不再包含远程下载逻辑。
+/// 负责资源的本地检查、列表、删除与从本地 ZIP/目录导入, 不包含远程下载逻辑.
+/// 导入始终经过同卷 staging、完整校验与原子交换.
 /// </summary>
 public sealed class ResourceManager(string? dataDir = null)
 {
@@ -14,52 +15,56 @@ public sealed class ResourceManager(string? dataDir = null)
 
 	private string ResourcesRoot => Path.Combine(_dataDir, AppPaths.ResourcesDirName);
 
-	/// <summary>
-	/// 指定资源的目录
-	/// </summary>
+	/// <summary>指定资源的目录.</summary>
 	public string ResourceDir(ResourceType type, string name) =>
 		Path.Combine(ResourcesRoot, type.AsString(), ResourceName.Validate(name));
 
 	/// <summary>
-	/// 资源是否已安装. Live2D 必须真的包含 .model3.json 才算装好.
+	/// 资源是否已安装. Live2D 必须是固定支持的模型 ID, 且真的包含 model3.json.
+	/// 导入时的引用完整校验在 staging 阶段完成.
 	/// </summary>
 	public bool IsInstalled(ResourceType type, string name)
 	{
+		if (type == ResourceType.Live2D && !SupportedModelIds.IsSupported(name)) return false;
 		string dir = ResourceDir(type, name);
 		if (!Directory.Exists(dir)) return false;
-		return type switch
-		{
-			ResourceType.Live2D => HasModel3Json(dir),
-			_ => true,
-		};
+		return IsInstalledAt(type, dir);
 	}
 
-	/// <summary>
-	/// 列出某类型下所有已安装资源 (按名称排序)
-	/// </summary>
+	/// <summary>列出某类型下所有已安装资源 (按名称排序).</summary>
 	public IReadOnlyList<ResourceInfo> List(ResourceType type)
 	{
 		string root = Path.Combine(ResourcesRoot, type.AsString());
 		if (!Directory.Exists(root)) return [];
 		List<ResourceInfo> result = [];
-		foreach (string dir in Directory.EnumerateDirectories(root))
+		try
 		{
-			string name = Path.GetFileName(dir);
-			if (type == ResourceType.Live2D && !HasModel3Json(dir)) continue;
-			result.Add(new ResourceInfo
+			foreach (DirectoryInfo directory in EnumerateDirectoriesSafely(root))
 			{
-				Name = name,
-				ResourceType = type,
-				Path = dir,
-				Size = DirectorySize(dir),
-			});
+				string name = directory.Name;
+				if (type == ResourceType.Live2D && !SupportedModelIds.IsSupported(name)) continue;
+				if (!IsInstalledAt(type, directory.FullName)) continue;
+				result.Add(new ResourceInfo
+				{
+					Name = name,
+					ResourceType = type,
+					Path = directory.FullName,
+					Size = DirectorySize(directory.FullName),
+				});
+			}
+		}
+		catch (IOException)
+		{
+			return [];
+		}
+		catch (UnauthorizedAccessException)
+		{
+			return [];
 		}
 		return [.. result.OrderBy(item => item.Name, StringComparer.Ordinal)];
 	}
 
-	/// <summary>
-	/// 删除资源
-	/// </summary>
+	/// <summary>删除资源.</summary>
 	public void Delete(ResourceType type, string name)
 	{
 		string dir = ResourceDir(type, name);
@@ -71,8 +76,15 @@ public sealed class ResourceManager(string? dataDir = null)
 	/// 从本地 ZIP 压缩包或目录导入资源.
 	/// 所有候选先在 resources 根目录同卷 staging 中复制并验证, 成功后才交换 target.
 	/// </summary>
-	public IReadOnlyList<string> Import(ResourceType type, string sourcePath)
+	public IReadOnlyList<string> Import(ResourceType type, string sourcePath) =>
+		Import(type, sourcePath, CancellationToken.None);
+
+	/// <summary>
+	/// 从本地 ZIP 压缩包或目录导入资源, 支持在 staging、复制与交换阶段取消.
+	/// </summary>
+	public IReadOnlyList<string> Import(ResourceType type, string sourcePath, CancellationToken cancellationToken)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
 		if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
 		{
 			throw new ResourceException($"导入源不存在: {sourcePath}");
@@ -80,32 +92,36 @@ public sealed class ResourceManager(string? dataDir = null)
 
 		if (File.Exists(sourcePath) && sourcePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
 		{
-			return ImportFromZip(type, sourcePath);
+			return ImportFromZip(type, sourcePath, cancellationToken);
 		}
 
 		if (Directory.Exists(sourcePath))
 		{
-			return ImportFromDirectory(type, sourcePath);
+			return ImportFromDirectory(type, sourcePath, cancellationToken);
 		}
 
 		throw new ResourceException("目前仅支持导入 .zip 压缩包或模型文件夹");
 	}
 
-	private IReadOnlyList<string> ImportFromZip(ResourceType type, string zipPath)
+	private IReadOnlyList<string> ImportFromZip(ResourceType type, string zipPath, CancellationToken cancellationToken)
 	{
 		string stagingRoot = CreateStagingRoot();
 		try
 		{
 			string extractedRoot = Path.Combine(stagingRoot, "extracted");
-			ZipExtractor.Extract(zipPath, extractedRoot);
-			IReadOnlyList<ModelCandidate> candidates = CollectCandidates(extractedRoot);
-			return PrepareAndSwap(type, candidates, stagingRoot);
+			ZipExtractor.Extract(zipPath, extractedRoot, cancellationToken);
+			IReadOnlyList<ModelCandidate> candidates = CollectCandidates(extractedRoot, cancellationToken);
+			return PrepareAndSwap(type, candidates, stagingRoot, cancellationToken);
 		}
 		catch (ResourceException)
 		{
 			throw;
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
 		{
 			throw new ResourceException($"导入资源失败: {exception.Message}", exception);
 		}
@@ -115,15 +131,24 @@ public sealed class ResourceManager(string? dataDir = null)
 		}
 	}
 
-	private IReadOnlyList<string> ImportFromDirectory(ResourceType type, string sourceDir)
+	private IReadOnlyList<string> ImportFromDirectory(ResourceType type, string sourceDir, CancellationToken cancellationToken)
 	{
 		string stagingRoot = CreateStagingRoot();
 		try
 		{
-			IReadOnlyList<ModelCandidate> candidates = CollectCandidates(sourceDir);
-			return PrepareAndSwap(type, candidates, stagingRoot);
+			string canonicalSource = ResourcePathSafety.FullPath(sourceDir);
+			if (ResourcePathSafety.IsSameOrWithin(canonicalSource, stagingRoot))
+			{
+				throw new ResourceException("导入目录不能包含应用 staging 目录");
+			}
+			IReadOnlyList<ModelCandidate> candidates = CollectCandidates(canonicalSource, cancellationToken);
+			return PrepareAndSwap(type, candidates, stagingRoot, cancellationToken);
 		}
 		catch (ResourceException)
+		{
+			throw;
+		}
+		catch (OperationCanceledException)
 		{
 			throw;
 		}
@@ -141,47 +166,91 @@ public sealed class ResourceManager(string? dataDir = null)
 	private string CreateStagingRoot()
 	{
 		Directory.CreateDirectory(ResourcesRoot);
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(ResourcesRoot, "资源根目录包含符号链接或 reparse point");
 		string root = Path.Combine(ResourcesRoot, $".nori-import-{Guid.NewGuid():N}");
 		Directory.CreateDirectory(root);
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(root, "staging 目录包含符号链接或 reparse point");
 		return root;
 	}
 
 	/// <summary>
-	/// 收集候选并拒绝重复模型 ID.
-	/// 每个候选以包含 model3 JSON 的目录作为复制边界, 保留其纹理和动作相对路径.
+	/// 安全遍历候选目录并拒绝任意符号链接或 reparse point.
 	/// </summary>
-	private static IReadOnlyList<ModelCandidate> CollectCandidates(string sourceRoot)
+	private static IReadOnlyList<ModelCandidate> CollectCandidates(string sourceRoot, CancellationToken cancellationToken)
 	{
-		string[] modelFiles = Directory.GetFiles(sourceRoot, "*.model3.json", SearchOption.AllDirectories);
-		if (modelFiles.Length == 0)
+		cancellationToken.ThrowIfCancellationRequested();
+		string canonicalRoot = ResourcePathSafety.FullPath(sourceRoot);
+		if (!Directory.Exists(canonicalRoot)) throw new ResourceException($"导入目录不存在: {sourceRoot}");
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(canonicalRoot, "导入目录包含符号链接或 reparse point");
+
+		List<string> modelFiles = [];
+		CollectFiles(canonicalRoot, canonicalRoot, modelFiles, cancellationToken);
+		if (modelFiles.Count == 0)
 		{
 			throw new ResourceException("所选资源中未找到任何 .model3.json 模型定义文件");
 		}
 
 		List<ModelCandidate> candidates = [];
 		HashSet<string> ids = new(StringComparer.OrdinalIgnoreCase);
-		foreach (string modelFile in modelFiles)
+		foreach (string modelFile in modelFiles.OrderBy(path => path, StringComparer.Ordinal))
 		{
-			string relativePath = Path.GetRelativePath(sourceRoot, modelFile);
-			string modelId = ResourceName.Validate(ModelIdFromPath(relativePath));
+			cancellationToken.ThrowIfCancellationRequested();
+			string relativePath = Path.GetRelativePath(canonicalRoot, modelFile);
+			string? resolvedId = SupportedModelIds.ResolveFromModelPath(relativePath);
+			if (resolvedId is null)
+			{
+				throw new ResourceException($"不支持的 Live2D 模型 ID: {relativePath}");
+			}
+			string modelId = ResourceName.Validate(resolvedId);
 			if (!ids.Add(modelId))
 			{
 				throw new ResourceException($"导入资源中存在重复模型 ID: {modelId}");
 			}
 
-			string modelDir = Path.GetDirectoryName(modelFile) ?? sourceRoot;
-			candidates.Add(new ModelCandidate(modelId, modelDir));
+			string modelDir = Path.GetDirectoryName(modelFile) ?? canonicalRoot;
+			candidates.Add(new ModelCandidate(modelId, modelDir, Path.GetFileName(modelFile)));
 		}
 		return candidates;
 	}
 
-	/// <summary>
-	/// 将所有候选复制到 staging/models 并完整验证, 再批量交换 target.
-	/// </summary>
+	private static void CollectFiles(
+		string sourceRoot,
+		string currentDir,
+		List<string> modelFiles,
+		CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		ResourcePathSafety.EnsureNoReparsePoints(sourceRoot, currentDir, "导入目录包含符号链接或 reparse point");
+		DirectoryInfo directory = new(currentDir);
+		EnumerationOptions options = new()
+		{
+			IgnoreInaccessible = false,
+			RecurseSubdirectories = false,
+			ReturnSpecialDirectories = false,
+			AttributesToSkip = 0,
+		};
+		foreach (FileSystemInfo entry in directory.EnumerateFileSystemInfos("*", options))
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			ResourcePathSafety.EnsureNoReparsePoints(sourceRoot, entry.FullName, "导入目录包含符号链接或 reparse point");
+			if (entry is DirectoryInfo)
+			{
+				CollectFiles(sourceRoot, entry.FullName, modelFiles, cancellationToken);
+			}
+			else if (entry is FileInfo file
+				&& file.Name.EndsWith(".model3.json", StringComparison.OrdinalIgnoreCase))
+			{
+				modelFiles.Add(file.FullName);
+			}
+		}
+	}
+
+	/// <summary>将所有候选复制到 staging/models 并完整验证, 再批量交换 target.</summary>
 	private IReadOnlyList<string> PrepareAndSwap(
 		ResourceType type,
 		IReadOnlyList<ModelCandidate> candidates,
-		string stagingRoot)
+		string stagingRoot,
+		CancellationToken cancellationToken)
 	{
 		string preparedRoot = Path.Combine(stagingRoot, "prepared");
 		Directory.CreateDirectory(preparedRoot);
@@ -189,8 +258,15 @@ public sealed class ResourceManager(string? dataDir = null)
 
 		foreach (ModelCandidate candidate in candidates)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
+			if (type == ResourceType.Live2D && !SupportedModelIds.IsSupported(candidate.Id))
+			{
+				throw new ResourceException($"不支持的 Live2D 模型 ID: {candidate.Id}");
+			}
 			string preparedDir = Path.Combine(preparedRoot, candidate.Id);
-			CopyDirectory(candidate.SourceDir, preparedDir);
+			CopyDirectory(candidate.SourceDir, preparedDir, cancellationToken);
+			string preparedModelPath = Path.Combine(preparedDir, candidate.Model3FileName);
+			Model3ReferenceValidator.Validate(preparedDir, preparedModelPath, cancellationToken);
 			if (!IsInstalledAt(type, preparedDir))
 			{
 				throw new ResourceException($"模型 staging 校验失败: {candidate.Id}");
@@ -199,18 +275,25 @@ public sealed class ResourceManager(string? dataDir = null)
 		}
 
 		if (preparedIds.Count == 0) throw new ResourceException("未能成功解析和导入任何模型");
-		return SwapPrepared(type, preparedIds, preparedRoot);
+		return SwapPrepared(type, preparedIds, preparedRoot, cancellationToken);
 	}
 
 	/// <summary>
 	/// 同卷目录交换. backup 在所有 target 完成替换前一直保留, 任一失败逆序回滚.
 	/// </summary>
-	private IReadOnlyList<string> SwapPrepared(ResourceType type, IReadOnlyList<string> modelIds, string preparedRoot)
+	private IReadOnlyList<string> SwapPrepared(
+		ResourceType type,
+		IReadOnlyList<string> modelIds,
+		string preparedRoot,
+		CancellationToken cancellationToken)
 	{
 		string targetRoot = Path.Combine(ResourcesRoot, type.AsString());
 		string backupRoot = Path.Combine(ResourcesRoot, $".nori-backup-{Guid.NewGuid():N}");
 		Directory.CreateDirectory(targetRoot);
 		Directory.CreateDirectory(backupRoot);
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(ResourcesRoot, "资源目标目录包含符号链接或 reparse point");
+		ResourcePathSafety.EnsureNoReparsePoints(ResourcesRoot, targetRoot, "资源目标目录包含符号链接或 reparse point");
+		ResourcePathSafety.EnsureNoReparsePoints(ResourcesRoot, backupRoot, "资源备份目录包含符号链接或 reparse point");
 
 		List<(string Target, string Backup)> backups = [];
 		List<string> installedTargets = [];
@@ -218,8 +301,10 @@ public sealed class ResourceManager(string? dataDir = null)
 		{
 			foreach (string modelId in modelIds)
 			{
+				cancellationToken.ThrowIfCancellationRequested();
 				string targetDir = ResourceDir(type, modelId);
 				string preparedDir = Path.Combine(preparedRoot, modelId);
+				ResourcePathSafety.EnsureNoReparsePoints(ResourcesRoot, targetDir, "资源目标包含符号链接或 reparse point");
 				if (Directory.Exists(targetDir))
 				{
 					string backupDir = Path.Combine(backupRoot, modelId);
@@ -227,6 +312,7 @@ public sealed class ResourceManager(string? dataDir = null)
 					backups.Add((targetDir, backupDir));
 				}
 
+				cancellationToken.ThrowIfCancellationRequested();
 				Directory.Move(preparedDir, targetDir);
 				installedTargets.Add(targetDir);
 			}
@@ -234,7 +320,7 @@ public sealed class ResourceManager(string? dataDir = null)
 			TryDeleteDirectory(backupRoot);
 			return [.. modelIds];
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or OperationCanceledException or ResourceException)
 		{
 			try
 			{
@@ -245,6 +331,7 @@ public sealed class ResourceManager(string? dataDir = null)
 				throw new ResourceException($"导入资源失败且回滚失败: {rollbackException.Message}", rollbackException);
 			}
 
+			if (exception is OperationCanceledException or ResourceException) throw;
 			throw new ResourceException($"导入资源失败: {exception.Message}", exception);
 		}
 		finally
@@ -272,72 +359,146 @@ public sealed class ResourceManager(string? dataDir = null)
 		}
 	}
 
-	private static string ModelIdFromPath(string relativePath)
+	private static void CopyDirectory(string sourceDir, string targetDir, CancellationToken cancellationToken)
 	{
-		string fileName = Path.GetFileName(relativePath);
-		if (fileName.Equals("ARGNori.model3.json", StringComparison.OrdinalIgnoreCase)) return "arg-nori";
-		if (fileName.Equals("Nori.model3.json", StringComparison.OrdinalIgnoreCase)) return "nori";
-		string? folder = Path.GetDirectoryName(relativePath);
-		string modelId = !string.IsNullOrEmpty(folder) ? Path.GetFileName(folder) : Path.GetFileNameWithoutExtension(fileName);
-		return modelId.Replace(".model3", "", StringComparison.OrdinalIgnoreCase)
-			.Replace("_web", "", StringComparison.OrdinalIgnoreCase)
-			.Replace(" ", "-").ToLowerInvariant();
+		string canonicalSource = ResourcePathSafety.FullPath(sourceDir);
+		string canonicalTarget = ResourcePathSafety.FullPath(targetDir);
+		if (!Directory.Exists(canonicalSource)) throw new ResourceException($"模型目录不存在: {sourceDir}");
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(canonicalSource, "模型目录包含符号链接或 reparse point");
+		ResourcePathSafety.EnsureNoReparsePoints(canonicalSource, canonicalSource, "模型目录包含符号链接或 reparse point");
+		Directory.CreateDirectory(canonicalTarget);
+		ResourcePathSafety.EnsureNoReparsePointsAlongPath(canonicalTarget, "模型 staging 路径包含符号链接或 reparse point");
+		CopyDirectoryContents(canonicalSource, canonicalSource, canonicalTarget, cancellationToken);
 	}
 
-	private static void CopyDirectory(string sourceDir, string targetDir)
+	private static void CopyDirectoryContents(
+		string sourceRoot,
+		string sourceDir,
+		string targetRoot,
+		CancellationToken cancellationToken)
 	{
-		foreach (string dir in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+		cancellationToken.ThrowIfCancellationRequested();
+		EnumerationOptions options = new()
 		{
-			Directory.CreateDirectory(Path.Combine(targetDir, Path.GetRelativePath(sourceDir, dir)));
-		}
-		Directory.CreateDirectory(targetDir);
-		foreach (string file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+			IgnoreInaccessible = false,
+			RecurseSubdirectories = false,
+			ReturnSpecialDirectories = false,
+			AttributesToSkip = 0,
+		};
+		foreach (FileSystemInfo entry in new DirectoryInfo(sourceDir).EnumerateFileSystemInfos("*", options))
 		{
-			string destination = Path.Combine(targetDir, Path.GetRelativePath(sourceDir, file));
-			string? parent = Path.GetDirectoryName(destination);
-			if (parent is not null) Directory.CreateDirectory(parent);
-			File.Copy(file, destination, true);
+			cancellationToken.ThrowIfCancellationRequested();
+			ResourcePathSafety.EnsureNoReparsePoints(sourceRoot, entry.FullName, "模型目录包含符号链接或 reparse point");
+			string relative = Path.GetRelativePath(sourceRoot, entry.FullName);
+			string destination = Path.GetFullPath(Path.Combine(targetRoot, relative));
+			ResourcePathSafety.EnsureContained(targetRoot, destination, "模型 staging 路径超出目标目录");
+			if (entry is DirectoryInfo)
+			{
+				Directory.CreateDirectory(destination);
+				CopyDirectoryContents(sourceRoot, entry.FullName, targetRoot, cancellationToken);
+			}
+			else if (entry is FileInfo)
+			{
+				CopyFile(entry.FullName, destination, cancellationToken);
+			}
 		}
 	}
 
-	/// <summary>
-	/// 递归判断目录下是否存在 .model3.json
-	/// </summary>
-	private static bool HasModel3Json(string dir) => IsInstalledAt(ResourceType.Live2D, dir);
+	private static void CopyFile(string source, string destination, CancellationToken cancellationToken)
+	{
+		string parent = Path.GetDirectoryName(destination) ?? throw new ResourceException($"模型文件没有父目录: {destination}");
+		Directory.CreateDirectory(parent);
+		using FileStream input = new(source, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+		using FileStream output = new(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.SequentialScan);
+		byte[] buffer = new byte[64 * 1024];
+		while (true)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			int read = input.Read(buffer, 0, buffer.Length);
+			if (read == 0) break;
+			output.Write(buffer, 0, read);
+		}
+	}
+
+	/// <summary>递归判断目录下是否存在 .model3.json.</summary>
+	private static bool HasModel3Json(string dir)
+	{
+		try
+		{
+			List<string> modelFiles = [];
+			CollectFiles(dir, dir, modelFiles, CancellationToken.None);
+			return modelFiles.Count > 0;
+		}
+		catch (ResourceException)
+		{
+			return false;
+		}
+		catch (IOException)
+		{
+			return false;
+		}
+		catch (UnauthorizedAccessException)
+		{
+			return false;
+		}
+	}
 
 	private static bool IsInstalledAt(ResourceType type, string dir)
 	{
 		if (type != ResourceType.Live2D) return Directory.Exists(dir);
-		try
-		{
-			return Directory.EnumerateFiles(dir, "*.model3.json", SearchOption.AllDirectories).Any();
-		}
-		catch (IOException)
-		{
-			return false;
-		}
-		catch (UnauthorizedAccessException)
-		{
-			return false;
-		}
+		return HasModel3Json(dir);
 	}
 
-	/// <summary>
-	/// 递归计算目录大小
-	/// </summary>
+	/// <summary>递归计算目录大小, 遇到链接或不可读目录时返回 0.</summary>
 	private static long DirectorySize(string dir)
 	{
 		try
 		{
-			return Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Sum(file => new FileInfo(file).Length);
+			List<string> files = [];
+			CollectFilesForSize(dir, dir, files);
+			long size = 0;
+			foreach (string file in files) size = checked(size + new FileInfo(file).Length);
+			return size;
 		}
-		catch (IOException)
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or OverflowException or ResourceException)
 		{
 			return 0;
 		}
-		catch (UnauthorizedAccessException)
+	}
+
+	private static void CollectFilesForSize(string root, string current, List<string> files)
+	{
+		ResourcePathSafety.EnsureNoReparsePoints(root, current, "资源目录包含符号链接或 reparse point");
+		EnumerationOptions options = new()
 		{
-			return 0;
+			IgnoreInaccessible = false,
+			RecurseSubdirectories = false,
+			ReturnSpecialDirectories = false,
+			AttributesToSkip = 0,
+		};
+		foreach (FileSystemInfo entry in new DirectoryInfo(current).EnumerateFileSystemInfos("*", options))
+		{
+			ResourcePathSafety.EnsureNoReparsePoints(root, entry.FullName, "资源目录包含符号链接或 reparse point");
+			if (entry is DirectoryInfo) CollectFilesForSize(root, entry.FullName, files);
+			else if (entry is FileInfo file) files.Add(file.FullName);
+		}
+	}
+
+	private static IEnumerable<DirectoryInfo> EnumerateDirectoriesSafely(string root)
+	{
+		ResourcePathSafety.EnsureNoReparsePoints(root, root, "资源目录包含符号链接或 reparse point");
+		EnumerationOptions options = new()
+		{
+			IgnoreInaccessible = false,
+			RecurseSubdirectories = false,
+			ReturnSpecialDirectories = false,
+			AttributesToSkip = 0,
+		};
+		foreach (FileSystemInfo entry in new DirectoryInfo(root).EnumerateFileSystemInfos("*", options))
+		{
+			if (entry is not DirectoryInfo directory) continue;
+			ResourcePathSafety.EnsureNoReparsePoints(root, entry.FullName, "资源目录包含符号链接或 reparse point");
+			yield return directory;
 		}
 	}
 
@@ -358,5 +519,5 @@ public sealed class ResourceManager(string? dataDir = null)
 		}
 	}
 
-	private sealed record ModelCandidate(string Id, string SourceDir);
+	private sealed record ModelCandidate(string Id, string SourceDir, string Model3FileName);
 }

@@ -288,14 +288,6 @@ public class LAppModel : CubismUserModel
         _motions.Clear();
         _expressions.Clear();
 
-        if (_modelSetting.FileReferences?.Motions.Count > 0)
-        {
-            foreach (var item in _modelSetting.FileReferences.Motions)
-            {
-                ReleaseMotionGroup(item.Key);
-            }
-        }
-
         foreach (var item in Textures)
         {
             _lapp.TextureManager.ReleaseTexture(item);
@@ -580,15 +572,7 @@ public class LAppModel : CubismUserModel
             return null;
         }
 
-        //voice
-        string voice = item.Sound;
-        if (!string.IsNullOrWhiteSpace(voice))
-        {
-            //string path = voice;
-            //path = _modelHomeDir + path;
-            //_wavFileHandler.Start(path);
-        }
-
+        // [Nori] 模型动作中的 Sound/Voice 不由 SDK 播放, 语音统一由宿主外部音频管线负责。
         CubismLog.Debug($"[Live2D App]start motion: [{resolvedGroup}_{no}]");
         CurrentMotionGroup = resolvedGroup;
         return _motionManager.StartMotionPriority(motion, priority);
@@ -750,21 +734,6 @@ public class LAppModel : CubismUserModel
         }
 
         Renderer?.DrawModel();
-    }
-
-    /// <summary>
-    /// モーションデータをグループ名から一括で解放する。
-    /// モーションデータの名前は内部でModelSettingから取得する。
-    /// </summary>
-    /// <param name="group">モーションデータのグループ名</param>
-    private void ReleaseMotionGroup(string group)
-    {
-        var list = _modelSetting.FileReferences.Motions[group];
-        for (int i = 0; i < list.Count; i++)
-        {
-            string voice = list[i].Sound;
-            //TODO Voice
-        }
     }
 
     /// <summary>

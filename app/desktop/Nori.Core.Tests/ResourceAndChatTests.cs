@@ -164,6 +164,160 @@ public class ZipExtractorTests
 			Directory.Delete(root, true);
 		}
 	}
+
+	[Fact]
+	public void ZIP条目数量超过上限时拒绝()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"nori-zip-limit-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			string zipPath = Path.Combine(root, "pack.zip");
+			WriteZipEntries(zipPath, ("a.txt", "a"), ("b.txt", "b"));
+			ResourceException error = Assert.Throws<ResourceException>(() => ZipExtractor.Extract(
+				zipPath,
+				Path.Combine(root, "out"),
+				new ZipExtractionLimits {MaxEntryCount = 1}));
+			Assert.Contains("条目数量", error.Message, StringComparison.Ordinal);
+		}
+		finally
+		{
+			Directory.Delete(root, true);
+		}
+	}
+
+	[Fact]
+	public void ZIP单文件与总展开大小超过上限时拒绝()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"nori-zip-size-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			string singleZip = Path.Combine(root, "single.zip");
+			WriteZipEntries(singleZip, ("large.txt", "123456789"));
+			ResourceException singleError = Assert.Throws<ResourceException>(() => ZipExtractor.Extract(
+				singleZip,
+				Path.Combine(root, "single-out"),
+				new ZipExtractionLimits
+				{
+					MaxSingleFileBytes = 4,
+					MaxTotalUncompressedBytes = 100,
+					MaxCompressionRatio = 10_000,
+				}));
+			Assert.Contains("单个文件", singleError.Message, StringComparison.Ordinal);
+
+			string totalZip = Path.Combine(root, "total.zip");
+			WriteZipEntries(totalZip, ("a.txt", "1234"), ("b.txt", "5678"));
+			ResourceException totalError = Assert.Throws<ResourceException>(() => ZipExtractor.Extract(
+				totalZip,
+				Path.Combine(root, "total-out"),
+				new ZipExtractionLimits
+				{
+					MaxSingleFileBytes = 100,
+					MaxTotalUncompressedBytes = 5,
+					MaxCompressionRatio = 10_000,
+				}));
+			Assert.Contains("总展开大小", totalError.Message, StringComparison.Ordinal);
+		}
+		finally
+		{
+			Directory.Delete(root, true);
+		}
+	}
+
+	[Fact]
+	public void ZIP符号链接条目被拒绝()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"nori-zip-link-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			string zipPath = Path.Combine(root, "link.zip");
+			using (FileStream stream = File.Create(zipPath))
+			using (ZipArchive archive = new(stream, ZipArchiveMode.Create))
+			{
+				ZipArchiveEntry entry = archive.CreateEntry("linked.txt");
+				entry.ExternalAttributes = unchecked((int)(0xA000u << 16));
+				using StreamWriter writer = new(entry.Open());
+				writer.Write("target");
+			}
+
+			ResourceException error = Assert.Throws<ResourceException>(() => ZipExtractor.Extract(zipPath, Path.Combine(root, "out")));
+			Assert.Contains("符号链接", error.Message, StringComparison.Ordinal);
+		}
+		finally
+		{
+			Directory.Delete(root, true);
+		}
+	}
+
+	[Fact]
+	public void ZIP目标父目录符号链接被拒绝()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"nori-zip-target-link-{Guid.NewGuid():N}");
+		string outside = Path.Combine(root, "outside");
+		string targetParent = Path.Combine(root, "linked");
+		Directory.CreateDirectory(outside);
+		try
+		{
+			try
+			{
+				Directory.CreateSymbolicLink(targetParent, outside);
+			}
+			catch (Exception exception) when (exception is UnauthorizedAccessException or PlatformNotSupportedException or IOException)
+			{
+				return;
+			}
+
+			string zipPath = Path.Combine(root, "pack.zip");
+			WriteZipEntries(zipPath, ("file.txt", "content"));
+			ResourceException error = Assert.Throws<ResourceException>(() =>
+				ZipExtractor.Extract(zipPath, Path.Combine(targetParent, "out")));
+			Assert.Contains("符号链接", error.Message, StringComparison.Ordinal);
+			Assert.False(File.Exists(Path.Combine(outside, "out", "file.txt")));
+		}
+		finally
+		{
+			Directory.Delete(root, true);
+		}
+	}
+
+	[Fact]
+	public void ZIP异常压缩比超过上限时拒绝()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"nori-zip-ratio-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			string zipPath = Path.Combine(root, "ratio.zip");
+			WriteZipEntries(zipPath, ("repetitive.txt", new string('a', 10_000)));
+			ResourceException error = Assert.Throws<ResourceException>(() => ZipExtractor.Extract(
+				zipPath,
+				Path.Combine(root, "out"),
+				new ZipExtractionLimits
+				{
+					MaxSingleFileBytes = 20_000,
+					MaxTotalUncompressedBytes = 20_000,
+					MaxCompressionRatio = 2,
+				}));
+			Assert.Contains("压缩比", error.Message, StringComparison.Ordinal);
+		}
+		finally
+		{
+			Directory.Delete(root, true);
+		}
+	}
+
+	private static void WriteZipEntries(string zipPath, params (string Name, string Content)[] entries)
+	{
+		using FileStream stream = File.Create(zipPath);
+		using ZipArchive archive = new(stream, ZipArchiveMode.Create);
+		foreach ((string name, string content) in entries)
+		{
+			using StreamWriter writer = new(archive.CreateEntry(name).Open());
+			writer.Write(content);
+		}
+	}
 }
 
 /// <summary>
@@ -341,9 +495,9 @@ public class ResourceImportTests
 	}
 
 	[Fact]
-	public void Import_重复模型ID被整体拒绝()
+	public void Import_不支持的模型ID被整体拒绝()
 	{
-		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-dup-{Guid.NewGuid():N}");
+		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-unsupported-{Guid.NewGuid():N}");
 		Directory.CreateDirectory(tempDir);
 		try
 		{
@@ -360,9 +514,90 @@ public class ResourceImportTests
 
 			ResourceManager manager = new(tempDir);
 			ResourceException error = Assert.Throws<ResourceException>(() => manager.Import(ResourceType.Live2D, zipPath));
-			Assert.Contains("重复模型 ID", error.Message, StringComparison.Ordinal);
+			Assert.Contains("不支持的 Live2D 模型 ID", error.Message, StringComparison.Ordinal);
 			Assert.Empty(manager.List(ResourceType.Live2D));
 			Assert.Empty(Directory.GetDirectories(tempDir, ".nori-*", SearchOption.AllDirectories));
+		}
+		finally
+		{
+			Directory.Delete(tempDir, true);
+		}
+	}
+
+	[Fact]
+	public void Import_model3越界引用被拒绝且不覆盖旧资源()
+	{
+		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-invalid-reference-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(tempDir);
+		try
+		{
+			ResourceManager manager = new(tempDir);
+			string zipPath = Path.Combine(tempDir, "invalid.zip");
+			using (FileStream stream = File.Create(zipPath))
+			using (ZipArchive archive = new(stream, ZipArchiveMode.Create))
+			{
+				using StreamWriter writer = new(archive.CreateEntry("ARGNori/ARGNori.model3.json").Open());
+				writer.Write("{\"FileReferences\":{\"Moc\":\"../outside.moc3\"}}");
+			}
+
+			ResourceException error = Assert.Throws<ResourceException>(() => manager.Import(ResourceType.Live2D, zipPath));
+			Assert.Contains("路径穿越", error.Message, StringComparison.Ordinal);
+			Assert.False(manager.IsInstalled(ResourceType.Live2D, "arg-nori"));
+			Assert.Empty(Directory.GetDirectories(tempDir, ".nori-*", SearchOption.AllDirectories));
+		}
+		finally
+		{
+			Directory.Delete(tempDir, true);
+		}
+	}
+
+	[Fact]
+	public void Import_取消后不留下staging或资源()
+	{
+		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-cancel-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(tempDir);
+		try
+		{
+			string zipPath = Path.Combine(tempDir, "cancel.zip");
+			WriteModelZip(zipPath, "ARGNori_web", "ARGNori.model3.json", "{}", "texture");
+			using CancellationTokenSource cancellation = new();
+			cancellation.Cancel();
+			ResourceManager manager = new(tempDir);
+			Assert.Throws<OperationCanceledException>(() => manager.Import(ResourceType.Live2D, zipPath, cancellation.Token));
+			Assert.Empty(manager.List(ResourceType.Live2D));
+			Assert.Empty(Directory.GetDirectories(tempDir, ".nori-*", SearchOption.AllDirectories));
+		}
+		finally
+		{
+			Directory.Delete(tempDir, true);
+		}
+	}
+
+	[Fact]
+	public void Import_目录中的符号链接被拒绝()
+	{
+		string tempDir = Path.Combine(Path.GetTempPath(), $"nori-symlink-{Guid.NewGuid():N}");
+		string sourceDir = Path.Combine(tempDir, "source");
+		string outsideDir = Path.Combine(tempDir, "outside");
+		Directory.CreateDirectory(sourceDir);
+		Directory.CreateDirectory(outsideDir);
+		try
+		{
+			File.WriteAllText(Path.Combine(sourceDir, "ARGNori.model3.json"), "{}");
+			File.WriteAllText(Path.Combine(outsideDir, "outside.txt"), "outside");
+			try
+			{
+				Directory.CreateSymbolicLink(Path.Combine(sourceDir, "linked"), outsideDir);
+			}
+			catch (Exception exception) when (exception is UnauthorizedAccessException or PlatformNotSupportedException or IOException)
+			{
+				return;
+			}
+
+			ResourceManager manager = new(tempDir);
+			ResourceException error = Assert.Throws<ResourceException>(() => manager.Import(ResourceType.Live2D, sourceDir));
+			Assert.Contains("符号链接", error.Message, StringComparison.Ordinal);
+			Assert.Empty(manager.List(ResourceType.Live2D));
 		}
 		finally
 		{
