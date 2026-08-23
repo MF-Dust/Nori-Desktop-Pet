@@ -62,11 +62,15 @@ jobs:
               echo "标签必须匹配 v<major>.<minor>.<patch>[-Codename]: $tag" >&2
               exit 1
             fi
-            git show-ref --tags --verify --quiet "refs/tags/$tag" || {
-              echo "标签不存在: $tag" >&2
-              exit 1
-            }
-            echo "使用已有标签: $tag"
+            if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
+              echo "使用已有标签: $tag"
+            else
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a "$tag" -m "chore: release $tag"
+              git push origin "$tag"
+              echo "已创建并推送指定标签: $tag"
+            fi
           else
             latest="$(git tag --list 'v*' | grep -E "$tag_pattern" | sort -V | tail -n1 || true)"
             if [ -z "$latest" ]; then
