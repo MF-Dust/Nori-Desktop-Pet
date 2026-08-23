@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {feedback, errorText} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppField from "../ui/AppField.vue"
 
 const I18N = computed(() => useLanguages().views.main.ai)
 
@@ -25,13 +29,14 @@ const model = ref("")
 const persona = ref("")
 const hasApiKey = computed(() => RUNTIME.snapshot.value?.ai.hasApiKey ?? false)
 const apiKeyPlaceholder = computed(() => {
+	if (hasApiKey.value) return I18N.value.apiKeySavedHint
 	switch (provider.value) {
 		case "anthropic":
-			return hasApiKey.value ? "已保存 (输入可更换)" : "sk-ant-..."
+			return "sk-ant-..."
 		case "google":
-			return hasApiKey.value ? "已保存 (输入可更换)" : "AIza..."
+			return "AIza..."
 		default:
-			return hasApiKey.value ? "已保存 (输入可更换)" : "sk-..."
+			return "sk-..."
 	}
 })
 const baseUrlPlaceholder = computed(() => DEFAULT_BASE_URLS[provider.value] || "https://api.openai.com/v1")
@@ -58,28 +63,27 @@ onMounted(async () => {
 	syncFromSnapshot()
 })
 
-// 保存辅助: 每个 key 独立防抖 timer (规范要求)
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
-const saveDebounced = (key: string, value: () => Record<string, unknown>) => {
-	clearTimeout(timers.get(key))
-	timers.set(key, setTimeout(() => {
-		timers.delete(key)
-		void RUNTIME.updateAi(value()).catch(error => console.error(`保存 AI 配置失败 (${key}):`, error))
-	}, 400))
+// 保存辅助: 每个 key 独立防抖 timer + 卸载 flush (规范要求)
+// 失败提示按字段细分, 保留原来日志里的语义
+const failText = (key: string): string => {
+	if (key === "provider") return I18N.value.providerSaveFailed
+	if (key === "model") return I18N.value.modelSaveFailed
+	return I18N.value.saveFailed
 }
+const SAVE = useDebouncedSave({onError: (key, error) => feedback.error(failText(key), error)})
 
 const onBaseUrlChange = () => {
 	if (!baseUrl.value.trim()) return
-	saveDebounced("baseUrl", () => ({baseUrl: baseUrl.value.trim()}))
+	SAVE.save("baseUrl", () => RUNTIME.updateAi({baseUrl: baseUrl.value.trim()}))
 }
 const onApiKeyChange = () => {
 	const VALUE = apiKeyInput.value.trim()
 	apiKeyInput.value = ""
 	if (!VALUE) return
-	saveDebounced("apiKey", () => ({apiKey: VALUE}))
+	SAVE.save("apiKey", () => RUNTIME.updateAi({apiKey: VALUE}))
 }
 const onPersonaChange = () => {
-	saveDebounced("persona", () => ({persona: persona.value}))
+	SAVE.save("persona", () => RUNTIME.updateAi({persona: persona.value}))
 }
 
 // 切换 Provider: 默认地址联动 + 立即保存
@@ -91,13 +95,13 @@ const onProviderChange = () => {
 	}
 	models.value = []
 	model.value = ""
-	void RUNTIME.updateAi({provider: provider.value, baseUrl: baseUrl.value}).catch(error => console.error("保存协议类型失败:", error))
+	void SAVE.saveNow("provider", () => RUNTIME.updateAi({provider: provider.value, baseUrl: baseUrl.value}))
 }
 
 // 选中模型直接保存
 const onSelectModel = (value: string) => {
 	if (!value) return
-	void RUNTIME.updateAi({model: value}).catch(error => console.error("保存模型失败:", error))
+	void SAVE.saveNow("model", () => RUNTIME.updateAi({model: value}))
 }
 
 // 获取模型按钮 (密钥只在本次调用中发往后端, 不回显)
@@ -128,7 +132,7 @@ const fetchModels = async () => {
 			model.value = models.value[0]
 		}
 	} catch (error) {
-		errorMsg.value = String(error)
+		errorMsg.value = `${I18N.value.fetchFailed}: ${errorText(error)}`
 		console.error("获取模型失败:", error)
 	} finally {
 		loading.value = false
@@ -147,15 +151,12 @@ const modelOptions = computed(() => {
 </script>
 
 <template>
-	<section class="ai-settings">
-		<div class="ai-head">
-			<h2 class="ai-title glow-teal">{{ I18N.title }}</h2>
-			<p class="ai-sub">{{ I18N.sub }}</p>
-		</div>
+	<section class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+		<AppSectionHeader :title="I18N.title" :subtitle="I18N.sub"/>
 
-		<div class="ai-form">
+		<div class="w-full max-w-[54rem] flex flex-col gap-4 p-5 surface-card rounded-lg shadow-[0_0.6rem_2.4rem_rgba(0,0,0,0.35)]">
 			<div class="field">
-				<span class="field-label">{{ I18N.provider }}</span>
+				<span class="field-label font-500">{{ I18N.provider }}</span>
 				<n-select
 					v-model:value="provider"
 					:options="providerOptions"
@@ -163,39 +164,37 @@ const modelOptions = computed(() => {
 				/>
 			</div>
 
-			<label class="field">
-				<span class="field-label">{{ I18N.apiBaseUrl }}</span>
+			<AppField :label="I18N.apiBaseUrl" :state="SAVE.stateOf('baseUrl')">
 				<input
 					v-model="baseUrl"
-					class="input"
+					class="input-base"
 					type="text"
 					:placeholder="baseUrlPlaceholder"
 					spellcheck="false"
 					@blur="onBaseUrlChange"
 				/>
-			</label>
+			</AppField>
 
-			<label class="field">
-				<span class="field-label">{{ I18N.apiKey }}{{ hasApiKey ? " (已加密保存)" : "" }}</span>
+			<AppField :label="hasApiKey ? `${I18N.apiKey} ${I18N.apiKeyStored}` : I18N.apiKey" :state="SAVE.stateOf('apiKey')">
 				<input
 					v-model="apiKeyInput"
-					class="input"
+					class="input-base"
 					type="password"
 					:placeholder="apiKeyPlaceholder"
 					spellcheck="false"
 					autocomplete="off"
 					@blur="onApiKeyChange"
 				/>
-			</label>
+			</AppField>
 
 			<div class="field">
-				<span class="field-label">{{ I18N.model }}</span>
-				<div class="model-row">
+				<span class="field-label font-500">{{ I18N.model }}</span>
+				<div class="flex items-center gap-2.5">
 					<n-select
 						:value="model"
 						:options="modelOptions"
 						:disabled="modelOptions.length === 0"
-						:placeholder="modelOptions.length === 0 ? I18N.modelEmpty : '请选择模型'"
+						:placeholder="modelOptions.length === 0 ? I18N.modelEmpty : I18N.modelPlaceholder"
 						class="flex-1"
 						@update:value="onSelectModel"
 					/>
@@ -210,119 +209,21 @@ const modelOptions = computed(() => {
 				</div>
 			</div>
 
-			<div class="field">
-				<span class="field-label">人设与系统提示词 (System Prompt)</span>
+			<AppField :label="I18N.persona" :state="SAVE.stateOf('persona')">
 				<textarea
 					v-model="persona"
-					class="input textarea"
+					class="input-base resize-y leading-relaxed"
 					rows="4"
-					placeholder="设定 Nori 的人设、性格、口吻或对话规则（留空将使用默认陪伴人设）..."
+					:placeholder="I18N.personaPlaceholder"
 					@blur="onPersonaChange"
 				/>
-			</div>
+			</AppField>
 
-			<p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+			<p
+				v-if="errorMsg"
+				class="px-3 py-2 rounded-sm text-sm text-danger-text bg-danger/12 border border-danger/35 font-500"
+				role="alert"
+			>{{ errorMsg }}</p>
 		</div>
 	</section>
 </template>
-
-<style scoped lang="less">
-.ai-settings {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	overflow-y: auto;
-	padding: 1.6rem 2.4rem;
-	gap: 1.6rem;
-}
-
-.ai-head {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.ai-title {
-	font-size: 1.8rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.ai-sub {
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.ai-form {
-	width: 100%;
-	max-width: 52rem;
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	padding: 1.8rem;
-}
-
-.field {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-}
-
-.field-label {
-	font-size: 1.2rem;
-	font-weight: 500;
-	color: var(--text-muted);
-}
-
-.input {
-	padding: 0.95rem 1.4rem;
-	width: 100%;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-family: inherit;
-	outline: none;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:focus {
-		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.06);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.input::placeholder {
-	color: var(--text-faint);
-	opacity: 0.7;
-}
-
-.model-row {
-	display: flex;
-	gap: 1rem;
-	align-items: center;
-
-	.flex-1 {
-		flex: 1;
-	}
-}
-
-.textarea {
-	resize: vertical;
-	line-height: 1.5;
-}
-
-.error {
-	font-size: 1.2rem;
-	color: var(--danger);
-	padding: 0.6rem 1rem;
-	background: rgba(251, 60, 68, 0.1);
-	border: 0.1rem solid rgba(251, 60, 68, 0.25);
-	border-radius: var(--radius-sm);
-}
-</style>

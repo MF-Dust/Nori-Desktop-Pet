@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import {onMounted, ref} from "vue"
+import {computed, onMounted, ref} from "vue"
+import useLanguages from "../../services/i18n/useLanguages.ts"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {feedback} from "../../services/feedback"
 import {RUNTIME, type MemoryItem} from "../../services/runtime"
 import Icon from "../Icon.vue"
+import AppCard from "../ui/AppCard.vue"
+import AppChip from "../ui/AppChip.vue"
+import AppField from "../ui/AppField.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+
+const I18N = computed(() => useLanguages().views.main.memory)
 
 const memories = ref<MemoryItem[]>([])
 const searchKeyword = ref("")
@@ -24,6 +33,12 @@ const adding = ref(false)
 
 let syncedEmbedding = false
 
+// API Key 标签: 已保存时补一段加密提示
+const API_KEY_LABEL = computed(() => {
+	const SAVED = hasEmbeddingApiKey.value ? ` ${I18N.value.embedding.apiKeySaved}` : ""
+	return `API Key${SAVED} ${I18N.value.embedding.apiKeyReuse}`
+})
+
 // 加载记忆列表
 const loadMemories = async () => {
 	loading.value = true
@@ -34,7 +49,7 @@ const loadMemories = async () => {
 			memories.value = await RUNTIME.memoryList(50)
 		}
 	} catch (error) {
-		console.error("加载记忆列表失败:", error)
+		feedback.error(I18N.value.toast.loadFailed, error)
 	} finally {
 		loading.value = false
 	}
@@ -56,44 +71,37 @@ onMounted(async () => {
 	await loadMemories()
 })
 
-// 保存 Embedding 配置辅助: 每个 key 独立防抖 timer
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
-const saveEmbeddingDebounced = (key: string, patch: () => Record<string, unknown>) => {
-	clearTimeout(timers.get(key))
-	timers.set(key, setTimeout(() => {
-		timers.delete(key)
-		void RUNTIME.updateEmbedding(patch()).catch(error => console.error(`保存 Embedding 配置失败 (${key}):`, error))
-	}, 400))
-}
+// 保存 Embedding 配置: 每个字段独立防抖 (400ms), 卸载时由 composable 负责 flush
+const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(I18N.value.toast.saveFailed, error)})
 
 // 保存维数: 留空表示用模型默认; 非正整数一律回退为空
 const saveDimensions = () => {
 	const RAW = embeddingDimensions.value.trim()
 	if (RAW === "") {
-		saveEmbeddingDebounced("dims", () => ({dimensions: ""}))
+		SAVE.save("dims", () => RUNTIME.updateEmbedding({dimensions: ""}))
 		return
 	}
 	const NUM = Number.parseInt(RAW, 10)
 	if (Number.isNaN(NUM) || NUM <= 0) {
 		embeddingDimensions.value = ""
-		saveEmbeddingDebounced("dims", () => ({dimensions: ""}))
+		SAVE.save("dims", () => RUNTIME.updateEmbedding({dimensions: ""}))
 		return
 	}
 	embeddingDimensions.value = String(NUM)
-	saveEmbeddingDebounced("dims", () => ({dimensions: String(NUM)}))
+	SAVE.save("dims", () => RUNTIME.updateEmbedding({dimensions: String(NUM)}))
 }
 
 // 重新计算向量嵌入
 const reembedAll = async () => {
 	if (isReembedding.value) return
 	isReembedding.value = true
-	reembedMessage.value = "正在计算向量..."
+	reembedMessage.value = I18N.value.embedding.reembedRunning
 	try {
 		const COUNT = await RUNTIME.memoryReembed()
-		reembedMessage.value = `成功为 ${COUNT} 条记忆生成了向量索引！`
+		reembedMessage.value = `${I18N.value.embedding.reembedDonePrefix}${COUNT}${I18N.value.embedding.reembedDoneSuffix}`
 		await loadMemories()
 	} catch (error) {
-		reembedMessage.value = "向量生成失败，请检查 Embedding 接口配置"
+		reembedMessage.value = I18N.value.embedding.reembedFailed
 		console.error("重新生成向量失败:", error)
 	} finally {
 		isReembedding.value = false
@@ -114,7 +122,7 @@ const addMemory = async () => {
 		newTags.value = ""
 		await loadMemories()
 	} catch (error) {
-		console.error("添加记忆失败:", error)
+		feedback.error(I18N.value.toast.addFailed, error)
 	} finally {
 		adding.value = false
 	}
@@ -126,7 +134,7 @@ const deleteMemory = async (id: number) => {
 		await RUNTIME.memoryDelete(id)
 		await loadMemories()
 	} catch (error) {
-		console.error("删除记忆失败:", error)
+		feedback.error(I18N.value.toast.deleteFailed, error)
 	}
 }
 
@@ -136,495 +144,192 @@ const clearAll = async () => {
 		await RUNTIME.memoryClear()
 		await loadMemories()
 	} catch (error) {
-		console.error("清空记忆失败:", error)
+		feedback.error(I18N.value.toast.clearFailed, error)
 	}
 }
 </script>
 
 <template>
-	<div class="memory-settings">
-		<header class="section-header">
-			<h2 class="title glow-teal">长期记忆库管理</h2>
-			<p class="subtitle">查看并管理 Nori 记录的关于主人的偏好、重要事实与约定事项</p>
-		</header>
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+		<AppSectionHeader
+			:title="I18N.header.title"
+			:subtitle="I18N.header.subtitle"
+		/>
 
-		<div class="settings-content">
+		<div class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. Embedding 向量嵌入配置 -->
-			<div class="setting-card">
-				<div class="card-header space-between">
-					<div class="header-left">
-						<Icon name="sparkles" :size="18" class="card-icon"/>
-						<span class="card-title">向量嵌入与语义检索配置 (Embedding)</span>
-					</div>
+			<AppCard :title="I18N.embedding.title" icon="sparkles">
+				<template #actions>
 					<n-button type="primary" :loading="isReembedding" :disabled="isReembedding" @click="reembedAll">
 						<template #icon>
 							<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
 						</template>
-						{{ isReembedding ? "正在索引..." : "重新计算记忆向量" }}
+						{{ isReembedding ? I18N.embedding.indexing : I18N.embedding.reembed }}
 					</n-button>
+				</template>
+
+				<div class="flex gap-3">
+					<AppField :label="I18N.embedding.model" class="flex-1">
+						<input
+							v-model="embeddingModel"
+							class="input-base"
+							placeholder="BAAI/bge-m3, text-embedding-3-small..."
+							@blur="SAVE.save('model', () => RUNTIME.updateEmbedding({model: embeddingModel.trim()}))"
+						/>
+					</AppField>
+					<AppField :label="I18N.embedding.baseUrl" class="flex-1">
+						<input
+							v-model="embeddingBaseUrl"
+							class="input-base"
+							placeholder="https://api.openai.com/v1"
+							@blur="SAVE.save('base', () => RUNTIME.updateEmbedding({baseUrl: embeddingBaseUrl.trim()}))"
+						/>
+					</AppField>
 				</div>
-				<div class="card-body">
-					<div class="form-row">
-						<div class="form-item flex-1">
-							<label class="label">Embedding 向量模型</label>
-							<input
-								v-model="embeddingModel"
-								class="input"
-								placeholder="BAAI/bge-m3, text-embedding-3-small..."
-								@blur="saveEmbeddingDebounced('model', () => ({model: embeddingModel.trim()}))"
-							/>
-						</div>
-						<div class="form-item flex-1">
-							<label class="label">API 地址 (留空复用 AI 大脑配置)</label>
-							<input
-								v-model="embeddingBaseUrl"
-								class="input"
-								placeholder="https://api.openai.com/v1"
-								@blur="saveEmbeddingDebounced('base', () => ({baseUrl: embeddingBaseUrl.trim()}))"
-							/>
-						</div>
-					</div>
 
-					<div class="form-row">
-						<div class="form-item flex-1">
-							<label class="label">API Key {{ hasEmbeddingApiKey ? "(已加密保存)" : "" }} (留空复用 AI 大脑配置)</label>
-							<input
-								v-model="embeddingApiKeyInput"
-								type="password"
-								class="input"
-								placeholder="sk-..."
-								@blur="() => {
-									const VALUE = embeddingApiKeyInput.trim()
-									embeddingApiKeyInput = ''
-									if (VALUE) saveEmbeddingDebounced('key', () => ({apiKey: VALUE}))
-								}"
-							/>
-						</div>
-						<div class="form-item dims-item">
-							<label class="label">向量维数</label>
-							<input
-								v-model="embeddingDimensions"
-								type="number"
-								min="1"
-								class="input"
-								placeholder="默认"
-								@blur="saveDimensions"
-							/>
-						</div>
-					</div>
-
-					<p class="dims-hint">留空使用模型默认维数；仅部分模型支持自定义，修改后请点击右上角“重新计算记忆向量”。</p>
-
-					<p v-if="reembedMessage" class="status-tip">{{ reembedMessage }}</p>
+				<div class="flex gap-3">
+					<AppField :label="API_KEY_LABEL" class="flex-1">
+						<input
+							v-model="embeddingApiKeyInput"
+							type="password"
+							class="input-base"
+							placeholder="sk-..."
+							@blur="() => {
+								const VALUE = embeddingApiKeyInput.trim()
+								embeddingApiKeyInput = ''
+								if (VALUE) SAVE.save('key', () => RUNTIME.updateEmbedding({apiKey: VALUE}))
+							}"
+						/>
+					</AppField>
+					<AppField :label="I18N.embedding.dimensions" class="w-[11rem] shrink-0">
+						<input
+							v-model="embeddingDimensions"
+							type="number"
+							min="1"
+							class="input-base"
+							:placeholder="I18N.embedding.dimensionsPlaceholder"
+							@blur="saveDimensions"
+						/>
+					</AppField>
 				</div>
-			</div>
+
+				<p class="text-hint leading-relaxed">{{ I18N.embedding.dimensionsHint }}</p>
+
+				<p v-if="reembedMessage" class="text-sm text-nori-teal-bright">{{ reembedMessage }}</p>
+			</AppCard>
 
 			<!-- 2. 新增记忆 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="sparkles" :size="18" class="card-icon"/>
-					<span class="card-title">添加长期记忆</span>
-				</div>
-				<div class="card-body">
-					<div class="form-item">
-						<textarea
-							v-model="newContent"
-							class="textarea"
-							rows="2"
-							placeholder="输入需要让 Nori 记住的内容（如: 主人最喜欢的饮料是冰美式）..."
+			<AppCard :title="I18N.add.title" icon="sparkles">
+				<textarea
+					v-model="newContent"
+					class="input-base resize-y"
+					rows="2"
+					:placeholder="I18N.add.contentPlaceholder"
+				/>
+
+				<div class="flex items-center gap-3">
+					<div class="flex-1">
+						<input
+							v-model="newTags"
+							class="input-base"
+							:placeholder="I18N.add.tagsPlaceholder"
 						/>
 					</div>
 
-					<div class="add-meta-row">
-						<div class="form-item flex-1">
-							<input
-								v-model="newTags"
-								class="input"
-								placeholder="标签 (可选, 如: 偏好, 饮食)"
-							/>
-						</div>
-
-						<div class="form-item">
-							<div class="importance-wrap">
-								<span class="label">重要度: {{ Math.round(newImportance * 100) }}%</span>
-								<n-slider
-									v-model:value="newImportance"
-									:min="0.1"
-									:max="1.0"
-									:step="0.1"
-									:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
-									style="width: 12rem;"
-								/>
-							</div>
-						</div>
-
-						<n-button type="primary" :disabled="!newContent.trim() || adding" :loading="adding" @click="addMemory">
-							<template #icon>
-								<Icon :name="adding ? 'loading' : 'check'" :size="14"/>
-							</template>
-							保存记忆
-						</n-button>
+					<div class="flex items-center gap-2 shrink-0">
+						<span class="field-label">{{ I18N.add.importance }}: {{ Math.round(newImportance * 100) }}%</span>
+						<n-slider
+							v-model:value="newImportance"
+							:min="0.1"
+							:max="1.0"
+							:step="0.1"
+							:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
+							style="width: 12rem;"
+						/>
 					</div>
+
+					<n-button type="primary" :disabled="!newContent.trim() || adding" :loading="adding" @click="addMemory">
+						<template #icon>
+							<Icon :name="adding ? 'loading' : 'check'" :size="14"/>
+						</template>
+						{{ I18N.add.submit }}
+					</n-button>
 				</div>
-			</div>
+			</AppCard>
 
 			<!-- 3. 记忆库列表与搜索 -->
-			<div class="setting-card flex-1-card">
-				<div class="card-header space-between">
-					<div class="header-left">
-						<Icon name="package" :size="18" class="card-icon"/>
-						<span class="card-title">记忆列表 (共 {{ memories.length }} 条)</span>
-					</div>
+			<AppCard :title="`${I18N.list.title} (${memories.length})`" icon="package">
+				<template #actions>
 					<n-popconfirm
 						v-if="memories.length > 0"
-						positive-text="确定清空"
-						negative-text="取消"
+						:positive-text="I18N.list.clearConfirm"
+						:negative-text="I18N.common.cancel"
 						@positive-click="clearAll"
 					>
 						<template #trigger>
-							<button class="btn-danger-text">
-								清空所有记忆
+							<button
+								type="button"
+								class="btn-base px-1 bg-transparent text-sm text-danger-text opacity-85
+									hover:(opacity-100 underline)"
+							>
+								{{ I18N.list.clearAll }}
 							</button>
 						</template>
-						确定要清空全部长期记忆吗？此操作不可恢复。
+						{{ I18N.list.clearQuestion }}
 					</n-popconfirm>
+				</template>
+
+				<div class="flex gap-2">
+					<input
+						v-model="searchKeyword"
+						class="input-base flex-1"
+						:placeholder="I18N.list.searchPlaceholder"
+						@input="loadMemories"
+					/>
 				</div>
 
-				<div class="card-body">
-					<div class="search-row">
-						<input
-							v-model="searchKeyword"
-							class="input flex-1"
-							placeholder="搜索记忆关键词..."
-							@input="loadMemories"
-						/>
+				<div class="flex flex-col gap-2 max-h-[28rem] scroll-area">
+					<div v-if="memories.length === 0" class="py-4 text-center text-sm text-text-faint">
+						{{ searchKeyword ? I18N.list.emptySearch : I18N.list.empty }}
 					</div>
 
-					<div class="memory-list">
-						<div v-if="memories.length === 0" class="empty-hint">
-							{{ searchKeyword ? "未搜索到匹配的记忆条目" : "暂无已保存的长期记忆" }}
-						</div>
-
-						<div
-							v-for="item in memories"
-							:key="item.id"
-							class="memory-item"
-						>
-							<div class="item-main">
-								<div class="item-tags">
-									<span v-if="item.tags" class="tag-badge">{{ item.tags }}</span>
-									<span class="source-badge">{{ item.source === "agent" ? "AI 自动记忆" : "手动记录" }}</span>
-									<span class="imp-badge">重要度 {{ Math.round(item.importance * 100) }}%</span>
-								</div>
-								<p class="item-content">{{ item.content }}</p>
-								<span class="item-time">{{ new Date(item.createdAt).toLocaleString("zh-CN") }}</span>
+					<div
+						v-for="item in memories"
+						:key="item.id"
+						class="flex items-start justify-between gap-3 px-3.5 py-2.5 rounded-sm bg-white/3
+							border border-line-subtle transition-all duration-200
+							hover:(bg-nori-teal-bright/4 border-line-strong)"
+					>
+						<div class="flex flex-1 flex-col gap-1.5 min-w-0">
+							<div class="flex flex-wrap gap-1.5">
+								<AppChip v-if="item.tags" tone="teal">{{ item.tags }}</AppChip>
+								<AppChip>{{ item.source === "agent" ? I18N.list.sourceAgent : I18N.list.sourceManual }}</AppChip>
+								<AppChip tone="warning">{{ I18N.add.importance }} {{ Math.round(item.importance * 100) }}%</AppChip>
 							</div>
-							<n-popconfirm
-								positive-text="删除"
-								negative-text="取消"
-								@positive-click="deleteMemory(item.id)"
-							>
-								<template #trigger>
-									<button class="btn-del" title="删除此记忆">
-										<Icon name="close" :size="14"/>
-									</button>
-								</template>
-								确定删除这条记忆吗？
-							</n-popconfirm>
+							<p class="text-base text-text-primary leading-normal">{{ item.content }}</p>
+							<span class="text-xs text-text-faint">{{ new Date(item.createdAt).toLocaleString("zh-CN") }}</span>
 						</div>
+						<n-popconfirm
+							:positive-text="I18N.list.delete"
+							:negative-text="I18N.common.cancel"
+							@positive-click="deleteMemory(item.id)"
+						>
+							<template #trigger>
+								<button
+									type="button"
+									class="btn-base w-7 h-7 shrink-0 rounded-sm bg-white/6 text-text-muted
+										hover:(bg-danger/18 text-danger-text)"
+									:title="I18N.list.deleteThis"
+									:aria-label="I18N.list.deleteThis"
+								>
+									<Icon name="close" :size="14"/>
+								</button>
+							</template>
+							{{ I18N.list.deleteQuestion }}
+						</n-popconfirm>
 					</div>
 				</div>
-			</div>
+			</AppCard>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.memory-settings {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	overflow-y: auto;
-	padding: 1.6rem 2.4rem;
-	gap: 1.6rem;
-}
-
-.section-header {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.title {
-	margin: 0;
-	font-size: 1.8rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.subtitle {
-	margin: 0;
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.settings-content {
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-	padding-bottom: 2rem;
-}
-
-.setting-card {
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	padding: 1.6rem;
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-	transition: all 0.2s ease;
-
-	&:hover {
-		border-color: var(--line-strong);
-	}
-}
-
-.card-header {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	color: var(--nori-teal-bright);
-
-	&.space-between {
-		justify-content: space-between;
-	}
-}
-
-.header-left {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-}
-
-.card-title {
-	font-size: 1.35rem;
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.card-body {
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-}
-
-.form-item {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-}
-
-.label {
-	font-size: 1.2rem;
-	font-weight: 500;
-	color: var(--text-muted);
-}
-
-.input {
-	padding: 0.9rem 1.4rem;
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-family: inherit;
-	outline: none;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:focus {
-		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.06);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.textarea {
-	padding: 1rem 1.4rem;
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-family: inherit;
-	resize: vertical;
-	outline: none;
-
-	&:focus {
-		border-color: var(--nori-teal);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.add-meta-row {
-	display: flex;
-	align-items: center;
-	gap: 1.2rem;
-}
-
-.flex-1 {
-	flex: 1;
-}
-
-.importance-wrap {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	font-size: 1.2rem;
-	color: var(--text-muted);
-}
-
-.form-row {
-	display: flex;
-	gap: 1.2rem;
-}
-
-.dims-item {
-	width: 11rem;
-	flex-shrink: 0;
-}
-
-.dims-hint {
-	margin: 0;
-	font-size: 1.1rem;
-	color: var(--text-faint);
-	line-height: 1.5;
-}
-
-.status-tip {
-	margin: 0;
-	font-size: 1.2rem;
-	color: var(--nori-teal-bright);
-}
-
-.btn-danger-text {
-	background: none;
-	border: none;
-	color: var(--danger);
-	font-size: 1.2rem;
-	cursor: pointer;
-	opacity: 0.85;
-	transition: opacity 0.2s;
-
-	&:hover {
-		opacity: 1;
-		text-decoration: underline;
-	}
-}
-
-.search-row {
-	display: flex;
-	gap: 0.8rem;
-}
-
-.memory-list {
-	display: flex;
-	flex-direction: column;
-	gap: 0.8rem;
-	max-height: 28rem;
-	overflow-y: auto;
-}
-
-.empty-hint {
-	font-size: 1.2rem;
-	color: var(--text-faint);
-	padding: 1.6rem 0;
-	text-align: center;
-}
-
-.memory-item {
-	display: flex;
-	align-items: flex-start;
-	justify-content: space-between;
-	padding: 1.1rem 1.4rem;
-	background: rgba(255, 255, 255, 0.03);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	gap: 1.2rem;
-	transition: all 0.2s ease;
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.04);
-		border-color: var(--line-strong);
-	}
-}
-
-.item-main {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-	flex: 1;
-}
-
-.item-tags {
-	display: flex;
-	gap: 0.6rem;
-	flex-wrap: wrap;
-}
-
-.tag-badge, .source-badge, .imp-badge {
-	font-size: 1.05rem;
-	padding: 0.2rem 0.6rem;
-	border-radius: var(--radius-pill);
-}
-
-.tag-badge {
-	background: rgba(125, 227, 255, 0.12);
-	color: var(--nori-teal-bright);
-	border: 0.1rem solid rgba(125, 227, 255, 0.2);
-}
-
-.source-badge {
-	background: rgba(255, 255, 255, 0.06);
-	color: var(--text-muted);
-}
-
-.imp-badge {
-	background: rgba(255, 180, 50, 0.15);
-	color: #ffb432;
-	border: 0.1rem solid rgba(255, 180, 50, 0.25);
-}
-
-.item-content {
-	margin: 0;
-	font-size: 1.25rem;
-	color: var(--text-primary);
-	line-height: 1.4;
-}
-
-.item-time {
-	font-size: 1.05rem;
-	color: var(--text-faint);
-}
-
-.btn-del {
-	width: 2.8rem;
-	height: 2.8rem;
-	flex-shrink: 0;
-	border: none;
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.06);
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.2s ease;
-
-	&:hover {
-		background: rgba(255, 75, 75, 0.2);
-		color: #ff4b4b;
-	}
-}
-</style>

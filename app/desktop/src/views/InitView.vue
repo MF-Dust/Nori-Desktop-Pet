@@ -7,12 +7,21 @@ import useLanguages from "../services/i18n/useLanguages.ts"
 import {closeWindow, showWindow} from "../services/window"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
+import AppButton from "../components/ui/AppButton.vue"
 import logo from "../assets/images/logo.png"
 
 const I18N = computed(() => useLanguages().views.init)
 
+/** 等待宿主初始化信号的上限, 超时后给用户一条自救路径 */
+const INIT_TIMEOUT_MS = 10_000
+
 // 状态文本
 const statusText = ref(I18N.value.title)
+
+// 超时兜底面板与重试错误
+const timedOut = ref(false)
+const retryError = ref("")
+const entering = ref(false)
 
 // 关闭窗口
 const closeApp = () => {
@@ -20,23 +29,54 @@ const closeApp = () => {
 }
 
 let unlistenInitStart: UnlistenFn | null = null
+let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+let started = false
+
+const clearWatchdog = () => {
+	if (timeoutTimer) clearTimeout(timeoutTimer)
+	timeoutTimer = null
+}
 
 onBeforeUnmount(() => {
 	if (unlistenInitStart) unlistenInitStart()
+	unlistenInitStart = null
+	clearWatchdog()
 })
 
-// 初始化流程: 后端已完成资源/运行时装配, 这里只负责窗口切换
-const startInitFlow = async () => {
-	await RUNTIME.init()
-
-	// 初始化完成: 打开主窗口
-	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
-	await showWindow("main")
-	await sleep(600)
-	await closeWindow("init")
+// 初始化流程: 后端已完成资源/运行时装配, 这里只负责窗口切换 (重入闸门防止事件与握手重复触发)
+const startInitFlow = async (): Promise<void> => {
+	if (started) return
+	started = true
+	clearWatchdog()
+	timedOut.value = false
+	try {
+		await RUNTIME.init()
+		const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+		await showWindow("main")
+		await sleep(600)
+		await closeWindow("init")
+	} catch (error) {
+		// 主窗口没能打开时不能静默: 退回超时面板让用户重试
+		started = false
+		timedOut.value = true
+		retryError.value = I18N.value.enterFailed
+		console.error("初始化流程失败:", error)
+	}
 }
 
-// 当前窗口是否可见 (非 Tauri 环境视为可见, 保持原行为)
+// 超时面板上的手动重试
+const retryEnterMain = async (): Promise<void> => {
+	if (entering.value) return
+	entering.value = true
+	retryError.value = ""
+	try {
+		await startInitFlow()
+	} finally {
+		entering.value = false
+	}
+}
+
+// 当前窗口是否可见 (宿主不可用时视为可见, 保持原行为)
 const isWindowVisible = async (): Promise<boolean> => {
 	try {
 		return await getCurrentWindow().isVisible()
@@ -46,146 +86,76 @@ const isWindowVisible = async (): Promise<boolean> => {
 }
 
 onMounted(async () => {
-	// 首次运行路径下 init 窗口隐藏启动: 若直接执行会在引导页旁弹出主窗口,
-	// 因此等待宿主在向导完成后 emit 事件 (nori:init-start) 再执行
 	statusText.value = I18N.value.live2d
 	await RUNTIME.init()
-	if (await isWindowVisible()) {
-		await startInitFlow()
-		return
-	}
+
+	// 首次运行路径下 init 窗口隐藏启动: 直接执行会在引导页旁弹出主窗口,
+	// 因此要等宿主在向导完成后广播 nori:init-start。
+	// 顺序很关键: 先订阅, 再握手 —— 反过来会漏掉订阅前到达的广播。
 	unlistenInitStart = await listen("nori:init-start", () => {
 		void startInitFlow()
 	})
+
+	let pending = false
+	try {
+		pending = (await RUNTIME.initReady()).initStartPending
+	} catch {
+		// 宿主不可用 (纯 vite 调试) 时按可见性判断
+	}
+
+	if (pending || await isWindowVisible()) {
+		await startInitFlow()
+		return
+	}
+
+	// 既没可见也没拿到信号: 留一条 10s 兜底出口, 不让用户永远看着转圈
+	timeoutTimer = setTimeout(() => {
+		if (!started) timedOut.value = true
+	}, INIT_TIMEOUT_MS)
 })
 </script>
 
 <template>
-	<div class="init-window">
+	<div
+		class="w-100vw h-100vh flex flex-col overflow-hidden select-none rounded-lg
+			bg-[radial-gradient(56rem_36rem_at_50%_45%,rgba(125,227,255,0.18),transparent_70%),radial-gradient(36rem_24rem_at_50%_60%,rgba(94,234,212,0.15),transparent_65%),linear-gradient(165deg,var(--bg-panel)_0%,var(--bg-deep)_50%,var(--bg-abyss)_100%)]
+			shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.65),inset_0_0_0_0.1rem_var(--line-subtle)]"
+	>
 		<TitleBar>
-			<button class="close-btn" title="关闭" @click="closeApp">
+			<button type="button" class="close-btn focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
 				<Icon name="close" class="close-icon"/>
 			</button>
 		</TitleBar>
 
-		<div class="body">
-			<div class="avatar-stage">
-				<div class="avatar-ring-outer"></div>
-				<div class="avatar-ring-inner"></div>
-				<img class="avatar" :src="logo" alt="Nori"/>
+		<div class="flex-1 flex flex-col items-center justify-center gap-7 pb-6 relative">
+			<!-- 多重轨道天体声呐光环 -->
+			<div class="relative w-[15rem] h-[15rem] flex items-center justify-center">
+				<span class="absolute inset-0 rounded-full border border-dashed border-nori-teal-bright/40 [animation:rotate_14s_linear_infinite]"/>
+				<span class="absolute inset-2.5 rounded-full border border-dotted border-nori-teal/30 [animation:rotate_22s_linear_infinite_reverse]"/>
+				<span class="absolute inset-5 rounded-full bg-[radial-gradient(circle,var(--glow-teal)_0%,var(--glow-teal-soft)_45%,transparent_75%)] animate-glow-pulse"/>
+				<img class="relative w-[8.2rem] h-[8.2rem] object-contain animate-breathe drop-shadow-[0_0_1.6rem_var(--glow-teal-soft)]" :src="logo" alt="Nori"/>
 			</div>
 
-			<div class="status-pill">
-				<Icon name="loading" class="spin status-icon" :size="13"/>
-				<span class="status-text">{{ statusText }}</span>
+			<!-- 状态胶囊 -->
+			<div
+				v-if="!timedOut"
+				class="inline-flex items-center gap-2.5 px-4.5 py-2 rounded-pill bg-bg-abyss/70 border border-nori-teal-bright/30 shadow-[0_0_2rem_rgba(125,227,255,0.16)] backdrop-blur-[1.4rem]"
+				role="status"
+				aria-live="polite"
+			>
+				<Icon name="loading" class="spin text-nori-teal-bright" :size="15"/>
+				<span class="text-base text-text-primary font-600 tracking-[0.03rem] [text-shadow:0_0_1rem_var(--glow-teal-soft)]">{{ statusText }}</span>
+			</div>
+
+			<!-- 宿主信号迟迟不来时的自救出口 -->
+			<div v-else class="flex flex-col items-center gap-3 px-6 py-5 surface-card backdrop-blur-[1.4rem] text-center shadow-[0_0.8rem_3.2rem_rgba(0,0,0,0.5)] border-line-strong" role="alert">
+				<span class="title-sm text-text-primary">{{ I18N.timeout }}</span>
+				<span class="text-sub max-w-[32rem] leading-relaxed">{{ I18N.timeoutDesc }}</span>
+				<AppButton variant="primary" class="mt-1.5 px-5" icon="arrow-right" :loading="entering" @click="retryEnterMain">
+					{{ I18N.enterMain }}
+				</AppButton>
+				<span v-if="retryError" class="text-sm text-danger-text font-500">{{ retryError }}</span>
 			</div>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.init-window {
-	width: 100vw;
-	height: 100vh;
-	background: radial-gradient(40rem 26rem at 50% 45%, rgba(94, 234, 212, 0.16) 0%, transparent 68%),
-		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
-	border-radius: var(--radius-lg);
-	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65), inset 0 0 0 0.1rem var(--line-subtle);
-	display: flex;
-	flex-direction: column;
-	overflow: hidden;
-	user-select: none;
-}
-
-.body {
-	flex: 1;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 2.2rem;
-	padding-bottom: 2rem;
-}
-
-.avatar-stage {
-	position: relative;
-	width: 13rem;
-	height: 13rem;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.avatar-ring-outer {
-	position: absolute;
-	inset: 0;
-	border-radius: 50%;
-	border: 0.1rem dashed rgba(125, 227, 255, 0.35);
-	animation: rotate 12s linear infinite;
-}
-
-.avatar-ring-inner {
-	position: absolute;
-	inset: 1rem;
-	border-radius: 50%;
-	background: radial-gradient(circle, rgba(125, 227, 255, 0.2) 0%, rgba(94, 234, 212, 0.05) 50%, transparent 70%);
-	animation: glow-pulse 2.5s ease-in-out infinite;
-}
-
-.avatar {
-	width: 7.6rem;
-	height: 7.6rem;
-	object-fit: contain;
-	animation: breathe 2.4s ease-in-out infinite;
-	position: relative;
-	z-index: 1;
-}
-
-.status-pill {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.8rem;
-	padding: 0.5rem 1.4rem;
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	backdrop-filter: blur(0.8rem);
-	box-shadow: 0 0.4rem 1.6rem rgba(0, 0, 0, 0.25);
-}
-
-.status-icon {
-	color: var(--nori-teal-bright);
-}
-
-.status-text {
-	color: var(--text-primary);
-	font-size: 1.25rem;
-	font-weight: 500;
-	letter-spacing: 0.02rem;
-}
-
-.close-btn {
-	width: 2.6rem;
-	height: 2.6rem;
-	border: none;
-	border-radius: 50%;
-	background-color: transparent;
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.15s ease;
-
-	&:hover {
-		background-color: rgba(251, 60, 68, 0.18);
-		color: var(--danger);
-	}
-}
-
-.close-icon {
-	width: 1.4rem;
-	height: 1.4rem;
-}
-</style>
-

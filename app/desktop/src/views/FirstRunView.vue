@@ -4,10 +4,12 @@ import useLanguages from "../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../services/runtime"
 import Icon from "../components/Icon.vue"
 import TitleBar from "../components/TitleBar.vue"
+import AppButton from "../components/ui/AppButton.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
 import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
 import Ready from "../components/firstRun/Ready.vue"
+import {createWizard, WIZARD_STEPS} from "../services/firstRun/wizard"
 
 const I18N = computed(() => useLanguages().views.firstRun)
 
@@ -15,9 +17,14 @@ const I18N = computed(() => useLanguages().views.firstRun)
 const appVersion = ref("0.1.0")
 const selectedModel = ref("arg-nori")
 
-// 步骤配置与名称
-const STEP_LABELS = ["欢迎", "语言", "形象", "就绪"]
-const STEPS_COUNT = STEP_LABELS.length
+// 步骤名称 (i18n)
+const STEP_LABELS = computed(() => [
+	I18N.value.steps.welcome,
+	I18N.value.steps.language,
+	I18N.value.steps.model,
+	I18N.value.steps.ready,
+])
+const STEPS_COUNT = WIZARD_STEPS.length
 
 // 组件挂载后拉取后端快照
 onMounted(async () => {
@@ -26,30 +33,54 @@ onMounted(async () => {
 	selectedModel.value = RUNTIME.snapshot.value?.models.selected ?? selectedModel.value
 })
 
-// 当前步骤索引
-const currentStep = ref(0)
+// 向导状态机 (步进、守卫与提交状态全在 services/firstRun/wizard.ts)
+const WIZARD = createWizard(async () => {
+	await RUNTIME.completeFirstRun()
+	await RUNTIME.writeLog("info", `初始化完成 (v${appVersion.value}, model=${selectedModel.value})`)
+})
 
-// 切换方向: 1 = 下一步, -1 = 上一步 (决定动画方向)
-const direction = ref(1)
-
-// 当前步骤是否为第一个
-const isFirst = computed(() => currentStep.value === 0)
-
-// 当前步骤是否为最后一个
-const isLast = computed(() => currentStep.value === STEPS_COUNT - 1)
-
-// 下一步
-const next = () => {
-	if (isLast.value) return
-	direction.value = 1
-	currentStep.value++
+const state = ref(WIZARD.snapshot())
+const sync = () => {
+	state.value = WIZARD.snapshot()
 }
 
-// 上一步
+const currentStep = computed(() => state.value.index)
+const direction = computed(() => state.value.direction)
+const isFirst = computed(() => state.value.isFirst)
+const isLast = computed(() => state.value.isLast)
+const submitting = computed(() => state.value.finishState === "submitting")
+const stepError = computed(() => state.value.stepError)
+const finishError = computed(() => state.value.finishError)
+
+// 各步骤的环境光晕 (只改光晕位置与尺寸, 底色统一走深海蓝令牌)
+// 注意: UnoCSS 是静态扇描, 类名必须在源码里字面出现 —— 不能用模板拼接
+const STEP_GLOW = [
+	"bg-[radial-gradient(64rem_40rem_at_85%_30%,var(--glow-teal-soft),transparent_65%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
+	"bg-[radial-gradient(62rem_42rem_at_50%_115%,var(--glow-teal-soft),transparent_60%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
+	"bg-[radial-gradient(52rem_38rem_at_50%_48%,var(--glow-teal-soft),transparent_70%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
+	"bg-[radial-gradient(56rem_40rem_at_50%_50%,var(--glow-teal),transparent_68%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
+]
+
+// 下一步 / 上一步
+const next = () => {
+	WIZARD.next()
+	sync()
+}
+
 const prev = () => {
-	if (isFirst.value) return
-	direction.value = -1
-	currentStep.value--
+	WIZARD.prev()
+	sync()
+}
+
+// 模型选择失败: 阻止前进并把错误摆到底部
+const onModelError = (message: string) => {
+	if (message) WIZARD.blockStep(message)
+	else WIZARD.clearStep()
+	sync()
+}
+
+const onModelSelected = (modelId: string) => {
+	selectedModel.value = modelId
 }
 
 // 关闭窗口
@@ -57,281 +88,105 @@ const closeApp = () => {
 	void RUNTIME.exitApp()
 }
 
-// 完成初始化
+// 完成初始化 (失败保留在末步可重试)
 const finish = async () => {
-	try {
-		await RUNTIME.completeFirstRun()
-		await RUNTIME.writeLog("info", `初始化完成 (v${appVersion.value}, model=${selectedModel.value})`)
-	} catch (error) {
-		console.error("首次运行失败:", error)
-	}
+	await WIZARD.finish()
+	sync()
 }
 </script>
 
 <template>
-	<div class="first-run-window" :class="`bg-step-${currentStep + 1}`">
+	<div
+		class="w-full h-full flex flex-col overflow-hidden select-none rounded-lg text-text-body
+			shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.65),inset_0_0_0_0.1rem_var(--line-subtle)] transition-[background] duration-600"
+		:class="STEP_GLOW[currentStep]"
+	>
 		<TitleBar>
-			<div class="titlebar-center">
-				<div class="step-badge-group">
+			<div class="flex items-center justify-center">
+				<div class="flex items-center gap-3.5 px-4 py-1.5 rounded-pill bg-bg-abyss/70 border border-line-strong backdrop-blur-[1.2rem] shadow-[0_0.4rem_1.6rem_rgba(0,0,0,0.4)]">
 					<div
 						v-for="(label, idx) in STEP_LABELS"
 						:key="idx"
-						class="step-badge-item"
-						:class="{active: idx === currentStep, done: idx < currentStep}"
+						class="flex items-center gap-1.5 text-xs transition-all duration-300"
+						:class="idx === currentStep
+							? 'text-nori-teal-bright font-600 [text-shadow:0_0_0.8rem_var(--glow-teal-soft)]'
+							: (idx < currentStep ? 'text-nori-teal-soft' : 'text-text-faint')"
 					>
-						<span class="step-dot"/>
-						<span class="step-text">{{ label }}</span>
+						<span
+							class="rounded-full transition-all duration-300"
+							:class="idx === currentStep
+								? 'w-[0.75rem] h-[0.75rem] bg-nori-teal-bright shadow-[0_0_1rem_var(--glow-teal)]'
+								: (idx < currentStep ? 'w-1.5 h-1.5 bg-nori-teal' : 'w-1.5 h-1.5 bg-white/20')"
+						/>
+						<span>{{ label }}</span>
 					</div>
 				</div>
 			</div>
 
-			<div class="titlebar-right">
-				<div class="steps-progress-wrap">
-					<div class="steps-indicator">
+			<div class="flex items-center gap-3">
+				<div class="flex items-center gap-2 px-2.5 py-1 rounded-sm bg-white/4 border border-line-subtle backdrop-blur-[0.8rem]">
+					<div class="flex gap-1.2">
 						<span
 							v-for="i in STEPS_COUNT"
 							:key="i"
-							class="seg"
-							:class="{active: i <= currentStep + 1}"
+							class="w-[2rem] h-[0.4rem] rounded-pill transition-all duration-300"
+							:class="i <= currentStep + 1
+								? 'bg-gradient-to-r from-nori-teal-bright to-nori-teal shadow-[0_0_0.8rem_var(--glow-teal-soft)]'
+								: 'bg-white/12'"
 						/>
 					</div>
-					<span class="step-count">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
+					<span class="text-xs text-text-faint mono font-500">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
 				</div>
-				<button class="close-btn" title="关闭" @click="closeApp">
+				<button type="button" class="close-btn focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
 					<Icon name="close" class="close-icon"/>
 				</button>
 			</div>
 		</TitleBar>
 
-		<div class="stage">
+		<!-- 舞台: 720×480 固定窗口下内容可能超高, 让舞台自己滚动而不是被窗口裁掉 -->
+		<div class="relative flex-1 w-full scroll-area">
 			<Transition :name="direction > 0 ? 'page-next' : 'page-prev'" mode="out-in">
 				<Welcome v-if="currentStep === 0"/>
 				<LanguageSelect v-else-if="currentStep === 1"/>
-				<ModelSelect v-else-if="currentStep === 2"/>
+				<ModelSelect
+					v-else-if="currentStep === 2"
+					@error="onModelError"
+					@selected="onModelSelected"
+				/>
 				<Ready v-else/>
 			</Transition>
 		</div>
 
 		<!-- 底部导航 -->
-		<div class="footer">
-			<button v-if="!isFirst" class="btn btn-ghost" @click="prev">
-				<Icon name="arrow-left" class="btn-icon"/>
-				<span>{{ I18N.back }}</span>
-			</button>
-			<span v-else class="footer-spacer"/>
+		<div class="relative z-2 h-16 shrink-0 flex items-center justify-between gap-3 px-8 bg-bg-abyss/75 border-t border-line-subtle backdrop-blur-[1.4rem]">
+			<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/22 to-transparent pointer-events-none"/>
 
-			<button v-if="!isLast" class="btn btn-primary" @click="next">
-				<span>{{ I18N.next }}</span>
-				<Icon name="arrow-right" class="btn-icon"/>
-			</button>
-			<button v-else class="btn btn-primary btn-start" @click="finish">
-				<Icon name="sparkles" class="btn-icon"/>
-				<span>{{ I18N.start }}</span>
-			</button>
+			<AppButton v-if="!isFirst" icon="arrow-left" :disabled="submitting" @click="prev">
+				{{ I18N.back }}
+			</AppButton>
+			<span v-else class="w-2.5"/>
+
+			<p v-if="stepError || finishError" class="flex-1 inline-flex items-center justify-center gap-1.5 m-0 text-sm text-danger-text text-center" role="alert">
+				<Icon name="info" :size="13"/>
+				<span>{{ stepError || finishError }}</span>
+			</p>
+
+			<AppButton v-if="!isLast" variant="primary" @click="next">
+				<span class="inline-flex items-center gap-2">
+					<span>{{ I18N.next }}</span>
+					<Icon name="arrow-right" :size="15"/>
+				</span>
+			</AppButton>
+			<AppButton
+				v-else
+				variant="primary"
+				icon="sparkles"
+				class="px-7 text-md shadow-[0_0.4rem_2rem_var(--glow-teal-strong)]"
+				:loading="submitting"
+				@click="finish"
+			>
+				{{ submitting ? I18N.starting : (finishError ? I18N.retry : I18N.start) }}
+			</AppButton>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.first-run-window {
-	width: 100%;
-	height: 100%;
-	border-radius: var(--radius-lg);
-	display: flex;
-	flex-direction: column;
-	overflow: hidden;
-	user-select: none;
-	color: var(--text-body);
-	background: linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
-	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65), inset 0 0 0 0.1rem var(--line-subtle);
-	transition: background 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
-	position: relative;
-
-	// 各步骤动态环境光晕
-	&.bg-step-1 {
-		background-image: radial-gradient(64rem 40rem at 85% 30%, rgba(94, 234, 212, 0.18), transparent 65%),
-			radial-gradient(40rem 28rem at 15% 85%, rgba(125, 227, 255, 0.08), transparent 60%),
-			linear-gradient(160deg, #10324e 0%, var(--bg-deep) 58%, var(--bg-abyss) 100%);
-	}
-
-	&.bg-step-2 {
-		background-image: radial-gradient(62rem 42rem at 50% 115%, rgba(127, 212, 232, 0.2), transparent 60%),
-			radial-gradient(38rem 26rem at 50% 0%, rgba(94, 234, 212, 0.1), transparent 60%),
-			linear-gradient(160deg, #0e2e48 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
-	}
-
-	&.bg-step-3 {
-		background-image: radial-gradient(52rem 38rem at 50% 48%, rgba(125, 227, 255, 0.16), transparent 70%),
-			radial-gradient(40rem 26rem at 20% 20%, rgba(94, 234, 212, 0.1), transparent 60%),
-			linear-gradient(160deg, #0c2642 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
-	}
-
-	&.bg-step-4 {
-		background-image: radial-gradient(56rem 40rem at 50% 50%, rgba(94, 234, 212, 0.22), transparent 68%),
-			radial-gradient(48rem 32rem at 50% 10%, rgba(125, 227, 255, 0.15), transparent 60%),
-			linear-gradient(160deg, #123654 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
-	}
-}
-
-.titlebar-center {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.step-badge-group {
-	display: flex;
-	align-items: center;
-	gap: 1.4rem;
-	padding: 0.35rem 1.2rem;
-	background: rgba(0, 0, 0, 0.25);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-pill);
-	backdrop-filter: blur(0.8rem);
-}
-
-.step-badge-item {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-	transition: all 0.3s ease;
-
-	.step-dot {
-		width: 0.5rem;
-		height: 0.5rem;
-		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.2);
-		transition: all 0.3s ease;
-	}
-
-	&.active {
-		color: var(--nori-teal-bright);
-		font-weight: 600;
-
-		.step-dot {
-			width: 0.7rem;
-			height: 0.7rem;
-			background: var(--nori-teal-bright);
-			box-shadow: 0 0 0.8rem var(--glow-teal);
-		}
-	}
-
-	&.done {
-		color: var(--nori-teal-soft);
-
-		.step-dot {
-			background: var(--nori-teal);
-		}
-	}
-}
-
-.titlebar-right {
-	display: flex;
-	align-items: center;
-	gap: 1.2rem;
-
-	.steps-progress-wrap {
-		display: flex;
-		align-items: center;
-		gap: 0.8rem;
-		background: rgba(255, 255, 255, 0.04);
-		padding: 0.3rem 0.8rem;
-		border-radius: var(--radius-sm);
-		border: 0.1rem solid var(--line-subtle);
-	}
-
-	.steps-indicator {
-		display: flex;
-		gap: 0.3rem;
-	}
-
-	.seg {
-		width: 1.8rem;
-		height: 0.35rem;
-		border-radius: 0.2rem;
-		background-color: rgba(255, 255, 255, 0.12);
-		transition: all 0.3s ease;
-
-		&.active {
-			background-image: linear-gradient(90deg, var(--nori-teal-bright), var(--nori-teal));
-			box-shadow: 0 0 0.8rem var(--glow-teal-soft);
-		}
-	}
-
-	.step-count {
-		font-size: 1.1rem;
-		color: var(--text-faint);
-		font-variant-numeric: tabular-nums;
-		font-family: monospace;
-	}
-}
-
-// 舞台
-.stage {
-	flex: 1;
-	width: 100%;
-	height: 100%;
-	min-height: 0;
-	position: relative;
-}
-
-// 页面过渡: 带有细微缩放与透明度的平滑滑入
-.page-next-enter-active,
-.page-next-leave-active,
-.page-prev-enter-active,
-.page-prev-leave-active {
-	transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.page-next-enter-from {
-	opacity: 0;
-	transform: translateX(3rem) scale(0.98);
-}
-
-.page-next-leave-to {
-	opacity: 0;
-	transform: translateX(-3rem) scale(0.98);
-}
-
-.page-prev-enter-from {
-	opacity: 0;
-	transform: translateX(-3rem) scale(0.98);
-}
-
-.page-prev-leave-to {
-	opacity: 0;
-	transform: translateX(3rem) scale(0.98);
-}
-
-// 底部导航
-.footer {
-	padding: 0 3.2rem;
-	height: 6.4rem;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	flex-shrink: 0;
-	background: rgba(5, 14, 26, 0.4);
-	border-top: 0.1rem solid var(--line-subtle);
-	backdrop-filter: blur(0.8rem);
-
-	.footer-spacer {
-		width: 1rem;
-	}
-
-	.btn-icon {
-		width: 1.5rem;
-		height: 1.5rem;
-		flex-shrink: 0;
-	}
-
-	.btn-start {
-		padding: 1rem 2.6rem;
-		font-size: 1.4rem;
-		box-shadow: 0 0.4rem 2rem var(--glow-teal-strong);
-	}
-}
-</style>
-

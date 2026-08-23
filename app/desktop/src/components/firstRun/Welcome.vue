@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import {computed, ref} from "vue"
+import {computed, onBeforeUnmount, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
+import {feedback} from "../../services/feedback"
 import type {IconMode, IconName} from "../../services/icon"
 import logo from "../../assets/images/logo.png"
 
@@ -23,6 +24,10 @@ interface Link {
 const copiedQq = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 
+onBeforeUnmount(() => {
+	if (copyTimer) clearTimeout(copyTimer)
+})
+
 // 推广链接 (响应式: 随语言重算)
 const links = computed<Link[]>(() => [
 	{
@@ -31,7 +36,7 @@ const links = computed<Link[]>(() => [
 		sub: I18N.value.links.steam.sub,
 		url: "https://store.steampowered.com/app/4996280/I_NORI/",
 		mode: "fill",
-		icon: "steam"
+		icon: "steam",
 	},
 	{
 		key: "noriOS",
@@ -39,15 +44,15 @@ const links = computed<Link[]>(() => [
 		sub: I18N.value.links.noriOS.sub,
 		url: "https://os.inori.ai/landing",
 		mode: "stroke",
-		icon: "noriOS"
+		icon: "noriOS",
 	},
 	{
 		key: "qq",
-		label: copiedQq.value ? "已复制群号: 1041616195" : I18N.value.links.qq.label,
-		sub: copiedQq.value ? "前往 QQ 粘贴即可加入" : I18N.value.links.qq.sub,
+		label: copiedQq.value ? I18N.value.links.qq.copiedLabel : I18N.value.links.qq.label,
+		sub: copiedQq.value ? I18N.value.links.qq.copiedSub : I18N.value.links.qq.sub,
 		qq: "1041616195",
 		mode: "fill",
-		icon: "qq"
+		icon: "qq",
 	},
 	{
 		key: "bilibili",
@@ -55,8 +60,15 @@ const links = computed<Link[]>(() => [
 		sub: I18N.value.links.bilibili.sub,
 		url: "https://space.bilibili.com/326505494",
 		mode: "fill",
-		icon: "bilibili"
-	}
+		icon: "bilibili",
+	},
+])
+
+// 特性标签
+const FEATURES = computed<{icon: IconName; text: string}[]>(() => [
+	{icon: "sparkles", text: I18N.value.features.live2d},
+	{icon: "cpu", text: I18N.value.features.ai},
+	{icon: "package", text: I18N.value.features.local},
 ])
 
 // 点击链接卡片: 有 qq 属性则复制群号, 否则打开网页
@@ -71,343 +83,77 @@ const handleLink = async (link: Link) => {
 			}, 2500)
 			await RUNTIME.writeLog("info", `复制 QQ 群号 ${link.qq} 成功`)
 		} catch (error) {
+			feedback.error(I18N.value.links.qq.copyFailed, error)
 			await RUNTIME.writeLog("error", `复制 QQ 群号 ${link.qq} 失败`)
 		}
-	} else if (link.url) {
-		await RUNTIME.openUrl(link.url)
+		return
+	}
+	if (link.url) {
+		try {
+			await RUNTIME.openUrl(link.url)
+		} catch (error) {
+			feedback.error(I18N.value.openFailed, error)
+		}
 	}
 }
 </script>
 
 <template>
-	<section key="welcome" class="page page-welcome">
-		<div class="hero-copy">
-			<div class="badge-row">
-				<span class="badge">
+	<section key="welcome" class="w-full min-h-full flex flex-row items-center gap-9 px-12 pt-3 pb-2.5">
+		<div class="flex-1 min-w-0 flex flex-col items-start gap-2.5">
+			<div class="flex items-center gap-1.5">
+				<span class="chip-teal">
 					<Icon name="sparkles" :size="12"/>
 					<span>Live2D Cyber Pet</span>
 				</span>
-				<span class="badge badge-version">v0.1.0</span>
+				<span class="chip mono">v0.1.0</span>
 			</div>
 
-			<h1 class="hero-title glow-teal">{{ I18N.title }}</h1>
-			<p class="hero-desc">{{ I18N.subtitle }}</p>
+			<h1 class="text-3xl font-800 glow-teal">{{ I18N.title }}</h1>
+			<p class="text-base text-text-body leading-relaxed max-w-[42rem]">{{ I18N.subtitle }}</p>
 
-			<div class="features-pills">
-				<span class="feature-tag">
-					<Icon name="sparkles" :size="11"/>
-					<span>灵动 Live2D 交互</span>
-				</span>
-				<span class="feature-tag">
-					<Icon name="cpu" :size="11"/>
-					<span>全协议 AI 大脑</span>
-				</span>
-				<span class="feature-tag">
-					<Icon name="package" :size="11"/>
-					<span>本地私密安全</span>
+			<div class="flex flex-wrap items-center gap-2">
+				<span v-for="item in FEATURES" :key="item.text" class="chip">
+					<Icon :name="item.icon" :size="11"/>
+					<span>{{ item.text }}</span>
 				</span>
 			</div>
 
-			<div class="links-grid">
+			<div class="grid grid-cols-2 gap-2.5 w-full mt-1">
 				<button
 					v-for="link in links"
 					:key="link.key"
-					class="link-card"
-					:class="{copied: link.key === 'qq' && copiedQq}"
+					type="button"
+					class="group flex items-center gap-2.5 px-3 py-2.5 rounded-md text-left cursor-pointer
+						bg-white/3 border border-line-subtle transition-all duration-250 focus-ring
+						hover:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.15rem] shadow-[0_0.4rem_1.6rem_var(--glow-teal-soft)])"
+					:class="link.key === 'qq' && copiedQq ? 'bg-success/12 border-success/40' : ''"
 					@click="handleLink(link)"
 				>
-					<div class="link-icon-wrap">
-						<Icon :name="link.icon" :mode="link.mode" class="link-icon"/>
-					</div>
-					<div class="link-text">
-						<span class="link-label">{{ link.label }}</span>
-						<span class="link-sub">{{ link.sub }}</span>
-					</div>
-					<span class="link-arrow">
+					<span
+						class="w-8 h-8 shrink-0 rounded-sm flex items-center justify-center
+							bg-nori-teal-bright/8 border border-line-subtle text-nori-teal-bright transition-transform duration-200
+							group-hover:scale-110"
+						:class="link.key === 'qq' && copiedQq ? 'text-success' : ''"
+					>
+						<Icon :name="link.icon" :mode="link.mode" :size="16"/>
+					</span>
+					<span class="flex flex-col gap-0.5 min-w-0 flex-1">
+						<span class="text-sm text-text-primary font-500 truncate">{{ link.label }}</span>
+						<span class="text-xs text-text-faint truncate">{{ link.sub }}</span>
+					</span>
+					<span class="shrink-0 text-text-faint transition-transform duration-200 group-hover:translate-x-1">
 						<Icon :name="link.key === 'qq' && copiedQq ? 'check' : 'arrow-right'" :size="13"/>
 					</span>
 				</button>
 			</div>
 		</div>
 
-		<div class="hero-art">
-			<div class="halo-outer"></div>
-			<div class="halo-inner"></div>
-			<div class="logo-glow-wrap">
-				<img class="hero-logo" :src="logo" alt="Nori"/>
-			</div>
-			<span class="hero-hint">- N O R I -</span>
+		<div class="relative shrink-0 w-[22rem] h-[26rem] flex flex-col items-center justify-center">
+			<span class="absolute w-[20rem] h-[20rem] rounded-full border border-dashed border-nori-teal-bright/25 [animation:rotate_18s_linear_infinite]"/>
+			<span class="absolute w-[15rem] h-[15rem] rounded-full bg-[radial-gradient(circle,var(--glow-teal)_0%,transparent_70%)] animate-glow-pulse"/>
+			<img class="relative w-[15rem] h-[15rem] object-contain animate-breathe" :src="logo" alt="Nori"/>
+			<span class="relative mt-2 text-sm tracking-[0.6rem] text-nori-teal-soft">- N O R I -</span>
 		</div>
 	</section>
 </template>
-
-<style scoped lang="less">
-.page {
-	width: 100%;
-	height: 100%;
-	display: flex;
-}
-
-.page-welcome {
-	padding: 1.2rem 4.8rem 1rem;
-	flex-direction: row;
-	align-items: center;
-	gap: 3.6rem;
-}
-
-.hero-copy {
-	flex: 1 1 auto;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	gap: 1rem;
-}
-
-.badge-row {
-	display: flex;
-	align-items: center;
-	gap: 0.6rem;
-}
-
-.badge {
-	padding: 0.35rem 1rem;
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	border-radius: var(--radius-pill);
-	background: rgba(125, 227, 255, 0.08);
-	border: 0.1rem solid var(--line-subtle);
-	color: var(--nori-teal);
-	font-size: 1.1rem;
-	letter-spacing: 0.04rem;
-
-	&.badge-version {
-		background: rgba(255, 255, 255, 0.05);
-		color: var(--text-muted);
-		font-family: monospace;
-	}
-}
-
-.hero-title {
-	font-size: 2.8rem;
-	font-weight: 700;
-	line-height: 1.15;
-	color: var(--text-primary);
-	letter-spacing: -0.02rem;
-}
-
-.hero-desc {
-	font-size: 1.3rem;
-	line-height: 1.55;
-	color: var(--text-body);
-}
-
-.features-pills {
-	display: flex;
-	gap: 0.6rem;
-	margin-top: 0.2rem;
-}
-
-.feature-tag {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.4rem;
-	padding: 0.25rem 0.8rem;
-	background: rgba(125, 227, 255, 0.06);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	font-size: 1.05rem;
-	color: var(--nori-teal-soft);
-}
-
-.links-grid {
-	margin-top: 0.6rem;
-	width: 100%;
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 0.8rem;
-}
-
-.link-card {
-	padding: 0.85rem 1.1rem;
-	display: flex;
-	align-items: center;
-	gap: 0.9rem;
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.03);
-	border: 0.1rem solid var(--line-subtle);
-	color: var(--text-primary);
-	font-family: inherit;
-	cursor: pointer;
-	text-align: left;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.08);
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
-		transform: translateY(-0.15rem);
-
-		.link-icon-wrap {
-			background: rgba(125, 227, 255, 0.2);
-			border-color: var(--nori-teal-bright);
-		}
-
-		.link-arrow {
-			color: var(--nori-teal-bright);
-			transform: translateX(0.2rem);
-		}
-	}
-
-	&.copied {
-		background: rgba(32, 224, 144, 0.12);
-		border-color: rgba(32, 224, 144, 0.4);
-
-		.link-icon-wrap {
-			background: rgba(32, 224, 144, 0.2);
-			color: #20e090;
-		}
-
-		.link-label {
-			color: #20e090;
-		}
-	}
-}
-
-.link-icon-wrap {
-	width: 3.2rem;
-	height: 3.2rem;
-	border-radius: var(--radius-sm);
-	background: rgba(125, 227, 255, 0.06);
-	border: 0.1rem solid var(--line-subtle);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
-	color: var(--nori-teal);
-	transition: all 0.2s ease;
-}
-
-.link-icon {
-	width: 1.8rem;
-	height: 1.8rem;
-}
-
-.link-text {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 0.15rem;
-}
-
-.link-label {
-	color: var(--text-primary);
-	font-size: 1.25rem;
-	font-weight: 500;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.link-sub {
-	color: var(--text-faint);
-	font-size: 1.05rem;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.link-arrow {
-	color: var(--text-muted);
-	flex-shrink: 0;
-	display: inline-flex;
-	align-items: center;
-	transition: all 0.2s ease;
-}
-
-// 右侧 Hero 艺术图
-.hero-art {
-	flex: 0 0 auto;
-	display: grid;
-	grid-template-areas: "art";
-	width: 22rem;
-	height: 25rem;
-	place-items: center center;
-	position: relative;
-}
-
-.halo-outer,
-.halo-inner,
-.logo-glow-wrap,
-.hero-hint {
-	grid-area: art;
-}
-
-.halo-outer {
-	align-self: center;
-	justify-self: center;
-	width: 21rem;
-	height: 21rem;
-	border-radius: 50%;
-	background-image: radial-gradient(circle, rgba(94, 234, 212, 0.18) 0%, rgba(94, 234, 212, 0.04) 50%, transparent 70%);
-	border: 0.1rem dashed rgba(125, 227, 255, 0.25);
-	animation: halo-spin 14s linear infinite;
-}
-
-.halo-inner {
-	align-self: center;
-	justify-self: center;
-	width: 16rem;
-	height: 16rem;
-	border-radius: 50%;
-	border: 0.1rem solid rgba(125, 227, 255, 0.15);
-	background: radial-gradient(circle, rgba(125, 227, 255, 0.12) 0%, transparent 60%);
-	animation: halo-spin-reverse 10s linear infinite;
-}
-
-@keyframes halo-spin {
-	from {
-		transform: rotate(0deg);
-	}
-	to {
-		transform: rotate(360deg);
-	}
-}
-
-@keyframes halo-spin-reverse {
-	from {
-		transform: rotate(360deg);
-	}
-	to {
-		transform: rotate(0deg);
-	}
-}
-
-.logo-glow-wrap {
-	align-self: center;
-	justify-self: center;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.hero-logo {
-	width: 10.8rem;
-	height: 10.8rem;
-	object-fit: contain;
-	animation: breathe 2.8s ease-in-out infinite;
-}
-
-.hero-hint {
-	align-self: end;
-	justify-self: center;
-	margin-bottom: 0.4rem;
-	font-size: 1.2rem;
-	letter-spacing: 0.45rem;
-	color: var(--nori-teal-soft);
-	font-weight: 600;
-	opacity: 0.85;
-}
-</style>

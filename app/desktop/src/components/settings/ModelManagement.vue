@@ -6,6 +6,10 @@ import {createLive2D} from "../../services/live2d"
 import {resolveModelFileBase} from "../../services/live2d/config"
 import {RUNTIME} from "../../services/runtime"
 import Icon from "../Icon.vue"
+import AppChip from "../ui/AppChip.vue"
+import AppButton from "../ui/AppButton.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import {feedback} from "../../services/feedback"
 import AdjustControls from "./AdjustControls.vue"
 import Live2dBehaviorControls from "./Live2dBehaviorControls.vue"
 
@@ -23,18 +27,17 @@ const importStatusText = ref("")
 const importLocalModel = async () => {
 	if (importing.value) return
 	importing.value = true
-	importStatusText.value = "正在选择并导入 Live2D 文件..."
+	importStatusText.value = I18N.value.import.picking
 	try {
 		const imported = await RUNTIME.importLocalModel()
 		if (imported?.length) {
-			importStatusText.value = `导入成功: ${imported.join(", ")}`
+			importStatusText.value = `${I18N.value.import.success}: ${imported.join(", ")}`
 			await refreshStatus()
 			setTimeout(() => { importStatusText.value = "" }, 3000)
 		} else importStatusText.value = ""
 	} catch (error) {
-		console.error("导入模型失败:", error)
-		importStatusText.value = `导入失败: ${String(error)}`
-		setTimeout(() => { importStatusText.value = "" }, 4000)
+		feedback.error(I18N.value.import.failed, error)
+		importStatusText.value = ""
 	} finally {
 		importing.value = false
 	}
@@ -83,7 +86,7 @@ const enableModel = async (model: ModelInfo) => {
 		selectedModel.value = model.id
 		await refreshStatus()
 	} catch (error) {
-		console.error("启用模型失败:", error)
+		feedback.error(I18N.value.enableFailed, error)
 	}
 }
 
@@ -197,7 +200,7 @@ const openAdjust = async (model: ModelInfo) => {
 		)
 		PREVIEW.setUserScale(pvScale.value)
 	} catch (error) {
-		console.error("加载预览模型失败:", error)
+		feedback.error(I18N.value.previewFailed, error)
 	}
 	previewReady.value = true
 	await syncPreviewClickInteraction()
@@ -216,55 +219,81 @@ const closeAdjust = () => {
 </script>
 
 <template>
-	<section class="model-management">
-		<div class="mm-head">
-			<div class="mm-head-info">
-				<h2 class="mm-title glow-teal">{{ I18N.title }}</h2>
-				<p class="mm-sub">{{ I18N.sub }}</p>
-			</div>
-			<div class="mm-head-actions">
-				<button class="btn-import" :disabled="importing" @click="importLocalModel">
-					<Icon name="package" :size="16"/>
-					<span>{{ importing ? "正在导入..." : "导入本地 Live2D" }}</span>
-				</button>
-			</div>
-		</div>
+	<section class="w-full h-full flex flex-col items-center gap-6 px-6 py-4 scroll-area">
+		<AppSectionHeader class="w-full" :title="I18N.title" :subtitle="I18N.sub">
+			<template #actions>
+				<AppButton
+					icon="package"
+					class="text-nori-teal-bright border-line-strong bg-nori-teal-bright/10 shadow-[0_0_1.4rem_rgba(125,227,255,0.12)] hover:bg-nori-teal-bright/15"
+					:loading="importing"
+					@click="importLocalModel"
+				>
+					{{ importing ? I18N.import.importing : I18N.import.button }}
+				</AppButton>
+			</template>
+		</AppSectionHeader>
 
-		<div v-if="importStatusText" class="mm-import-status">{{ importStatusText }}</div>
+		<p
+			v-if="importStatusText"
+			class="w-full m-0 px-4 py-2.5 rounded-sm text-center text-sm font-500 text-nori-teal-bright bg-nori-teal-bright/10 border border-nori-teal-soft/80 shadow-[0_0_1.2rem_rgba(125,227,255,0.15)]"
+			aria-live="polite"
+		>{{ importStatusText }}</p>
 
-		<!-- 下载进度条面板 -->
-
-		<div class="mm-grid">
+		<!-- 模型卡片展示网格 -->
+		<div class="flex flex-wrap justify-center gap-7">
 			<div
 				v-for="model in MODEL_LIST"
 				:key="model.id"
-				class="mm-card"
-				:class="{active: selectedModel === model.id}"
-				@click="toggleCardMenu(model)"
+				class="relative flex flex-col items-center gap-2.5 p-3 pb-3.5 rounded-md border transition-all duration-250
+					hover:(border-line-glow bg-bg-card-hover -translate-y-[0.25rem] shadow-[0_0.8rem_2.8rem_rgba(0,0,0,0.5),0_0_1.6rem_var(--glow-teal-soft)])"
+				:class="selectedModel === model.id
+					? 'border-nori-teal bg-nori-teal-bright/8 shadow-[0_0.6rem_2.4rem_rgba(0,0,0,0.4),0_0_1.8rem_var(--glow-teal-soft)]'
+					: 'border-line-subtle surface-card'"
 			>
-				<div class="mm-thumb-wrap">
-					<img class="mm-thumb" :src="model.thumb" :alt="model.name"/>
-					<div class="thumb-glow-overlay"></div>
-				</div>
-
-				<span class="mm-name">{{ model.name }}</span>
-
-				<div class="mm-tags">
-					<span class="mm-tag" :class="installedMap[model.id] ? 'ok' : ''">
-						{{ installedMap[model.id] ? I18N.installed : I18N.notInstalled }}
+				<button
+					type="button"
+					class="group/thumb relative w-[15.6rem] h-[25.6rem] overflow-hidden rounded-sm border border-line-subtle bg-black/40 cursor-pointer focus-ring"
+					:aria-label="model.name"
+					:aria-expanded="cardMenuFor === model.id"
+					@click="toggleCardMenu(model)"
+				>
+					<img class="w-full h-full object-cover block transition-transform duration-300 group-hover/thumb:scale-106" :src="model.thumb" :alt="model.name"/>
+					<span class="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-transparent to-bg-abyss/85"/>
+					<span
+						v-if="selectedModel === model.id"
+						class="absolute top-2 right-2 px-2 py-0.5 rounded-pill text-xs font-600 bg-nori-teal-bright text-on-teal shadow-[0_0_1rem_var(--glow-teal)]"
+					>
+						{{ I18N.current }}
 					</span>
-					<span v-if="selectedModel === model.id" class="mm-tag current">{{ I18N.current }}</span>
+				</button>
+
+				<span class="text-md font-600 text-text-primary tracking-[0.02rem]">{{ model.name }}</span>
+
+				<div class="flex items-center gap-1.5">
+					<AppChip :tone="installedMap[model.id] ? 'success' : 'neutral'" dot>
+						{{ installedMap[model.id] ? I18N.installed : I18N.notInstalled }}
+					</AppChip>
 				</div>
 
 				<!-- 点击卡片: 蒙版菜单 (再点一次卡片收起) -->
-				<Transition name="mask">
-					<div v-if="cardMenuFor === model.id" class="mm-card-mask" @click.stop="cardMenuFor = null">
-						<div class="mm-card-menu" @click.stop>
+				<Transition name="fade">
+					<div
+						v-if="cardMenuFor === model.id"
+						class="absolute inset-0 z-5 flex items-center justify-center rounded-md bg-bg-base/85 backdrop-blur-[0.8rem]"
+						@click.stop="cardMenuFor = null"
+					>
+						<div
+							class="relative w-[88%] flex flex-col items-center gap-3 px-3.5 py-4.5 rounded-md border border-line-strong
+								bg-[linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-abyss)_100%)]
+								shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.7),0_0_2rem_var(--glow-teal-soft)]"
+							@click.stop
+						>
 							<button
 								v-if="installedMap[model.id]"
-								class="mm-menu-btn btn-primary"
-								:class="{enabled: selectedModel === model.id}"
-								:disabled="!installedMap[model.id] || selectedModel === model.id"
+								type="button"
+								class="w-full justify-center"
+								:class="selectedModel === model.id ? 'btn-ghost' : 'btn-primary'"
+								:disabled="selectedModel === model.id"
 								@click="enableModel(model)"
 							>
 								<Icon name="check" :size="13"/>
@@ -272,8 +301,8 @@ const closeAdjust = () => {
 							</button>
 							<button
 								v-if="installedMap[model.id]"
-								class="mm-menu-btn btn-ghost"
-								:disabled="!installedMap[model.id]"
+								type="button"
+								class="btn-ghost w-full justify-center"
 								@click="openAdjust(model)"
 							>
 								<Icon name="settings" :size="13"/>
@@ -286,20 +315,33 @@ const closeAdjust = () => {
 		</div>
 
 		<!-- 行为与交互设置 (始终可见) -->
-		<div class="mm-behavior-section glass-panel">
+		<div class="w-full max-w-[62rem] mx-auto px-6 py-5 glass-panel rounded-lg shadow-[0_0.6rem_2.4rem_rgba(0,0,0,0.35)]">
 			<Live2dBehaviorControls :model-id="selectedModel"/>
 		</div>
 
 		<!-- 整页调整面板: 铺满整个页面, 左侧橱窗实时预览, 右侧控制 -->
-		<Transition name="view">
-			<div v-if="adjustFor" class="mm-fullpage">
-				<button class="mm-back" :title="I18N.back" @click="closeAdjust">
-					<Icon name="arrow-left" class="mm-back-icon"/>
+		<Transition name="fade">
+			<div
+				v-if="adjustFor"
+				class="fixed inset-0 z-100 flex flex-col backdrop-blur-[1.6rem]
+					bg-[radial-gradient(ellipse_70rem_50rem_at_20%_20%,rgba(125,227,255,0.1)_0%,transparent_65%),linear-gradient(165deg,rgba(8,20,32,0.98)_0%,rgba(2,10,18,0.99)_100%)]"
+			>
+				<button
+					type="button"
+					class="absolute top-4.5 left-5 z-3 w-[4rem] h-[4rem] flex items-center justify-center rounded-full
+						border border-line-subtle bg-white/6 text-text-body cursor-pointer transition-all duration-200 focus-ring shadow-soft
+						hover:(text-nori-teal-bright border-nori-teal-soft bg-nori-teal-bright/14 -translate-y-[0.1rem] shadow-[0_0_1.6rem_var(--glow-teal-soft)])"
+					:title="I18N.back"
+					:aria-label="I18N.back"
+					@click="closeAdjust"
+				>
+					<Icon name="arrow-left" :size="18"/>
 				</button>
 
-				<div ref="showcaseRef" class="mm-showcase"></div>
+				<!-- 预览画布容器: 尺寸被 getBoundingClientRect 读取用于建画布, 不要改动几何 -->
+				<div ref="showcaseRef" class="absolute top-[5.6rem] left-6 w-[34rem] h-[50rem] z-201"/>
 
-				<div class="mm-adjust-pane glass-panel">
+				<div class="absolute top-[5.6rem] left-[40rem] right-6 bottom-5 px-6 py-5 scroll-area glass-panel shadow-[0_0.8rem_3.2rem_rgba(0,0,0,0.5)]">
 					<AdjustControls
 						:model-id="adjustFor"
 						:model-name="modelNameOf(adjustFor)"
@@ -309,326 +351,10 @@ const closeAdjust = () => {
 						@scale="onPreviewScale"
 						@expressions="onPreviewExpressions"
 					/>
-					<div class="mm-behavior-divider"/>
+					<div class="h-[0.1rem] my-5 bg-line-subtle"/>
 					<Live2dBehaviorControls :model-id="adjustFor"/>
 				</div>
 			</div>
 		</Transition>
 	</section>
 </template>
-
-<style scoped lang="less">
-.model-management {
-	width: 100%;
-	height: 100%;
-	padding: 1.6rem 2.4rem;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 2rem;
-	overflow-y: auto;
-}
-
-.mm-head {
-	width: 100%;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 1.6rem;
-}
-
-.mm-head-info {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.mm-title {
-	font-size: 2.2rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.mm-sub {
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.btn-import {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.7rem;
-	padding: 0.85rem 1.6rem;
-	background: rgba(125, 227, 255, 0.08);
-	border: 0.1rem solid var(--line-strong);
-	border-radius: var(--radius-sm);
-	color: var(--nori-teal-bright);
-	font-size: 1.25rem;
-	font-family: inherit;
-	font-weight: 500;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover:not(:disabled) {
-		background: rgba(125, 227, 255, 0.18);
-		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
-		transform: translateY(-0.15rem);
-	}
-
-	&:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-}
-
-.mm-import-status {
-	width: 100%;
-	padding: 0.8rem 1.2rem;
-	background: rgba(125, 227, 255, 0.08);
-	border: 0.1rem solid var(--nori-teal-soft);
-	border-radius: var(--radius-sm);
-	font-size: 1.2rem;
-	color: var(--nori-teal-bright);
-	text-align: center;
-}
-
-.mm-grid {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: center;
-	gap: 2.4rem;
-}
-
-.mm-card {
-	position: relative;
-	padding: 1rem 1rem 1.2rem;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 0.9rem;
-	border: 0.15rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	background: rgba(255, 255, 255, 0.03);
-	cursor: default;
-	transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.08);
-		border-color: var(--nori-teal-soft);
-		transform: translateY(-0.25rem);
-		box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.35), 0 0 1.2rem var(--glow-teal-soft);
-	}
-
-	&.active {
-		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.12);
-		box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.4), 0 0 1.8rem var(--glow-teal);
-	}
-}
-
-.mm-thumb-wrap {
-	width: 15.2rem;
-	height: 25.2rem;
-	overflow: hidden;
-	border-radius: var(--radius-sm);
-	background: rgba(0, 0, 0, 0.3);
-	border: 0.1rem solid var(--line-subtle);
-	position: relative;
-}
-
-.mm-thumb {
-	width: 100%;
-	height: 100%;
-	object-fit: cover;
-	display: block;
-	transition: transform 0.3s ease;
-}
-
-.thumb-glow-overlay {
-	position: absolute;
-	inset: 0;
-	background: linear-gradient(180deg, transparent 65%, rgba(5, 14, 26, 0.7) 100%);
-	pointer-events: none;
-}
-
-.mm-name {
-	font-size: 1.35rem;
-	font-weight: 500;
-	color: var(--text-primary);
-}
-
-.mm-tags {
-	display: flex;
-	gap: 0.6rem;
-	align-items: center;
-}
-
-.mm-tag {
-	padding: 0.25rem 0.8rem;
-	border-radius: var(--radius-pill);
-	font-size: 1.05rem;
-	color: var(--text-faint);
-	background: rgba(255, 255, 255, 0.06);
-	white-space: nowrap;
-
-	&.ok {
-		color: var(--nori-teal);
-		background: rgba(94, 234, 212, 0.12);
-		border: 0.1rem solid rgba(94, 234, 212, 0.25);
-	}
-
-	&.current {
-		color: var(--nori-teal-bright);
-		background: rgba(125, 227, 255, 0.15);
-		border: 0.1rem solid var(--nori-teal);
-		font-weight: 600;
-	}
-}
-
-// ---- 卡片蒙版菜单 ----
-.mm-card-mask {
-	position: absolute;
-	inset: 0;
-	z-index: 5;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	background: rgba(2, 10, 18, 0.75);
-	backdrop-filter: blur(4px);
-	border-radius: var(--radius-md);
-	cursor: default;
-}
-
-.mm-card-menu {
-	position: relative;
-	width: 84%;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 0.8rem;
-	padding: 1.6rem 1.2rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	background: linear-gradient(160deg, #0e2a44 0%, var(--bg-abyss) 100%);
-	box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6), 0 0 1.4rem var(--glow-teal-soft);
-}
-
-.mm-menu-btn {
-	width: 100%;
-	padding: 0.75rem 0;
-	font-size: 1.25rem;
-	font-family: inherit;
-	border-radius: var(--radius-sm);
-	cursor: pointer;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 0.6rem;
-
-	&.enabled,
-	&:disabled {
-		color: var(--text-muted);
-		opacity: 0.55;
-		cursor: default;
-		background: rgba(255, 255, 255, 0.04);
-		border-color: var(--line-subtle);
-		filter: none;
-	}
-}
-
-// ---- 整页调整面板: 铺满页面 ----
-.mm-fullpage {
-	position: fixed;
-	inset: 0;
-	z-index: 100;
-	display: flex;
-	flex-direction: column;
-	background: linear-gradient(165deg, rgba(8, 20, 32, 0.97) 0%, rgba(2, 10, 18, 0.98) 100%);
-	backdrop-filter: blur(1.2rem);
-	cursor: default;
-}
-
-.mm-back {
-	position: absolute;
-	top: 1.6rem;
-	left: 2rem;
-	z-index: 3;
-	width: 3.8rem;
-	height: 3.8rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: 50%;
-	background: rgba(255, 255, 255, 0.05);
-	color: var(--text-body);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		color: var(--nori-teal-bright);
-		border-color: var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.12);
-		box-shadow: 0 0 1.4rem var(--glow-teal-soft);
-		transform: translateY(-0.1rem);
-	}
-}
-
-.mm-back-icon {
-	width: 1.8rem;
-	height: 1.8rem;
-}
-
-.mm-showcase {
-	position: absolute;
-	top: 5.6rem;
-	left: 2.4rem;
-	width: 34rem;
-	height: 50rem;
-	z-index: 201;
-}
-
-.mm-adjust-pane {
-	position: absolute;
-	top: 5.6rem;
-	left: 40rem;
-	right: 2.4rem;
-	bottom: 2rem;
-	overflow-y: auto;
-	padding: 1.6rem 2rem;
-}
-
-.mm-behavior-section {
-	width: 100%;
-	max-width: 60rem;
-	margin: 0 auto;
-	padding: 1.6rem 2.4rem;
-}
-
-.mm-behavior-divider {
-	height: 0.1rem;
-	background: var(--line-subtle);
-	margin: 1.6rem 0;
-}
-
-// ---- 动画 ----
-.mask-enter-active,
-.mask-leave-active {
-	transition: opacity 0.18s ease;
-}
-
-.mask-enter-from,
-.mask-leave-to {
-	opacity: 0;
-}
-
-.view-enter-active,
-.view-leave-active {
-	transition: opacity 0.25s ease;
-}
-
-.view-enter-from,
-.view-leave-to {
-	opacity: 0;
-}
-</style>

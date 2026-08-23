@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
+import {feedback} from "../../services/feedback"
 import {i18n} from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
+import AppCard from "../ui/AppCard.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppSwitchRow from "../ui/AppSwitchRow.vue"
 
 const TEXT = computed(() => useLanguages().views.main.proactive)
 
@@ -49,8 +53,8 @@ onMounted(async () => {
 // 手动创建提醒
 const createReminder = async () => {
 	if (!newReminderText.value.trim()) return
-	await RUNTIME.reminderAdd(newReminderText.value.trim(), newReminderMinutes.value).catch(error =>
-		console.error("创建提醒失败:", error))
+	await RUNTIME.reminderAdd(newReminderText.value.trim(), newReminderMinutes.value)
+		.catch(error => feedback.error(TEXT.value.reminders.addFailed, error))
 	newReminderText.value = ""
 	await RUNTIME.refresh()
 	syncReminders()
@@ -58,359 +62,112 @@ const createReminder = async () => {
 
 // 取消提醒
 const cancelReminder = async (id: string) => {
-	await RUNTIME.reminderCancel(id).catch(error => console.error("取消提醒失败:", error))
+	await RUNTIME.reminderCancel(id).catch(error => feedback.error(TEXT.value.reminders.cancelFailed, error))
 	await RUNTIME.refresh()
 	syncReminders()
 }
 </script>
 
 <template>
-	<div class="proactive-settings">
-		<header class="section-header">
-			<h2 class="title glow-teal">{{ TEXT.title }}</h2>
-			<p class="subtitle">{{ TEXT.subtitle }}</p>
-		</header>
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+		<AppSectionHeader :title="TEXT.title" :subtitle="TEXT.subtitle"/>
 
-		<div class="settings-content">
+		<div class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 挂机主动关怀 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="sparkles" :size="18" class="card-icon"/>
-					<span class="card-title">{{ TEXT.idle.title }}</span>
-				</div>
-				<div class="card-body">
-					<div class="switch-row">
-						<div>
-							<span class="switch-title">{{ TEXT.idle.enabled }}</span>
-							<p class="switch-desc">{{ TEXT.idle.enabledDesc }}</p>
-						</div>
-						<n-switch
-							:value="idleEnabled"
-							@update:value="(val: boolean) => RUNTIME.updateProactive({idleEnabled: val})"
-						/>
-					</div>
+			<AppCard :title="TEXT.idle.title" icon="sparkles">
+				<AppSwitchRow :title="TEXT.idle.enabled" :desc="TEXT.idle.enabledDesc">
+					<n-switch
+						:value="idleEnabled"
+						@update:value="(val: boolean) => RUNTIME.updateProactive({idleEnabled: val})"
+					/>
+				</AppSwitchRow>
 
-					<div v-if="idleEnabled" class="form-item">
-						<label class="label">{{ TEXT.idle.interval }}</label>
-						<div class="radio-group">
-							<label
-								v-for="min in [5, 15, 30, 60]"
-								:key="min"
-								class="radio-chip"
-								:class="{active: idleMinutes === min}"
-							>
-								<input
-									v-model="idleMinutes"
-									type="radio"
-									:value="min"
-									@change="RUNTIME.updateProactive({idleMinutes: min})"
-								/>
-								{{ min }} {{ TEXT.minutes }}
-							</label>
-						</div>
+				<div v-if="idleEnabled" class="field">
+					<span class="field-label">{{ TEXT.idle.interval }}</span>
+					<div class="flex flex-wrap gap-2">
+						<!-- 单选按钮本体用 sr-only 隐藏而非 display:none, 保留键盘可达与读屏语义 -->
+						<label
+							v-for="min in [5, 15, 30, 60]"
+							:key="min"
+							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+								transition-all duration-200
+								focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
+							:class="idleMinutes === min
+								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-nori-teal-bright/6 border-nori-teal-soft)'"
+						>
+							<input
+								v-model="idleMinutes"
+								type="radio"
+								:value="min"
+								class="sr-only"
+								@change="RUNTIME.updateProactive({idleMinutes: min})"
+							/>
+							{{ min }} {{ TEXT.minutes }}
+						</label>
 					</div>
 				</div>
-			</div>
+			</AppCard>
 
 			<!-- 2. 日常早晚安日程 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="noriOS" :size="18" class="card-icon"/>
-					<span class="card-title">{{ TEXT.daily.title }}</span>
-				</div>
-				<div class="card-body">
-					<div class="switch-row">
-						<div>
-							<span class="switch-title">{{ TEXT.daily.enabled }}</span>
-							<p class="switch-desc">{{ TEXT.daily.enabledDesc }}</p>
-						</div>
-						<n-switch
-							:value="dailyGreeting"
-							@update:value="(val: boolean) => RUNTIME.updateProactive({dailyGreeting: val})"
-						/>
-					</div>
-				</div>
-			</div>
+			<AppCard :title="TEXT.daily.title" icon="noriOS">
+				<AppSwitchRow :title="TEXT.daily.enabled" :desc="TEXT.daily.enabledDesc">
+					<n-switch
+						:value="dailyGreeting"
+						@update:value="(val: boolean) => RUNTIME.updateProactive({dailyGreeting: val})"
+					/>
+				</AppSwitchRow>
+			</AppCard>
 
 			<!-- 3. 定时提醒管理 (持久化于后端 SQLite, 重启自动恢复) -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="info" :size="18" class="card-icon"/>
-					<span class="card-title">{{ TEXT.reminders.title }}</span>
+			<AppCard :title="TEXT.reminders.title" icon="info">
+				<div class="flex gap-2">
+					<input
+						v-model="newReminderText"
+						class="input-base flex-1"
+						:placeholder="TEXT.reminders.placeholder"
+						@keydown.enter="createReminder"
+					/>
+					<n-select
+						v-model:value="newReminderMinutes"
+						:options="REMINDER_OPTIONS"
+						style="width: 14rem;"
+					/>
+					<n-button type="primary" :disabled="!newReminderText.trim()" @click="createReminder">
+						{{ TEXT.reminders.add }}
+					</n-button>
 				</div>
-				<div class="card-body">
-					<div class="add-reminder-row">
-						<input
-							v-model="newReminderText"
-							class="input flex-1"
-							:placeholder="TEXT.reminders.placeholder"
-							@keydown.enter="createReminder"
-						/>
-						<n-select
-							v-model:value="newReminderMinutes"
-							:options="REMINDER_OPTIONS"
-							style="width: 14rem;"
-						/>
-						<n-button type="primary" :disabled="!newReminderText.trim()" @click="createReminder">
-							{{ TEXT.reminders.add }}
-						</n-button>
-					</div>
 
-					<div class="reminder-list">
-						<div v-if="reminders.length === 0" class="empty-hint">
-							{{ TEXT.reminders.empty }}
+				<div class="flex flex-col gap-2 mt-1.5">
+					<div v-if="reminders.length === 0" class="py-2 text-sm text-text-faint">
+						{{ TEXT.reminders.empty }}
+					</div>
+					<div
+						v-for="item in reminders"
+						:key="item.id"
+						class="flex items-center justify-between gap-3 px-3.5 py-2 rounded-sm bg-white/3
+							border border-line-subtle transition-all duration-200
+							hover:(bg-nori-teal-bright/4 border-line-strong)"
+					>
+						<div class="flex flex-col gap-0.5 min-w-0">
+							<span class="text-base text-text-primary font-500">{{ item.content }}</span>
+							<span class="text-xs text-nori-teal-bright mono">
+								{{ TEXT.reminders.trigger }}: {{ new Date(item.triggerTime).toLocaleTimeString(i18n.global.locale.value) }}
+							</span>
 						</div>
-						<div
-							v-for="item in reminders"
-							:key="item.id"
-							class="reminder-item"
+						<button
+							type="button"
+							class="btn-base w-7 h-7 shrink-0 rounded-sm bg-white/5 text-text-muted
+								hover:(bg-danger/18 text-danger-text)"
+							:title="TEXT.reminders.cancel"
+							:aria-label="TEXT.reminders.cancel"
+							@click="cancelReminder(item.id)"
 						>
-							<div class="reminder-info">
-								<span class="reminder-text">{{ item.content }}</span>
-								<span class="reminder-time">
-									{{ TEXT.reminders.trigger }}: {{ new Date(item.triggerTime).toLocaleTimeString(i18n.global.locale.value) }}
-								</span>
-							</div>
-							<button class="btn-del" :title="TEXT.reminders.cancel" @click="cancelReminder(item.id)">
-								<Icon name="close" :size="14"/>
-							</button>
-						</div>
+							<Icon name="close" :size="14"/>
+						</button>
 					</div>
 				</div>
-			</div>
+			</AppCard>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.proactive-settings {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	overflow-y: auto;
-	padding: 1.6rem 2.4rem;
-	gap: 1.6rem;
-}
-
-.section-header {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.title {
-	margin: 0;
-	font-size: 1.8rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.subtitle {
-	margin: 0;
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.settings-content {
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-	padding-bottom: 2rem;
-}
-
-.setting-card {
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	padding: 1.6rem;
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-	transition: all 0.2s ease;
-
-	&:hover {
-		border-color: var(--line-strong);
-	}
-}
-
-.card-header {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	color: var(--nori-teal-bright);
-}
-
-.card-title {
-	font-size: 1.35rem;
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.card-body {
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-}
-
-.form-item {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-}
-
-.label {
-	font-size: 1.2rem;
-	font-weight: 500;
-	color: var(--text-muted);
-}
-
-.input {
-	padding: 0.9rem 1.4rem;
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: 1.3rem;
-	font-family: inherit;
-	outline: none;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:focus {
-		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.06);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.flex-1 {
-	flex: 1;
-}
-
-.radio-group {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.8rem;
-}
-
-.radio-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.65rem 1.3rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.03);
-	color: var(--text-body);
-	font-size: 1.15rem;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	input {
-		display: none;
-	}
-
-	&:hover {
-		color: var(--nori-teal-bright);
-		background: rgba(125, 227, 255, 0.06);
-		border-color: var(--nori-teal-soft);
-	}
-
-	&.active {
-		border-color: transparent;
-		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-		color: #03101c;
-		font-weight: 600;
-		box-shadow: 0 0.2rem 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.switch-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-}
-
-.switch-title {
-	font-size: 1.3rem;
-	color: var(--text-primary);
-	font-weight: 500;
-}
-
-.switch-desc {
-	margin: 0.2rem 0 0;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-}
-
-.add-reminder-row {
-	display: flex;
-	gap: 0.8rem;
-}
-
-.reminder-list {
-	display: flex;
-	flex-direction: column;
-	gap: 0.8rem;
-	margin-top: 0.6rem;
-}
-
-.empty-hint {
-	font-size: 1.2rem;
-	color: var(--text-faint);
-	padding: 0.8rem 0;
-}
-
-.reminder-item {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0.9rem 1.4rem;
-	background: rgba(255, 255, 255, 0.03);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	transition: all 0.2s ease;
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.04);
-		border-color: var(--line-strong);
-	}
-}
-
-.reminder-info {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-}
-
-.reminder-text {
-	font-size: 1.3rem;
-	color: var(--text-primary);
-	font-weight: 500;
-}
-
-.reminder-time {
-	font-size: 1.1rem;
-	color: var(--nori-teal-bright);
-	font-family: monospace;
-}
-
-.btn-del {
-	width: 2.8rem;
-	height: 2.8rem;
-	border: none;
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.05);
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.15s ease;
-
-	&:hover {
-		background: rgba(251, 60, 68, 0.18);
-		color: var(--danger);
-	}
-}
-</style>

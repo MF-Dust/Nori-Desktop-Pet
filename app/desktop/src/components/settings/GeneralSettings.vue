@@ -3,7 +3,9 @@ import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
-import Icon from "../Icon.vue"
+import AppCard from "../ui/AppCard.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppSwitchRow from "../ui/AppSwitchRow.vue"
 
 const currentLang = ref("zh-CN")
 const autoSummon = ref(true)
@@ -35,235 +37,78 @@ const onAutoSummonChange = (val: boolean) => {
 </script>
 
 <template>
-	<div class="general-settings">
-		<header class="section-header">
-			<h2 class="title glow-teal">{{ TEXT.title }}</h2>
-			<p class="subtitle">{{ TEXT.subtitle }}</p>
-		</header>
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+		<AppSectionHeader :title="TEXT.title" :subtitle="TEXT.subtitle"/>
 
-		<div class="settings-content">
+		<div class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 界面语言 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="noriOS" :size="18" class="card-icon"/>
-					<span class="card-title">{{ TEXT.language.title }}</span>
+			<AppCard :title="TEXT.language.title" icon="noriOS">
+				<div class="flex flex-wrap gap-2">
+					<!-- 单选按钮本体用 sr-only 隐藏而非 display:none, 保留键盘可达与读屏语义 -->
+					<label
+						class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-sm cursor-pointer
+							transition-all duration-200
+							focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
+						:class="currentLang === 'zh-CN'
+							? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+							: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-nori-teal-bright/6 border-nori-teal-soft)'"
+					>
+						<input
+							v-model="currentLang"
+							type="radio"
+							value="zh-CN"
+							class="sr-only"
+							@change="onLanguageChange('zh-CN')"
+						/>
+						🇨🇳 {{ TEXT.language.chinese }}
+					</label>
+					<label
+						class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-sm cursor-pointer
+							transition-all duration-200
+							focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
+						:class="currentLang === 'en-US'
+							? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+							: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-nori-teal-bright/6 border-nori-teal-soft)'"
+					>
+						<input
+							v-model="currentLang"
+							type="radio"
+							value="en-US"
+							class="sr-only"
+							@change="onLanguageChange('en-US')"
+						/>
+						🇺🇸 {{ TEXT.language.english }}
+					</label>
 				</div>
-				<div class="card-body">
-					<div class="radio-group">
-						<label class="radio-chip" :class="{active: currentLang === 'zh-CN'}">
-							<input
-								v-model="currentLang"
-								type="radio"
-								value="zh-CN"
-								@change="onLanguageChange('zh-CN')"
-							/>
-							🇨🇳 {{ TEXT.language.chinese }}
-						</label>
-						<label class="radio-chip" :class="{active: currentLang === 'en-US'}">
-							<input
-								v-model="currentLang"
-								type="radio"
-								value="en-US"
-								@change="onLanguageChange('en-US')"
-							/>
-							🇺🇸 {{ TEXT.language.english }}
-						</label>
-					</div>
-				</div>
-			</div>
+			</AppCard>
 
 			<!-- 2. 启动与窗口行为 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="settings" :size="18" class="card-icon"/>
-					<span class="card-title">{{ TEXT.startup.title }}</span>
-				</div>
-				<div class="card-body">
-					<div class="switch-row">
-						<div>
-							<span class="switch-title">{{ TEXT.startup.autoSummon }}</span>
-							<p class="switch-desc">{{ TEXT.startup.autoSummonDesc }}</p>
-						</div>
-						<n-switch
-							:value="autoSummon"
-							@update:value="(val: boolean) => onAutoSummonChange(val)"
-						/>
-					</div>
-				</div>
-			</div>
+			<AppCard :title="TEXT.startup.title" icon="settings">
+				<AppSwitchRow :title="TEXT.startup.autoSummon" :desc="TEXT.startup.autoSummonDesc">
+					<n-switch
+						:value="autoSummon"
+						@update:value="(val: boolean) => onAutoSummonChange(val)"
+					/>
+				</AppSwitchRow>
+			</AppCard>
 
 			<!-- 3. 应用关于信息 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="info" :size="18" class="card-icon"/>
-					<span class="card-title">{{ TEXT.about.title }}</span>
-				</div>
-				<div class="card-body">
-					<div class="info-row">
-						<span class="info-label">{{ TEXT.about.version }}</span>
-						<span class="info-val">v{{ appVersion }}</span>
+			<AppCard :title="TEXT.about.title" icon="info">
+				<div class="flex flex-col">
+					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
+						<span class="text-sm text-text-muted">{{ TEXT.about.version }}</span>
+						<span class="text-sm text-text-primary mono">v{{ appVersion }}</span>
 					</div>
-					<div class="info-row">
-						<span class="info-label">{{ TEXT.about.license }}</span>
-						<span class="info-val">GPL-3.0 License</span>
+					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
+						<span class="text-sm text-text-muted">{{ TEXT.about.license }}</span>
+						<span class="text-sm text-text-primary mono">GPL-3.0 License</span>
 					</div>
-					<div class="info-row">
-						<span class="info-label">{{ TEXT.about.renderer }}</span>
-						<span class="info-val">Avalonia UI + Microsoft WebView2</span>
+					<div class="flex items-center justify-between gap-3 py-2">
+						<span class="text-sm text-text-muted">{{ TEXT.about.renderer }}</span>
+						<span class="text-sm text-text-primary mono">Avalonia UI + Microsoft WebView2</span>
 					</div>
 				</div>
-			</div>
+			</AppCard>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.general-settings {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	overflow-y: auto;
-	padding: 1.6rem 2.4rem;
-	gap: 1.6rem;
-}
-
-.section-header {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.title {
-	margin: 0;
-	font-size: 1.8rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.subtitle {
-	margin: 0;
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.settings-content {
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-	padding-bottom: 2rem;
-}
-
-.setting-card {
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	padding: 1.6rem;
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-	transition: all 0.2s ease;
-
-	&:hover {
-		border-color: var(--line-strong);
-	}
-}
-
-.card-header {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	color: var(--nori-teal-bright);
-}
-
-.card-title {
-	font-size: 1.35rem;
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.card-body {
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-}
-
-.radio-group {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.8rem;
-}
-
-.radio-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.7rem 1.4rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.03);
-	color: var(--text-body);
-	font-size: 1.2rem;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	input {
-		display: none;
-	}
-
-	&:hover {
-		color: var(--nori-teal-bright);
-		background: rgba(125, 227, 255, 0.06);
-		border-color: var(--nori-teal-soft);
-	}
-
-	&.active {
-		border-color: transparent;
-		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-		color: #03101c;
-		font-weight: 600;
-		box-shadow: 0 0.2rem 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.switch-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-}
-
-.switch-title {
-	font-size: 1.3rem;
-	color: var(--text-primary);
-	font-weight: 500;
-}
-
-.switch-desc {
-	margin: 0.2rem 0 0;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-}
-
-.info-row {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	padding: 0.8rem 0;
-	border-bottom: 0.1rem solid var(--line-subtle);
-
-	&:last-child {
-		border-bottom: none;
-	}
-}
-
-.info-label {
-	font-size: 1.2rem;
-	color: var(--text-muted);
-}
-
-.info-val {
-	font-size: 1.2rem;
-	color: var(--text-primary);
-	font-family: monospace;
-}
-</style>

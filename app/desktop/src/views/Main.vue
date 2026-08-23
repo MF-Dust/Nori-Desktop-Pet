@@ -1,23 +1,53 @@
 <script setup lang="ts">
-import {computed, defineAsyncComponent, onMounted, ref} from "vue"
+import {computed, defineAsyncComponent, h, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch} from "vue"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../services/runtime"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
+import AppChip from "../components/ui/AppChip.vue"
+import AppButton from "../components/ui/AppButton.vue"
+import AppSkeleton from "../components/ui/AppSkeleton.vue"
 import type {IconName} from "../services/icon"
 import {showWindow, hideWindow} from "../services/window"
-import {getWindowByLabel} from "../services/host/window"
 import {MODEL_LIST} from "../services/live2d/models"
-
-const HomePanel = defineAsyncComponent(() => import("../components/home/HomePanel.vue"))
-const SettingsPanel = defineAsyncComponent(() => import("../components/settings/SettingsPanel.vue"))
-const ModelManagement = defineAsyncComponent(() => import("../components/settings/ModelManagement.vue"))
-const ChatView = defineAsyncComponent(() => import("../components/ChatView.vue"))
+import {feedback} from "../services/feedback"
+import {installAudioHost, uninstallAudioHost} from "../services/audio"
 
 const I18N = computed(() => useLanguages().views.main)
+const UI_I18N = computed(() => useLanguages().components.ui.state)
+const PLATFORM_I18N = computed(() => useLanguages().views.main.platform)
 
-// ---- 侧边导航项 ----
-type NavKey = "home" | "talk" | "model" | "settings" | "about"
+// 平台能力: 托盘不可用时要在主窗内补一个常驻入口 (部分 Linux 桌面环境没有 StatusNotifier)
+const PLATFORM = computed(() => RUNTIME.platform())
+const DEGRADED_HINTS = computed(() => {
+	const HINTS: string[] = []
+	if (!PLATFORM.value.supportsTray) HINTS.push(PLATFORM_I18N.value.trayUnavailable)
+	if (!PLATFORM.value.supportsHitThrough) HINTS.push(PLATFORM_I18N.value.hitThroughDegraded)
+	if (!PLATFORM.value.supportsGlobalCursor) HINTS.push(PLATFORM_I18N.value.cursorDegraded)
+	return HINTS
+})
+
+// 异步面板: 卡住/加载失败时给出可见状态, 而不是一片空白
+const PANEL_LOADING = () => h(AppSkeleton, {rows: 4})
+const PANEL_ERROR = () => h("div", {class: "flex flex-1 items-center justify-center gap-2 text-base text-danger-text"}, [
+	h(Icon, {name: "info", size: 18}),
+	h("span", UI_I18N.value.loadFailed),
+])
+
+const PANEL_OPTIONS = {
+	loadingComponent: PANEL_LOADING,
+	errorComponent: PANEL_ERROR,
+	delay: 120,
+	timeout: 15_000,
+} as const
+
+const HomePanel = defineAsyncComponent({loader: () => import("../components/home/HomePanel.vue"), ...PANEL_OPTIONS})
+const SettingsPanel = defineAsyncComponent({loader: () => import("../components/settings/SettingsPanel.vue"), ...PANEL_OPTIONS})
+const ModelManagement = defineAsyncComponent({loader: () => import("../components/settings/ModelManagement.vue"), ...PANEL_OPTIONS})
+const ChatView = defineAsyncComponent({loader: () => import("../components/ChatView.vue"), ...PANEL_OPTIONS})
+
+// ---- 侧边导航 (「关于」已并入设置的二级列表) ----
+type NavKey = "home" | "talk" | "model" | "settings"
 
 const aiConfigured = computed(() => RUNTIME.snapshot.value?.ai.configured ?? false)
 
@@ -26,462 +56,235 @@ const NAV_ITEMS = computed<{key: NavKey; label: string; icon: IconName; badge?: 
 	{key: "talk", label: I18N.value.nav.talk, icon: "send"},
 	{key: "model", label: I18N.value.nav.model, icon: "package"},
 	{key: "settings", label: I18N.value.nav.settings, icon: "settings", badge: !aiConfigured.value},
-	{key: "about", label: I18N.value.nav.about, icon: "info"},
 ])
 
 const activeNav = ref<NavKey>("home")
 const currentNav = computed(() => NAV_ITEMS.value.find((item) => item.key === activeNav.value))
+
+// 设置面板要打开的初始子页 (从主页磁贴跳过来时直达)
+const settingsTarget = ref("")
+
+// ---- 侧边栏折叠 (状态持久化在 general.sidebarCollapsed) ----
+const collapsed = ref(false)
+watch(() => RUNTIME.snapshot.value?.general.sidebarCollapsed, (value) => {
+	if (typeof value === "boolean") collapsed.value = value
+}, {immediate: true})
+
+const toggleSidebar = async () => {
+	collapsed.value = !collapsed.value
+	try {
+		await RUNTIME.updateGeneral({sidebarCollapsed: collapsed.value})
+	} catch (error) {
+		feedback.error(UI_I18N.value.saveFailed, error)
+	}
+}
 
 // 窗口操作: 最小化主窗口 / 退出应用
 const minimizeMain = async () => {
 	await hideWindow("main")
 }
 
-const closeWindow = () => {
+const exitApp = () => {
 	void RUNTIME.exitApp()
 }
 
-// 桌宠当前是否显示
-const petVisible = ref(false)
+// 桌宠当前是否显示: 宿主快照是唯一真相 (托盘切换后会广播 state-changed, 不会陈旧)
+const petVisible = computed(() => RUNTIME.snapshot.value?.pet.visible ?? false)
 const selectedModelName = computed(() => {
 	const MODEL_ID = RUNTIME.snapshot.value?.models.selected ?? "nori"
 	return MODEL_LIST.find(model => model.id === MODEL_ID)?.name ?? MODEL_ID
 })
 
-const refreshPetState = async () => {
+// 召唤 / 收起桌宠
+const togglePet = async () => {
 	try {
-		petVisible.value = await getWindowByLabel("pet").isVisible()
+		if (petVisible.value) {
+			await hideWindow("pet")
+			await RUNTIME.writeLog("info", "主窗口收起 Nori")
+		} else {
+			await showWindow("pet")
+			await RUNTIME.writeLog("info", "主窗口唤出 Nori")
+		}
+	} catch (error) {
+		feedback.error(UI_I18N.value.saveFailed, error)
+	} finally {
 		await RUNTIME.refresh()
-	} catch {
-		petVisible.value = false
 	}
 }
 
-// 召唤 / 收起桌宠
-const togglePet = async () => {
-	if (petVisible.value) {
-		await hideWindow("pet")
-		await RUNTIME.writeLog("info", "主窗口收起 Nori")
-	} else {
-		await showWindow("pet")
-		await RUNTIME.writeLog("info", "主窗口唤出 Nori")
-	}
-	await refreshPetState()
+// 主页磁贴跳转
+const navigate = (tab: "talk" | "model" | "settings") => {
+	if (tab === "settings") settingsTarget.value = "ai"
+	activeNav.value = tab
 }
+
+// 面板内未捕获异常不能拖崩整个主窗口
+const panelError = ref("")
+onErrorCaptured((error) => {
+	panelError.value = error instanceof Error ? error.message : String(error)
+	console.error("面板异常:", error)
+	return false
+})
+
+watch(activeNav, () => {
+	panelError.value = ""
+})
 
 onMounted(async () => {
 	await RUNTIME.init()
-	await refreshPetState()
+	// 主窗口兼任音频宿主: TTS 播放与麦克风录音都在这里 (关窗只隐藏, 所以一直在线)
+	await installAudioHost()
 	void RUNTIME.writeLog("info", "主窗口 Main 挂载完成")
+})
+
+onBeforeUnmount(() => {
+	uninstallAudioHost()
 })
 </script>
 
 <template>
-	<div class="main-window">
+	<div
+		class="w-100vw h-100vh flex flex-col overflow-hidden select-none rounded-lg
+			bg-[radial-gradient(110rem_70rem_at_90%_0%,rgba(125,227,255,0.18)_0%,transparent_60%),radial-gradient(60rem_50rem_at_0%_100%,rgba(15,45,71,0.5)_0%,transparent_60%),linear-gradient(165deg,var(--bg-panel)_0%,var(--bg-deep)_45%,var(--bg-abyss)_100%)]
+			shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.65),inset_0_0_0_0.1rem_var(--line-subtle)]"
+	>
 		<TitleBar>
-			<div class="nav-title-chip">
-				<Icon :name="currentNav?.icon || 'noriOS'" :size="13" class="nav-chip-icon"/>
-				<span class="nav-chip-label">{{ currentNav?.label }}</span>
+			<div class="flex items-center gap-2 px-2.5 py-0.8 rounded-pill bg-white/4 border border-line-subtle text-xs text-text-faint font-500 backdrop-blur-[0.8rem]">
+				<Icon :name="currentNav?.icon || 'noriOS'" :size="13" class="text-nori-teal-bright"/>
+				<span class="text-text-muted">{{ currentNav?.label }}</span>
 			</div>
 
-			<div class="titlebar-right">
-				<button class="win-btn" title="最小化" @click="minimizeMain">
-					<Icon name="minus" :size="14"/>
+			<div class="flex items-center gap-1.5">
+				<button type="button" class="btn-icon" :title="I18N.footer.minimize" :aria-label="I18N.footer.minimize" @click="minimizeMain">
+					<Icon name="minus" :size="13"/>
 				</button>
-				<button class="win-btn close-btn" title="退出应用" @click="closeWindow">
+				<button type="button" class="close-btn" :title="I18N.footer.exit" :aria-label="I18N.footer.exit" @click="exitApp">
 					<Icon name="close" class="close-icon"/>
 				</button>
 			</div>
 		</TitleBar>
 
-		<div class="body">
-			<aside class="sidebar">
-				<div class="sidebar-nav">
+		<div class="flex-1 flex min-h-0 relative">
+			<!-- 侧边导航控制台 -->
+			<aside
+				class="shrink-0 flex flex-col justify-between gap-3 py-3 px-2.5 border-r border-line-subtle
+					bg-bg-abyss/55 backdrop-blur-[1.4rem] transition-[width] duration-250 z-2"
+				:class="collapsed ? 'w-[5.6rem]' : 'w-[15.5rem]'"
+			>
+				<nav class="flex flex-col gap-1.5" :aria-label="I18N.nav.home">
 					<button
 						v-for="item in NAV_ITEMS"
 						:key="item.key"
-						class="nav-item"
-						:class="{active: item.key === activeNav}"
+						type="button"
+						class="nav-item group"
+						:class="[
+							item.key === activeNav ? 'nav-item-active' : '',
+							collapsed ? 'justify-center px-0' : '',
+						]"
+						:title="collapsed ? item.label : undefined"
+						:aria-label="item.label"
+						:aria-current="item.key === activeNav ? 'page' : undefined"
 						@click="activeNav = item.key"
 					>
-						<span class="active-glow-bar"/>
-						<div class="nav-icon-wrap">
+						<span
+							v-if="item.key === activeNav"
+							class="absolute left-0 top-1.5 bottom-1.5 w-[0.35rem] rounded-pill bg-gradient-to-b from-nori-teal-bright to-nori-teal shadow-[0_0_1rem_var(--glow-teal)]"
+						/>
+						<span
+							class="flex items-center justify-center shrink-0 transition-all duration-200"
+							:class="item.key === activeNav ? 'text-nori-teal-bright scale-105' : 'group-hover:scale-110'"
+						>
 							<Icon :name="item.icon" :size="17"/>
-						</div>
-						<span class="nav-label">{{ item.label }}</span>
-						<span v-if="item.badge" class="nav-badge" title="未配置 AI API"/>
+						</span>
+						<span v-if="!collapsed" class="truncate font-500">{{ item.label }}</span>
+						<span
+							v-if="item.badge"
+							class="w-1.8 h-1.8 rounded-full bg-warning shadow-[0_0_0.8rem_var(--warning)] animate-pulse"
+							:class="collapsed ? 'absolute top-1.5 right-1.5' : 'absolute right-3'"
+						/>
 					</button>
-				</div>
+				</nav>
+
+				<button
+					type="button"
+					class="nav-item justify-center text-text-faint hover:text-nori-teal-bright hover:bg-white/6"
+					:title="collapsed ? I18N.sidebar.expand : I18N.sidebar.collapse"
+					:aria-label="collapsed ? I18N.sidebar.expand : I18N.sidebar.collapse"
+					@click="toggleSidebar"
+				>
+					<Icon :name="collapsed ? 'arrow-right' : 'arrow-left'" :size="14"/>
+					<span v-if="!collapsed" class="text-xs font-500">{{ I18N.sidebar.collapse }}</span>
+				</button>
 			</aside>
 
-			<main class="content" :class="{compact: activeNav === 'home'}">
+			<!-- 主工作区 -->
+			<main class="flex-1 min-h-0 flex flex-col items-stretch overflow-hidden px-5 py-4 relative">
+				<p
+					v-if="panelError"
+					class="shrink-0 mb-2.5 px-3 py-1.5 rounded-sm text-sm text-danger-text bg-danger/12 border border-danger/28"
+					role="alert"
+				>{{ panelError }}</p>
+
 				<Transition name="tab-fade" mode="out-in">
 					<!-- 主页看板 -->
 					<HomePanel
 						v-if="activeNav === 'home'"
 						:pet-visible="petVisible"
 						@toggle-pet="togglePet"
-						@navigate="(tab) => activeNav = tab"
+						@navigate="navigate"
 					/>
 
 					<!-- 对话 -->
-					<ChatView v-else-if="activeNav === 'talk'" @go-settings="activeNav = 'settings'"/>
+					<ChatView v-else-if="activeNav === 'talk'" @go-settings="navigate('settings')"/>
 
 					<!-- 模型管理 -->
 					<ModelManagement v-else-if="activeNav === 'model'"/>
 
-					<!-- 全功能设置面板 -->
-					<SettingsPanel v-else-if="activeNav === 'settings'"/>
-
-					<!-- 声明 -->
-					<section v-else-if="activeNav === 'about'" class="about-panel">
-						<div class="about-card glass-panel">
-							<div class="about-icon-header">
-								<Icon name="sparkles" :size="32" class="about-sparkle"/>
-							</div>
-							<h2 class="about-title glow-teal">{{ I18N.about.title }}</h2>
-							<div class="about-badge-row">
-								<span class="about-pill">{{ I18N.about.license }}</span>
-								<span class="about-pill authors">{{ I18N.about.authors }}</span>
-							</div>
-							<p class="about-desc">{{ I18N.about.desc }}</p>
-						</div>
-					</section>
+					<!-- 全功能设置面板 (含关于) -->
+					<SettingsPanel v-else :initial-tab="settingsTarget"/>
 				</Transition>
 			</main>
 		</div>
 
-		<!-- 底部状态与操作栏 -->
-		<div class="footer">
-			<div class="footer-left">
-				<div class="pet-status-chip" :class="{online: petVisible}">
-					<span class="status-pulse-dot"/>
-					<span class="status-text">桌宠状态: {{ petVisible ? '已在桌面就绪' : '待命休眠中' }}</span>
-					<span class="status-model-name">({{ selectedModelName }})</span>
-				</div>
-			</div>
+		<!-- 底部状态与操作胶囊栏 -->
+		<div class="relative shrink-0 flex flex-col gap-1.5 px-5 py-2.5 border-t border-line-subtle bg-bg-abyss/75 backdrop-blur-[1.4rem]">
+			<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/20 to-transparent pointer-events-none"/>
 
-			<div class="footer-right">
-				<button class="btn-primary btn-summon" @click="togglePet">
-					<Icon :name="petVisible ? 'close' : 'sparkles'" :size="15"/>
-					<span>{{ petVisible ? I18N.hidePet : I18N.summonPet }}</span>
-				</button>
+			<!-- 平台降级提示: 没有托盘/穿透/全局光标时明确告知, 而不是静默失效 -->
+			<p
+				v-for="hint in DEGRADED_HINTS"
+				:key="hint"
+				class="m-0 inline-flex items-center gap-1.5 text-xs text-warning"
+				role="note"
+			>
+				<Icon name="info" :size="12"/>
+				<span>{{ hint }}</span>
+			</p>
+
+			<div class="flex items-center justify-between gap-3">
+				<!-- 桌宠实时连接胶囊 -->
+				<div class="flex items-center gap-2">
+					<AppChip :tone="petVisible ? 'success' : 'neutral'" dot>
+						<span>{{ I18N.footer.petLabel }}: {{ petVisible ? I18N.footer.petOnline : I18N.footer.petOffline }}</span>
+						<span class="mono opacity-80">({{ selectedModelName }})</span>
+					</AppChip>
+				</div>
+
+				<div class="flex items-center gap-2.5">
+					<!-- 托盘不可用时的内建退出入口 -->
+					<AppButton v-if="!PLATFORM.supportsTray" icon="power" @click="exitApp">
+						{{ I18N.footer.exit }}
+					</AppButton>
+					<AppButton
+						variant="primary"
+						:icon="petVisible ? 'close' : 'sparkles'"
+						class="shadow-[0_0.2rem_1.4rem_var(--glow-teal-soft)] hover:shadow-[0_0.4rem_2rem_var(--glow-teal)]"
+						@click="togglePet"
+					>
+						{{ petVisible ? I18N.hidePet : I18N.summonPet }}
+					</AppButton>
+				</div>
 			</div>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.main-window {
-	width: 100vw;
-	height: 100vh;
-	background: radial-gradient(80rem 50rem at 100% 0%, rgba(94, 234, 212, 0.08) 0%, transparent 60%),
-		linear-gradient(160deg, var(--bg-panel) 0%, var(--bg-deep) 55%, var(--bg-abyss) 100%);
-	border-radius: var(--radius-lg);
-	display: flex;
-	flex-direction: column;
-	overflow: hidden;
-	user-select: none;
-	box-shadow: 0 1.2rem 3.6rem rgba(0, 0, 0, 0.65), inset 0 0 0 0.1rem var(--line-subtle);
-}
-
-.nav-title-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.3rem 0.9rem;
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	font-size: 1.2rem;
-	color: var(--text-primary);
-
-	.nav-chip-icon {
-		color: var(--nori-teal-bright);
-	}
-}
-
-.titlebar-right {
-	display: flex;
-	align-items: center;
-	gap: 0.6rem;
-}
-
-.win-btn {
-	width: 2.8rem;
-	height: 2.8rem;
-	border: none;
-	border-radius: 50%;
-	background-color: transparent;
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.15s ease;
-
-	&:hover {
-		background-color: rgba(255, 255, 255, 0.08);
-		color: var(--nori-teal-bright);
-	}
-
-	&.close-btn:hover {
-		background-color: rgba(251, 60, 68, 0.18);
-		color: var(--danger);
-	}
-
-	&:active {
-		transform: scale(0.92);
-	}
-}
-
-.body {
-	flex: 1;
-	display: flex;
-	min-height: 0;
-}
-
-.sidebar {
-	width: 15rem;
-	padding: 1.2rem 0.8rem;
-	display: flex;
-	flex-direction: column;
-	justify-content: space-between;
-	border-right: 0.1rem solid var(--line-subtle);
-	background: rgba(5, 14, 26, 0.4);
-	backdrop-filter: blur(1rem);
-}
-
-.sidebar-nav {
-	display: flex;
-	flex-direction: column;
-	gap: 0.5rem;
-}
-
-.nav-item {
-	position: relative;
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-	padding: 0.95rem 1.2rem;
-	border: 0.1rem solid transparent;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: var(--text-muted);
-	font-family: inherit;
-	font-size: 1.3rem;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-	overflow: hidden;
-
-	.active-glow-bar {
-		position: absolute;
-		left: 0;
-		top: 0.6rem;
-		bottom: 0.6rem;
-		width: 0.35rem;
-		border-radius: 0.2rem;
-		background: var(--nori-teal-bright);
-		opacity: 0;
-		transform: scaleY(0.4);
-		transition: all 0.2s ease;
-		box-shadow: 0 0 0.8rem var(--glow-teal);
-	}
-
-	.nav-icon-wrap {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: transform 0.2s ease;
-	}
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.06);
-		color: var(--text-primary);
-
-		.nav-icon-wrap {
-			transform: scale(1.1);
-			color: var(--nori-teal-soft);
-		}
-	}
-
-	&.active {
-		background: rgba(125, 227, 255, 0.12);
-		border-color: rgba(125, 227, 255, 0.2);
-		color: var(--nori-teal-bright);
-		font-weight: 600;
-
-		.active-glow-bar {
-			opacity: 1;
-			transform: scaleY(1);
-		}
-
-		.nav-icon-wrap {
-			color: var(--nori-teal-bright);
-		}
-	}
-
-	.nav-badge {
-		position: absolute;
-		right: 1rem;
-		width: 0.65rem;
-		height: 0.65rem;
-		border-radius: 50%;
-		background: var(--warning);
-		box-shadow: 0 0 0.8rem var(--warning);
-	}
-}
-
-.content {
-	flex: 1;
-	display: flex;
-	flex-direction: column;
-	align-items: stretch;
-	justify-content: flex-start;
-	padding: 1.6rem 2rem;
-	overflow: hidden;
-	min-height: 0;
-}
-
-// 标签过渡
-.tab-fade-enter-active,
-.tab-fade-leave-active {
-	transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.tab-fade-enter-from {
-	opacity: 0;
-	transform: translateY(0.8rem);
-}
-
-.tab-fade-leave-to {
-	opacity: 0;
-	transform: translateY(-0.8rem);
-}
-
-// 声明面板
-.about-panel {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.about-card {
-	width: 100%;
-	max-width: 48rem;
-	padding: 2.8rem 2.4rem;
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-lg);
-	backdrop-filter: blur(1.2rem);
-	box-shadow: 0 0.8rem 2.8rem rgba(0, 0, 0, 0.35);
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 1.4rem;
-	text-align: center;
-}
-
-.about-sparkle {
-	color: var(--nori-teal-bright);
-	filter: drop-shadow(0 0 1.2rem var(--glow-teal));
-}
-
-.about-title {
-	font-size: 2.4rem;
-	font-weight: 700;
-}
-
-.about-badge-row {
-	display: flex;
-	gap: 0.8rem;
-	flex-wrap: wrap;
-	justify-content: center;
-}
-
-.about-pill {
-	padding: 0.35rem 1rem;
-	background: rgba(125, 227, 255, 0.08);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-pill);
-	font-size: 1.15rem;
-	color: var(--nori-teal-soft);
-
-	&.authors {
-		background: rgba(255, 255, 255, 0.05);
-		color: var(--text-body);
-	}
-}
-
-.about-desc {
-	font-size: 1.25rem;
-	color: var(--text-muted);
-	line-height: 1.6;
-	max-width: 36rem;
-}
-
-// 底部控制栏
-.footer {
-	padding: 0.8rem 1.6rem;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	border-top: 0.1rem solid var(--line-subtle);
-	background: rgba(5, 14, 26, 0.6);
-	backdrop-filter: blur(1rem);
-	flex-shrink: 0;
-}
-
-.footer-left {
-	display: flex;
-	align-items: center;
-}
-
-.pet-status-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.35rem 0.9rem;
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	font-size: 1.15rem;
-	color: var(--text-muted);
-
-	.status-pulse-dot {
-		width: 0.6rem;
-		height: 0.6rem;
-		border-radius: 50%;
-		background: #7a8c9e;
-		transition: all 0.3s ease;
-	}
-
-	.status-model-name {
-		color: var(--text-faint);
-		font-family: monospace;
-	}
-
-	&.online {
-		background: rgba(32, 224, 144, 0.08);
-		border-color: rgba(32, 224, 144, 0.25);
-		color: #20e090;
-
-		.status-pulse-dot {
-			background: #20e090;
-			box-shadow: 0 0 0.8rem #20e090;
-		}
-
-		.status-model-name {
-			color: var(--nori-teal-soft);
-		}
-	}
-}
-
-.btn-summon {
-	padding: 0.75rem 1.8rem;
-	font-size: 1.25rem;
-}
-</style>
-

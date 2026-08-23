@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../Icon.vue"
+import AppChip from "../ui/AppChip.vue"
+import AppButton from "../ui/AppButton.vue"
 import type {IconMode, IconName} from "../../services/icon"
 import {MODEL_LIST} from "../../services/live2d/models"
 import {RUNTIME} from "../../services/runtime"
+import {feedback} from "../../services/feedback"
 
 const props = defineProps<{
 	petVisible: boolean
@@ -12,7 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
 	"toggle-pet": []
-	navigate: [tab: "talk" | "model" | "settings" | "about"]
+	navigate: [tab: "talk" | "model" | "settings"]
 }>()
 
 const I18N = computed(() => useLanguages().views.main.home)
@@ -25,7 +28,7 @@ const aiConfigured = computed(() => SNAPSHOT.value?.ai.configured ?? false)
 const aiProvider = computed(() => SNAPSHOT.value?.ai.provider ?? "")
 const aiModel = computed(() => SNAPSHOT.value?.ai.model ?? "")
 const enabledSkillsCount = computed(() => SNAPSHOT.value?.enabledSkillsCount ?? 0)
-const enabledToolsCount = computed(() => (SNAPSHOT.value?.tools ?? []).filter(t => t.enabled).length)
+const enabledToolsCount = computed(() => (SNAPSHOT.value?.tools ?? []).filter(tool => tool.enabled).length)
 
 // ---- 快捷动作提示反馈 ----
 const motionFeedback = ref(false)
@@ -34,6 +37,11 @@ let feedbackTimer: ReturnType<typeof setTimeout> | null = null
 // 复制 QQ 提示
 const qqCopied = ref(false)
 let qqTimer: ReturnType<typeof setTimeout> | null = null
+
+onBeforeUnmount(() => {
+	if (feedbackTimer) clearTimeout(feedbackTimer)
+	if (qqTimer) clearTimeout(qqTimer)
+})
 
 // 社区外链列表
 interface CommunityLink {
@@ -62,7 +70,7 @@ const communityLinks = computed<CommunityLink[]>(() => [
 	},
 	{
 		key: "qq",
-		label: qqCopied.value ? "已复制群号" : I18N.value.links.qq,
+		label: qqCopied.value ? I18N.value.links.copied : I18N.value.links.qq,
 		icon: "qq",
 		mode: "fill",
 		qq: "1041616195",
@@ -73,6 +81,55 @@ const communityLinks = computed<CommunityLink[]>(() => [
 		icon: "bilibili",
 		mode: "fill",
 		url: "https://space.bilibili.com/326505494",
+	},
+])
+
+// 磁贴卡片
+interface NavCard {
+	key: "talk" | "model" | "settings"
+	icon: IconName
+	iconClass: string
+	title: string
+	desc: string
+	action: string
+	status: string
+	ok: boolean
+}
+
+const NAV_CARDS = computed<NavCard[]>(() => [
+	{
+		key: "talk",
+		icon: "send",
+		iconClass: "bg-nori-teal-bright/12 text-nori-teal-bright",
+		title: I18N.value.cards.chat.title,
+		desc: I18N.value.cards.chat.desc,
+		action: I18N.value.cards.chat.action,
+		status: aiConfigured.value
+			? (aiModel.value ? `${I18N.value.cards.chat.statusConfigured}: ${aiModel.value}` : I18N.value.cards.chat.statusConfigured)
+			: I18N.value.cards.chat.statusNotConfigured,
+		ok: aiConfigured.value,
+	},
+	{
+		key: "model",
+		icon: "package",
+		iconClass: "bg-nori-teal/12 text-nori-teal",
+		title: I18N.value.cards.model.title,
+		desc: I18N.value.cards.model.desc,
+		action: I18N.value.cards.model.action,
+		status: `${I18N.value.cards.model.current}: ${currentModel.value.name}`,
+		ok: true,
+	},
+	{
+		key: "settings",
+		icon: "cpu",
+		iconClass: "bg-warning/12 text-warning",
+		title: I18N.value.cards.ai.title,
+		desc: I18N.value.cards.ai.desc,
+		action: I18N.value.cards.ai.action,
+		status: aiProvider.value
+			? `${I18N.value.cards.ai.provider}: ${aiProvider.value}`
+			: I18N.value.cards.chat.statusNotConfigured,
+		ok: aiConfigured.value,
 	},
 ])
 
@@ -87,7 +144,7 @@ const triggerQuickMotion = async () => {
 			motionFeedback.value = false
 		}, 1500)
 	} catch (error) {
-		console.error("触发动作失败:", error)
+		feedback.error(I18N.value.motionFailed, error)
 	}
 }
 
@@ -103,12 +160,16 @@ const handleCommunityClick = async (link: CommunityLink) => {
 			}, 2000)
 			await RUNTIME.writeLog("info", `已复制 QQ 交流群号: ${link.qq}`)
 		} catch (error) {
-			console.error("复制 QQ 群号失败:", error)
+			feedback.error(I18N.value.copyFailed, error)
 		}
 		return
 	}
 	if (link.url) {
-		await RUNTIME.openUrl(link.url)
+		try {
+			await RUNTIME.openUrl(link.url)
+		} catch (error) {
+			feedback.error(I18N.value.openFailed, error)
+		}
 	}
 }
 
@@ -118,656 +179,147 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="home-panel">
-		<!-- 顶部 Hero 卡片: 桌宠形象与状态控制 -->
-		<section class="hero-card glass-panel">
-			<div class="hero-left">
-				<div class="avatar-wrap" :class="{active: props.petVisible}">
-					<img :src="currentModel.thumb" :alt="currentModel.name" class="pet-thumb"/>
-					<div class="avatar-glow-ring"></div>
-					<span class="status-indicator" :class="{online: props.petVisible}"/>
+	<div class="w-full h-full flex flex-col gap-4 px-0.5 py-0.5 scroll-area">
+		<!-- 顶部 Hero 角色中枢舞台 -->
+		<section
+			class="relative overflow-hidden flex items-center justify-between gap-5 p-5 rounded-lg
+				bg-gradient-to-r from-bg-card/90 via-bg-card to-bg-panel/40 border border-line-strong backdrop-blur-[1.6rem]
+				shadow-[0_0.8rem_3.2rem_rgba(0,0,0,0.45),inset_0_0_0_0.1rem_var(--line-subtle)]"
+		>
+			<!-- 深海径向光晕背景 -->
+			<span class="absolute -top-1/2 -left-[15%] w-[42rem] h-[24rem] opacity-35 pointer-events-none bg-[radial-gradient(circle,var(--glow-teal)_0%,transparent_68%)]"/>
+			<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/30 to-transparent pointer-events-none"/>
+
+			<div class="relative flex items-center gap-5 min-w-0">
+				<!-- 头像与能量光环 -->
+				<div class="relative w-[5.8rem] h-[5.8rem] shrink-0 rounded-full flex items-center justify-center bg-bg-deep/90 border-2 border-nori-teal-bright/35 overflow-hidden shadow-[0_0_2rem_var(--glow-teal-soft)]">
+					<img :src="currentModel.thumb" :alt="currentModel.name" class="w-full h-full object-cover object-top transition-transform duration-300 hover:scale-110"/>
+					<!-- 在线状态呼吸环 -->
+					<span
+						class="absolute bottom-0 right-0 w-[1.3rem] h-[1.3rem] rounded-full border-2 border-bg-abyss"
+						:class="props.petVisible ? 'bg-success shadow-[0_0_0.8rem_var(--success)] animate-pulse' : 'bg-text-faint'"
+					/>
 				</div>
 
-				<div class="hero-info">
-					<div class="hero-header-row">
-						<h2 class="pet-name glow-teal">{{ currentModel.name }}</h2>
-						<span class="status-tag" :class="{online: props.petVisible}">
-							<span class="status-dot"/>
+				<div class="flex flex-col gap-1.5 min-w-0">
+					<div class="flex items-center gap-2.5 flex-wrap">
+						<h2 class="title-lg tracking-[0.02rem] text-text-primary [text-shadow:0_0_1.4rem_var(--glow-teal-soft)]">{{ currentModel.name }}</h2>
+						<AppChip :tone="props.petVisible ? 'success' : 'neutral'" dot>
 							{{ props.petVisible ? I18N.petStatusOnline : I18N.petStatusOffline }}
-						</span>
+						</AppChip>
 					</div>
-					<p class="pet-desc">
+					<p class="text-xs text-text-muted leading-relaxed">
 						{{ props.petVisible ? I18N.petStatusDescOnline : I18N.petStatusDescOffline }}
 					</p>
 
-					<!-- 快速状态标签栏 -->
-					<div class="quick-status-row">
-						<span class="quick-badge" :class="{ok: aiConfigured}">
-							<Icon name="cpu" :size="12"/>
-							<span>{{ aiConfigured ? (aiModel || 'AI 已就绪') : '未连接 AI' }}</span>
-						</span>
-						<span class="quick-badge">
-							<Icon name="sparkles" :size="12"/>
-							<span>{{ enabledSkillsCount }} 技能 / {{ enabledToolsCount }} 工具</span>
-						</span>
+					<div class="flex items-center gap-2 flex-wrap mt-0.5">
+						<AppChip :tone="aiConfigured ? 'teal' : 'neutral'" icon="cpu">
+							{{ aiConfigured ? (aiModel || I18N.badge.aiReady) : I18N.badge.aiMissing }}
+						</AppChip>
+						<AppChip icon="sparkles">
+							{{ enabledSkillsCount }} {{ I18N.badge.skills }} / {{ enabledToolsCount }} {{ I18N.badge.tools }}
+						</AppChip>
 					</div>
 				</div>
 			</div>
 
-			<div class="hero-actions">
-				<button
-					class="btn-action"
-					:class="props.petVisible ? 'btn-pet-hide' : 'btn-pet-summon'"
+			<div class="relative flex items-center gap-2.5 shrink-0">
+				<AppButton
+					:variant="props.petVisible ? 'ghost' : 'primary'"
+					:icon="props.petVisible ? 'close' : 'sparkles'"
+					class="px-4 py-2"
 					@click="emit('toggle-pet')"
 				>
-					<Icon :name="props.petVisible ? 'close' : 'sparkles'" :size="16"/>
-					<span>{{ props.petVisible ? I18N.hidePet : I18N.summonPet }}</span>
-				</button>
+					{{ props.petVisible ? I18N.hidePet : I18N.summonPet }}
+				</AppButton>
 
-				<button
+				<AppButton
 					v-if="props.petVisible"
-					class="btn-action btn-motion"
+					icon="sparkles"
 					:disabled="motionFeedback"
+					class="px-3.5 py-2"
 					@click="triggerQuickMotion"
 				>
-					<Icon name="sparkles" :size="16"/>
-					<span>{{ motionFeedback ? I18N.quickMotionDone : I18N.quickMotion }}</span>
-				</button>
+					{{ motionFeedback ? I18N.quickMotionDone : I18N.quickMotion }}
+				</AppButton>
 			</div>
 		</section>
 
-		<!-- 中部磁贴导航网格 -->
-		<section class="nav-grid">
-			<!-- AI 对话卡片 -->
-			<div class="grid-card chat-card glass-panel" @click="emit('navigate', 'talk')">
-				<div class="card-glow-backdrop"></div>
-				<div class="card-icon-wrap icon-chat">
-					<Icon name="send" :size="22"/>
-				</div>
-				<div class="card-body">
-					<h3 class="card-title">{{ I18N.cards.chat.title }}</h3>
-					<p class="card-desc">{{ I18N.cards.chat.desc }}</p>
-					<div class="card-status">
-						<span class="status-pill" :class="{ok: aiConfigured}">
-							<span class="pill-dot"/>
-							{{ aiConfigured ? (aiModel ? `已接入: ${aiModel}` : I18N.cards.chat.statusConfigured) : I18N.cards.chat.statusNotConfigured }}
-						</span>
-					</div>
-				</div>
-				<div class="card-btn">
-					<span>{{ I18N.cards.chat.action }}</span>
-					<Icon name="arrow-right" :size="14" class="card-btn-arrow"/>
-				</div>
-			</div>
+		<!-- 中部立体导航磁贴网格 -->
+		<section class="grid gap-3.5 grid-cols-1 md:grid-cols-3">
+			<button
+				v-for="card in NAV_CARDS"
+				:key="card.key"
+				type="button"
+				class="group relative overflow-hidden min-h-[14.5rem] flex flex-col justify-between p-4.5 text-left
+					surface-card cursor-pointer transition-all duration-200 focus-ring
+					hover:(border-line-glow bg-bg-card-hover -translate-y-[0.2rem] shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.5),0_0_1.6rem_var(--glow-teal-soft)])"
+				@click="emit('navigate', card.key)"
+			>
+				<!-- 顶部悬浮光线 -->
+				<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/0 to-transparent transition-all duration-300 group-hover:via-nori-teal-bright/40"/>
 
-			<!-- 模型换装卡片 -->
-			<div class="grid-card model-card glass-panel" @click="emit('navigate', 'model')">
-				<div class="card-glow-backdrop"></div>
-				<div class="card-icon-wrap icon-model">
-					<Icon name="package" :size="22"/>
-				</div>
-				<div class="card-body">
-					<h3 class="card-title">{{ I18N.cards.model.title }}</h3>
-					<p class="card-desc">{{ I18N.cards.model.desc }}</p>
-					<div class="card-status">
-						<span class="status-pill ok">
-							<span class="pill-dot"/>
-							{{ I18N.cards.model.current }}: {{ currentModel.name }}
+				<div>
+					<div class="flex items-center justify-between gap-2 mb-3">
+						<span
+							class="w-[3.6rem] h-[3.6rem] rounded-sm flex items-center justify-center border border-line-subtle text-nori-teal-bright bg-nori-teal-bright/10 transition-all duration-200 group-hover:(scale-110 border-nori-teal-bright/40 shadow-[0_0_1.2rem_var(--glow-teal-soft)])"
+						>
+							<Icon :name="card.icon" :size="18"/>
 						</span>
+						<AppChip :tone="card.ok ? 'teal' : 'neutral'" dot>{{ card.status }}</AppChip>
 					</div>
-				</div>
-				<div class="card-btn">
-					<span>{{ I18N.cards.model.action }}</span>
-					<Icon name="arrow-right" :size="14" class="card-btn-arrow"/>
-				</div>
-			</div>
 
-			<!-- AI 大脑配置卡片 -->
-			<div class="grid-card ai-card glass-panel" @click="emit('navigate', 'settings')">
-				<div class="card-glow-backdrop"></div>
-				<div class="card-icon-wrap icon-ai">
-					<Icon name="cpu" :size="22"/>
-				</div>
-				<div class="card-body">
-					<h3 class="card-title">{{ I18N.cards.ai.title }}</h3>
-					<p class="card-desc">{{ I18N.cards.ai.desc }}</p>
-					<div class="card-status">
-						<span class="status-pill" :class="{ok: aiConfigured}">
-							<span class="pill-dot"/>
-							{{ aiProvider ? `${I18N.cards.ai.provider}: ${aiProvider}` : I18N.cards.chat.statusNotConfigured }}
-						</span>
+					<div class="flex flex-col gap-1.2">
+						<span class="title-sm text-text-primary group-hover:text-nori-teal-bright transition-colors">{{ card.title }}</span>
+						<span class="text-xs text-text-muted leading-relaxed">{{ card.desc }}</span>
 					</div>
 				</div>
-				<div class="card-btn">
-					<span>{{ I18N.cards.ai.action }}</span>
-					<Icon name="arrow-right" :size="14" class="card-btn-arrow"/>
+
+				<div
+					class="mt-3.5 flex items-center justify-between pt-2.5 border-t border-line-subtle text-xs text-text-muted transition-colors
+						group-hover:text-nori-teal-bright"
+				>
+					<span class="font-500">{{ card.action }}</span>
+					<Icon name="arrow-right" :size="14" class="transition-transform duration-200 group-hover:translate-x-1"/>
 				</div>
-			</div>
+			</button>
 		</section>
 
 		<!-- 底部生态社区与系统状态 -->
-		<section class="footer-section">
-			<div class="community-block">
-				<h4 class="section-title">{{ I18N.links.title }}</h4>
-				<div class="links-row">
+		<section class="flex flex-col gap-3 pt-3 border-t border-line-subtle">
+			<div>
+				<h4 class="text-hint mb-2 uppercase font-600 tracking-[0.06rem]">{{ I18N.links.title }}</h4>
+				<div class="flex flex-wrap gap-2.5">
 					<button
 						v-for="item in communityLinks"
 						:key="item.key"
-						class="community-chip"
-						:class="{copied: item.key === 'qq' && qqCopied}"
+						type="button"
+						class="btn-ghost px-3.5 py-1.8"
+						:class="item.key === 'qq' && qqCopied ? 'bg-success/15 border-success/40 text-success' : ''"
 						@click="handleCommunityClick(item)"
 					>
-						<Icon :name="item.icon" :mode="item.mode" :size="16"/>
-						<span>{{ item.label }}</span>
+						<Icon :name="item.icon" :mode="item.mode" :size="14"/>
+						<span class="font-500">{{ item.label }}</span>
 					</button>
 				</div>
 			</div>
 
-			<div class="system-block">
-				<span class="sys-item">
-					<span class="sys-label">{{ I18N.system.appVersion }}:</span>
-					<span class="sys-value">v{{ SNAPSHOT?.app.appVersion ?? "0.1.0" }}</span>
+			<div class="flex items-center gap-2.5 flex-wrap text-xs text-text-faint pt-1">
+				<span class="flex items-center">
+					<span>{{ I18N.system.appVersion }}:</span>
+					<span class="ml-1 text-text-muted mono font-600">v{{ SNAPSHOT?.app.appVersion ?? "0.1.0" }}</span>
 				</span>
-				<span class="sys-divider">/</span>
-				<span class="sys-item">
-					<span class="sys-label">{{ I18N.system.webview }}:</span>
-					<span class="sys-value">Avalonia + WebView2</span>
+				<span class="opacity-30">/</span>
+				<span class="flex items-center">
+					<span>{{ I18N.system.webview }}:</span>
+					<span class="ml-1 text-text-muted">Avalonia + WebView2</span>
 				</span>
-				<span class="sys-divider">/</span>
-				<span class="sys-item status-ok">
-					<span class="sys-dot"/>
+				<span class="opacity-30">/</span>
+				<span class="inline-flex items-center gap-1.5 text-success font-500">
+					<span class="w-1.5 h-1.5 rounded-full bg-success shadow-[0_0_0.6rem_var(--success)]"/>
 					<span>{{ I18N.system.statusNormal }}</span>
 				</span>
 			</div>
 		</section>
 	</div>
 </template>
-
-<style scoped lang="less">
-.home-panel {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	gap: 1.6rem;
-	overflow-y: auto;
-	padding: 0.2rem 0.4rem;
-}
-
-// ---- Hero 顶部卡片 ----
-.hero-card {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 1.8rem 2.4rem;
-	background: linear-gradient(135deg, rgba(125, 227, 255, 0.08) 0%, rgba(5, 14, 26, 0.75) 100%);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-lg);
-	box-shadow: 0 0.8rem 2.8rem rgba(0, 0, 0, 0.35);
-	backdrop-filter: blur(1.2rem);
-	position: relative;
-	overflow: hidden;
-
-	&::before {
-		content: "";
-		position: absolute;
-		top: -40%;
-		left: -10%;
-		width: 36rem;
-		height: 18rem;
-		background: radial-gradient(circle, var(--glow-teal-soft) 0%, transparent 70%);
-		opacity: 0.4;
-		pointer-events: none;
-	}
-}
-
-.hero-left {
-	display: flex;
-	align-items: center;
-	gap: 1.8rem;
-	z-index: 1;
-}
-
-.avatar-wrap {
-	position: relative;
-	width: 6.8rem;
-	height: 6.8rem;
-	border-radius: 50%;
-	background: rgba(8, 22, 38, 0.85);
-	border: 0.2rem solid var(--line-strong);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	.avatar-glow-ring {
-		position: absolute;
-		inset: -0.4rem;
-		border-radius: 50%;
-		border: 0.1rem solid transparent;
-		transition: all 0.3s ease;
-	}
-
-	&.active {
-		border-color: var(--nori-teal-bright);
-		box-shadow: 0 0 2rem var(--glow-teal);
-
-		.avatar-glow-ring {
-			border-color: rgba(94, 234, 212, 0.4);
-			animation: glow-pulse 2.5s ease-in-out infinite;
-		}
-	}
-}
-
-.pet-thumb {
-	width: 6rem;
-	height: 6rem;
-	object-fit: cover;
-	border-radius: 50%;
-}
-
-.status-indicator {
-	position: absolute;
-	bottom: 0.2rem;
-	right: 0.2rem;
-	width: 1.3rem;
-	height: 1.3rem;
-	border-radius: 50%;
-	background: #7a8c9e;
-	border: 0.2rem solid #050e1a;
-	transition: all 0.3s ease;
-
-	&.online {
-		background: #20e090;
-		box-shadow: 0 0 1rem #20e090;
-	}
-}
-
-.hero-info {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.hero-header-row {
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-}
-
-.pet-name {
-	font-size: 2.2rem;
-	font-weight: 700;
-	color: var(--text-primary);
-	letter-spacing: 0.05rem;
-}
-
-.status-tag {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	padding: 0.3rem 0.9rem;
-	border-radius: var(--radius-pill);
-	font-size: 1.15rem;
-	background: rgba(255, 255, 255, 0.06);
-	color: var(--text-muted);
-	border: 0.1rem solid rgba(255, 255, 255, 0.08);
-	transition: all 0.3s ease;
-
-	.status-dot {
-		width: 0.6rem;
-		height: 0.6rem;
-		border-radius: 50%;
-		background: #7a8c9e;
-		transition: all 0.3s ease;
-	}
-
-	&.online {
-		background: rgba(32, 224, 144, 0.12);
-		color: #20e090;
-		border-color: rgba(32, 224, 144, 0.3);
-
-		.status-dot {
-			background: #20e090;
-			box-shadow: 0 0 0.8rem #20e090;
-		}
-	}
-}
-
-.pet-desc {
-	font-size: 1.25rem;
-	color: var(--text-faint);
-}
-
-.quick-status-row {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	margin-top: 0.4rem;
-	flex-wrap: wrap;
-}
-
-.quick-badge {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	padding: 0.25rem 0.8rem;
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	font-size: 1.1rem;
-	color: var(--text-muted);
-
-	&.ok {
-		background: rgba(125, 227, 255, 0.08);
-		border-color: rgba(125, 227, 255, 0.25);
-		color: var(--nori-teal-bright);
-	}
-}
-
-.hero-actions {
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-	z-index: 1;
-}
-
-.btn-action {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.7rem;
-	padding: 0.9rem 1.8rem;
-	border-radius: var(--radius-sm);
-	font-size: 1.35rem;
-	font-family: inherit;
-	font-weight: 600;
-	cursor: pointer;
-	border: none;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&.btn-pet-summon {
-		background: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-		color: #03101c;
-		box-shadow: 0 0.4rem 1.6rem var(--glow-teal-soft);
-
-		&:hover {
-			box-shadow: 0 0.6rem 2.4rem var(--glow-teal-strong);
-			transform: translateY(-0.15rem);
-		}
-	}
-
-	&.btn-pet-hide {
-		background: rgba(255, 255, 255, 0.08);
-		color: var(--text-body);
-		border: 0.1rem solid var(--line-subtle);
-
-		&:hover {
-			background: rgba(251, 60, 68, 0.15);
-			border-color: rgba(251, 60, 68, 0.4);
-			color: #ff6b6b;
-			transform: translateY(-0.1rem);
-		}
-	}
-
-	&.btn-motion {
-		background: rgba(125, 227, 255, 0.1);
-		color: var(--nori-teal-bright);
-		border: 0.1rem solid var(--line-strong);
-
-		&:hover:not(:disabled) {
-			background: rgba(125, 227, 255, 0.18);
-			box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-			transform: translateY(-0.15rem);
-		}
-
-		&:disabled {
-			opacity: 0.6;
-			cursor: not-allowed;
-		}
-	}
-}
-
-// ---- 导航网格 ----
-.nav-grid {
-	display: grid;
-	grid-template-columns: repeat(3, 1fr);
-	gap: 1.4rem;
-}
-
-.grid-card {
-	display: flex;
-	flex-direction: column;
-	justify-content: space-between;
-	padding: 1.8rem 1.6rem;
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	cursor: pointer;
-	transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-	min-height: 17rem;
-	position: relative;
-	overflow: hidden;
-
-	.card-glow-backdrop {
-		position: absolute;
-		top: -20%;
-		right: -20%;
-		width: 14rem;
-		height: 14rem;
-		border-radius: 50%;
-		background: radial-gradient(circle, rgba(125, 227, 255, 0.08) 0%, transparent 70%);
-		opacity: 0;
-		transition: opacity 0.3s ease;
-		pointer-events: none;
-	}
-
-	&:hover {
-		border-color: var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.08);
-		box-shadow: 0 0.8rem 2.6rem rgba(0, 0, 0, 0.35), 0 0 1.4rem var(--glow-teal-soft);
-		transform: translateY(-0.3rem);
-
-		.card-glow-backdrop {
-			opacity: 1;
-		}
-
-		.card-btn {
-			color: var(--nori-teal-bright);
-			border-color: var(--nori-teal-soft);
-			background: rgba(125, 227, 255, 0.1);
-
-			.card-btn-arrow {
-				transform: translateX(0.3rem);
-			}
-		}
-	}
-}
-
-.card-icon-wrap {
-	width: 4.2rem;
-	height: 4.2rem;
-	border-radius: var(--radius-sm);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	margin-bottom: 1.2rem;
-	border: 0.1rem solid var(--line-subtle);
-	transition: transform 0.2s ease;
-
-	&.icon-chat {
-		background: rgba(125, 227, 255, 0.12);
-		color: var(--nori-teal-bright);
-	}
-
-	&.icon-model {
-		background: rgba(180, 140, 255, 0.12);
-		color: #c49eff;
-	}
-
-	&.icon-ai {
-		background: rgba(255, 180, 80, 0.12);
-		color: #ffb86c;
-	}
-}
-
-.card-body {
-	flex: 1;
-	display: flex;
-	flex-direction: column;
-	gap: 0.5rem;
-}
-
-.card-title {
-	font-size: 1.55rem;
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.card-desc {
-	font-size: 1.2rem;
-	color: var(--text-muted);
-	line-height: 1.45;
-}
-
-.card-status {
-	margin-top: 0.8rem;
-}
-
-.status-pill {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	font-size: 1.05rem;
-	padding: 0.25rem 0.8rem;
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.05);
-	color: var(--text-faint);
-	border: 0.1rem solid var(--line-subtle);
-
-	.pill-dot {
-		width: 0.5rem;
-		height: 0.5rem;
-		border-radius: 50%;
-		background: var(--text-faint);
-	}
-
-	&.ok {
-		background: rgba(125, 227, 255, 0.1);
-		color: var(--nori-teal-bright);
-		border-color: rgba(125, 227, 255, 0.25);
-
-		.pill-dot {
-			background: var(--nori-teal-bright);
-			box-shadow: 0 0 0.6rem var(--glow-teal);
-		}
-	}
-}
-
-.card-btn {
-	margin-top: 1.2rem;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0.7rem 1rem;
-	background: rgba(255, 255, 255, 0.03);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-muted);
-	font-size: 1.2rem;
-	font-weight: 500;
-	transition: all 0.2s ease;
-
-	.card-btn-arrow {
-		transition: transform 0.2s ease;
-	}
-}
-
-// ---- 底部区域 ----
-.footer-section {
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-	padding-top: 0.8rem;
-	border-top: 0.1rem solid var(--line-subtle);
-}
-
-.section-title {
-	font-size: 1.2rem;
-	color: var(--text-faint);
-	margin-bottom: 0.8rem;
-	letter-spacing: 0.04rem;
-}
-
-.links-row {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 1rem;
-}
-
-.community-chip {
-	display: flex;
-	align-items: center;
-	gap: 0.7rem;
-	padding: 0.75rem 1.4rem;
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	color: var(--text-body);
-	font-size: 1.2rem;
-	font-family: inherit;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.1);
-		border-color: var(--nori-teal-soft);
-		color: var(--nori-teal-bright);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-		transform: translateY(-0.15rem);
-	}
-
-	&.copied {
-		background: rgba(32, 224, 144, 0.15);
-		border-color: rgba(32, 224, 144, 0.4);
-		color: #20e090;
-	}
-}
-
-.system-block {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-	padding-top: 0.4rem;
-}
-
-.sys-label {
-	color: var(--text-faint);
-}
-
-.sys-value {
-	color: var(--text-muted);
-	margin-left: 0.3rem;
-}
-
-.sys-divider {
-	opacity: 0.3;
-}
-
-.status-ok {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.5rem;
-	color: #20e090;
-
-	.sys-dot {
-		width: 0.6rem;
-		height: 0.6rem;
-		border-radius: 50%;
-		background: #20e090;
-		box-shadow: 0 0 0.8rem #20e090;
-	}
-}
-</style>
-

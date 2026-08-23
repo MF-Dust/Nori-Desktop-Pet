@@ -1,10 +1,21 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
+import {feedback} from "../../services/feedback"
+import useLanguages from "../../services/i18n/useLanguages"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
 import Icon from "../Icon.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppCard from "../ui/AppCard.vue"
+import AppSwitchRow from "../ui/AppSwitchRow.vue"
+
+const I18N = computed(() => useLanguages().views.main.voice)
 
 const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
 const VOICE = computed(() => SNAPSHOT.value?.voice)
+
+// 字段级防抖保存 (每字段独立计时器, 卸载时自动 flush, 失败走反馈层)
+const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(I18N.value.saveFailed, error)})
 
 // 全局音量 (0 ~ 100)
 const volume = ref(100)
@@ -54,20 +65,19 @@ const syncFromSnapshot = () => {
 	sttBaseUrl.value = V.sttBaseUrl
 }
 
-// 保存辅助: 每个 key 独立防抖 timer
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
-const saveDebounced = (key: string, value: () => Record<string, unknown>) => {
-	clearTimeout(timers.get(key))
-	timers.set(key, setTimeout(() => {
-		timers.delete(key)
-		void RUNTIME.updateVoice(value()).catch(error => console.error(`保存语音配置失败 (${key}):`, error))
-	}, 400))
-}
-
-// 音量修改 (立即提交, 滑块松手即生效)
+// 音量修改 (滑块连续拖动, 防抖提交)
 const onVolumeChange = (value: number) => {
 	volume.value = value
-	saveDebounced("volume", () => ({volume: String(value / 100)}))
+	SAVE.save("volume", () => RUNTIME.updateVoice({volume: String(value / 100)}))
+}
+
+// 关闭旧浏览器语音配置提示
+const ackNotice = async () => {
+	try {
+		await RUNTIME.ackVoiceNotice()
+	} catch (error) {
+		feedback.error(I18N.value.notice.ackFailed, error)
+	}
 }
 
 // 试听当前音色 (合成与播放全部在后端)
@@ -77,7 +87,7 @@ const testVoice = async () => {
 	try {
 		await RUNTIME.ttsTest()
 	} catch (error) {
-		console.error("试听失败:", error)
+		feedback.error(I18N.value.tts.testFailed, error)
 	} finally {
 		isSpeakingTest.value = false
 	}
@@ -85,477 +95,242 @@ const testVoice = async () => {
 </script>
 
 <template>
-	<div class="voice-settings">
-		<header class="section-header">
-			<h2 class="title glow-teal">语音与音效设置</h2>
-			<p class="subtitle">配置桌宠语音合成 (TTS)、语音识别 (STT) 与全局输出音量</p>
-		</header>
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+		<AppSectionHeader
+			:title="I18N.title"
+			:subtitle="I18N.subtitle"
+		/>
 
 		<!-- 旧浏览器语音配置一次性提示 -->
-		<div v-if="VOICE?.noticePending" class="notice-card">
-			<Icon name="alert" :size="16" class="notice-icon"/>
-			<div class="notice-body">
-				<p class="notice-title">检测到旧版浏览器语音配置</p>
-				<p class="notice-desc">
-					纯后端版本不再支持 Web Speech / 浏览器 Edge-TTS。请改用 OpenAI / 自定义 HTTP / GPT-SoVITS 云端语音；原配置已保留，不会被删除。
+		<div
+			v-if="VOICE?.noticePending"
+			class="shrink-0 flex items-start gap-2.5 px-4 py-3 rounded-md bg-white/4 border border-warning/35"
+			role="status"
+		>
+			<Icon name="alert" :size="16" class="shrink-0 mt-0.5 text-warning"/>
+			<div class="flex-1 min-w-0 flex flex-col gap-1">
+				<p class="text-base font-600 text-text-primary">{{ I18N.notice.title }}</p>
+				<p class="text-xs text-text-muted leading-relaxed">
+					{{ I18N.notice.desc }}
 				</p>
 			</div>
-			<n-button size="small" @click="RUNTIME.ackVoiceNotice()">
-				知道了
+			<n-button size="small" @click="ackNotice">
+				{{ I18N.notice.ack }}
 			</n-button>
 		</div>
 
-		<div class="settings-content">
+		<div class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 全局音量 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="volume" :size="18" class="card-icon"/>
-					<span class="card-title">全局输出音量</span>
+			<AppCard :title="I18N.volume.title" icon="volume">
+				<div class="flex items-center gap-3.5">
+					<n-slider
+						:value="volume"
+						:min="0"
+						:max="100"
+						:format-tooltip="(v: number) => `${v}%`"
+						class="flex-1"
+						@update:value="onVolumeChange"
+					/>
+					<span class="w-[4.8rem] text-right text-sm font-600 text-nori-teal-bright mono">{{ volume }}%</span>
 				</div>
-				<div class="card-body">
-					<div class="slider-row">
-						<n-slider
-							:value="volume"
-							:min="0"
-							:max="100"
-							:format-tooltip="(v: number) => `${v}%`"
-							class="volume-slider"
-							@update:value="onVolumeChange"
-						/>
-						<span class="slider-value">{{ volume }}%</span>
-					</div>
-				</div>
-			</div>
+			</AppCard>
 
 			<!-- 2. TTS 语音合成 -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="sparkles" :size="18" class="card-icon"/>
-					<span class="card-title">TTS 语音合成服务</span>
+			<AppCard :title="I18N.tts.title" icon="sparkles">
+				<div class="field">
+					<span class="field-label font-500">{{ I18N.tts.provider }}</span>
+					<div class="flex flex-wrap gap-2">
+						<label
+							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
+							:class="ttsProvider === 'openai'
+								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+						>
+							<input v-model="ttsProvider" type="radio" value="openai" class="sr-only"
+								@change="SAVE.saveNow('ttsProvider', () => RUNTIME.updateVoice({ttsProvider: 'openai'}))"/>
+							{{ I18N.tts.providerOpenai }}
+						</label>
+						<label
+							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
+							:class="ttsProvider === 'custom'
+								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+						>
+							<input v-model="ttsProvider" type="radio" value="custom" class="sr-only"
+								@change="SAVE.saveNow('ttsProvider', () => RUNTIME.updateVoice({ttsProvider: 'custom'}))"/>
+							{{ I18N.tts.providerCustom }}
+						</label>
+						<label
+							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
+							:class="ttsProvider === 'gpt_sovits'
+								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+						>
+							<input v-model="ttsProvider" type="radio" value="gpt_sovits" class="sr-only"
+								@change="SAVE.saveNow('ttsProvider', () => RUNTIME.updateVoice({ttsProvider: 'gpt_sovits'}))"/>
+							{{ I18N.tts.providerGptSovits }}
+						</label>
+					</div>
 				</div>
-				<div class="card-body">
-					<div class="form-item">
-						<label class="label">服务提供商</label>
-						<div class="radio-group">
-							<label class="radio-chip" :class="{active: ttsProvider === 'openai'}">
-								<input v-model="ttsProvider" type="radio" value="openai"
-									@change="saveDebounced('ttsProvider', () => ({ttsProvider: 'openai'}))"/>
-								OpenAI / 兼容接口
-							</label>
-							<label class="radio-chip" :class="{active: ttsProvider === 'custom'}">
-								<input v-model="ttsProvider" type="radio" value="custom"
-									@change="saveDebounced('ttsProvider', () => ({ttsProvider: 'custom'}))"/>
-								自定义 HTTP 端点
-							</label>
-							<label class="radio-chip" :class="{active: ttsProvider === 'gpt_sovits'}">
-								<input v-model="ttsProvider" type="radio" value="gpt_sovits"
-									@change="saveDebounced('ttsProvider', () => ({ttsProvider: 'gpt_sovits'}))"/>
-								GPT-SoVITS API
-							</label>
-						</div>
+
+				<template v-if="ttsProvider === 'openai' || ttsProvider === 'custom'">
+					<label class="field">
+						<span class="field-label font-500">{{ I18N.tts.baseUrl }}</span>
+						<input
+							v-model="ttsBaseUrl"
+							class="input-base"
+							placeholder="https://api.openai.com/v1"
+							@blur="SAVE.save('tts_base_url', () => RUNTIME.updateVoice({ttsBaseUrl: ttsBaseUrl.trim()}))"
+						/>
+					</label>
+
+					<label class="field">
+						<span class="field-label font-500">{{ I18N.tts.apiKey }} {{ VOICE?.hasTtsApiKey ? I18N.encrypted : "" }}</span>
+						<input
+							v-model="ttsApiKeyInput"
+							type="password"
+							class="input-base"
+							placeholder="sk-..."
+							@blur="() => {
+								const VALUE = ttsApiKeyInput.trim()
+								ttsApiKeyInput = ''
+								if (VALUE) SAVE.save('tts_api_key', () => RUNTIME.updateVoice({ttsApiKey: VALUE}))
+							}"
+						/>
+					</label>
+				</template>
+
+				<template v-else-if="ttsProvider === 'gpt_sovits'">
+					<label class="field">
+						<span class="field-label font-500">{{ I18N.gptSovits.baseUrl }}</span>
+						<input
+							v-model="gptsovitsBaseUrl"
+							class="input-base"
+							placeholder="http://127.0.0.1:9880"
+							@blur="SAVE.save('gptsovits_url', () => RUNTIME.updateVoice({gptsovitsBaseUrl: gptsovitsBaseUrl.trim()}))"
+						/>
+					</label>
+
+					<label class="field">
+						<span class="field-label font-500">{{ I18N.gptSovits.refAudio }}</span>
+						<input
+							v-model="gptsovitsRefAudio"
+							class="input-base"
+							placeholder="E:/GPT-SoVITS/reference.wav"
+							@blur="SAVE.save('gptsovits_ref', () => RUNTIME.updateVoice({gptsovitsRefAudio: gptsovitsRefAudio.trim()}))"
+						/>
+					</label>
+
+					<div class="flex gap-3">
+						<label class="field flex-1">
+							<span class="field-label font-500">{{ I18N.gptSovits.promptText }}</span>
+							<input
+								v-model="gptsovitsPromptText"
+								class="input-base"
+								:placeholder="I18N.gptSovits.promptTextPlaceholder"
+								@blur="SAVE.save('gptsovits_text', () => RUNTIME.updateVoice({gptsovitsPromptText: gptsovitsPromptText.trim()}))"
+							/>
+						</label>
+						<label class="field w-[10rem] shrink-0">
+							<span class="field-label font-500">{{ I18N.gptSovits.lang }}</span>
+							<input
+								v-model="gptsovitsPromptLang"
+								class="input-base"
+								placeholder="zh / ja / en"
+								@blur="SAVE.save('gptsovits_lang', () => RUNTIME.updateVoice({gptsovitsPromptLang: gptsovitsPromptLang.trim()}))"
+							/>
+						</label>
 					</div>
+				</template>
 
-					<template v-if="ttsProvider === 'openai' || ttsProvider === 'custom'">
-						<div class="form-item">
-							<label class="label">TTS API 地址</label>
-							<input
-								v-model="ttsBaseUrl"
-								class="input"
-								placeholder="https://api.openai.com/v1"
-								@blur="saveDebounced('tts_base_url', () => ({ttsBaseUrl: ttsBaseUrl.trim()}))"
-							/>
-						</div>
+				<div class="flex gap-3">
+					<label class="field flex-1">
+						<span class="field-label font-500">{{ I18N.tts.voice }}</span>
+						<input
+							v-model="ttsVoice"
+							class="input-base"
+							placeholder="nova, alloy, shimmer..."
+							@blur="SAVE.save('tts_voice', () => RUNTIME.updateVoice({ttsVoice: ttsVoice.trim()}))"
+						/>
+					</label>
 
-						<div class="form-item">
-							<label class="label">TTS API Key {{ VOICE?.hasTtsApiKey ? "(已加密保存)" : "" }}</label>
-							<input
-								v-model="ttsApiKeyInput"
-								type="password"
-								class="input"
-								placeholder="sk-..."
-								@blur="() => {
-									const VALUE = ttsApiKeyInput.trim()
-									ttsApiKeyInput = ''
-									if (VALUE) saveDebounced('tts_api_key', () => ({ttsApiKey: VALUE}))
-								}"
-							/>
-						</div>
-					</template>
-
-					<template v-else-if="ttsProvider === 'gpt_sovits'">
-						<div class="form-item">
-							<label class="label">GPT-SoVITS API 地址</label>
-							<input
-								v-model="gptsovitsBaseUrl"
-								class="input"
-								placeholder="http://127.0.0.1:9880"
-								@blur="saveDebounced('gptsovits_url', () => ({gptsovitsBaseUrl: gptsovitsBaseUrl.trim()}))"
-							/>
-						</div>
-
-						<div class="form-item">
-							<label class="label">参考音频路径 (Ref Audio)</label>
-							<input
-								v-model="gptsovitsRefAudio"
-								class="input"
-								placeholder="E:/GPT-SoVITS/reference.wav"
-								@blur="saveDebounced('gptsovits_ref', () => ({gptsovitsRefAudio: gptsovitsRefAudio.trim()}))"
-							/>
-						</div>
-
-						<div class="form-row">
-							<div class="form-item flex-1">
-								<label class="label">参考音频文本 (Prompt Text)</label>
-								<input
-									v-model="gptsovitsPromptText"
-									class="input"
-									placeholder="参考音频中所说的文字内容"
-									@blur="saveDebounced('gptsovits_text', () => ({gptsovitsPromptText: gptsovitsPromptText.trim()}))"
-								/>
-							</div>
-							<div class="form-item w-80">
-								<label class="label">语言</label>
-								<input
-									v-model="gptsovitsPromptLang"
-									class="input"
-									placeholder="zh / ja / en"
-									@blur="saveDebounced('gptsovits_lang', () => ({gptsovitsPromptLang: gptsovitsPromptLang.trim()}))"
-								/>
-							</div>
-						</div>
-					</template>
-
-					<div class="form-row">
-						<div class="form-item flex-1">
-							<label class="label">朗读音色 (Voice)</label>
-							<input
-								v-model="ttsVoice"
-								class="input"
-								placeholder="nova, alloy, shimmer..."
-								@blur="saveDebounced('tts_voice', () => ({ttsVoice: ttsVoice.trim()}))"
-							/>
-						</div>
-
-						<div class="form-item flex-1">
-							<label class="label">语速: {{ ttsSpeed }}x</label>
-							<n-slider
-								:value="ttsSpeed"
-								:min="0.5"
-								:max="2.0"
-								:step="0.1"
-								:format-tooltip="(v: number) => `${v}x`"
-								class="speed-slider"
-								@update:value="(v: number) => {
-									ttsSpeed = v
-									saveDebounced('tts_speed', () => ({ttsSpeed: String(v)}))
-								}"
-							/>
-						</div>
+					<div class="field flex-1">
+						<span class="field-label font-500">{{ I18N.tts.speed }}: {{ ttsSpeed }}x</span>
+						<n-slider
+							:value="ttsSpeed"
+							:min="0.5"
+							:max="2.0"
+							:step="0.1"
+							:format-tooltip="(v: number) => `${v}x`"
+							@update:value="(v: number) => {
+								ttsSpeed = v
+								SAVE.save('tts_speed', () => RUNTIME.updateVoice({ttsSpeed: String(v)}))
+							}"
+						/>
 					</div>
+				</div>
 
-					<div class="switch-row">
-						<div>
-							<span class="switch-title">对话自动朗读</span>
-							<p class="switch-desc">当桌宠生成回复消息时，自动进行语音朗读播放</p>
-						</div>
+				<div class="pt-2 border-t border-line-subtle">
+					<AppSwitchRow :title="I18N.tts.autoPlay" :desc="I18N.tts.autoPlayDesc">
 						<n-switch
 							:value="ttsAutoPlay"
 							@update:value="(v: boolean) => {
 								ttsAutoPlay = v
-								saveDebounced('tts_auto_play', () => ({ttsAutoPlay: v}))
+								void SAVE.saveNow('tts_auto_play', () => RUNTIME.updateVoice({ttsAutoPlay: v}))
 							}"
 						/>
-					</div>
-
-					<div class="action-row">
-						<n-button
-							type="primary"
-							:loading="isSpeakingTest"
-							:disabled="isSpeakingTest"
-							@click="testVoice"
-						>
-							<template #icon>
-								<Icon :name="isSpeakingTest ? 'loading' : 'play'" :size="15"/>
-							</template>
-							{{ isSpeakingTest ? "正在试听..." : "试听当前音色" }}
-						</n-button>
-					</div>
+					</AppSwitchRow>
 				</div>
-			</div>
+
+				<div class="flex gap-2 pt-1">
+					<n-button
+						type="primary"
+						:loading="isSpeakingTest"
+						:disabled="isSpeakingTest"
+						@click="testVoice"
+					>
+						<template #icon>
+							<Icon :name="isSpeakingTest ? 'loading' : 'play'" :size="15"/>
+						</template>
+						{{ isSpeakingTest ? I18N.tts.testing : I18N.tts.test }}
+					</n-button>
+				</div>
+			</AppCard>
 
 			<!-- 3. STT 语音识别 (Whisper 云端) -->
-			<div class="setting-card">
-				<div class="card-header">
-					<Icon name="mic" :size="18" class="card-icon"/>
-					<span class="card-title">STT 语音识别服务 (Whisper)</span>
-				</div>
-				<div class="card-body">
-					<p class="hint-line">
-						录音在本地完成后上传至 OpenAI 兼容接口识别; 旧的浏览器听写已停用。
-					</p>
+			<AppCard :title="I18N.stt.title" icon="mic">
+				<p class="text-xs text-text-faint leading-relaxed">
+					{{ I18N.stt.desc }}
+				</p>
 
-					<div class="form-item">
-						<label class="label">Whisper API 地址</label>
-						<input
-							v-model="sttBaseUrl"
-							class="input"
-							placeholder="https://api.openai.com/v1"
-							@blur="saveDebounced('stt_base_url', () => ({sttBaseUrl: sttBaseUrl.trim(), sttProvider: 'whisper'}))"
-						/>
-					</div>
+				<label class="field">
+					<span class="field-label font-500">{{ I18N.stt.baseUrl }}</span>
+					<input
+						v-model="sttBaseUrl"
+						class="input-base"
+						placeholder="https://api.openai.com/v1"
+						@blur="SAVE.save('stt_base_url', () => RUNTIME.updateVoice({sttBaseUrl: sttBaseUrl.trim(), sttProvider: 'whisper'}))"
+					/>
+				</label>
 
-					<div class="form-item">
-						<label class="label">Whisper API Key {{ VOICE?.hasSttApiKey ? "(已加密保存)" : "" }}</label>
-						<input
-							v-model="sttApiKeyInput"
-							type="password"
-							class="input"
-							placeholder="sk-..."
-							@blur="() => {
-								const VALUE = sttApiKeyInput.trim()
-								sttApiKeyInput = ''
-								if (VALUE) saveDebounced('stt_api_key', () => ({sttApiKey: VALUE}))
-							}"
-						/>
-					</div>
-				</div>
-			</div>
+				<label class="field">
+					<span class="field-label font-500">{{ I18N.stt.apiKey }} {{ VOICE?.hasSttApiKey ? I18N.encrypted : "" }}</span>
+					<input
+						v-model="sttApiKeyInput"
+						type="password"
+						class="input-base"
+						placeholder="sk-..."
+						@blur="() => {
+							const VALUE = sttApiKeyInput.trim()
+							sttApiKeyInput = ''
+							if (VALUE) SAVE.save('stt_api_key', () => RUNTIME.updateVoice({sttApiKey: VALUE}))
+						}"
+					/>
+				</label>
+			</AppCard>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.voice-settings {
-	width: 100%;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-	overflow-y: auto;
-	padding: 1.6rem 2.4rem;
-	gap: 1.6rem;
-}
-
-.section-header {
-	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
-}
-
-.title {
-	margin: 0;
-	font-size: 1.8rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.subtitle {
-	margin: 0;
-	font-size: 1.2rem;
-	color: var(--text-faint);
-}
-
-.notice-card {
-	display: flex;
-	align-items: flex-start;
-	gap: 1rem;
-	padding: 1.2rem 1.6rem;
-	background: rgba(255, 180, 50, 0.08);
-	border: 0.1rem solid rgba(255, 180, 50, 0.35);
-	border-radius: var(--radius-md);
-}
-
-.notice-icon {
-	color: #ffb432;
-	margin-top: 0.2rem;
-	flex-shrink: 0;
-}
-
-.notice-body {
-	flex: 1;
-
-	.notice-title {
-		margin: 0 0 0.3rem;
-		font-size: 1.25rem;
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.notice-desc {
-		margin: 0;
-		font-size: 1.15rem;
-		color: var(--text-muted);
-		line-height: 1.5;
-	}
-}
-
-.settings-content {
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-	padding-bottom: 2rem;
-}
-
-.setting-card {
-	background: var(--bg-card);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-md);
-	padding: 1.6rem;
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-	transition: all 0.2s ease;
-
-	&:hover {
-		border-color: var(--line-strong);
-	}
-}
-
-.card-header {
-	display: flex;
-	align-items: center;
-	gap: 0.8rem;
-	color: var(--nori-teal-bright);
-}
-
-.card-title {
-	font-size: 1.35rem;
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.card-body {
-	display: flex;
-	flex-direction: column;
-	gap: 1.2rem;
-}
-
-.slider-row {
-	display: flex;
-	align-items: center;
-	gap: 1.4rem;
-}
-
-.slider-value {
-	width: 4.8rem;
-	font-size: 1.2rem;
-	color: var(--nori-teal-bright);
-	font-family: monospace;
-	font-weight: 600;
-	text-align: right;
-}
-
-.form-item {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-}
-
-.form-row {
-	display: flex;
-	gap: 1.2rem;
-}
-
-.flex-1 {
-	flex: 1;
-}
-
-.w-80 {
-	width: 10rem;
-	flex-shrink: 0;
-}
-
-.label {
-	font-size: 1.2rem;
-	font-weight: 500;
-	color: var(--text-muted);
-}
-
-.hint-line {
-	margin: 0;
-	font-size: 1.15rem;
-	color: var(--text-faint);
-	line-height: 1.5;
-}
-
-.input {
-	padding: 0.9rem 1.2rem;
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: 1.25rem;
-	font-family: inherit;
-	outline: none;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:focus {
-		border-color: var(--nori-teal);
-		background: rgba(125, 227, 255, 0.06);
-		box-shadow: 0 0 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.radio-group {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.8rem;
-}
-
-.radio-chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	padding: 0.65rem 1.3rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.03);
-	color: var(--text-body);
-	font-size: 1.15rem;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	input {
-		display: none;
-	}
-
-	&:hover {
-		color: var(--nori-teal-bright);
-		background: rgba(125, 227, 255, 0.06);
-		border-color: var(--nori-teal-soft);
-	}
-
-	&.active {
-		border-color: transparent;
-		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-		color: #03101c;
-		font-weight: 600;
-		box-shadow: 0 0.2rem 1.2rem var(--glow-teal-soft);
-	}
-}
-
-.switch-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0.8rem 0;
-	border-top: 0.1rem solid var(--line-subtle);
-}
-
-.switch-title {
-	font-size: 1.25rem;
-	color: var(--text-primary);
-	font-weight: 500;
-}
-
-.switch-desc {
-	margin: 0.2rem 0 0;
-	font-size: 1.1rem;
-	color: var(--text-faint);
-}
-
-.action-row {
-	display: flex;
-	gap: 0.8rem;
-	padding-top: 0.4rem;
-}
-</style>

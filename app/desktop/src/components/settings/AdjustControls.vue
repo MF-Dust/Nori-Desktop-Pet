@@ -2,6 +2,7 @@
 import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../../services/runtime"
+import {feedback} from "../../services/feedback"
 
 const props = withDefaults(defineProps<{
 	// 模型 id (资源名)
@@ -78,7 +79,7 @@ const loadExpressions = async () => {
 		const META = await RUNTIME.modelMeta(props.modelId)
 		expressions.value = META.expressions.map(name => ({name}))
 	} catch (error) {
-		console.error("读取表情列表失败:", error)
+		feedback.error(I18N.value.expressionLoadFailed, error)
 	} finally {
 		loading.value = false
 	}
@@ -90,160 +91,65 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="adjust-controls">
-		<h3 class="adjust-title">
+	<!-- 根容器保持 width:100% + 纵向流, 供 ModelManagement 的调整面板量取宽度 -->
+	<div class="w-full flex flex-col gap-[1.8rem]">
+		<h3 class="m-0 text-lg font-700 text-text-primary text-left">
 			{{ I18N.adjustTitle }}
-			<span class="adjust-model">{{ modelName || modelId }}</span>
+			<span class="ml-2 text-xs font-500 text-nori-teal-bright">{{ modelName || modelId }}</span>
 		</h3>
 
-		<div class="adjust-section">
-			<span class="adjust-label">{{ I18N.scale }}</span>
-			<div class="adjust-scale-row">
+		<div class="flex flex-col items-start gap-[0.9rem]">
+			<span class="text-sm font-500 text-text-body">{{ I18N.scale }}</span>
+			<div class="w-full flex items-center gap-3">
 				<n-slider
 					v-model:value="scale"
 					:min="0.5"
 					:max="2"
 					:step="0.05"
 					:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
-					class="adjust-slider"
+					class="flex-1 min-w-0"
 					@update:value="onScaleInput"
 				/>
-				<span class="adjust-value">{{ scalePercent }}%</span>
+				<span class="w-[4.8rem] shrink-0 text-sm font-600 text-right text-nori-teal-bright mono">{{ scalePercent }}%</span>
 			</div>
 		</div>
 
-		<div class="adjust-section">
-			<span class="adjust-label">{{ I18N.expression }}</span>
-			<div v-if="expressionEnabled" class="expression-list">
-				<button class="expression-chip" :class="{active: selected.length === 0}" @click="clearExpressions">
+		<div class="flex flex-col items-start gap-[0.9rem]">
+			<span class="text-sm font-500 text-text-body">{{ I18N.expression }}</span>
+			<div v-if="expressionEnabled" class="w-full flex flex-wrap gap-2">
+				<button
+					type="button"
+					class="px-3 py-[0.55rem] rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring
+						hover:(text-nori-teal-bright border-nori-teal-soft bg-nori-teal-bright/8 -translate-y-[0.1rem])"
+					:class="selected.length === 0
+						? 'font-600 text-on-teal border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal shadow-[0_0.2rem_1rem_var(--glow-teal-soft)]'
+						: 'text-text-body border-line-subtle bg-white/4'"
+					:aria-pressed="selected.length === 0"
+					@click="clearExpressions"
+				>
 					{{ I18N.expressionNone }}
 				</button>
 				<button
 					v-for="item in expressions"
 					:key="item.name"
-					class="expression-chip"
-					:class="{active: selected.includes(item.name)}"
+					type="button"
+					class="px-3 py-[0.55rem] rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring
+						hover:(text-nori-teal-bright border-nori-teal-soft bg-nori-teal-bright/8 -translate-y-[0.1rem])"
+					:class="selected.includes(item.name)
+						? 'font-600 text-on-teal border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal shadow-[0_0.2rem_1rem_var(--glow-teal-soft)]'
+						: 'text-text-body border-line-subtle bg-white/4'"
+					:aria-pressed="selected.includes(item.name)"
 					@click="toggleExpression(item.name)"
 				>
 					{{ expressionLabel(item.name) }}
 				</button>
-				<p v-if="!loading && expressions.length === 0" class="adjust-hint">{{ I18N.expressionNone }}</p>
+				<p v-if="!loading && expressions.length === 0" class="m-0 text-hint">{{ I18N.expressionNone }}</p>
 			</div>
 			<div v-else>
-				<p class="adjust-hint">{{ I18N.expressionHint }}</p>
+				<p class="m-0 text-hint">{{ I18N.expressionHint }}</p>
 			</div>
-			<p v-if="expressionEnabled && selected.length > 0" class="adjust-count">{{ selectedCountText }}</p>
-			<p v-if="expressionEnabled" class="adjust-hint">{{ I18N.expressionSelectHint }}</p>
+			<p v-if="expressionEnabled && selected.length > 0" class="m-0 text-xs font-600 text-nori-teal-bright">{{ selectedCountText }}</p>
+			<p v-if="expressionEnabled" class="m-0 text-hint">{{ I18N.expressionSelectHint }}</p>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.adjust-controls {
-	display: flex;
-	flex-direction: column;
-	gap: 1.8rem;
-	width: 100%;
-}
-
-.adjust-title {
-	margin: 0;
-	font-size: 1.6rem;
-	font-weight: 700;
-	color: var(--text-primary);
-	text-align: left;
-}
-
-.adjust-model {
-	margin-left: 0.8rem;
-	font-size: 1.15rem;
-	font-weight: 500;
-	color: var(--nori-teal-bright);
-}
-
-.adjust-section {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	gap: 0.9rem;
-}
-
-.adjust-label {
-	font-size: 1.2rem;
-	font-weight: 500;
-	color: var(--text-body);
-}
-
-.adjust-scale-row {
-	display: flex;
-	align-items: center;
-	gap: 1.2rem;
-	width: 100%;
-}
-
-.adjust-range {
-	flex: 1;
-	min-width: 0;
-	height: 0.6rem;
-	accent-color: var(--nori-teal-bright);
-	cursor: pointer;
-}
-
-.adjust-value {
-	width: 4.8rem;
-	flex-shrink: 0;
-	font-size: 1.2rem;
-	color: var(--nori-teal-bright);
-	font-family: monospace;
-	font-weight: 600;
-	text-align: right;
-}
-
-.expression-list {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.8rem;
-	width: 100%;
-}
-
-.expression-chip {
-	padding: 0.55rem 1.2rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-pill);
-	background: rgba(255, 255, 255, 0.04);
-	color: var(--text-body);
-	font-size: 1.15rem;
-	font-family: inherit;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		color: var(--nori-teal-bright);
-		border-color: var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.08);
-		transform: translateY(-0.1rem);
-	}
-
-	&.active {
-		color: #05121a;
-		border-color: transparent;
-		background-image: linear-gradient(135deg, var(--nori-teal-bright) 0%, var(--nori-teal) 100%);
-		box-shadow: 0 0.2rem 1rem var(--glow-teal-soft);
-		font-weight: 600;
-	}
-}
-
-.adjust-count {
-	margin: 0;
-	font-size: 1.15rem;
-	font-weight: 600;
-	color: var(--nori-teal-bright);
-}
-
-.adjust-hint {
-	margin: 0;
-	font-size: 1.1rem;
-	color: var(--text-faint);
-	line-height: 1.4;
-}
-</style>

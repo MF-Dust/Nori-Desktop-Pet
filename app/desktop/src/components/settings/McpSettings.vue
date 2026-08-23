@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
-import {useMessage} from "naive-ui"
+import useLanguages from "../../services/i18n/useLanguages.ts"
+import {feedback} from "../../services/feedback"
 import {RUNTIME, type McpServerStatusInfo, type ToolDto} from "../../services/runtime"
 import Icon from "../Icon.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppButton from "../ui/AppButton.vue"
+import AppChip from "../ui/AppChip.vue"
 
-const MESSAGE = useMessage()
+const I18N = computed(() => useLanguages().views.main.mcp)
 const SUB_TAB = ref<"servers" | "builtin">("servers")
 const SERVERS = ref<McpServerStatusInfo[]>([])
 const LOADING = ref(false)
@@ -55,7 +59,7 @@ const refresh = async () => {
 		SERVERS.value = await RUNTIME.mcpGetServers()
 		await RUNTIME.refresh()
 	} catch (error) {
-		MESSAGE.error(`读取 MCP 状态失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.load, error)
 	} finally {
 		LOADING.value = false
 	}
@@ -69,7 +73,7 @@ onMounted(async () => {
 const newForm = () => {
 	FORM.value = {
 		id: `mcp_${Date.now().toString(36)}`,
-		name: "新 MCP 服务",
+		name: I18N.value.server.defaultName,
 		transport: "stdio",
 		command: "npx",
 		args: ["-y", "@modelcontextprotocol/server-filesystem", "C:/"],
@@ -114,9 +118,9 @@ const saveServer = async () => {
 		await RUNTIME.mcpSaveServer(formPayload())
 		MODAL_OPEN.value = false
 		await refresh()
-		MESSAGE.success(EDITING.value ? "MCP 服务器已更新" : "已添加 MCP 服务器")
+		feedback.success(EDITING.value ? I18N.value.server.updated : I18N.value.server.added)
 	} catch (error) {
-		MESSAGE.error(`保存失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.save, error)
 	} finally {
 		LOADING.value = false
 	}
@@ -127,10 +131,10 @@ const testServer = async () => {
 	TEST_RESULT.value = null
 	try {
 		TEST_RESULT.value = await RUNTIME.mcpTestServer(formPayload())
-		if (TEST_RESULT.value.status === "connected") MESSAGE.success("MCP 服务连接测试成功")
-		else MESSAGE.warning(TEST_RESULT.value.errorMessage || "MCP 服务未就绪")
+		if (TEST_RESULT.value.status === "connected") feedback.success(I18N.value.test.success)
+		else feedback.warning(TEST_RESULT.value.errorMessage || I18N.value.test.notReady)
 	} catch (error) {
-		MESSAGE.error(`连接测试失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.test, error)
 	} finally {
 		TESTING.value = false
 	}
@@ -141,9 +145,9 @@ const connect = async (id: string) => {
 	try {
 		await RUNTIME.mcpConnect(id)
 		await refresh()
-		MESSAGE.success("服务器已连接")
+		feedback.success(I18N.value.server.connected)
 	} catch (error) {
-		MESSAGE.error(`连接失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.connect, error)
 	} finally {
 		LOADING.value = false
 	}
@@ -154,9 +158,9 @@ const disconnect = async (id: string) => {
 	try {
 		await RUNTIME.mcpDisconnect(id)
 		await refresh()
-		MESSAGE.info("服务器连接已断开")
+		feedback.info(I18N.value.server.disconnected)
 	} catch (error) {
-		MESSAGE.error(`断开失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.disconnect, error)
 	} finally {
 		LOADING.value = false
 	}
@@ -167,9 +171,9 @@ const remove = async (id: string) => {
 	try {
 		await RUNTIME.mcpDeleteServer(id)
 		await refresh()
-		MESSAGE.success("已删除 MCP 服务器配置")
+		feedback.success(I18N.value.server.deleted)
 	} catch (error) {
-		MESSAGE.error(`删除失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.delete, error)
 	} finally {
 		LOADING.value = false
 	}
@@ -202,7 +206,7 @@ const executeTool = async () => {
 			: await RUNTIME.toolsExecuteManual(ACTIVE_TOOL.value.name, ARGS)
 		TOOL_OUTPUT.value = JSON.stringify(RESULT, null, 2)
 	} catch (error) {
-		TOOL_OUTPUT.value = `执行出错: ${error instanceof Error ? error.message : String(error)}`
+		TOOL_OUTPUT.value = `${I18N.value.tool.execFailed}: ${error instanceof Error ? error.message : String(error)}`
 	} finally {
 		TOOL_RUNNING.value = false
 	}
@@ -213,7 +217,7 @@ const toggleTool = async (tool: ToolDto) => {
 		await RUNTIME.toolsSetEnabled(tool.name, !tool.enabled)
 		await RUNTIME.refresh()
 	} catch (error) {
-		MESSAGE.error(`更新工具失败: ${error instanceof Error ? error.message : String(error)}`)
+		feedback.error(I18N.value.error.toolToggle, error)
 	}
 }
 
@@ -225,7 +229,7 @@ const importConfig = async () => {
 		await RUNTIME.mcpImportUrl(IMPORT_URL.value.trim())
 		IMPORT_OPEN.value = false
 		await refresh()
-		MESSAGE.success("MCP 配置导入成功")
+		feedback.success(I18N.value.import.success)
 	} catch (error) {
 		IMPORT_ERROR.value = error instanceof Error ? error.message : String(error)
 	} finally {
@@ -235,147 +239,223 @@ const importConfig = async () => {
 </script>
 
 <template>
-	<div class="mcp-settings">
-		<header class="header">
-			<div>
-				<h2 class="title glow-teal">MCP 与工具</h2>
-				<p class="subtitle">管理后端 MCP 服务器与内置工具。工具调用始终由 C# 执行。</p>
-			</div>
-			<div class="actions">
-				<button class="btn-ghost" :disabled="LOADING" @click="refresh"><Icon name="refresh" :class="{spin: LOADING}" :size="14"/>刷新</button>
-				<button class="btn-ghost" @click="openImport"><Icon name="external-link" :size="14"/>导入 URL</button>
-				<button class="btn-primary" @click="newForm"><Icon name="plus" :size="14"/>添加服务器</button>
-			</div>
-		</header>
+	<div class="w-full h-full flex flex-col gap-3 px-6 pt-4 pb-5 scroll-area">
+		<AppSectionHeader :title="I18N.title" :subtitle="I18N.subtitle">
+			<template #actions>
+				<AppButton variant="ghost" size="sm" icon="refresh" :loading="LOADING" :disabled="LOADING" @click="refresh">{{ I18N.refresh }}</AppButton>
+				<AppButton variant="ghost" size="sm" icon="external-link" @click="openImport">{{ I18N.importUrl }}</AppButton>
+				<AppButton variant="primary" size="sm" icon="plus" @click="newForm">{{ I18N.server.add }}</AppButton>
+			</template>
+		</AppSectionHeader>
 
-		<nav class="tabs">
-			<button :class="{active: SUB_TAB === 'servers'}" @click="SUB_TAB = 'servers'">MCP 服务器 ({{ SERVERS.length }})</button>
-			<button :class="{active: SUB_TAB === 'builtin'}" @click="SUB_TAB = 'builtin'">内置工具 ({{ BUILTIN_TOOLS.length }})</button>
+		<nav class="flex gap-1.5 border-b border-line-subtle shrink-0">
+			<button
+				type="button"
+				class="px-3 py-[0.7rem] bg-transparent border-b-2 text-sm font-inherit cursor-pointer transition-colors duration-200 focus-ring"
+				:class="SUB_TAB === 'servers'
+					? 'text-nori-teal-bright border-b-nori-teal'
+					: 'text-text-muted border-b-transparent hover:text-text-primary'"
+				:aria-pressed="SUB_TAB === 'servers'"
+				@click="SUB_TAB = 'servers'"
+			>
+				{{ I18N.tabs.servers }} ({{ SERVERS.length }})
+			</button>
+			<button
+				type="button"
+				class="px-3 py-[0.7rem] bg-transparent border-b-2 text-sm font-inherit cursor-pointer transition-colors duration-200 focus-ring"
+				:class="SUB_TAB === 'builtin'
+					? 'text-nori-teal-bright border-b-nori-teal'
+					: 'text-text-muted border-b-transparent hover:text-text-primary'"
+				:aria-pressed="SUB_TAB === 'builtin'"
+				@click="SUB_TAB = 'builtin'"
+			>
+				{{ I18N.tabs.builtin }} ({{ BUILTIN_TOOLS.length }})
+			</button>
 		</nav>
 
-		<section v-if="SUB_TAB === 'servers'" class="server-list">
-			<div v-if="SERVERS.length === 0" class="empty">尚未配置 MCP 服务器。可添加本地 stdio 服务或 SSE 服务。</div>
-			<div v-for="server in SERVERS" :key="server.serverId" class="server-card">
-				<div class="server-main">
-					<div class="server-title-row">
-						<Icon name="server" :size="17" class="server-icon"/>
+		<section v-if="SUB_TAB === 'servers'" class="flex-1 min-h-0 flex flex-col gap-2 scroll-area">
+			<p v-if="SERVERS.length === 0" class="m-0 text-hint">{{ I18N.server.empty }}</p>
+			<div
+				v-for="server in SERVERS"
+				:key="server.serverId"
+				class="surface-card flex justify-between gap-2.5 px-3.5 py-3 transition-all duration-200
+					hover:(border-nori-teal-soft bg-nori-teal-bright/6)"
+			>
+				<div class="flex-1 min-w-0">
+					<div class="flex items-center gap-[0.7rem] text-base text-text-primary">
+						<Icon name="server" :size="17" class="text-nori-teal-bright shrink-0"/>
 						<strong>{{ server.name }}</strong>
-						<span class="status" :class="server.status">{{ server.status }}</span>
+						<AppChip :tone="server.status === 'connected' ? 'success' : (server.status === 'error' ? 'danger' : 'neutral')">
+							{{ server.status }}
+						</AppChip>
 					</div>
-					<p v-if="server.errorMessage" class="error-text">{{ server.errorMessage }}</p>
-					<div v-if="server.tools?.length" class="tool-chips">
-						<button v-for="tool in server.tools" :key="tool.name" class="tool-chip" @click="openTool(tool, server.serverId)">
+					<p v-if="server.errorMessage" class="mt-1.5 mb-0 text-xs text-danger-text">{{ server.errorMessage }}</p>
+					<div v-if="server.tools?.length" class="flex flex-wrap gap-1.5 mt-2">
+						<button
+							v-for="tool in server.tools"
+							:key="tool.name"
+							type="button"
+							class="chip-teal cursor-pointer transition-colors duration-200 focus-ring
+								hover:(border-nori-teal-soft bg-nori-teal-bright/16)"
+							@click="openTool(tool, server.serverId)"
+						>
 							{{ tool.name }}
 						</button>
 					</div>
-					<span v-else class="hint">未发现在线工具</span>
+					<span v-else class="text-hint">{{ I18N.tool.noneOnline }}</span>
 				</div>
-				<div class="server-actions">
-					<button v-if="server.status !== 'connected'" class="btn-ghost" @click="connect(server.serverId)">连接</button>
-					<button v-else class="btn-ghost" @click="disconnect(server.serverId)">断开</button>
-					<n-popconfirm positive-text="删除" negative-text="取消" @positive-click="remove(server.serverId)">
-						<template #trigger><button class="btn-danger">删除</button></template>
-						确定删除「{{ server.name }}」的配置吗？
+				<div class="flex items-center gap-1.5 shrink-0">
+					<AppButton v-if="server.status !== 'connected'" variant="ghost" size="sm" @click="connect(server.serverId)">{{ I18N.server.connect }}</AppButton>
+					<AppButton v-else variant="ghost" size="sm" @click="disconnect(server.serverId)">{{ I18N.server.disconnect }}</AppButton>
+					<n-popconfirm
+						:positive-text="I18N.common.delete"
+						:negative-text="I18N.common.cancel"
+						@positive-click="remove(server.serverId)"
+					>
+						<template #trigger>
+							<button type="button" class="btn-danger px-3 py-1.5 text-sm">{{ I18N.common.delete }}</button>
+						</template>
+						<span class="flex flex-col gap-1">
+							<span>{{ I18N.server.deleteConfirm }}</span>
+							<strong>{{ server.name }}</strong>
+						</span>
 					</n-popconfirm>
 				</div>
 			</div>
 		</section>
 
-		<section v-else class="tool-section">
-			<div class="search-row"><input v-model="SEARCH" class="input" placeholder="搜索内置工具..."/></div>
-			<div class="tool-grid">
-				<div v-for="tool in FILTERED_TOOLS" :key="tool.name" class="builtin-card" :class="{disabled: !tool.enabled}">
-					<div class="tool-header"><strong>{{ tool.name }}</strong><span class="permission">{{ tool.permissionLevel }}</span></div>
-					<p>{{ tool.description }}</p>
-					<div class="tool-actions">
-						<button class="btn-ghost" :disabled="!tool.enabled || tool.permissionLevel !== 'safe'" @click="openTool(tool)">测试</button>
+		<section v-else class="flex-1 min-h-0 flex flex-col">
+			<div class="mb-2 shrink-0">
+				<input v-model="SEARCH" class="input-base text-sm" :placeholder="I18N.tool.searchPlaceholder"/>
+			</div>
+			<div class="grid grid-cols-[repeat(auto-fill,minmax(25rem,1fr))] gap-2 scroll-area flex-1">
+				<div
+					v-for="tool in FILTERED_TOOLS"
+					:key="tool.name"
+					class="surface-card flex flex-col gap-2.5 px-3.5 py-3 transition-all duration-200 hover:border-line-strong"
+					:class="tool.enabled ? '' : 'opacity-55'"
+				>
+					<div class="flex items-center justify-between gap-2">
+						<strong class="text-base text-text-primary">{{ tool.name }}</strong>
+						<AppChip tone="teal">{{ tool.permissionLevel }}</AppChip>
+					</div>
+					<p class="flex-1 m-0 text-xs text-text-muted leading-relaxed">{{ tool.description }}</p>
+					<div class="flex items-center justify-between gap-2">
+						<AppButton
+							variant="ghost"
+							size="sm"
+							:disabled="!tool.enabled || tool.permissionLevel !== 'safe'"
+							@click="openTool(tool)"
+						>
+							{{ I18N.tool.test }}
+						</AppButton>
 						<n-switch :value="tool.enabled" @update:value="toggleTool(tool)"/>
 					</div>
 				</div>
 			</div>
 		</section>
 
-		<div v-if="MODAL_OPEN" class="modal-overlay" @click.self="MODAL_OPEN = false">
-			<div class="modal-card">
-				<header class="modal-header"><h3>添加 MCP 服务器</h3><button class="close" @click="MODAL_OPEN = false"><Icon name="close" :size="16"/></button></header>
-				<div class="modal-body">
-					<label class="field">名称<input v-model="FORM.name" class="input"/></label>
-					<label class="field">传输协议<select v-model="FORM.transport" class="input"><option value="stdio">Stdio</option><option value="sse">SSE</option></select></label>
+		<!-- 添加 MCP 服务器弹窗 -->
+		<div
+			v-if="MODAL_OPEN"
+			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/72 backdrop-blur-[0.4rem]"
+			@click.self="MODAL_OPEN = false"
+		>
+			<div class="w-[min(48rem,92vw)] max-h-[86vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg">
+				<header class="flex items-center justify-between gap-2 px-[1.5rem] py-[1.1rem] border-b border-line-subtle">
+					<h3 class="m-0 text-md text-text-primary">{{ I18N.server.modalTitle }}</h3>
+					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="MODAL_OPEN = false">
+						<Icon name="close" :size="16"/>
+					</button>
+				</header>
+				<div class="flex flex-col gap-2.5 px-[1.5rem] py-3.5 scroll-area">
+					<label class="field field-label">{{ I18N.server.name }}<input v-model="FORM.name" class="input-base text-sm"/></label>
+					<label class="field field-label">
+						{{ I18N.server.transport }}
+						<select v-model="FORM.transport" class="input-base text-sm">
+							<option value="stdio">Stdio</option>
+							<option value="sse">SSE</option>
+						</select>
+					</label>
 					<template v-if="FORM.transport === 'stdio'">
-						<label class="field">命令<input v-model="FORM.command" class="input" placeholder="npx / python / node"/></label>
-						<label class="field">参数 (空格分隔)<input v-model="ARGS_INPUT" class="input"/></label>
-						<label class="field">环境变量 (每行 KEY=VALUE)<textarea v-model="ENV_INPUT" class="input textarea" rows="3"/></label>
+						<label class="field field-label">{{ I18N.server.command }}<input v-model="FORM.command" class="input-base text-sm" placeholder="npx / python / node"/></label>
+						<label class="field field-label">{{ I18N.server.args }}<input v-model="ARGS_INPUT" class="input-base text-sm"/></label>
+						<label class="field field-label">
+							{{ I18N.server.env }}
+							<textarea v-model="ENV_INPUT" class="input-base text-sm resize-y leading-relaxed" rows="3"/>
+						</label>
 					</template>
-					<label v-else class="field">SSE 地址<input v-model="FORM.url" class="input" placeholder="http://localhost:3000/sse"/></label>
-					<div class="checks"><label><input v-model="FORM.enabled" type="checkbox"/>启用</label><label><input v-model="FORM.autoConnect" type="checkbox"/>启动时自动连接</label></div>
-					<div v-if="TEST_RESULT" class="test-result" :class="TEST_RESULT.status">{{ TEST_RESULT.status === 'connected' ? `连接成功，发现 ${TEST_RESULT.tools?.length || 0} 个工具` : TEST_RESULT.errorMessage }}</div>
+					<label v-else class="field field-label">{{ I18N.server.sseUrl }}<input v-model="FORM.url" class="input-base text-sm" placeholder="http://localhost:3000/sse"/></label>
+					<div class="flex gap-4 text-xs text-text-muted">
+						<label class="inline-flex items-center gap-1 cursor-pointer"><input v-model="FORM.enabled" type="checkbox"/>{{ I18N.server.enabled }}</label>
+						<label class="inline-flex items-center gap-1 cursor-pointer"><input v-model="FORM.autoConnect" type="checkbox"/>{{ I18N.server.autoConnect }}</label>
+					</div>
+					<div
+						v-if="TEST_RESULT"
+						class="px-2.5 py-[0.7rem] rounded-sm text-xs"
+						:class="TEST_RESULT.status === 'connected' ? 'text-success bg-success/10' : 'text-danger-text bg-danger/10'"
+					>
+						<template v-if="TEST_RESULT.status === 'connected'">
+							{{ I18N.test.foundPrefix }} {{ TEST_RESULT.tools?.length || 0 }} {{ I18N.test.foundUnit }}
+						</template>
+						<template v-else>{{ TEST_RESULT.errorMessage }}</template>
+					</div>
 				</div>
-				<footer class="modal-footer"><button class="btn-ghost" @click="testServer">{{ TESTING ? "测试中..." : "测试连接" }}</button><button class="btn-primary" :disabled="LOADING" @click="saveServer">保存</button></footer>
+				<footer class="flex items-center justify-end gap-[0.7rem] px-[1.5rem] py-[1.1rem] border-t border-line-subtle">
+					<AppButton variant="ghost" size="sm" :loading="TESTING" @click="testServer">{{ TESTING ? I18N.test.testing : I18N.test.run }}</AppButton>
+					<AppButton variant="primary" size="sm" :disabled="LOADING" @click="saveServer">{{ I18N.common.save }}</AppButton>
+				</footer>
 			</div>
 		</div>
 
-		<div v-if="IMPORT_OPEN" class="modal-overlay" @click.self="IMPORT_OPEN = false">
-			<div class="modal-card"><header class="modal-header"><h3>导入 MCP JSON</h3><button class="close" @click="IMPORT_OPEN = false"><Icon name="close" :size="16"/></button></header><div class="modal-body"><p class="hint">后端会使用安全 URL 策略读取并解析 mcp.json。</p><input v-model="IMPORT_URL" class="input" placeholder="https://.../mcp.json"/><p v-if="IMPORT_ERROR" class="error-text">{{ IMPORT_ERROR }}</p></div><footer class="modal-footer"><button class="btn-ghost" @click="IMPORT_OPEN = false">取消</button><button class="btn-primary" :disabled="IMPORTING || !IMPORT_URL.trim()" @click="importConfig">导入</button></footer></div>
+		<!-- 导入 MCP JSON 弹窗 -->
+		<div
+			v-if="IMPORT_OPEN"
+			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/72 backdrop-blur-[0.4rem]"
+			@click.self="IMPORT_OPEN = false"
+		>
+			<div class="w-[min(48rem,92vw)] max-h-[86vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg">
+				<header class="flex items-center justify-between gap-2 px-[1.5rem] py-[1.1rem] border-b border-line-subtle">
+					<h3 class="m-0 text-md text-text-primary">{{ I18N.import.title }}</h3>
+					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="IMPORT_OPEN = false">
+						<Icon name="close" :size="16"/>
+					</button>
+				</header>
+				<div class="flex flex-col gap-2.5 px-[1.5rem] py-3.5 scroll-area">
+					<p class="m-0 text-hint">{{ I18N.import.hint }}</p>
+					<input v-model="IMPORT_URL" class="input-base text-sm" placeholder="https://.../mcp.json"/>
+					<p v-if="IMPORT_ERROR" class="m-0 text-xs text-danger-text" role="alert">{{ IMPORT_ERROR }}</p>
+				</div>
+				<footer class="flex items-center justify-end gap-[0.7rem] px-[1.5rem] py-[1.1rem] border-t border-line-subtle">
+					<AppButton variant="ghost" size="sm" @click="IMPORT_OPEN = false">{{ I18N.common.cancel }}</AppButton>
+					<AppButton variant="primary" size="sm" :loading="IMPORTING" :disabled="IMPORTING || !IMPORT_URL.trim()" @click="importConfig">{{ I18N.import.confirm }}</AppButton>
+				</footer>
+			</div>
 		</div>
 
-		<div v-if="TOOL_MODAL_OPEN && ACTIVE_TOOL" class="modal-overlay" @click.self="TOOL_MODAL_OPEN = false">
-			<div class="modal-card"><header class="modal-header"><h3>测试工具: {{ ACTIVE_TOOL.name }}</h3><button class="close" @click="TOOL_MODAL_OPEN = false"><Icon name="close" :size="16"/></button></header><div class="modal-body"><p class="hint">{{ ACTIVE_TOOL.description }}</p><textarea v-model="TOOL_ARGS" class="input textarea" rows="7"/><pre v-if="TOOL_OUTPUT" class="output">{{ TOOL_OUTPUT }}</pre></div><footer class="modal-footer"><button class="btn-ghost" @click="TOOL_MODAL_OPEN = false">关闭</button><button class="btn-primary" :disabled="TOOL_RUNNING" @click="executeTool">{{ TOOL_RUNNING ? "执行中..." : "执行" }}</button></footer></div>
+		<!-- 测试工具弹窗 -->
+		<div
+			v-if="TOOL_MODAL_OPEN && ACTIVE_TOOL"
+			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/72 backdrop-blur-[0.4rem]"
+			@click.self="TOOL_MODAL_OPEN = false"
+		>
+			<div class="w-[min(48rem,92vw)] max-h-[86vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg">
+				<header class="flex items-center justify-between gap-2 px-[1.5rem] py-[1.1rem] border-b border-line-subtle">
+					<h3 class="m-0 text-md text-text-primary">{{ I18N.tool.testTitle }}: {{ ACTIVE_TOOL.name }}</h3>
+					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="TOOL_MODAL_OPEN = false">
+						<Icon name="close" :size="16"/>
+					</button>
+				</header>
+				<div class="flex flex-col gap-2.5 px-[1.5rem] py-3.5 scroll-area">
+					<p class="m-0 text-hint">{{ ACTIVE_TOOL.description }}</p>
+					<textarea v-model="TOOL_ARGS" class="input-base text-sm resize-y leading-relaxed" rows="7"/>
+					<pre v-if="TOOL_OUTPUT" class="m-0 p-2 max-h-[18rem] overflow-auto rounded-sm bg-black/25 text-xs text-text-body whitespace-pre-wrap">{{ TOOL_OUTPUT }}</pre>
+				</div>
+				<footer class="flex items-center justify-end gap-[0.7rem] px-[1.5rem] py-[1.1rem] border-t border-line-subtle">
+					<AppButton variant="ghost" size="sm" @click="TOOL_MODAL_OPEN = false">{{ I18N.common.close }}</AppButton>
+					<AppButton variant="primary" size="sm" :loading="TOOL_RUNNING" :disabled="TOOL_RUNNING" @click="executeTool">{{ TOOL_RUNNING ? I18N.tool.running : I18N.tool.execute }}</AppButton>
+				</footer>
+			</div>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.mcp-settings { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 1.2rem; overflow-y: auto; padding: 1.6rem 2.4rem 2rem; }
-.header, .server-title-row, .server-actions, .tool-header, .tool-actions, .modal-header, .modal-footer, .actions { display: flex; align-items: center; }
-.header, .server-card, .modal-header, .modal-footer { justify-content: space-between; }
-.title { margin: 0; font-size: 1.8rem; color: var(--text-primary); }
-.subtitle, .hint, .empty { margin: 0; color: var(--text-faint); font-size: 1.15rem; line-height: 1.5; }
-.actions, .server-actions { gap: 0.6rem; }
-.tabs { display: flex; gap: 0.6rem; border-bottom: 0.1rem solid var(--line-subtle); }
-.tabs button { padding: 0.7rem 1.2rem; border: none; border-bottom: 0.2rem solid transparent; background: transparent; color: var(--text-muted); font: inherit; font-size: 1.2rem; cursor: pointer; }
-.tabs button.active { color: var(--nori-teal-bright); border-color: var(--nori-teal); }
-.btn-ghost, .btn-primary, .btn-danger { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 1rem; border-radius: var(--radius-sm); font: inherit; font-size: 1.15rem; cursor: pointer; }
-.btn-ghost { color: var(--text-muted); border: 0.1rem solid var(--line-subtle); background: rgba(255,255,255,0.03); }
-.btn-primary { color: #03101c; border: none; background: linear-gradient(135deg, var(--nori-teal-bright), var(--nori-teal)); font-weight: 600; }
-.btn-danger { color: var(--danger); border: 0.1rem solid rgba(251,60,68,0.3); background: rgba(251,60,68,0.08); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-.server-list, .tool-grid { display: flex; flex-direction: column; gap: 0.9rem; }
-.server-card, .builtin-card { display: flex; gap: 1rem; padding: 1.3rem 1.5rem; border: 0.1rem solid var(--line-subtle); border-radius: var(--radius-md); background: var(--bg-card); }
-.server-main { flex: 1; min-width: 0; }
-.server-title-row { gap: 0.7rem; font-size: 1.3rem; color: var(--text-primary); }
-.server-icon { color: var(--nori-teal-bright); }
-.status, .permission { padding: 0.2rem 0.6rem; border-radius: var(--radius-pill); font-size: 1rem; background: rgba(255,255,255,0.08); color: var(--text-muted); }
-.status.connected { color: #20e090; background: rgba(32,224,144,0.12); }
-.status.error { color: var(--danger); background: rgba(251,60,68,0.12); }
-.error-text { margin: 0.6rem 0 0; color: var(--danger); font-size: 1.1rem; }
-.tool-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.8rem; }
-.tool-chip { padding: 0.35rem 0.7rem; border: 0.1rem solid var(--line-subtle); border-radius: var(--radius-pill); background: rgba(125,227,255,0.06); color: var(--nori-teal-bright); font: inherit; font-size: 1.05rem; cursor: pointer; }
-.tool-section, .server-list { min-height: 0; }
-.search-row { margin-bottom: 0.8rem; }
-.input { width: 100%; box-sizing: border-box; padding: 0.75rem 1rem; border: 0.1rem solid var(--line-subtle); border-radius: var(--radius-sm); background: rgba(255,255,255,0.04); color: var(--text-primary); font: inherit; font-size: 1.2rem; outline: none; }
-.input:focus { border-color: var(--nori-teal); }
-.tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(25rem, 1fr)); }
-.builtin-card { flex-direction: column; }
-.builtin-card.disabled { opacity: 0.55; }
-.tool-header, .tool-actions { justify-content: space-between; gap: 0.8rem; }
-.builtin-card p { flex: 1; margin: 0; color: var(--text-muted); font-size: 1.1rem; line-height: 1.45; }
-.permission { color: var(--nori-teal-soft); }
-.modal-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(2,8,16,0.72); backdrop-filter: blur(0.4rem); }
-.modal-card { width: min(48rem, 92vw); max-height: 86vh; display: flex; flex-direction: column; background: #0a1a2c; border: 0.1rem solid var(--line-strong); border-radius: var(--radius-lg); }
-.modal-header, .modal-footer { padding: 1.1rem 1.5rem; border-color: var(--line-subtle); }
-.modal-header { border-bottom: 0.1rem solid var(--line-subtle); }
-.modal-header h3 { margin: 0; color: var(--text-primary); font-size: 1.4rem; }
-.modal-footer { justify-content: flex-end; gap: 0.7rem; border-top: 0.1rem solid var(--line-subtle); }
-.close { border: none; background: transparent; color: var(--text-muted); cursor: pointer; }
-.modal-body { display: flex; flex-direction: column; gap: 1rem; padding: 1.4rem 1.5rem; overflow-y: auto; }
-.field { display: flex; flex-direction: column; gap: 0.45rem; color: var(--text-muted); font-size: 1.15rem; }
-.textarea { resize: vertical; line-height: 1.5; }
-.checks { display: flex; gap: 1.5rem; color: var(--text-muted); font-size: 1.15rem; }
-.checks label { display: inline-flex; align-items: center; gap: 0.4rem; }
-.test-result { padding: 0.7rem 1rem; border-radius: var(--radius-sm); font-size: 1.1rem; }
-.test-result.connected { color: #20e090; background: rgba(32,224,144,0.1); }
-.test-result.error { color: var(--danger); background: rgba(251,60,68,0.1); }
-.output { max-height: 18rem; overflow: auto; margin: 0; padding: 0.9rem; white-space: pre-wrap; color: var(--text-body); background: rgba(0,0,0,0.25); border-radius: var(--radius-sm); font-size: 1.1rem; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-</style>

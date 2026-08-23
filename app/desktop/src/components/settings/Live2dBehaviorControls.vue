@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import {computed, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {feedback} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
+import AppSwitchRow from "../ui/AppSwitchRow.vue"
 
 const props = withDefaults(defineProps<{
 	modelId?: string
@@ -24,14 +27,14 @@ const beatSync = ref(false)
 const renderScale = ref(2)
 const maxFps = ref(0)
 const modelScale = ref(1)
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
+
+// 保存辅助: 每个字段独立防抖 timer + 卸载 flush (规范要求)
+const SAVE = useDebouncedSave({
+	onError: (key, error) => feedback.error(key === "modelScale" ? I18N.value.scaleSaveFailed : I18N.value.saveFailed, error),
+})
 
 const saveBehavior = (key: string, value: boolean | number) => {
-	clearTimeout(timers.get(key))
-	timers.set(key, setTimeout(() => {
-		timers.delete(key)
-		void RUNTIME.setModelBehavior({[key]: value}).catch(error => console.error(`保存桌宠行为失败 (${key}):`, error))
-	}, 400))
+	void SAVE.saveNow(key, () => RUNTIME.setModelBehavior({[key]: value}))
 }
 
 const makeToggle = (key: string, state: {value: boolean}) => computed({
@@ -69,27 +72,23 @@ onMounted(async () => {
 		maxFps.value = BEHAVIOR.maxFps
 	}
 	if (props.modelId) {
-		try { modelScale.value = (await RUNTIME.modelMeta(props.modelId)).scale } catch (error) { console.error("读取模型缩放失败:", error) }
+		try { modelScale.value = (await RUNTIME.modelMeta(props.modelId)).scale } catch (error) { feedback.error(I18N.value.scaleLoadFailed, error) }
 	}
 })
 
 watch(() => props.modelId, async modelId => {
 	if (!modelId) return
-	try { modelScale.value = (await RUNTIME.modelMeta(modelId)).scale } catch (error) { console.error("读取模型缩放失败:", error) }
+	try { modelScale.value = (await RUNTIME.modelMeta(modelId)).scale } catch (error) { feedback.error(I18N.value.scaleLoadFailed, error) }
 })
 
 const onModelScaleUpdate = (value: number) => {
 	modelScale.value = value
-	clearTimeout(timers.get("modelScale"))
-	timers.set("modelScale", setTimeout(() => {
-		timers.delete("modelScale")
-		void RUNTIME.setModelDisplay(props.modelId, {scale: value}).catch(error => console.error("保存模型缩放失败:", error))
-	}, 400))
+	SAVE.save("modelScale", () => RUNTIME.setModelDisplay(props.modelId, {scale: value}))
 }
 
 const onRenderScaleUpdate = (value: number) => {
 	renderScale.value = value
-	saveBehavior("renderScale", value)
+	SAVE.save("renderScale", () => RUNTIME.setModelBehavior({renderScale: value}))
 }
 
 const onMaxFpsUpdate = (value: number) => {
@@ -105,238 +104,135 @@ const fpsOptions = computed(() => [
 </script>
 
 <template>
-	<div class="behavior-controls">
-		<h3 class="behavior-title">{{ I18N.title }}</h3>
+	<div class="w-full flex flex-col gap-3.5">
+		<h3 class="m-0 text-lg font-700 text-text-primary">{{ I18N.title }}</h3>
 
-		<div class="toggle-grid">
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.clickInteraction }}</span>
-					<span class="toggle-desc">{{ I18N.clickInteractionDesc }}</span>
-				</div>
+		<div class="flex flex-col gap-1.5">
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.clickInteraction"
+				:desc="I18N.clickInteractionDesc"
+			>
 				<n-switch v-model:value="clickInteractionToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.autoBlink }}</span>
-					<span class="toggle-desc">{{ I18N.autoBlinkDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.autoBlink"
+				:desc="I18N.autoBlinkDesc"
+			>
 				<n-switch v-model:value="autoBlinkToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.eyeTracking }}</span>
-					<span class="toggle-desc">{{ I18N.eyeTrackingDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.eyeTracking"
+				:desc="I18N.eyeTrackingDesc"
+			>
 				<n-switch v-model:value="eyeTrackingToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.idleEyeAnimation }}</span>
-					<span class="toggle-desc">{{ I18N.idleEyeAnimationDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.idleEyeAnimation"
+				:desc="I18N.idleEyeAnimationDesc"
+			>
 				<n-switch v-model:value="idleEyeToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.idleAnimation }}</span>
-					<span class="toggle-desc">{{ I18N.idleAnimationDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.idleAnimation"
+				:desc="I18N.idleAnimationDesc"
+			>
 				<n-switch v-model:value="idleAnimToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.expressionEnabled }}</span>
-					<span class="toggle-desc">{{ I18N.expressionEnabledDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.expressionEnabled"
+				:desc="I18N.expressionEnabledDesc"
+			>
 				<n-switch v-model:value="expressionEnabledToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.lipSync }}</span>
-					<span class="toggle-desc">{{ I18N.lipSyncDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.lipSync"
+				:desc="I18N.lipSyncDesc"
+			>
 				<n-switch v-model:value="lipSyncToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.shadow }}</span>
-					<span class="toggle-desc">{{ I18N.shadowDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.shadow"
+				:desc="I18N.shadowDesc"
+			>
 				<n-switch v-model:value="shadowToggle"/>
-			</div>
+			</AppSwitchRow>
 
-			<div class="toggle-row">
-				<div class="toggle-info">
-					<span class="toggle-label">{{ I18N.beatSync }}</span>
-					<span class="toggle-desc">{{ I18N.beatSyncDesc }}</span>
-				</div>
+			<AppSwitchRow
+				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
+					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				:title="I18N.beatSync"
+				:desc="I18N.beatSyncDesc"
+			>
 				<n-switch v-model:value="beatSyncToggle"/>
-			</div>
+			</AppSwitchRow>
 		</div>
 
-		<div class="adjust-section">
-			<span class="toggle-label">{{ I18N.modelScale }}</span>
-			<span class="toggle-desc">{{ I18N.modelScaleDesc }}</span>
-			<div class="scale-row">
+		<div class="flex flex-col gap-1.5 px-[1.1rem] py-2 rounded-sm border border-line-subtle bg-white/3">
+			<span class="text-base font-500 text-text-primary">{{ I18N.modelScale }}</span>
+			<span class="text-hint">{{ I18N.modelScaleDesc }}</span>
+			<div class="flex items-center gap-2.5">
 				<n-slider
 					:value="modelScale"
 					:min="0.5"
 					:max="2"
 					:step="0.05"
 					:format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
-					class="scale-slider"
+					class="flex-1 min-w-0"
 					@update:value="onModelScaleUpdate"
 				/>
-				<span class="scale-value">{{ Math.round(modelScale * 100) }}%</span>
+				<span class="w-[5rem] shrink-0 text-sm font-600 text-right text-nori-teal-bright mono">{{ Math.round(modelScale * 100) }}%</span>
 			</div>
 		</div>
 
-		<div class="adjust-section">
-			<span class="toggle-label">{{ I18N.renderScale }}</span>
-			<span class="toggle-desc">{{ I18N.renderScaleDesc }}</span>
-			<div class="scale-row">
+		<div class="flex flex-col gap-1.5 px-[1.1rem] py-2 rounded-sm border border-line-subtle bg-white/3">
+			<span class="text-base font-500 text-text-primary">{{ I18N.renderScale }}</span>
+			<span class="text-hint">{{ I18N.renderScaleDesc }}</span>
+			<div class="flex items-center gap-2.5">
 				<n-slider
 					:value="renderScale"
 					:min="0.5"
 					:max="2"
 					:step="0.25"
 					:format-tooltip="(v: number) => `${v.toFixed(2)}x`"
-					class="scale-slider"
+					class="flex-1 min-w-0"
 					@update:value="onRenderScaleUpdate"
 				/>
-				<span class="scale-value">{{ renderScale.toFixed(2) }}x</span>
+				<span class="w-[5rem] shrink-0 text-sm font-600 text-right text-nori-teal-bright mono">{{ renderScale.toFixed(2) }}x</span>
 			</div>
 		</div>
 
-		<div class="adjust-section">
-			<span class="toggle-label">{{ I18N.maxFps }}</span>
-			<n-select
-				:value="maxFps"
-				:options="fpsOptions"
-				class="fps-select"
-				@update:value="onMaxFpsUpdate"
-			/>
+		<div class="flex flex-col gap-1.5 px-[1.1rem] py-2 rounded-sm border border-line-subtle bg-white/3">
+			<span class="text-base font-500 text-text-primary">{{ I18N.maxFps }}</span>
+			<div class="w-[14rem]">
+				<n-select
+					:value="maxFps"
+					:options="fpsOptions"
+					@update:value="onMaxFpsUpdate"
+				/>
+			</div>
 		</div>
 	</div>
 </template>
-
-<style scoped lang="less">
-.behavior-controls {
-	display: flex;
-	flex-direction: column;
-	gap: 1.4rem;
-	width: 100%;
-}
-
-.behavior-title {
-	margin: 0;
-	font-size: 1.6rem;
-	font-weight: 700;
-	color: var(--text-primary);
-}
-
-.toggle-grid {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-}
-
-.toggle-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 1.4rem;
-	padding: 0.9rem 1.2rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.03);
-	transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-	&:hover {
-		background: rgba(125, 227, 255, 0.06);
-		border-color: var(--nori-teal-soft);
-	}
-}
-
-.toggle-info {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
-	flex: 1;
-}
-
-.toggle-label {
-	font-size: 1.25rem;
-	color: var(--text-primary);
-	font-weight: 500;
-}
-
-.toggle-desc {
-	font-size: 1.1rem;
-	color: var(--text-faint);
-	line-height: 1.35;
-}
-
-.scale-slider {
-	flex: 1;
-}
-
-.adjust-section {
-	display: flex;
-	flex-direction: column;
-	gap: 0.6rem;
-	padding: 0.8rem 1.1rem;
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	background: rgba(255, 255, 255, 0.03);
-}
-
-.scale-row {
-	display: flex;
-	align-items: center;
-	gap: 1rem;
-}
-
-.adjust-range {
-	flex: 1;
-	height: 0.6rem;
-	accent-color: var(--nori-teal-bright);
-	cursor: pointer;
-}
-
-.scale-value {
-	width: 5rem;
-	font-size: 1.2rem;
-	color: var(--nori-teal-bright);
-	font-family: monospace;
-	font-weight: 600;
-	text-align: right;
-}
-
-.fps-select {
-	width: 14rem;
-	padding: 0.6rem 1rem;
-	background: rgba(255, 255, 255, 0.04);
-	border: 0.1rem solid var(--line-subtle);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: 1.2rem;
-	font-family: inherit;
-	cursor: pointer;
-	outline: none;
-	transition: all 0.2s ease;
-
-	&:focus {
-		border-color: var(--nori-teal-soft);
-		box-shadow: 0 0 1rem var(--glow-teal-soft);
-	}
-}
-</style>
