@@ -11,6 +11,7 @@ import type {
 	AgentEventPayload,
 	BehaviorsState,
 	HistoryMessage,
+	InteractionConfig,
 	McpServerStatusInfo,
 	MemoryAtom,
 	MemoryItem,
@@ -35,6 +36,12 @@ export type {
 	EmotionDto,
 	GeneralState,
 	HistoryMessage,
+	InteractionAction,
+	InteractionActionMode,
+	InteractionConfig,
+	InteractionReactionMode,
+	InteractionRect,
+	InteractionRegion,
 	McpServerStatusInfo,
 	MemoryAtom,
 	MemoryItem,
@@ -250,6 +257,9 @@ export const RUNTIME = {
 	},
 	setModelDisplay(modelId: string, patch: {scale?: number; expressions?: string[]}): Promise<void> {
 		return invoke<void>("model_set_display", {modelId, ...patch})
+	},
+	setModelInteractions(modelId: string, interactions: InteractionConfig): Promise<void> {
+		return invoke<void>("model_set_interactions", {modelId, interactions})
 	},
 	setModelBehavior(patch: Partial<BehaviorsState>): Promise<void> {
 		return invoke<void>("model_set_behavior", patch)

@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import {computed, nextTick, onBeforeUnmount, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
+import {useDebouncedSave} from "../../composables/useDebouncedSave"
 import {MODEL_LIST, type ModelInfo} from "../../services/live2d/models"
 import {createLive2D} from "../../services/live2d"
 import {resolveModelFileBase} from "../../services/live2d/config"
-import {RUNTIME} from "../../services/runtime"
+import {
+	calculateModelViewportRect,
+	createDefaultInteractionConfig,
+	createDefaultInteractionRegion,
+	type ViewportPixelRect,
+} from "../../services/live2d/interactions"
+import {
+	RUNTIME,
+	type InteractionConfig,
+	type InteractionRect,
+	type InteractionRegion,
+} from "../../services/runtime"
 import Icon from "../Icon.vue"
 import AppChip from "../ui/AppChip.vue"
 import AppButton from "../ui/AppButton.vue"
@@ -12,6 +24,8 @@ import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import {feedback} from "../../services/feedback"
 import AdjustControls from "./AdjustControls.vue"
 import Live2dBehaviorControls from "./Live2dBehaviorControls.vue"
+import InteractionControls from "./InteractionControls.vue"
+import InteractionRegionOverlay from "./InteractionRegionOverlay.vue"
 
 const I18N = computed(() => useLanguages().views.main.model)
 
@@ -49,6 +63,9 @@ const cardMenuFor = ref<string | null>(null)
 // 打开整页调整面板的模型 id
 const adjustFor = ref<string | null>(null)
 
+// 调整面板内部标签页 (基础/行为 vs 自定义互动区域)
+const adjustTab = ref<"display" | "interactions">("display")
+
 // 模型 id → 展示名
 const modelNameOf = (id: string): string => MODEL_LIST.find((model) => model.id === id)?.name ?? id
 
@@ -60,6 +77,16 @@ const refreshStatus = async () => {
 	selectedModel.value = RUNTIME.snapshot.value?.models.selected ?? selectedModel.value
 }
 
+// 独立防抖保存器 (每模型/字段独立 key, 卸载自动 flush)
+const SAVE = useDebouncedSave({
+	onError: (key, error) => {
+		feedback.error(
+			key.startsWith("interactions_") ? I18N.value.interactions.saveFailed : I18N.value.behavior.saveFailed,
+			error,
+		)
+	},
+})
+
 onMounted(async () => {
 	await RUNTIME.init()
 	await refreshStatus()
@@ -67,6 +94,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+	SAVE.flush()
 	window.removeEventListener("resize", onWindowResize)
 	unbindPreviewClick()
 	void PREVIEW.destroy()
@@ -96,8 +124,35 @@ const showcaseRef = ref<HTMLElement>()
 const previewReady = ref(false)
 const previewClickInteraction = ref(true)
 
+// 自定义互动区域状态
+const interactionsConfig = ref<InteractionConfig>(createDefaultInteractionConfig())
+const selectedRegionId = ref<string | null>(null)
+const isEditingInteractions = ref(true)
+const isCreatingRegion = ref(false)
+const modelViewport = ref<ViewportPixelRect | null>(null)
+const availableMotions = ref<{group: string; names: string[]}[]>([])
+const availableExpressions = ref<string[]>([])
+
+// 重新计算模型在预览容器中的像素视口
+const updateModelViewport = () => {
+	const rect = showcaseRef.value?.getBoundingClientRect()
+	if (!rect) return
+	const state = PREVIEW.getState()
+	const baseW = state?.baseWidth ?? rect.width
+	const baseH = state?.baseHeight ?? rect.height
+	const initW = state?.initialModelWidth ?? 400
+	const initH = state?.initialModelHeight ?? 520
+	modelViewport.value = calculateModelViewportRect(
+		{width: baseW, height: baseH},
+		{width: initW, height: initH},
+		pvScale.value,
+	)
+}
+
 const onPreviewClick = (event: MouseEvent) => {
 	if (!previewReady.value || !previewClickInteraction.value) return
+	// 编辑互动区域时禁止触发全局点击测试
+	if (adjustTab.value === "interactions" && isEditingInteractions.value) return
 	PREVIEW.tapAt(event.clientX, event.clientY)
 }
 
@@ -126,6 +181,7 @@ const refreshPreviewLayout = () => {
 	if (!previewReady.value) return
 	PREVIEW.resize()
 	PREVIEW.setUserScale(pvScale.value)
+	updateModelViewport()
 }
 
 // 窗口尺寸变化时重新对齐预览画布
@@ -169,23 +225,100 @@ const onPreviewExpressions = (list: string[]) => {
 	void applyPreviewExpressions(list)
 }
 
+// ---- 互动区域修改与持久化 ----
+const onUpdateRegions = (regions: InteractionRegion[]) => {
+	interactionsConfig.value = {version: 1, regions}
+	const modelId = adjustFor.value
+	if (!modelId) return
+	SAVE.save(`interactions_${modelId}`, () => RUNTIME.setModelInteractions(modelId, {version: 1, regions}))
+}
+
+const onAddRegion = () => {
+	const count = interactionsConfig.value.regions.length + 1
+	const newRegion = createDefaultInteractionRegion({
+		name: `${I18N.value.interactions.defaultRegionName} ${count}`,
+	})
+	const regions = [...interactionsConfig.value.regions, newRegion]
+	selectedRegionId.value = newRegion.id
+	onUpdateRegions(regions)
+}
+
+const onCreateRegion = (rect: InteractionRect) => {
+	const count = interactionsConfig.value.regions.length + 1
+	const newRegion = createDefaultInteractionRegion({
+		name: `${I18N.value.interactions.defaultRegionName} ${count}`,
+		rect,
+	})
+	const regions = [...interactionsConfig.value.regions, newRegion]
+	selectedRegionId.value = newRegion.id
+	onUpdateRegions(regions)
+}
+
+const onDeleteRegion = (id: string) => {
+	const regions = interactionsConfig.value.regions.filter(r => r.id !== id)
+	if (selectedRegionId.value === id) selectedRegionId.value = null
+	onUpdateRegions(regions)
+}
+
+const onClearRegions = () => {
+	selectedRegionId.value = null
+	onUpdateRegions([])
+}
+
+// 在测试模式下点击区域播放本地预设动作/表情 (不发 AI 请求)
+const onRegionClick = async (region: InteractionRegion) => {
+	if (isEditingInteractions.value) return
+
+	if (region.motion.mode === "selected" && region.motion.name) {
+		void PREVIEW.playMotionByName(region.motion.name)
+	} else if (region.motion.mode === "random") {
+		const groups = availableMotions.value
+		if (groups.length > 0) {
+			const group = groups[Math.floor(Math.random() * groups.length)]
+			if (group.names.length > 0) {
+				const name = group.names[Math.floor(Math.random() * group.names.length)]
+				void PREVIEW.playMotionByName(name)
+			}
+		}
+	}
+
+	if (region.expression.mode === "selected" && region.expression.name) {
+		void PREVIEW.playExpression(region.expression.name)
+	} else if (region.expression.mode === "random" && availableExpressions.value.length > 0) {
+		const exp = availableExpressions.value[Math.floor(Math.random() * availableExpressions.value.length)]
+		void PREVIEW.playExpression(exp)
+	}
+}
+
 // 打开整页调整面板: 挂载该模型的实时预览
 const openAdjust = async (model: ModelInfo) => {
 	cardMenuFor.value = null
 	adjustFor.value = model.id
+	adjustTab.value = "display"
+	selectedRegionId.value = null
+	isEditingInteractions.value = true
+	isCreatingRegion.value = false
 	previewReady.value = false
 	await nextTick()
 
-	// 读取该模型的显示配置与后端元数据
+	// 读取该模型的显示配置、元数据与互动配置 (空缺时使用空配置)
 	try {
 		const META = await RUNTIME.modelMeta(model.id)
 		pvScale.value = META.scale
 		const SNAPSHOT = RUNTIME.snapshot.value
 		previewExpressionList.value = SNAPSHOT?.models.selected === model.id ? [...SNAPSHOT.models.expressions] : []
+		interactionsConfig.value = META.interactions?.regions
+			? {version: 1, regions: [...META.interactions.regions]}
+			: createDefaultInteractionConfig()
+		availableMotions.value = META.motions ?? []
+		availableExpressions.value = META.expressions ?? []
 	} catch (error) {
-		console.error("读取模型显示配置失败:", error)
+		console.error("读取模型显示与互动配置失败:", error)
 		pvScale.value = 1
 		previewExpressionList.value = []
+		interactionsConfig.value = createDefaultInteractionConfig()
+		availableMotions.value = []
+		availableExpressions.value = []
 	}
 
 	// 以预览区域尺寸挂载预览, 避免画布变形
@@ -206,11 +339,13 @@ const openAdjust = async (model: ModelInfo) => {
 	await syncPreviewClickInteraction()
 	bindPreviewClick()
 	refreshPreviewLayout()
+	updateModelViewport()
 	await applyPreviewExpressions(previewExpressionList.value)
 }
 
-// 关闭调整面板: 卸载预览
+// 关闭调整面板: 卸载预览并刷新保存
 const closeAdjust = () => {
+	SAVE.flush()
 	adjustFor.value = null
 	previewReady.value = false
 	unbindPreviewClick()
@@ -339,20 +474,86 @@ const closeAdjust = () => {
 				</button>
 
 				<!-- 预览画布容器: 尺寸被 getBoundingClientRect 读取用于建画布, 不要改动几何 -->
-				<div ref="showcaseRef" class="absolute top-[5.6rem] left-6 w-[34rem] h-[50rem] z-201"/>
+				<div ref="showcaseRef" class="relative absolute top-[5.6rem] left-6 w-[34rem] h-[50rem] z-201">
+					<!-- 互动区域编辑蒙版 (覆盖在 Pixi 画布上方) -->
+					<InteractionRegionOverlay
+						v-if="previewReady"
+						:regions="interactionsConfig.regions"
+						:selected-id="selectedRegionId"
+						:model-viewport="modelViewport"
+						:editing="adjustTab === 'interactions' && isEditingInteractions"
+						:creating="isCreatingRegion"
+						@update:selected-id="selectedRegionId = $event"
+						@update:regions="onUpdateRegions"
+						@update:creating="isCreatingRegion = $event"
+						@create-region="onCreateRegion"
+						@delete-region="onDeleteRegion"
+						@region-click="onRegionClick"
+					/>
+				</div>
 
 				<div class="absolute top-[5.6rem] left-[40rem] right-6 bottom-5 px-6 py-5 scroll-area glass-panel shadow-[0_0.8rem_3.2rem_rgba(0,0,0,0.5)]">
-					<AdjustControls
-						:model-id="adjustFor"
-						:model-name="modelNameOf(adjustFor)"
-						:expression-enabled="true"
-						:initial-scale="pvScale"
-						:initial-expressions="previewExpressionList"
-						@scale="onPreviewScale"
-						@expressions="onPreviewExpressions"
-					/>
-					<div class="h-[0.1rem] my-5 bg-line-subtle"/>
-					<Live2dBehaviorControls :model-id="adjustFor"/>
+					<!-- 标签页导航：基础与行为 vs 自定义互动区域 -->
+					<div class="w-full flex items-center gap-2 pb-4 mb-4 border-b border-line-subtle">
+						<button
+							type="button"
+							class="px-4 py-1.5 rounded-sm text-sm font-600 transition-all duration-200 focus-ring cursor-pointer"
+							:class="adjustTab === 'display'
+								? 'bg-nori-teal-bright text-on-teal shadow-[0_0_1.2rem_var(--glow-teal)]'
+								: 'bg-white/4 text-text-muted hover:(bg-white/8 text-text-body)'"
+							@click="adjustTab = 'display'"
+						>
+							{{ I18N.tabDisplay }}
+						</button>
+						<button
+							type="button"
+							class="px-4 py-1.5 rounded-sm text-sm font-600 transition-all duration-200 focus-ring cursor-pointer flex items-center gap-1.5"
+							:class="adjustTab === 'interactions'
+								? 'bg-nori-teal-bright text-on-teal shadow-[0_0_1.2rem_var(--glow-teal)]'
+								: 'bg-white/4 text-text-muted hover:(bg-white/8 text-text-body)'"
+							@click="adjustTab = 'interactions'"
+						>
+							<span>{{ I18N.tabInteractions }}</span>
+							<AppChip v-if="interactionsConfig.regions.length > 0" tone="teal" dot>
+								{{ interactionsConfig.regions.length }}
+							</AppChip>
+						</button>
+					</div>
+
+					<!-- 标签页 1: 基础显示与桌宠行为 -->
+					<div v-show="adjustTab === 'display'" class="flex flex-col">
+						<AdjustControls
+							:model-id="adjustFor"
+							:model-name="modelNameOf(adjustFor)"
+							:expression-enabled="true"
+							:initial-scale="pvScale"
+							:initial-expressions="previewExpressionList"
+							@scale="onPreviewScale"
+							@expressions="onPreviewExpressions"
+						/>
+						<div class="h-[0.1rem] my-5 bg-line-subtle"/>
+						<Live2dBehaviorControls :model-id="adjustFor"/>
+					</div>
+
+					<!-- 标签页 2: 自定义互动区域设置 -->
+					<div v-show="adjustTab === 'interactions'" class="flex flex-col">
+						<InteractionControls
+							:model-id="adjustFor"
+							:regions="interactionsConfig.regions"
+							:selected-id="selectedRegionId"
+							:available-motions="availableMotions"
+							:available-expressions="availableExpressions"
+							:editing="isEditingInteractions"
+							:creating="isCreatingRegion"
+							@update:selected-id="selectedRegionId = $event"
+							@update:regions="onUpdateRegions"
+							@update:editing="isEditingInteractions = $event"
+							@update:creating="isCreatingRegion = $event"
+							@add-region="onAddRegion"
+							@delete-region="onDeleteRegion"
+							@clear-regions="onClearRegions"
+						/>
+					</div>
 				</div>
 			</div>
 		</Transition>

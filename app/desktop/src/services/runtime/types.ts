@@ -95,6 +95,7 @@ export interface BehaviorsState {
 	beatSync: boolean
 	renderScale: number
 	maxFps: number
+	aiInteraction: boolean
 }
 
 /** 语音配置 (秘密已脱敏) */
@@ -428,10 +429,48 @@ export interface McpServerStatusInfo {
 	resources?: unknown[]
 }
 
+/** 交互反应模式: 本地动作 / AI 大脑响应 */
+export type InteractionReactionMode = "local" | "ai"
+
+/** 交互动作触发模式: 无 / 随机 / 指定 */
+export type InteractionActionMode = "none" | "random" | "selected"
+
+/** 交互动作定义 (动作或表情) */
+export interface InteractionAction {
+	mode: InteractionActionMode
+	group?: string
+	name?: string
+}
+
+/** 归一化矩形区域 (0~1, y 向下) */
+export interface InteractionRect {
+	x: number
+	y: number
+	width: number
+	height: number
+}
+
+/** 自定义矩形交互区域 */
+export interface InteractionRegion {
+	id: string
+	name: string
+	reactionMode: InteractionReactionMode
+	rect: InteractionRect
+	motion: InteractionAction
+	expression: InteractionAction
+}
+
+/** 交互区域配置 */
+export interface InteractionConfig {
+	version: 1
+	regions: InteractionRegion[]
+}
+
 /** 模型元数据 (model_get_meta) */
 export interface ModelMeta {
 	modelId: string
 	scale: number
 	expressions: string[]
 	motions: {group: string; names: string[]}[]
+	interactions: InteractionConfig
 }
