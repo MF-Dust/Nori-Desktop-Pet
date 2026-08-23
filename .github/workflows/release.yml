@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已有标签时可直接填写，例如 v1.0.0-Arona；留空则自动创建"
+        description: "已有标签时填写 v1.0.0；留空则按 bump 计算新标签"
         required: false
         type: string
       bump:
@@ -12,16 +12,18 @@ on:
         required: true
         default: patch
         type: choice
-        options:
-          - patch
-          - minor
-          - major
+        options: [patch, minor, major]
       codename:
-        description: "自动递增标签的 Codename，可留空并继承最新标签"
+        description: "新标签 Codename，可留空"
         required: false
         type: string
-      include_runtime:
-        description: "是否打包 .NET Runtime"
+      confirm_avalonia_webview_distribution_license:
+        description: "确认本次分发包含 Avalonia WebView 且维护者已确认其分发许可"
+        required: true
+        default: false
+        type: boolean
+      confirm_cubism_core_distribution_license:
+        description: "确认本次分发包含 Cubism Core 且维护者已确认其分发许可"
         required: true
         default: false
         type: boolean
@@ -33,26 +35,42 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# 先跑完所有四道门和跨平台编译/单测, 再创建标签; 最后才创建 GitHub Release。
+# 正式产物只有 Windows framework-dependent ZIP, macOS/Linux 只做 compile + unit。
 jobs:
   validate:
-    name: 校验并创建版本标签
+    name: 预检版本与分发确认
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
-      mode: ${{ steps.version.outputs.mode }}
+    env:
+      NORI_AVALONIA_WEBVIEW_DISTRIBUTION_LICENSE_CONFIRMED: ${{ inputs.confirm_avalonia_webview_distribution_license }}
+      NORI_CUBISM_CORE_DISTRIBUTION_LICENSE_CONFIRMED: ${{ inputs.confirm_cubism_core_distribution_license }}
     steps:
+      - name: 检查原生分发许可确认
+        shell: bash
+        run: |
+          if [ "$NORI_AVALONIA_WEBVIEW_DISTRIBUTION_LICENSE_CONFIRMED" != "true" ]; then
+            echo "必须显式确认 Avalonia WebView 的分发许可。" >&2
+            exit 1
+          fi
+          if [ "$NORI_CUBISM_CORE_DISTRIBUTION_LICENSE_CONFIRMED" != "true" ]; then
+            echo "必须显式确认 Cubism Core 的分发许可。" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
       - id: version
-        name: 校验或自动创建 v* 标签
+        name: 计算目标标签但暂不创建
         shell: bash
         env:
-          TAG: ${{ inputs.tag }}
+          TAG_INPUT: ${{ inputs.tag }}
           BUMP: ${{ inputs.bump }}
           CODENAME: ${{ inputs.codename }}
         run: |
@@ -60,44 +78,36 @@ jobs:
           tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
           version_pattern='^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
           codename_pattern='^[A-Za-z0-9][A-Za-z0-9.-]*$'
-          tag="$TAG"
+          tag="$TAG_INPUT"
           if [ -n "$tag" ]; then
             if [[ ! "$tag" =~ $tag_pattern ]]; then
               echo "标签必须匹配 v<major>.<minor>.<patch>[-Codename]: $tag" >&2
               exit 1
             fi
             if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
-              echo "使用已有标签: $tag"
-            else
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git tag -a "$tag" -m "chore: release $tag"
-              git push origin "$tag"
-              echo "已创建并推送指定标签: $tag"
+              tagged_sha="$(git rev-list -n1 "refs/tags/$tag")"
+              if [ "$tagged_sha" != "$GITHUB_SHA" ]; then
+                echo "已有标签没有指向本次 workflow 的提交: $tag" >&2
+                exit 1
+              fi
             fi
           else
             latest="$(git tag --list 'v*' | grep -E "$tag_pattern" | sort -V | tail -n1 || true)"
             if [ -z "$latest" ]; then
-              initial_version="$(sed -nE 's/.*<Version[^>]*>([0-9]+\.[0-9]+\.[0-9]+)<\/Version>.*/\1/p' app/desktop/Nori.Desktop/Nori.Desktop.csproj | head -n1)"
-              initial_version="${initial_version:-0.1.0}"
+              base_version="$(sed -nE 's/.*<Version[^>]*>([0-9]+\.[0-9]+\.[0-9]+)<\/Version>.*/\1/p' app/desktop/Nori.Desktop/Nori.Desktop.csproj | head -n1)"
+              base_version="${base_version:-0.1.0}"
               codename="$CODENAME"
               if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
                 echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
                 exit 1
               fi
-              if [ -n "$codename" ]; then tag="v$initial_version-$codename"; else tag="v$initial_version"; fi
-              echo "没有历史版本标签, 使用项目初始版本: $tag"
+              if [ -n "$codename" ]; then tag="v$base_version-$codename"; else tag="v$base_version"; fi
             else
-              if [[ ! "$latest" =~ $version_pattern ]]; then
-                echo "无法解析最新标签: $latest" >&2
-                exit 1
-              fi
-              major="${BASH_REMATCH[1]}"
-              minor="${BASH_REMATCH[2]}"
-              patch="${BASH_REMATCH[3]}"
-              latest_suffix="${BASH_REMATCH[4]:-}"
+              if [[ ! "$latest" =~ $version_pattern ]]; then echo "无法解析最新标签: $latest" >&2; exit 1; fi
+              major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"
+              suffix="${BASH_REMATCH[4]:-}"
               codename="$CODENAME"
-              if [ -z "$codename" ] && [ -n "$latest_suffix" ]; then codename="${latest_suffix#-}"; fi
+              if [ -z "$codename" ] && [ -n "$suffix" ]; then codename="${suffix#-}"; fi
               if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
                 echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
                 exit 1
@@ -110,34 +120,25 @@ jobs:
               esac
               if [ -n "$codename" ]; then tag="v$major.$minor.$patch-$codename"; else tag="v$major.$minor.$patch"; fi
             fi
-            if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
-              echo "目标标签已存在: $tag" >&2
-              exit 1
-            fi
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$tag" -m "chore: release $tag"
-            git push origin "$tag"
-            echo "已创建并推送标签: $tag"
+          fi
+          if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
+            echo "目标标签已存在, 只能发布指向本次提交的已有标签: $tag"
           fi
           version="${tag#v}"
-          if [ "${{ inputs.include_runtime }}" = "true" ]; then mode=self-contained; else mode=framework-dependent; fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release=nori@$version" >> "$GITHUB_OUTPUT"
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "版本: $version"
-          echo "Sentry release: nori@$version"
-          echo "发布模式: $mode"
+          echo "目标版本: $version (标签将在所有测试通过后创建)"
 
-  frontend:
-    name: Web 构建与 source map
+  preflight:
+    name: Ubuntu 四道门与前端产物
     needs: validate
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: app/desktop
     env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       VITE_SENTRY_DSN_WEB: ${{ secrets.SENTRY_DSN_WEB }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
       NORI_SENTRY_ENVIRONMENT: production
@@ -148,95 +149,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.validate.outputs.tag }}
-
-      - name: 检查 Sentry Secrets
+          ref: ${{ github.sha }}
+      - name: 检查 Sentry 构建变量
         shell: bash
         run: |
           for name in VITE_SENTRY_DSN_WEB SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT_WEB; do
             if [ -z "${!name}" ]; then echo "缺少 GitHub Secret: $name" >&2; exit 1; fi
           done
-
       - uses: pnpm/action-setup@v4
         with:
           version: 11
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/desktop/pnpm-lock.yaml
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-
-      - name: 确认 source map 已由 Sentry 插件处理
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+      - name: 一方 TODO/FIXME 门禁
+        run: pnpm check:todo
+      - name: 前端门 · 类型检查与构建
+        run: pnpm build
+      - name: 前端门 · 单元测试
+        run: pnpm test
+      # dotnet 调用不并行, 且 test 不再触发第二次 build, 避免 obj 锁冲突。
+      - name: 后端门 · 构建
+        run: dotnet build Nori.slnx --configuration Release
+      - name: 后端门 · 单元测试
+        run: dotnet test Nori.slnx --configuration Release --no-build --no-restore
+      - name: 确认 source map 已上传并删除
         shell: bash
         run: |
           if find dist -name '*.map' -print -quit | grep -q .; then
-            echo "source map 未删除, 可能没有完成 Sentry 上传" >&2
+            echo "source map 未由 Sentry 插件处理" >&2
             exit 1
           fi
-
       - uses: actions/upload-artifact@v4
         with:
           name: nori-dist-${{ needs.validate.outputs.version }}
           path: app/desktop/dist
           if-no-files-found: error
-          retention-days: 1
-
-  native_release:
-    name: 创建 Native Sentry release
-    needs: validate
-    runs-on: ubuntu-latest
-    env:
-      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-      SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
-      SENTRY_PROJECT_NATIVE: ${{ secrets.SENTRY_PROJECT_NATIVE }}
-      SENTRY_URL: ${{ secrets.SENTRY_URL || 'https://sentry.io' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.validate.outputs.tag }}
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: 创建 Native release
-        shell: bash
-        run: |
-          for name in SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT_NATIVE; do
-            if [ -z "${!name}" ]; then echo "缺少 GitHub Secret: $name" >&2; exit 1; fi
-          done
-          dotnet restore app/desktop/Nori.Desktop/Nori.Desktop.csproj
-          cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Linux-x86_64"
-          test -f "$cli"
-          chmod +x "$cli"
-          if ! "$cli" releases new --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE"; then
-            "$cli" releases info --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE" >/dev/null
-          fi
-
-      - name: 创建或复用 GitHub Draft Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release 已存在，直接复用: $TAG"
-          else
-            gh release create "$TAG" \
-              --verify-tag \
-              --draft \
-              --title "$TAG" \
-              --generate-notes
-          fi
+          retention-days: 2
 
   native:
-    name: ${{ matrix.name }} · ${{ needs.validate.outputs.mode }}
-    needs: [validate, frontend, native_release]
+    name: ${{ matrix.name }} 编译与单测
+    needs: [validate, preflight]
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -250,16 +211,12 @@ jobs:
           - os: macos-14
             name: macos
             rid: osx-arm64
-    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: app/desktop
     env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       NORI_VERSION: ${{ needs.validate.outputs.version }}
-      NORI_TAG: ${{ needs.validate.outputs.tag }}
-      NORI_MODE: ${{ needs.validate.outputs.mode }}
-      NORI_INCLUDE_RUNTIME: ${{ inputs.include_runtime }}
-      GH_TOKEN: ${{ github.token }}
       NORI_SENTRY_DSN_NATIVE: ${{ secrets.SENTRY_DSN_NATIVE }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
       NORI_SENTRY_ENVIRONMENT: production
@@ -270,118 +227,112 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.validate.outputs.tag }}
-
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
           name: nori-dist-${{ needs.validate.outputs.version }}
           path: app/desktop/dist
-
-      - name: 检查 Sentry Native Secrets
-        shell: bash
-        if: matrix.name != 'windows'
+      - name: 安装 Linux 原生编译依赖
+        if: matrix.name == 'linux'
         run: |
-          for name in NORI_SENTRY_DSN_NATIVE SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT_NATIVE; do
-            if [ -z "${!name}" ]; then echo "缺少 GitHub Secret: $name" >&2; exit 1; fi
-          done
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-0 libgtk-3-0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: 后端门 · 跨平台构建
+        run: dotnet build Nori.slnx --configuration Release
+      - name: 后端门 · 跨平台单元测试
+        run: dotnet test Nori.slnx --configuration Release --no-build --no-restore
 
-      - name: 检查 Sentry Native Secrets (Windows)
-        shell: pwsh
+      - name: 检查 Windows Native Sentry 变量
         if: matrix.name == 'windows'
+        shell: pwsh
         run: |
           $names = @('NORI_SENTRY_DSN_NATIVE', 'SENTRY_AUTH_TOKEN', 'SENTRY_ORG', 'SENTRY_PROJECT_NATIVE')
           foreach ($name in $names) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) { throw "缺少 GitHub Secret: $name" }
           }
-
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-node@v4
+        if: matrix.name == 'windows'
         with:
-          dotnet-version: '10.0.x'
-
-      - name: 发布 Windows
+          node-version: 24
+      - name: Windows 发布目标还原
+        if: matrix.name == 'windows'
+        run: dotnet restore Nori.Desktop/Nori.Desktop.csproj --runtime win-x64
+      - name: Windows framework-dependent 发布
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          $env:NORI_SKIP_FRONTEND = '1'
-          $env:NORI_KEEP_SYMBOLS = '1'
-          $selfContained = if ('${{ inputs.include_runtime }}' -eq 'true') { 'true' } else { 'false' }
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r $env:RID --self-contained $selfContained `
-            -p:Version=$env:NORI_VERSION `
-            -p:NoriSentryDsnNative=$env:NORI_SENTRY_DSN_NATIVE `
-            -p:NoriSentryRelease=$env:NORI_SENTRY_RELEASE `
-            -p:NoriSentryEnvironment=$env:NORI_SENTRY_ENVIRONMENT `
-            -p:DebugType=portable -p:DebugSymbols=true `
-            -p:PublishSingleFile=false -p:PublishReadyToRun=false `
-            -o bin/publish/$env:RID
+          $publish = "bin/release-publish/win-x64"
+          if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
+          dotnet publish Nori.Desktop/Nori.Desktop.csproj --configuration Release --runtime win-x64 --self-contained false --no-restore `
+            -p:Version=$env:NORI_VERSION -p:NoriSentryDsnNative=$env:NORI_SENTRY_DSN_NATIVE `
+            -p:NoriSentryRelease=$env:NORI_SENTRY_RELEASE -p:NoriSentryEnvironment=$env:NORI_SENTRY_ENVIRONMENT `
+            -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=None -p:DebugSymbols=false -o $publish
+      - name: Windows ZIP / checksum / SBOM / third-party notices
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -PublishDir bin/release-publish/win-x64 -Version $env:NORI_VERSION -OutputDir bin/release
+      - name: Windows first-run 启动冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-first-run-$env:GITHUB_RUN_ID"
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile
+      - name: Windows initialized 启动冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-initialized-$env:GITHUB_RUN_ID"
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile
+      - name: 上传待发布 Windows 产物
+        if: matrix.name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-windows-release-${{ needs.validate.outputs.version }}
+          path: |
+            app/desktop/bin/release/*.zip
+            app/desktop/bin/release/*.sha256
+            app/desktop/bin/release/SBOM.cdx.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES.md
+            app/desktop/bin/release/RELEASE-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 2
+
+  create_tag:
+    name: 所有测试通过后创建标签
+    needs: [validate, preflight, native]
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ needs.validate.outputs.tag }}
+      version: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: 创建并推送标签
+        shell: bash
         env:
-          RID: ${{ matrix.rid }}
-
-      - name: 上传 Windows .NET 符号
-        if: matrix.name == 'windows'
-        shell: pwsh
+          TAG: ${{ needs.validate.outputs.tag }}
         run: |
-          $cli = Get-ChildItem "$env:USERPROFILE\.nuget\packages\sentry\6.9.0\tools\sentry-cli-Windows-*.exe" | Select-Object -First 1
-          if ($null -eq $cli) { throw '找不到 Sentry CLI' }
-          & $cli.FullName debug-files upload --org $env:SENTRY_ORG --project $env:SENTRY_PROJECT_NATIVE --type portablepdb bin/publish/$env:RID
-        env:
-          RID: ${{ matrix.rid }}
+          git fetch --tags --force
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            tagged_sha="$(git rev-list -n1 "refs/tags/$TAG")"
+            if [ "$tagged_sha" != "$GITHUB_SHA" ]; then echo "标签指向错误提交: $TAG" >&2; exit 1; fi
+            echo "复用已指向本次提交的标签: $TAG"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "chore: release $TAG"
+            git push origin "$TAG"
+          fi
 
-      - name: 删除 Windows 符号
-        if: matrix.name == 'windows'
-        shell: pwsh
-        run: Get-ChildItem -Path bin/publish/${{ matrix.rid }} -Recurse -Filter *.pdb | Remove-Item -Force
-
-      - name: 发布 Linux / macOS
-        if: matrix.name != 'windows'
-        shell: bash
-        run: |
-          chmod +x publish.sh
-          NORI_SKIP_FRONTEND=1 NORI_KEEP_SYMBOLS=1 ./publish.sh "${{ matrix.rid }}"
-
-      - name: 上传 Linux / macOS .NET 符号
-        if: matrix.name != 'windows'
-        shell: bash
-        run: |
-          if [ "${{ matrix.name }}" = "linux" ]; then cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Linux-x86_64"; else cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Darwin-arm64"; fi
-          test -f "$cli"
-          chmod +x "$cli"
-          "$cli" debug-files upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" --type portablepdb "bin/publish/${{ matrix.rid }}"
-
-      - name: 删除 Linux / macOS 符号
-        if: matrix.name != 'windows'
-        shell: bash
-        run: find "bin/publish/${{ matrix.rid }}" -name '*.pdb' -delete
-
-      - name: 打包并上传 Windows Release
-        if: matrix.name == 'windows'
-        shell: pwsh
-        run: |
-          $asset = "nori-$($env:NORI_VERSION)-${{ matrix.rid }}-$($env:NORI_MODE).zip"
-          $publishDir = "bin/publish/${{ matrix.rid }}"
-          if (Test-Path $asset) { Remove-Item $asset -Force }
-          Compress-Archive -Path "$publishDir/*" -DestinationPath $asset -CompressionLevel Optimal
-          gh release upload "$env:NORI_TAG" $asset --clobber
-
-      - name: 打包并上传 Linux Release
-        if: matrix.name == 'linux'
-        shell: bash
-        run: |
-          asset="nori-${NORI_VERSION}-${{ matrix.rid }}-${NORI_MODE}.tar.gz"
-          tar -czf "$asset" -C "bin/publish/${{ matrix.rid }}/app" .
-          gh release upload "$NORI_TAG" "$asset" --clobber
-
-      - name: 打包并上传 macOS Release
-        if: matrix.name == 'macos'
-        shell: bash
-        run: |
-          asset="nori-${NORI_VERSION}-${{ matrix.rid }}-${NORI_MODE}.zip"
-          ditto -c -k --sequesterRsrc --keepParent \
-            "bin/publish/${{ matrix.rid }}/Nori.app" "$asset"
-          gh release upload "$NORI_TAG" "$asset" --clobber
-
-  native_finalize:
+  finalize_sentry:
     name: 完成 Native Sentry release
-    needs: [native, validate]
+    needs: [create_tag, validate]
     runs-on: ubuntu-latest
     env:
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
@@ -392,25 +343,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.validate.outputs.tag }}
-
+          ref: ${{ needs.create_tag.outputs.tag }}
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
-
-      - name: Finalize Native release
+          dotnet-version: "10.0.x"
+      - name: 创建或复用并完成 Native release
         shell: bash
         run: |
+          for name in SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT_NATIVE; do
+            if [ -z "${!name}" ]; then echo "缺少 GitHub Secret: $name" >&2; exit 1; fi
+          done
           dotnet restore app/desktop/Nori.Desktop/Nori.Desktop.csproj
           cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Linux-x86_64"
+          test -f "$cli"
           chmod +x "$cli"
+          if ! "$cli" releases new --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE"; then
+            "$cli" releases info --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE" >/dev/null
+          fi
           "$cli" releases finalize --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" "$NORI_SENTRY_RELEASE"
 
-      - name: 发布 GitHub Release
+  publish_release:
+    name: 创建 GitHub Release
+    needs: [create_tag, finalize_sentry, validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nori-windows-release-${{ needs.validate.outputs.version }}
+          path: release-artifacts
+      - name: 发布 Windows ZIP 与审计元数据
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
+          TAG: ${{ needs.create_tag.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          gh release edit "$TAG" --draft=false
-          echo "Release 已发布: $TAG"
+          test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip"
+          test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256"
+          test -f release-artifacts/SBOM.cdx.json
+          test -f release-artifacts/THIRD-PARTY-NOTICES.json
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes \
+            release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip \
+            release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256 \
+            release-artifacts/SBOM.cdx.json \
+            release-artifacts/THIRD-PARTY-NOTICES.json \
+            release-artifacts/THIRD-PARTY-NOTICES.md \
+            release-artifacts/RELEASE-MANIFEST.json

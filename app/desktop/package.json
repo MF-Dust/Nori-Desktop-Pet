@@ -10,7 +10,8 @@
 		"dev": "vite",
 		"build": "vue-tsc --noEmit && vite build",
 		"preview": "vite preview",
-		"test": "vitest run"
+		"test": "vitest run",
+		"check:todo": "node scripts/check-first-party-todos.mjs"
 	},
 	"dependencies": {
 		"@pixi/app": "^6.5.10",

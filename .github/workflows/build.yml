@@ -1,19 +1,34 @@
 name: build
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      include_runtime:
-        description: "是否打包 .NET Runtime"
-        required: true
-        default: false
-        type: boolean
 
-# 四道门: pnpm build / pnpm test / dotnet build / dotnet test.
-# 自动 push / PR 构建由维护者改为手动触发, 避免每次提交都消耗三平台构建额度。
+permissions:
+  contents: read
+
+# CI 门禁: first-party TODO/FIXME 扫描 + pnpm build + pnpm test + dotnet build + dotnet test。
+# 每个 job 内的 dotnet 调用严格串行; Windows 另做 FDD 发布、ZIP 内容与双启动分支冒烟。
 jobs:
+  source_scan:
+    name: first-party TODO/FIXME 扫描
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 扫描一方源码标记
+        run: node scripts/check-first-party-todos.mjs
+
   desktop:
     name: ${{ matrix.name }}
+    needs: source_scan
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -32,12 +47,12 @@ jobs:
     defaults:
       run:
         working-directory: app/desktop
-
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
     steps:
       - uses: actions/checkout@v4
 
-      # WebKitGTK: Linux 上 NativeWebView 的原生依赖 (无它 dotnet build 仍能过, 运行期才需要)
-      - name: 安装 Linux 原生依赖
+      - name: 安装 Linux 原生编译依赖
         if: matrix.name == 'linux'
         run: |
           sudo apt-get update
@@ -46,47 +61,71 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/desktop/pnpm-lock.yaml
-
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: "10.0.x"
 
-      - run: pnpm install --frozen-lockfile
-
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+      - name: 一方 TODO/FIXME 门禁
+        run: pnpm check:todo
       - name: 前端门 · 类型检查与构建
         run: pnpm build
-
       - name: 前端门 · 单元测试
         run: pnpm test
 
+      # 不把 build/test/publish 合并成并行 matrix 或后台任务, 避免共享 obj 文件锁。
       - name: 后端门 · 构建
-        run: dotnet build --configuration Release
-
+        run: dotnet build Nori.slnx --configuration Release
       - name: 后端门 · 单元测试
-        run: dotnet test --configuration Release --no-build
+        run: dotnet test Nori.slnx --configuration Release --no-build --no-restore
 
-      # 发布冒烟: 只验证 publish 能产出可执行文件, 按输入可切换 Runtime 打包模式
-      - name: 发布冒烟 (Windows)
+      - name: Windows 发布目标还原
         if: matrix.name == 'windows'
-        shell: bash
-        run: |
-          if [ "${{ inputs.include_runtime }}" = "true" ]; then mode=self-contained; else mode=framework-dependent; fi
-          echo "发布模式: $mode"
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r ${{ matrix.rid }} \
-            --self-contained "${{ inputs.include_runtime }}" -o bin/ci-publish
-          test -f bin/ci-publish/Nori.Desktop.exe
+        run: dotnet restore Nori.Desktop/Nori.Desktop.csproj --runtime win-x64
 
-      - name: 发布冒烟 (Linux / macOS)
-        if: matrix.name != 'windows'
+      - name: Windows FDD 发布
+        if: matrix.name == 'windows'
+        shell: pwsh
         run: |
-          if [ "${{ inputs.include_runtime }}" = "true" ]; then mode=self-contained; else mode=framework-dependent; fi
-          echo "发布模式: $mode"
-          chmod +x publish.sh
-          NORI_SKIP_FRONTEND=1 NORI_INCLUDE_RUNTIME="${{ inputs.include_runtime }}" ./publish.sh ${{ matrix.rid }}
-          test -f "bin/publish/${{ matrix.rid }}/app/Nori.Desktop"
+          $publish = "bin/ci-publish/win-x64"
+          if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
+          dotnet publish Nori.Desktop/Nori.Desktop.csproj --configuration Release --runtime win-x64 --self-contained false --no-restore `
+            -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=None -p:DebugSymbols=false -o $publish
+          if (-not (Test-Path "$publish/Nori.Desktop.exe")) { throw "缺少 Windows 可执行文件" }
+          if (-not (Test-Path "$publish/wwwroot/index.html")) { throw "缺少打包后的 wwwroot/index.html" }
+          if (-not (Test-Path "$publish/Live2DCubismCore.dll")) { throw "缺少 Cubism Core 原生库" }
+
+      - name: Windows ZIP / SBOM / notices 内容冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-windows.ps1 -PublishDir bin/ci-publish/win-x64 -Version ci -OutputDir bin/ci-release
+
+      - name: Windows first-run 启动冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-first-run-$env:GITHUB_RUN_ID"
+          ./scripts/smoke-published.ps1 -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile
+
+      - name: Windows initialized 启动冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-initialized-$env:GITHUB_RUN_ID"
+          ./scripts/smoke-published.ps1 -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile
+
+      - name: 上传 Windows CI 产物
+        if: matrix.name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-windows-ci-package
+          path: app/desktop/bin/ci-release/*
+          if-no-files-found: error
+          retention-days: 7

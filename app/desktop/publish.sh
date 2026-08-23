@@ -2,6 +2,7 @@
 # Nori Desktop Pet — Linux / macOS 发布脚本
 #
 # 与 publish.bat 保持同样口径: framework-dependent 发布, 不打包 .NET 运行时。
+# macOS / Linux 目前只在 CI 做编译与单元测试, 此脚本仅供维护者本地预览。
 # 用法:
 #   ./publish.sh                  # 按当前系统推断 RID
 #   ./publish.sh linux-x64        # 指定单个 RID
@@ -15,11 +16,10 @@ APP_NAME="Nori.Desktop"
 APP_VERSION="${NORI_VERSION:-0.1.0}"
 BUNDLE_ID="cn.erhio.noriDesktopPet"
 
-# 发布默认 framework-dependent; 手动 CI 可通过 NORI_INCLUDE_RUNTIME=1 打包 .NET Runtime。
-SELF_CONTAINED="false"
-case "${NORI_INCLUDE_RUNTIME:-0}" in
-	1 | true | TRUE | yes) SELF_CONTAINED="true" ;;
-esac
+if [[ "${NORI_INCLUDE_RUNTIME:-0}" =~ ^(1|true|TRUE|yes)$ ]]; then
+	echo "不支持 self-contained 发布; 目标机必须预装 .NET 10 Runtime。" >&2
+	exit 2
+fi
 SKIP_FRONTEND="${NORI_SKIP_FRONTEND:-0}"
 KEEP_SYMBOLS="${NORI_KEEP_SYMBOLS:-0}"
 case "$KEEP_SYMBOLS" in
@@ -117,11 +117,10 @@ for rid in "${RIDS[@]}"; do
 
 	publish_dir="bin/publish/$rid/app"
 	mode="framework-dependent"
-	if [ "$SELF_CONTAINED" = "true" ]; then mode="self-contained"; fi
 	echo "[2/2] 发布 $APP_NAME ($rid, $mode)..."
 	rm -rf "bin/publish/$rid"
 	publish_args=(
-		-c Release -r "$rid" --self-contained "$SELF_CONTAINED"
+		-c Release -r "$rid" --self-contained false
 		-p:Version="$APP_VERSION"
 		-p:NoriSentryDsnNative="${NORI_SENTRY_DSN_NATIVE:-}"
 		-p:NoriSentryRelease="${NORI_SENTRY_RELEASE:-}"

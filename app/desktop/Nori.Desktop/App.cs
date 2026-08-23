@@ -127,6 +127,12 @@ public sealed class App : Application
 		{
 			config.InitDefaults(AppVersion());
 			config.EnsureSchemaVersion();
+			if (SmokeTestRuntime.Current?.Mode == SmokeTestMode.Initialized)
+			{
+				// 只在显式隔离 profile 的冒烟模式中预置完成标记, 不改变普通启动流程。
+				config.MarkFirstRunCompleted();
+				config.MarkInitialized();
+			}
 		}
 		catch (InvalidOperationException exception)
 		{
@@ -217,6 +223,15 @@ public sealed class App : Application
 				services.Windows.Show(WindowLabels.Main);
 			else
 				services.Windows.Show(firstRun ? WindowLabels.FirstRun : WindowLabels.Init);
+
+			if (SmokeTestRuntime.Current is { } smokeTest)
+			{
+				bool expectedFirstRun = smokeTest.Mode == SmokeTestMode.FirstRun;
+				if (firstRun != expectedFirstRun)
+					throw new InvalidOperationException("启动冒烟分支与 profile 状态不一致");
+				SmokeTestRuntime.WriteReady(smokeTest, firstRun);
+				SmokeTestRuntime.ScheduleBoundedExit(desktop);
+			}
 		});
 	}
 

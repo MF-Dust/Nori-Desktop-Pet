@@ -1,0 +1,32 @@
+{
+	"policy": "仅在仓库证据明确或发布前获得分发确认时填写 license；未确认的条目使用 null，不推断许可证。",
+	"components": [
+		{
+			"name": "Avalonia.Controls.WebView",
+			"version": "12.1.0",
+			"ecosystem": "NuGet",
+			"purl": "pkg:nuget/Avalonia.Controls.WebView@12.1.0",
+			"license": null,
+			"licenseStatus": "requires-distribution-confirmation",
+			"note": "发布前必须由维护者确认 Avalonia WebView 的分发许可。"
+		},
+		{
+			"name": "Live2D Cubism Core",
+			"version": "bundled-native",
+			"ecosystem": "native",
+			"purl": null,
+			"license": null,
+			"licenseStatus": "requires-distribution-confirmation",
+			"note": "随包原生库的 Cubism Core 分发许可必须由维护者确认。"
+		},
+		{
+			"name": "Microsoft Edge WebView2 Runtime",
+			"version": "system-prerequisite",
+			"ecosystem": "runtime",
+			"purl": null,
+			"license": null,
+			"licenseStatus": "not-bundled-not-confirmed",
+			"note": "Windows 目标机预装运行时，不进入 ZIP。"
+		}
+	]
+}

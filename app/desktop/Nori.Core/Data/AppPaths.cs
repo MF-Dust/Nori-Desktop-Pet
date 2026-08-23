@@ -10,6 +10,8 @@ namespace Nori.Core.Data;
 /// </summary>
 public static class AppPaths
 {
+	private static string? _diagnosticProfile;
+
 	/// <summary>
 	/// 应用标识, 与 tauri.conf.json 的 identifier 保持一致
 	/// </summary>
@@ -28,7 +30,24 @@ public static class AppPaths
 	/// <summary>
 	/// 应用数据目录: &lt;平台数据目录&gt;/&lt;应用标识&gt;/data
 	/// </summary>
-	public static string DataDir => Path.Combine(AppDataRoot(), Identifier, "data");
+	public static string DataDir => _diagnosticProfile is { } profile
+		? Path.Combine(profile, "data")
+		: Path.Combine(AppDataRoot(), Identifier, "data");
+
+	/// <summary>
+	/// 为隔离的启动冒烟模式设置 profile。
+	/// 普通启动不会调用此方法, 真实用户目录因此保持不变。
+	/// </summary>
+	public static void UseDiagnosticProfile(string profile)
+	{
+		if (string.IsNullOrWhiteSpace(profile)) throw new ArgumentException("profile 不能为空", nameof(profile));
+		string fullPath = Path.GetFullPath(profile);
+		if (Path.GetPathRoot(fullPath)?.Equals(fullPath, StringComparison.OrdinalIgnoreCase) == true)
+			throw new ArgumentException("profile 不能是文件系统根目录", nameof(profile));
+		if (_diagnosticProfile is not null && !string.Equals(_diagnosticProfile, fullPath, StringComparison.OrdinalIgnoreCase))
+			throw new InvalidOperationException("profile 只能设置一次");
+		_diagnosticProfile = fullPath;
+	}
 
 	/// <summary>
 	/// SQLite 数据库文件路径

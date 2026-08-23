@@ -1,5 +1,6 @@
 using System;
 using Avalonia;
+using Nori.Core.Data;
 using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Startup;
 
@@ -13,7 +14,29 @@ internal static class Program
 	[STAThread]
 	public static void Main(string[] args)
 	{
-		// 在 Avalonia 启动前就挂上域级兑底, 尽早覆盖启动期异常 (参考 ClassIsland Program.cs)
+		if (!SmokeTestOptions.TryParse(args, out SmokeTestOptions? smokeTest, out string parseError))
+		{
+			Console.Error.WriteLine($"启动参数错误: {parseError}");
+			Environment.ExitCode = 2;
+			return;
+		}
+
+		if (smokeTest is not null)
+		{
+			try
+			{
+				AppPaths.UseDiagnosticProfile(smokeTest.Profile);
+				SmokeTestRuntime.Configure(smokeTest);
+			}
+			catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+			{
+				Console.Error.WriteLine($"冒烟 profile 不可用: {exception.Message}");
+				Environment.ExitCode = 2;
+				return;
+			}
+		}
+
+		// 在 Avalonia 启动前就挂上域级兜底, 尽早覆盖启动期异常 (参考 ClassIsland Program.cs)
 		CrashReporter.RegisterDomainHandler();
 		using SingleInstanceGuard? singleInstance = SingleInstanceGuard.TryAcquire(() =>
 		{
