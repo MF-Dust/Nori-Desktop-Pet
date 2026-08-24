@@ -2,9 +2,8 @@
 import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
 import {feedback} from "../../services/feedback"
-import {useSnapshotField} from "../../composables/useSnapshotField"
+import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import useLanguages from "../../services/i18n/useLanguages"
-import {useDebouncedSave} from "../../composables/useDebouncedSave"
 import Icon from "../Icon.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppCard from "../ui/AppCard.vue"
@@ -17,109 +16,142 @@ const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
 const VOICE = computed(() => SNAPSHOT.value?.voice)
 
 // 字段级防抖保存 (每字段独立计时器, 卸载时自动 flush, 失败走反馈层)
-const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(I18N.value.saveFailed, error)})
+const SAVE_MGR = useSnapshotSave({
+	onError: (_key, error) => feedback.error(I18N.value.saveFailed, error),
+})
+const {defineField, save} = SAVE_MGR
 
 // 全局音量 (0 ~ 100)
-const volumeField = useSnapshotField(snapshot => Math.round(snapshot.voice.volume * 100), 100)
+const volumeField = defineField(
+	"volume",
+	snapshot => Math.round(snapshot.voice.volume * 100),
+	100,
+	val => RUNTIME.updateVoice({volume: String(val / 100)}),
+)
 const volume = volumeField.value
 
 // TTS 配置 (云端路径: openai / custom / gpt_sovits)
 type TtsProvider = "openai" | "custom" | "gpt_sovits"
-const ttsProviderField = useSnapshotField(snapshot => {
-	const VALUE = snapshot.voice.ttsProvider
-	return (["openai", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
-}, "openai" as TtsProvider)
+const ttsProviderField = defineField<TtsProvider>(
+	"ttsProvider",
+	snapshot => {
+		const VALUE = snapshot.voice.ttsProvider
+		return (["openai", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
+	},
+	"openai",
+	val => RUNTIME.updateVoice({ttsProvider: val}),
+)
 const ttsProvider = ttsProviderField.value
-const ttsBaseUrlField = useSnapshotField(snapshot => snapshot.voice.ttsBaseUrl, "")
+
+const ttsBaseUrlField = defineField(
+	"tts_base_url",
+	snapshot => snapshot.voice.ttsBaseUrl,
+	"",
+	val => RUNTIME.updateVoice({ttsBaseUrl: val.trim()}),
+)
 const ttsBaseUrl = ttsBaseUrlField.value
+
 const ttsApiKeyInput = ref("")
-const ttsVoiceField = useSnapshotField(snapshot => snapshot.voice.ttsVoice || "nova", "nova")
+
+const ttsVoiceField = defineField(
+	"tts_voice",
+	snapshot => snapshot.voice.ttsVoice || "nova",
+	"nova",
+	val => RUNTIME.updateVoice({ttsVoice: val.trim()}),
+)
 const ttsVoice = ttsVoiceField.value
-const ttsSpeedField = useSnapshotField(snapshot => snapshot.voice.ttsSpeed, 1)
+
+const ttsSpeedField = defineField(
+	"tts_speed",
+	snapshot => snapshot.voice.ttsSpeed,
+	1,
+	val => RUNTIME.updateVoice({ttsSpeed: String(val)}),
+)
 const ttsSpeed = ttsSpeedField.value
-const ttsAutoPlayField = useSnapshotField(snapshot => snapshot.voice.ttsAutoPlay, true)
+
+const ttsAutoPlayField = defineField(
+	"tts_auto_play",
+	snapshot => snapshot.voice.ttsAutoPlay,
+	true,
+	val => RUNTIME.updateVoice({ttsAutoPlay: val}),
+)
 const ttsAutoPlay = ttsAutoPlayField.value
+
 const isSpeakingTest = ref(false)
 const isSpeaking = computed(() => VOICE.value?.speaking ?? false)
 
 // GPT-SoVITS 配置
-const gptsovitsBaseUrlField = useSnapshotField(snapshot => snapshot.voice.gptsovitsBaseUrl, "http://127.0.0.1:9880")
+const gptsovitsBaseUrlField = defineField(
+	"gptsovits_url",
+	snapshot => snapshot.voice.gptsovitsBaseUrl,
+	"http://127.0.0.1:9880",
+	val => RUNTIME.updateVoice({gptsovitsBaseUrl: val.trim()}),
+)
 const gptsovitsBaseUrl = gptsovitsBaseUrlField.value
-const gptsovitsRefAudioField = useSnapshotField(snapshot => snapshot.voice.gptsovitsRefAudio, "")
+
+const gptsovitsRefAudioField = defineField(
+	"gptsovits_ref",
+	snapshot => snapshot.voice.gptsovitsRefAudio,
+	"",
+	val => RUNTIME.updateVoice({gptsovitsRefAudio: val.trim()}),
+)
 const gptsovitsRefAudio = gptsovitsRefAudioField.value
-const gptsovitsPromptTextField = useSnapshotField(snapshot => snapshot.voice.gptsovitsPromptText, "")
+
+const gptsovitsPromptTextField = defineField(
+	"gptsovits_text",
+	snapshot => snapshot.voice.gptsovitsPromptText,
+	"",
+	val => RUNTIME.updateVoice({gptsovitsPromptText: val.trim()}),
+)
 const gptsovitsPromptText = gptsovitsPromptTextField.value
-const gptsovitsPromptLangField = useSnapshotField(snapshot => snapshot.voice.gptsovitsPromptLang, "zh")
+
+const gptsovitsPromptLangField = defineField(
+	"gptsovits_lang",
+	snapshot => snapshot.voice.gptsovitsPromptLang,
+	"zh",
+	val => RUNTIME.updateVoice({gptsovitsPromptLang: val.trim()}),
+)
 const gptsovitsPromptLang = gptsovitsPromptLangField.value
 
 // STT (仅 Whisper 云端识别)
-const sttBaseUrlField = useSnapshotField(snapshot => snapshot.voice.sttBaseUrl, "")
+const sttBaseUrlField = defineField(
+	"stt_base_url",
+	snapshot => snapshot.voice.sttBaseUrl,
+	"",
+	val => RUNTIME.updateVoice({sttBaseUrl: val.trim(), sttProvider: "whisper"}),
+)
 const sttBaseUrl = sttBaseUrlField.value
+
 const sttApiKeyInput = ref("")
 
 onMounted(async () => {
 	await RUNTIME.init()
 })
 
-type EditableVoiceField = {
-	touch: () => void
-	blur: () => void
-	reset: () => void
-	commit: () => void
-}
-
-const saveVoiceField = (key: string, field: EditableVoiceField, task: () => Promise<void>): void => {
-	field.touch()
-	field.blur()
-	SAVE.save(key, async () => {
-		try {
-			await task()
-			field.commit()
-		} catch (error) {
-			field.reset()
-			throw error
-		}
-	})
-}
-
-const saveVoiceFieldNow = (key: string, field: EditableVoiceField, task: () => Promise<void>): void => {
-	field.touch()
-	field.blur()
-	void SAVE.saveNow(key, async () => {
-		try {
-			await task()
-			field.commit()
-		} catch (error) {
-			field.reset()
-			throw error
-		}
-	})
-}
-
 // 音量修改 (滑块连续拖动, 防抖提交)
 const onVolumeChange = (value: number) => {
 	volume.value = value
-	saveVoiceField("volume", volumeField, () => RUNTIME.updateVoice({volume: String(value / 100)}))
+	volumeField.save()
 }
 
 const onTtsProviderChange = (value: TtsProvider) => {
 	ttsProvider.value = value
-	saveVoiceFieldNow("ttsProvider", ttsProviderField, () => RUNTIME.updateVoice({ttsProvider: value}))
+	void ttsProviderField.saveNow()
 }
 
-const onTtsBaseUrlBlur = () => saveVoiceField("tts_base_url", ttsBaseUrlField, () => RUNTIME.updateVoice({ttsBaseUrl: ttsBaseUrl.value.trim()}))
-const onTtsVoiceBlur = () => saveVoiceField("tts_voice", ttsVoiceField, () => RUNTIME.updateVoice({ttsVoice: ttsVoice.value.trim()}))
-const onGptBaseUrlBlur = () => saveVoiceField("gptsovits_url", gptsovitsBaseUrlField, () => RUNTIME.updateVoice({gptsovitsBaseUrl: gptsovitsBaseUrl.value.trim()}))
-const onGptRefAudioBlur = () => saveVoiceField("gptsovits_ref", gptsovitsRefAudioField, () => RUNTIME.updateVoice({gptsovitsRefAudio: gptsovitsRefAudio.value.trim()}))
-const onGptPromptTextBlur = () => saveVoiceField("gptsovits_text", gptsovitsPromptTextField, () => RUNTIME.updateVoice({gptsovitsPromptText: gptsovitsPromptText.value.trim()}))
-const onGptPromptLangBlur = () => saveVoiceField("gptsovits_lang", gptsovitsPromptLangField, () => RUNTIME.updateVoice({gptsovitsPromptLang: gptsovitsPromptLang.value.trim()}))
-const onSttBaseUrlBlur = () => saveVoiceField("stt_base_url", sttBaseUrlField, () => RUNTIME.updateVoice({sttBaseUrl: sttBaseUrl.value.trim(), sttProvider: "whisper"}))
+const onTtsBaseUrlBlur = () => ttsBaseUrlField.save()
+const onTtsVoiceBlur = () => ttsVoiceField.save()
+const onGptBaseUrlBlur = () => gptsovitsBaseUrlField.save()
+const onGptRefAudioBlur = () => gptsovitsRefAudioField.save()
+const onGptPromptTextBlur = () => gptsovitsPromptTextField.save()
+const onGptPromptLangBlur = () => gptsovitsPromptLangField.save()
+const onSttBaseUrlBlur = () => sttBaseUrlField.save()
 
 const onTtsApiKeyBlur = () => {
 	const VALUE = ttsApiKeyInput.value.trim()
 	ttsApiKeyInput.value = ""
 	if (!VALUE) return
-	SAVE.save("tts_api_key", async () => {
+	save("tts_api_key", async () => {
 		try {
 			await RUNTIME.updateVoice({ttsApiKey: VALUE})
 		} catch (error) {
@@ -133,7 +165,7 @@ const onSttApiKeyBlur = () => {
 	const VALUE = sttApiKeyInput.value.trim()
 	sttApiKeyInput.value = ""
 	if (!VALUE) return
-	SAVE.save("stt_api_key", async () => {
+	save("stt_api_key", async () => {
 		try {
 			await RUNTIME.updateVoice({sttApiKey: VALUE})
 		} catch (error) {
@@ -145,12 +177,12 @@ const onSttApiKeyBlur = () => {
 
 const onTtsSpeedChange = (value: number) => {
 	ttsSpeed.value = value
-	saveVoiceField("tts_speed", ttsSpeedField, () => RUNTIME.updateVoice({ttsSpeed: String(value)}))
+	ttsSpeedField.save()
 }
 
 const onTtsAutoPlayChange = (value: boolean) => {
 	ttsAutoPlay.value = value
-	saveVoiceFieldNow("tts_auto_play", ttsAutoPlayField, () => RUNTIME.updateVoice({ttsAutoPlay: value}))
+	void ttsAutoPlayField.saveNow()
 }
 
 // 关闭旧浏览器语音配置提示

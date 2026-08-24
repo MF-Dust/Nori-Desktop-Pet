@@ -273,6 +273,26 @@ export const RUNTIME = {
 	updateAi(patch: Partial<{provider: string; baseUrl: string; apiKey: string; model: string; persona: string}>): Promise<void> {
 		return invoke("settings_update_ai", patch)
 	},
+	updateEmbedding(patch: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>): Promise<void> {
+		return invoke("settings_update_embedding", patch)
+	},
+	updateAiProviders(patch: {
+		chat?: Partial<{provider: string; baseUrl: string; apiKey: string; model: string}>
+		embedding?: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>
+		persona?: string
+	}): Promise<void> {
+		return invoke("settings_update_ai_providers", patch)
+	},
+	testAiConnection(args: {
+		target: "chat" | "embedding"
+		provider?: string
+		baseUrl?: string
+		apiKey?: string
+		model?: string
+		dimensions?: string
+	}): Promise<ProviderConnectionTestResult> {
+		return invoke("ai_test_connection", args)
+	},
 	updateVoice(patch: Partial<{
 		volume: string
 		ttsProvider: string
@@ -297,9 +317,6 @@ export const RUNTIME = {
 	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {
 		return invoke("settings_update_proactive", patch)
 	},
-	updateEmbedding(patch: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>): Promise<void> {
-		return invoke("settings_update_embedding", patch)
-	},
 	ackVoiceNotice(): Promise<void> {
 		return invoke("settings_ack_voice_notice")
 	},
@@ -307,10 +324,10 @@ export const RUNTIME = {
 		return invoke("llm_fetch_models", {provider, baseUrl, apiKey})
 	},
 	testLlmConnection(provider: string, baseUrl: string, apiKey: string, model: string): Promise<ProviderConnectionTestResult> {
-		return invoke("llm_test_connection", {provider, baseUrl, apiKey, model})
+		return invoke("ai_test_connection", {target: "chat", provider, baseUrl, apiKey, model})
 	},
 	testEmbeddingConnection(baseUrl: string, apiKey: string, model: string, dimensions?: string): Promise<ProviderConnectionTestResult> {
-		return invoke("embedding_test_connection", {baseUrl, apiKey, model, dimensions})
+		return invoke("ai_test_connection", {target: "embedding", baseUrl, apiKey, model, dimensions})
 	},
 
 	toolsSetEnabled(name: string, enabled: boolean): Promise<void> {

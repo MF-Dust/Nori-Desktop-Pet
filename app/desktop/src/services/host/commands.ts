@@ -37,8 +37,14 @@ export interface BridgeCommandMap {
 	llm_fetch_models: {args: {provider: string; baseUrl: string; apiKey: string}; result: string[]}
 	llm_test_connection: {args: {provider: string; baseUrl: string; apiKey: string; model: string}; result: ProviderConnectionTestResult}
 	embedding_test_connection: {args: {baseUrl: string; apiKey: string; model: string; dimensions?: string}; result: ProviderConnectionTestResult}
+	ai_test_connection: {args: {target: "chat" | "embedding"; provider?: string; baseUrl?: string; apiKey?: string; model?: string; dimensions?: string}; result: ProviderConnectionTestResult}
 	settings_update_ai: {args: Partial<{provider: string; baseUrl: string; apiKey: string; model: string; persona: string}>; result: void}
 	settings_update_embedding: {args: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>; result: void}
+	settings_update_ai_providers: {args: {
+		chat?: Partial<{provider: string; baseUrl: string; apiKey: string; model: string}>
+		embedding?: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>
+		persona?: string
+	}; result: void}
 	settings_update_voice: {args: CommandArgs; result: void}
 	settings_update_general: {args: CommandArgs; result: void}
 	settings_update_proactive: {args: CommandArgs; result: void}

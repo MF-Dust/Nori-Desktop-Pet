@@ -73,14 +73,20 @@ export interface SecretIssueDto {
 	requiresUserAction: boolean
 }
 
-/** AI 大脑状态 (秘密已脱敏) */
-export interface AiState {
+/** 聊天 Provider 配置状态 (秘密已脱敏) */
+export interface AiChatState {
 	configured: boolean
 	provider: string
 	baseUrl: string
 	model: string
 	persona: string
 	hasApiKey: boolean
+}
+
+/** AI 大脑状态 (包含扁平兼容字段与统一 chat/embedding 嵌套结构) */
+export interface AiState extends AiChatState {
+	chat?: AiChatState
+	embedding?: EmbeddingState
 }
 
 /** Provider 连接测试结果 (不包含密钥或请求正文) */
@@ -145,6 +151,7 @@ export interface VoiceState {
 
 /** Embedding 配置 (秘密已脱敏) */
 export interface EmbeddingState {
+	configured: boolean
 	model: string
 	baseUrl: string
 	dimensions: string

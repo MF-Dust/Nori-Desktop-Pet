@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {useSnapshotField} from "../../composables/useSnapshotField"
 import {feedback} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppCard from "../ui/AppCard.vue"
 import AppField from "../ui/AppField.vue"
 import AppButton from "../ui/AppButton.vue"
 
@@ -23,20 +24,48 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 	google: "https://generativelanguage.googleapis.com/v1beta",
 }
 
-// 本地编辑缓冲: 未编辑字段跟随快照, 正在编辑或脏字段保持本地值。
+// 错误提示细分
+const failText = (key: string): string => {
+	if (key === "provider") return I18N.value.providerSaveFailed
+	if (key === "model") return I18N.value.modelSaveFailed
+	if (key.startsWith("embedding")) return I18N.value.embeddingSaveFailed
+	return I18N.value.saveFailed
+}
+
+const SAVE_MGR = useSnapshotSave({
+	onError: (key, error) => feedback.error(failText(key), error),
+})
+const {defineField, save, saveNow, stateOf, errorOf} = SAVE_MGR
+
+// 对话配置字段
 const providerField = useSnapshotField(snapshot => {
-	const VALUE = snapshot.ai.provider
+	const VALUE = snapshot.ai.chat?.provider ?? snapshot.ai.provider
 	return (PROVIDER_OPTIONS as string[]).includes(VALUE) ? VALUE as ProviderKey : "openai"
 }, "openai" as ProviderKey)
-const baseUrlField = useSnapshotField(snapshot => snapshot.ai.baseUrl, "")
-const modelField = useSnapshotField(snapshot => snapshot.ai.model, "")
-const personaField = useSnapshotField(snapshot => snapshot.ai.persona, "")
 const provider = providerField.value
+
+const baseUrlField = defineField(
+	"baseUrl",
+	snapshot => snapshot.ai.chat?.baseUrl ?? snapshot.ai.baseUrl,
+	"",
+	val => RUNTIME.updateAiProviders({chat: {baseUrl: val.trim()}}),
+)
 const baseUrl = baseUrlField.value
-const apiKeyInput = ref("")
+
+const modelField = useSnapshotField(snapshot => snapshot.ai.chat?.model ?? snapshot.ai.model, "")
 const model = modelField.value
+
+const personaField = defineField(
+	"persona",
+	snapshot => snapshot.ai.chat?.persona ?? snapshot.ai.persona,
+	"",
+	val => RUNTIME.updateAiProviders({persona: val}),
+)
 const persona = personaField.value
-const hasApiKey = computed(() => RUNTIME.snapshot.value?.ai.hasApiKey ?? false)
+
+const apiKeyInput = ref("")
+const hasApiKey = computed(() => RUNTIME.snapshot.value?.ai.chat?.hasApiKey ?? RUNTIME.snapshot.value?.ai.hasApiKey ?? false)
+
 const apiKeyPlaceholder = computed(() => {
 	if (hasApiKey.value) return I18N.value.apiKeySavedHint
 	switch (provider.value) {
@@ -50,65 +79,78 @@ const apiKeyPlaceholder = computed(() => {
 })
 const baseUrlPlaceholder = computed(() => DEFAULT_BASE_URLS[provider.value] || "https://api.openai.com/v1")
 
-// 拉取模型
-const loading = ref(false)
-const testing = ref(false)
+// 对话模型状态
+const loadingModels = ref(false)
+const testingChat = ref(false)
 const models = ref<string[]>([])
-const errorMsg = ref("")
-const connectionResult = ref("")
-const connectionSuccess = ref(false)
+const chatErrorMsg = ref("")
+const chatConnectionResult = ref("")
+const chatConnectionSuccess = ref(false)
+
+// Embedding 配置字段 (独立隔离)
+const embeddingModelField = defineField(
+	"embeddingModel",
+	snapshot => snapshot.ai.embedding?.model ?? snapshot.embedding.model,
+	"BAAI/bge-m3",
+	val => RUNTIME.updateAiProviders({embedding: {model: val.trim()}}),
+)
+const embeddingModel = embeddingModelField.value
+
+const embeddingBaseUrlField = defineField(
+	"embeddingBaseUrl",
+	snapshot => snapshot.ai.embedding?.baseUrl ?? snapshot.embedding.baseUrl,
+	"",
+	val => RUNTIME.updateAiProviders({embedding: {baseUrl: val.trim()}}),
+)
+const embeddingBaseUrl = embeddingBaseUrlField.value
+
+const embeddingDimensionsField = defineField(
+	"embeddingDimensions",
+	snapshot => snapshot.ai.embedding?.dimensions ?? snapshot.embedding.dimensions,
+	"",
+)
+const embeddingDimensions = embeddingDimensionsField.value
+
+const embeddingApiKeyInput = ref("")
+const hasEmbeddingApiKey = computed(() => RUNTIME.snapshot.value?.ai.embedding?.hasApiKey ?? RUNTIME.snapshot.value?.embedding.hasApiKey ?? false)
+
+const embeddingApiKeyPlaceholder = computed(() => {
+	if (hasEmbeddingApiKey.value) return I18N.value.apiKeySavedHint
+	return I18N.value.embeddingApiKeyPlaceholder
+})
+
+const testingEmbedding = ref(false)
+const embeddingConnectionResult = ref("")
+const embeddingConnectionSuccess = ref(false)
 
 onMounted(async () => {
 	await RUNTIME.init()
 })
 
-// 保存辅助: 每个 key 独立防抖 timer + 卸载 flush (规范要求)
-// 失败提示按字段细分, 保留原来日志里的语义
-const failText = (key: string): string => {
-	if (key === "provider") return I18N.value.providerSaveFailed
-	if (key === "model") return I18N.value.modelSaveFailed
-	return I18N.value.saveFailed
-}
-const SAVE = useDebouncedSave({
-	onError: (key, error) => feedback.error(failText(key), error),
-})
-
-const saveField = (key: string, field: {touch: () => void; blur: () => void; reset: () => void; commit: () => void}, task: () => Promise<void>): void => {
-	field.touch()
-	field.blur()
-	SAVE.save(key, async () => {
-		try {
-			await task()
-			field.commit()
-		} catch (error) {
-			field.reset()
-			throw error
-		}
-	})
-}
-
-const onBaseUrlChange = () => {
+const onBaseUrlBlur = () => {
 	if (!baseUrl.value.trim()) {
 		baseUrlField.reset()
 		return
 	}
-	saveField("baseUrl", baseUrlField, () => RUNTIME.updateAi({baseUrl: baseUrl.value.trim()}))
+	baseUrlField.save()
 }
-const onApiKeyChange = () => {
+
+const onApiKeyBlur = () => {
 	const VALUE = apiKeyInput.value.trim()
 	apiKeyInput.value = ""
 	if (!VALUE) return
-	SAVE.save("apiKey", async () => {
+	save("apiKey", async () => {
 		try {
-			await RUNTIME.updateAi({apiKey: VALUE})
+			await RUNTIME.updateAiProviders({chat: {apiKey: VALUE}})
 		} catch (error) {
 			apiKeyInput.value = VALUE
 			throw error
 		}
 	})
 }
-const onPersonaChange = () => {
-	saveField("persona", personaField, () => RUNTIME.updateAi({persona: persona.value}))
+
+const onPersonaBlur = () => {
+	personaField.save()
 }
 
 // 切换 Provider: 默认地址联动 + 立即保存
@@ -122,9 +164,9 @@ const onProviderChange = () => {
 	baseUrlField.touch()
 	models.value = []
 	model.value = ""
-	void SAVE.saveNow("provider", async () => {
+	void saveNow("provider", async () => {
 		try {
-			await RUNTIME.updateAi({provider: provider.value, baseUrl: baseUrl.value})
+			await RUNTIME.updateAiProviders({chat: {provider: provider.value, baseUrl: baseUrl.value}})
 			providerField.commit()
 			baseUrlField.commit()
 		} catch (error) {
@@ -140,9 +182,9 @@ const onSelectModel = (value: string) => {
 	if (!value) return
 	model.value = value
 	modelField.touch()
-	void SAVE.saveNow("model", async () => {
+	void saveNow("model", async () => {
 		try {
-			await RUNTIME.updateAi({model: value})
+			await RUNTIME.updateAiProviders({chat: {model: value}})
 			modelField.commit()
 		} catch (error) {
 			modelField.reset()
@@ -151,60 +193,131 @@ const onSelectModel = (value: string) => {
 	})
 }
 
-// 测试连接只发送当前编辑值, 不保存配置或聊天内容
-const testConnection = async () => {
-	connectionResult.value = ""
-	testing.value = true
-	const API_KEY = apiKeyInput.value.trim()
-	try {
-		const RESULT = await RUNTIME.testLlmConnection(provider.value, baseUrl.value.trim(), API_KEY, model.value.trim())
-		connectionSuccess.value = RESULT.success
-		connectionResult.value = RESULT.success
-			? I18N.value.testSuccess
-			: `${I18N.value.testFailed}: ${RESULT.message}`
-	} catch (error) {
-		connectionSuccess.value = false
-		connectionResult.value = I18N.value.connectionError
-		feedback.error(I18N.value.connectionError)
-		console.error("LLM 连接测试失败", error instanceof Error ? error.name : "未知错误")
-	} finally {
-		apiKeyInput.value = ""
-		testing.value = false
-	}
-}
-
-// 获取模型按钮 (密钥只在本次调用中发往后端, 不回显)
+// 获取模型列表
 const fetchModels = async () => {
-	errorMsg.value = ""
+	chatErrorMsg.value = ""
 	if (!baseUrl.value.trim()) {
-		errorMsg.value = I18N.value.error.apiBaseUrl
+		chatErrorMsg.value = I18N.value.error.apiBaseUrl
 		return
 	}
 	if (!hasApiKey.value && !apiKeyInput.value.trim()) {
-		errorMsg.value = I18N.value.error.apiKey
+		chatErrorMsg.value = I18N.value.error.apiKey
 		return
 	}
-	loading.value = true
+	loadingModels.value = true
 	try {
-		// 明文密钥只在当前请求中传给后端; 已保存密钥由后端内部读取, 前端永不回读。
 		const KEY = apiKeyInput.value.trim()
 		const result = await RUNTIME.fetchModels(provider.value, baseUrl.value.trim(), KEY)
 		if (KEY) {
 			apiKeyInput.value = ""
-			await RUNTIME.updateAi({apiKey: KEY})
+			await RUNTIME.updateAiProviders({chat: {apiKey: KEY}})
 		}
 		models.value = Array.isArray(result) ? result : []
 		if (models.value.length === 0) {
-			errorMsg.value = I18N.value.modelEmpty
+			chatErrorMsg.value = I18N.value.modelEmpty
 		} else if (!models.value.includes(model.value)) {
 			onSelectModel(models.value[0])
 			model.value = models.value[0]
 		}
 	} catch (error) {
-		errorMsg.value = I18N.value.fetchFailed
+		chatErrorMsg.value = I18N.value.fetchFailed
 		console.error("获取模型失败", error instanceof Error ? error.name : "未知错误")
 	} finally {
-		loading.value = false
+		loadingModels.value = false
+	}
+}
+
+// 测试对话模型连接
+const testChatConnection = async () => {
+	chatConnectionResult.value = ""
+	testingChat.value = true
+	const API_KEY = apiKeyInput.value.trim()
+	try {
+		const RESULT = await RUNTIME.testAiConnection({
+			target: "chat",
+			provider: provider.value,
+			baseUrl: baseUrl.value.trim(),
+			apiKey: API_KEY,
+			model: model.value.trim(),
+		})
+		chatConnectionSuccess.value = RESULT.success
+		chatConnectionResult.value = RESULT.success
+			? I18N.value.testSuccess
+			: `${I18N.value.testFailed}: ${RESULT.message}`
+	} catch (error) {
+		chatConnectionSuccess.value = false
+		chatConnectionResult.value = I18N.value.connectionError
+		feedback.error(I18N.value.connectionError, error)
+		console.error("Chat 连接测试失败", error instanceof Error ? error.name : "未知错误")
+	} finally {
+		apiKeyInput.value = ""
+		testingChat.value = false
+	}
+}
+
+// Embedding 字段与操作
+const onEmbeddingModelBlur = () => {
+	embeddingModelField.save()
+}
+
+const onEmbeddingBaseUrlBlur = () => {
+	embeddingBaseUrlField.save()
+}
+
+const onEmbeddingApiKeyBlur = () => {
+	const VALUE = embeddingApiKeyInput.value.trim()
+	embeddingApiKeyInput.value = ""
+	if (!VALUE) return
+	save("embeddingApiKey", async () => {
+		try {
+			await RUNTIME.updateAiProviders({embedding: {apiKey: VALUE}})
+		} catch (error) {
+			embeddingApiKeyInput.value = VALUE
+			throw error
+		}
+	})
+}
+
+const onEmbeddingDimensionsBlur = () => {
+	const RAW = embeddingDimensions.value.trim()
+	if (RAW === "") {
+		embeddingDimensionsField.save(() => RUNTIME.updateAiProviders({embedding: {dimensions: ""}}))
+		return
+	}
+	const NUM = Number.parseInt(RAW, 10)
+	if (Number.isNaN(NUM) || NUM <= 0) {
+		embeddingDimensions.value = ""
+		embeddingDimensionsField.save(() => RUNTIME.updateAiProviders({embedding: {dimensions: ""}}))
+		return
+	}
+	embeddingDimensions.value = String(NUM)
+	embeddingDimensionsField.save(() => RUNTIME.updateAiProviders({embedding: {dimensions: String(NUM)}}))
+}
+
+const testEmbeddingConnection = async () => {
+	embeddingConnectionResult.value = ""
+	testingEmbedding.value = true
+	const API_KEY = embeddingApiKeyInput.value.trim()
+	try {
+		const RESULT = await RUNTIME.testAiConnection({
+			target: "embedding",
+			baseUrl: embeddingBaseUrl.value.trim(),
+			apiKey: API_KEY,
+			model: embeddingModel.value.trim(),
+			dimensions: embeddingDimensions.value.trim() || undefined,
+		})
+		embeddingConnectionSuccess.value = RESULT.success
+		embeddingConnectionResult.value = RESULT.success
+			? I18N.value.testSuccess
+			: `${I18N.value.testFailed}: ${RESULT.message}`
+	} catch (error) {
+		embeddingConnectionSuccess.value = false
+		embeddingConnectionResult.value = I18N.value.connectionError
+		feedback.error(I18N.value.connectionError, error)
+		console.error("Embedding 连接测试失败", error instanceof Error ? error.name : "未知错误")
+	} finally {
+		embeddingApiKeyInput.value = ""
+		testingEmbedding.value = false
 	}
 }
 
@@ -220,101 +333,181 @@ const modelOptions = computed(() => {
 </script>
 
 <template>
-	<section class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
 		<AppSectionHeader :title="I18N.title" :subtitle="I18N.sub"/>
 
-		<div class="w-full max-w-[54rem] flex flex-col gap-4 p-5 surface-card rounded-lg shadow-[0_0.6rem_2.4rem_rgba(0,0,0,0.35)]">
-			<div class="field">
-				<span class="field-label font-500">{{ I18N.provider }}</span>
-				<n-select
-					v-model:value="provider"
-					:options="providerOptions"
-					@update:value="onProviderChange"
-				/>
-			</div>
-
-			<AppField :label="I18N.apiBaseUrl" :state="SAVE.stateOf('baseUrl')" :error="SAVE.errorOf('baseUrl')">
-				<input
-					v-model="baseUrl"
-					class="input-base"
-					type="text"
-					:placeholder="baseUrlPlaceholder"
-					spellcheck="false"
-					@focus="baseUrlField.focus"
-					@input="baseUrlField.touch"
-					@blur="onBaseUrlChange"
-				/>
-			</AppField>
-
-			<AppField :label="hasApiKey ? `${I18N.apiKey} ${I18N.apiKeyStored}` : I18N.apiKey" :state="SAVE.stateOf('apiKey')">
-				<input
-					v-model="apiKeyInput"
-					class="input-base"
-					type="password"
-					:placeholder="apiKeyPlaceholder"
-					spellcheck="false"
-					autocomplete="off"
-					@blur="onApiKeyChange"
-				/>
-			</AppField>
-
-			<div class="field">
-				<span class="field-label font-500">{{ I18N.model }}</span>
-				<div class="flex items-center gap-2.5">
+		<div class="flex flex-col gap-3.5 pb-5">
+			<!-- 1. 对话模型配置 (Chat LLM) -->
+			<AppCard :title="I18N.chatSection" icon="chat">
+				<div class="field">
+					<span class="field-label font-500">{{ I18N.provider }}</span>
 					<n-select
-						:value="model"
-						:options="modelOptions"
-						:disabled="modelOptions.length === 0"
-						:placeholder="modelOptions.length === 0 ? I18N.modelEmpty : I18N.modelPlaceholder"
-						class="flex-1"
-						@update:value="onSelectModel"
+						v-model:value="provider"
+						:options="providerOptions"
+						@update:value="onProviderChange"
 					/>
-					<div class="flex items-center gap-2">
-						<AppButton
-							variant="primary"
-							size="sm"
-							:loading="loading"
-							:disabled="loading || testing"
-							@click="fetchModels"
-						>
-							{{ loading ? I18N.getting : I18N.getModel }}
-						</AppButton>
-						<AppButton
-							variant="ghost"
-							size="sm"
-							:loading="testing"
-							:disabled="loading || testing"
-							@click="testConnection"
-						>
-							{{ testing ? I18N.testingConnection : I18N.testConnection }}
-						</AppButton>
+				</div>
+
+				<AppField :label="I18N.apiBaseUrl" :state="stateOf('baseUrl')" :error="errorOf('baseUrl')">
+					<input
+						v-model="baseUrl"
+						class="input-base"
+						type="text"
+						:placeholder="baseUrlPlaceholder"
+						spellcheck="false"
+						@focus="baseUrlField.focus"
+						@input="baseUrlField.touch"
+						@blur="onBaseUrlBlur"
+					/>
+				</AppField>
+
+				<AppField :label="hasApiKey ? `${I18N.apiKey} ${I18N.apiKeyStored}` : I18N.apiKey" :state="stateOf('apiKey')" :error="errorOf('apiKey')">
+					<input
+						v-model="apiKeyInput"
+						class="input-base"
+						type="password"
+						:placeholder="apiKeyPlaceholder"
+						spellcheck="false"
+						autocomplete="off"
+						@blur="onApiKeyBlur"
+					/>
+				</AppField>
+
+				<div class="field">
+					<span class="field-label font-500">{{ I18N.model }}</span>
+					<div class="flex items-center gap-2.5">
+						<n-select
+							:value="model"
+							:options="modelOptions"
+							:disabled="modelOptions.length === 0"
+							:placeholder="modelOptions.length === 0 ? I18N.modelEmpty : I18N.modelPlaceholder"
+							class="flex-1"
+							@update:value="onSelectModel"
+						/>
+						<div class="flex items-center gap-2">
+							<AppButton
+								variant="primary"
+								size="sm"
+								:loading="loadingModels"
+								:disabled="loadingModels || testingChat"
+								@click="fetchModels"
+							>
+								{{ loadingModels ? I18N.getting : I18N.getModel }}
+							</AppButton>
+							<AppButton
+								variant="ghost"
+								size="sm"
+								:loading="testingChat"
+								:disabled="loadingModels || testingChat"
+								@click="testChatConnection"
+							>
+								{{ testingChat ? I18N.testingConnection : I18N.testConnection }}
+							</AppButton>
+						</div>
 					</div>
 				</div>
-			</div>
 
-			<AppField :label="I18N.persona" :state="SAVE.stateOf('persona')" :error="SAVE.errorOf('persona')">
-				<textarea
-					v-model="persona"
-					class="input-base resize-y leading-relaxed"
-					rows="4"
-					:placeholder="I18N.personaPlaceholder"
-					@focus="personaField.focus"
-					@input="personaField.touch"
-					@blur="onPersonaChange"
-				/>
-			</AppField>
+				<AppField :label="I18N.persona" :state="stateOf('persona')" :error="errorOf('persona')">
+					<textarea
+						v-model="persona"
+						class="input-base resize-y leading-relaxed"
+						rows="4"
+						:placeholder="I18N.personaPlaceholder"
+						@focus="personaField.focus"
+						@input="personaField.touch"
+						@blur="onPersonaBlur"
+					/>
+				</AppField>
 
-			<p
-				v-if="errorMsg"
-				class="px-3 py-2 rounded-sm text-sm text-danger-text bg-danger/12 border border-danger/35 font-500"
-				role="alert"
-			>{{ errorMsg }}</p>
-			<p
-				v-if="connectionResult"
-				class="px-3 py-2 rounded-sm text-sm font-500"
-				:class="connectionSuccess ? 'text-nori-teal-bright bg-nori-teal-bright/8 border border-nori-teal-soft/30' : 'text-danger-text bg-danger/12 border border-danger/35'"
-				role="status"
-			>{{ connectionResult }}</p>
+				<p
+					v-if="chatErrorMsg"
+					class="px-3 py-2 rounded-sm text-sm text-danger-text bg-danger/12 border border-danger/35 font-500"
+					role="alert"
+				>{{ chatErrorMsg }}</p>
+				<p
+					v-if="chatConnectionResult"
+					class="px-3 py-2 rounded-sm text-sm font-500"
+					:class="chatConnectionSuccess ? 'text-nori-teal-bright bg-nori-teal-bright/8 border border-nori-teal-soft/30' : 'text-danger-text bg-danger/12 border border-danger/35'"
+					role="status"
+				>{{ chatConnectionResult }}</p>
+			</AppCard>
+
+			<!-- 2. 向量嵌入配置 (Embedding) -->
+			<AppCard :title="I18N.embeddingSection" icon="sparkles">
+				<template #actions>
+					<AppButton
+						variant="ghost"
+						size="sm"
+						:loading="testingEmbedding"
+						:disabled="testingEmbedding"
+						@click="testEmbeddingConnection"
+					>
+						{{ testingEmbedding ? I18N.testingConnection : I18N.testEmbeddingConnection }}
+					</AppButton>
+				</template>
+
+				<div class="flex gap-3">
+					<AppField :label="I18N.embeddingModel" :state="stateOf('embeddingModel')" :error="errorOf('embeddingModel')" class="flex-1">
+						<input
+							v-model="embeddingModel"
+							class="input-base"
+							type="text"
+							:placeholder="I18N.embeddingModelPlaceholder"
+							spellcheck="false"
+							@focus="embeddingModelField.focus"
+							@input="embeddingModelField.touch"
+							@blur="onEmbeddingModelBlur"
+						/>
+					</AppField>
+					<AppField :label="I18N.embeddingBaseUrl" :state="stateOf('embeddingBaseUrl')" :error="errorOf('embeddingBaseUrl')" class="flex-1">
+						<input
+							v-model="embeddingBaseUrl"
+							class="input-base"
+							type="text"
+							:placeholder="I18N.embeddingBaseUrlPlaceholder"
+							spellcheck="false"
+							@focus="embeddingBaseUrlField.focus"
+							@input="embeddingBaseUrlField.touch"
+							@blur="onEmbeddingBaseUrlBlur"
+						/>
+					</AppField>
+				</div>
+
+				<div class="flex gap-3">
+					<AppField :label="hasEmbeddingApiKey ? `${I18N.embeddingApiKey} ${I18N.apiKeyStored}` : I18N.embeddingApiKey" :state="stateOf('embeddingApiKey')" :error="errorOf('embeddingApiKey')" class="flex-1">
+						<input
+							v-model="embeddingApiKeyInput"
+							type="password"
+							class="input-base"
+							:placeholder="embeddingApiKeyPlaceholder"
+							spellcheck="false"
+							autocomplete="off"
+							@blur="onEmbeddingApiKeyBlur"
+						/>
+					</AppField>
+					<AppField :label="I18N.embeddingDimensions" :state="stateOf('embeddingDimensions')" :error="errorOf('embeddingDimensions')" class="w-[14rem] shrink-0">
+						<input
+							v-model="embeddingDimensions"
+							type="number"
+							min="1"
+							class="input-base"
+							:placeholder="I18N.embeddingDimensionsPlaceholder"
+							@focus="embeddingDimensionsField.focus"
+							@input="embeddingDimensionsField.touch"
+							@blur="onEmbeddingDimensionsBlur"
+						/>
+					</AppField>
+				</div>
+
+				<p class="text-hint leading-relaxed">{{ I18N.embeddingDimensionsHint }}</p>
+
+				<p
+					v-if="embeddingConnectionResult"
+					class="px-3 py-2 rounded-sm text-sm font-500"
+					:class="embeddingConnectionSuccess ? 'text-nori-teal-bright bg-nori-teal-bright/8 border border-nori-teal-soft/30' : 'text-danger-text bg-danger/12 border border-danger/35'"
+					role="status"
+				>{{ embeddingConnectionResult }}</p>
+			</AppCard>
 		</div>
-	</section>
+	</div>
 </template>

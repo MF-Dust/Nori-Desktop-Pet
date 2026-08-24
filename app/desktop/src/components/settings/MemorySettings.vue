@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import {computed, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {useDebouncedSave} from "../../composables/useDebouncedSave"
-import {useSnapshotField} from "../../composables/useSnapshotField"
+import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {feedback} from "../../services/feedback"
-import {RUNTIME, type MemoryAtom, type MemoryItem, type MemoryRecallDebug, type MemorySource, type MemorySettings} from "../../services/runtime"
+import {RUNTIME, type MemoryAtom, type MemoryItem, type MemoryRecallDebug, type MemorySource} from "../../services/runtime"
 import Icon from "../Icon.vue"
 import AppCard from "../ui/AppCard.vue"
 import AppChip from "../ui/AppChip.vue"
@@ -77,31 +76,103 @@ const SECTIONS = computed(() => [
 	{key: "advanced" as MemorySection, label: I18N.value.tabs.advanced},
 ])
 
-// Embedding 配置 (秘密脱敏)
-const embeddingModelField = useSnapshotField(snapshot => snapshot.embedding.model, "BAAI/bge-m3")
-const embeddingBaseUrlField = useSnapshotField(snapshot => snapshot.embedding.baseUrl, "")
-const embeddingDimensionsField = useSnapshotField(snapshot => snapshot.embedding.dimensions, "")
-const embeddingModel = embeddingModelField.value
-const embeddingBaseUrl = embeddingBaseUrlField.value
-const embeddingDimensions = embeddingDimensionsField.value
-const embeddingApiKeyInput = ref("")
-const hasEmbeddingApiKey = computed(() => RUNTIME.snapshot.value?.embedding.hasApiKey ?? false)
+// 记忆设置防抖与状态管理
+const SAVE_MGR = useSnapshotSave({
+	onError: (_key, error) => feedback.error(I18N.value.toast.saveFailed, error),
+})
+const {defineField} = SAVE_MGR
+
 const isReembedding = ref(false)
-const embeddingTesting = ref(false)
-const embeddingTestMessage = ref("")
-const embeddingTestSuccess = ref(false)
 const reembedMessage = ref("")
-const reflectionRoundsField = useSnapshotField(snapshot => snapshot.memory.reflectionRounds, 8)
-const reflectionMinCharsField = useSnapshotField(snapshot => snapshot.memory.reflectionMinChars, 2500)
-const recallTopKField = useSnapshotField(snapshot => snapshot.memory.recallTopK, 6)
-const keywordTopKField = useSnapshotField(snapshot => snapshot.memory.keywordTopK, 20)
-const vectorTopKField = useSnapshotField(snapshot => snapshot.memory.vectorTopK, 20)
-const rrfKField = useSnapshotField(snapshot => snapshot.memory.rrfK, 60)
-const minSimilarityField = useSnapshotField(snapshot => snapshot.memory.minSimilarity, 0.25)
-const archiveThresholdField = useSnapshotField(snapshot => snapshot.memory.archiveThreshold, 0.15)
-const knowledgeEnabledField = useSnapshotField(snapshot => snapshot.memory.knowledgeEnabled, true)
-const knowledgeWatchField = useSnapshotField(snapshot => snapshot.memory.knowledgeWatch, true)
-const debugRetrievalField = useSnapshotField(snapshot => snapshot.memory.debugRetrieval, false)
+
+const reflectionRoundsField = defineField(
+	"reflectionRounds",
+	snapshot => snapshot.memory.reflectionRounds,
+	8,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({reflectionRounds: val})
+	},
+)
+const reflectionMinCharsField = defineField(
+	"reflectionMinChars",
+	snapshot => snapshot.memory.reflectionMinChars,
+	2500,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({reflectionMinChars: val})
+	},
+)
+const recallTopKField = defineField(
+	"recallTopK",
+	snapshot => snapshot.memory.recallTopK,
+	6,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({recallTopK: val})
+	},
+)
+const keywordTopKField = defineField(
+	"keywordTopK",
+	snapshot => snapshot.memory.keywordTopK,
+	20,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({keywordTopK: val})
+	},
+)
+const vectorTopKField = defineField(
+	"vectorTopK",
+	snapshot => snapshot.memory.vectorTopK,
+	20,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({vectorTopK: val})
+	},
+)
+const rrfKField = defineField(
+	"rrfK",
+	snapshot => snapshot.memory.rrfK,
+	60,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({rrfK: val})
+	},
+)
+const minSimilarityField = defineField(
+	"minSimilarity",
+	snapshot => snapshot.memory.minSimilarity,
+	0.25,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({minSimilarity: val})
+	},
+)
+const archiveThresholdField = defineField(
+	"archiveThreshold",
+	snapshot => snapshot.memory.archiveThreshold,
+	0.15,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({archiveThreshold: val})
+	},
+)
+const knowledgeEnabledField = defineField(
+	"knowledgeEnabled",
+	snapshot => snapshot.memory.knowledgeEnabled,
+	true,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({knowledgeEnabled: val})
+	},
+)
+const knowledgeWatchField = defineField(
+	"knowledgeWatch",
+	snapshot => snapshot.memory.knowledgeWatch,
+	true,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({knowledgeWatch: val})
+	},
+)
+const debugRetrievalField = defineField(
+	"debugRetrieval",
+	snapshot => snapshot.memory.debugRetrieval,
+	false,
+	async val => {
+		await RUNTIME.memoryUpdateSettings({debugRetrieval: val})
+	},
+)
 
 const reflectionRounds = reflectionRoundsField.value
 const reflectionMinChars = reflectionMinCharsField.value
@@ -121,12 +192,6 @@ const newImportance = ref(0.8)
 const newTags = ref("")
 const newKind = ref("general")
 const adding = ref(false)
-
-// API Key 标签: 已保存时补一段加密提示
-const API_KEY_LABEL = computed(() => {
-	const SAVED = hasEmbeddingApiKey.value ? ` ${I18N.value.embedding.apiKeySaved}` : ""
-	return `${I18N.value.embedding.apiKey}${SAVED} ${I18N.value.embedding.apiKeyReuse}`
-})
 
 // 加载记忆列表
 const loadMemories = async () => {
@@ -284,107 +349,9 @@ onMounted(async () => {
 	await loadMemories()
 })
 
-// 保存 Embedding 配置: 每个字段独立防抖 (400ms), 卸载时由 composable 负责 flush
-const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(I18N.value.toast.saveFailed, error)})
-
-const numberValue = (event: Event) => Number((event.target as HTMLInputElement).value)
-
-type EditableMemoryField = {
-	value: {value: unknown}
-	touch: () => void
-	blur: () => void
-	reset: () => void
-	commit: () => void
-}
-
-const saveMemorySetting = <T>(key: string, field: EditableMemoryField, value: T) => {
+const updateNumberField = (field: {value: {value: number}; touch: () => void}, event: Event): void => {
+	field.value.value = Number((event.target as HTMLInputElement).value)
 	field.touch()
-	field.blur()
-	SAVE.save(key, async () => {
-		try {
-			await RUNTIME.memoryUpdateSettings({[key]: value} as Partial<MemorySettings>)
-			field.commit()
-		} catch (error) {
-			field.reset()
-			throw error
-		}
-	})
-}
-
-const saveEmbedding = (key: string, field: EditableMemoryField, task: () => Promise<void>) => {
-	field.touch()
-	field.blur()
-	SAVE.save(key, async () => {
-		try {
-			await task()
-			field.commit()
-		} catch (error) {
-			field.reset()
-			throw error
-		}
-	})
-}
-
-const updateNumberField = (field: EditableMemoryField, event: Event): void => {
-	field.value.value = numberValue(event)
-	field.touch()
-}
-
-// 保存维数: 留空表示用模型默认; 非正整数一律回退为空
-const saveEmbeddingModel = () => saveEmbedding("model", embeddingModelField, () => RUNTIME.updateEmbedding({model: embeddingModel.value.trim()}))
-const saveEmbeddingBase = () => saveEmbedding("base", embeddingBaseUrlField, () => RUNTIME.updateEmbedding({baseUrl: embeddingBaseUrl.value.trim()}))
-
-const testEmbeddingConnection = async () => {
-	if (embeddingTesting.value) return
-	embeddingTesting.value = true
-	embeddingTestMessage.value = ""
-	const API_KEY = embeddingApiKeyInput.value.trim()
-	try {
-		const RESULT = await RUNTIME.testEmbeddingConnection(
-			embeddingBaseUrl.value.trim(),
-			API_KEY,
-			embeddingModel.value.trim(),
-			embeddingDimensions.value.trim() || undefined,
-		)
-		embeddingTestSuccess.value = RESULT.success
-		embeddingTestMessage.value = RESULT.success
-			? I18N.value.embedding.testSuccess
-			: `${I18N.value.embedding.testFailed}: ${RESULT.message}`
-	} catch (error) {
-		embeddingTestSuccess.value = false
-		embeddingTestMessage.value = I18N.value.embedding.connectionError
-		feedback.error(I18N.value.embedding.connectionError)
-		console.error("Embedding 连接测试失败", error instanceof Error ? error.name : "未知错误")
-	} finally {
-		embeddingApiKeyInput.value = ""
-		embeddingTesting.value = false
-	}
-}
-
-const saveDimensions = () => {
-	embeddingDimensionsField.blur()
-	const RAW = embeddingDimensions.value.trim()
-	if (RAW === "") {
-		SAVE.save("dims", async () => {
-			await RUNTIME.updateEmbedding({dimensions: ""})
-			embeddingDimensionsField.commit()
-		})
-		return
-	}
-	const NUM = Number.parseInt(RAW, 10)
-	if (Number.isNaN(NUM) || NUM <= 0) {
-		embeddingDimensions.value = ""
-		SAVE.save("dims", async () => {
-			await RUNTIME.updateEmbedding({dimensions: ""})
-			embeddingDimensionsField.commit()
-		})
-		return
-	}
-	embeddingDimensions.value = String(NUM)
-	SAVE.save("dims", async () => {
-		await RUNTIME.updateEmbedding({dimensions: String(NUM)})
-		embeddingDimensionsField.commit()
-	})
 }
 
 // 重新计算向量嵌入
@@ -467,26 +434,24 @@ const clearAll = async () => {
 			:subtitle="I18N.header.subtitle"
 		/>
 
-		<nav class="flex items-center gap-1.5 overflow-x-auto scroll-area pb-1 shrink-0" role="tablist" :aria-label="I18N.header.title">
+		<!-- 导航分段 -->
+		<div class="flex flex-wrap gap-2">
 			<button
-				v-for="section in SECTIONS"
-				:key="section.key"
+				v-for="s in SECTIONS"
+				:key="s.key"
 				type="button"
-				role="tab"
-				class="shrink-0 px-3.5 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 cursor-pointer focus-ring flex items-center gap-1.5"
-				:class="section.key === CURRENT_SECTION
-					? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-					: 'text-text-muted bg-white/4 border border-line-subtle hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
-				:aria-selected="section.key === CURRENT_SECTION"
-				@click="changeSection(section.key)"
+				class="px-3.5 py-1.5 rounded-pill text-sm font-500 transition-all duration-200"
+				:class="CURRENT_SECTION === s.key ? 'bg-nori-teal-bright/18 text-nori-teal-bright border border-nori-teal-bright/40 shadow-[0_0.2rem_1rem_var(--glow-teal-soft)]' : 'bg-white/4 text-text-muted hover:(bg-white/8 text-text-primary)'"
+				@click="changeSection(s.key)"
 			>
-				{{ section.label }}
+				{{ s.label }}
 			</button>
-		</nav>
+		</div>
 
+		<!-- 各分段视图 -->
 		<div v-if="CURRENT_SECTION === 'overview'" class="flex flex-col gap-3.5 pb-5">
-			<!-- 1. 数据统计总览 -->
-			<AppCard :title="I18N.overview.active" icon="package">
+			<!-- 1. 记忆资产概览 -->
+			<AppCard :title="I18N.overview.active" icon="sparkles">
 				<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
 					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
 						<span class="text-xs text-text-muted font-500">{{ I18N.overview.active }}</span>
@@ -580,13 +545,10 @@ const clearAll = async () => {
 		</div>
 
 		<div v-if="CURRENT_SECTION === 'memories' || CURRENT_SECTION === 'archive' || CURRENT_SECTION === 'advanced'" class="flex flex-col gap-3.5 pb-5">
-			<!-- 1. Embedding 向量嵌入配置 -->
-			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.embedding.title" icon="sparkles">
+			<!-- 1. 向量索引重建 -->
+			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.embedding.vectorRebuild" icon="sparkles">
 				<template #actions>
-					<AppButton size="sm" :loading="embeddingTesting" :disabled="isReembedding || embeddingTesting" @click="testEmbeddingConnection">
-						{{ embeddingTesting ? I18N.embedding.testingConnection : I18N.embedding.testConnection }}
-					</AppButton>
-					<AppButton variant="primary" size="sm" :loading="isReembedding" :disabled="isReembedding || embeddingTesting" @click="reembedAll">
+					<AppButton variant="primary" size="sm" :loading="isReembedding" :disabled="isReembedding" @click="reembedAll">
 						<template #icon>
 							<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
 						</template>
@@ -594,87 +556,47 @@ const clearAll = async () => {
 					</AppButton>
 				</template>
 
-				<div class="flex gap-3">
-					<AppField :label="I18N.embedding.model" class="flex-1">
-						<input
-							v-model="embeddingModel"
-							class="input-base"
-							:placeholder="I18N.embedding.modelPlaceholder"
-							@focus="embeddingModelField.focus"
-							@input="embeddingModelField.touch"
-							@blur="saveEmbeddingModel"
-						/>
-					</AppField>
-					<AppField :label="I18N.embedding.baseUrl" class="flex-1">
-						<input
-							v-model="embeddingBaseUrl"
-							class="input-base"
-							:placeholder="I18N.embedding.baseUrlPlaceholder"
-							@focus="embeddingBaseUrlField.focus"
-							@input="embeddingBaseUrlField.touch"
-							@blur="saveEmbeddingBase"
-						/>
-					</AppField>
-				</div>
+				<p class="text-sm text-text-muted leading-relaxed">{{ I18N.embedding.vectorRebuildDesc }}</p>
 
-				<div class="flex gap-3">
-					<AppField :label="API_KEY_LABEL" class="flex-1">
-						<input
-							v-model="embeddingApiKeyInput"
-							type="password"
-							class="input-base"
-							:placeholder="I18N.embedding.apiKeyPlaceholder"
-							@blur="() => {
-								const VALUE = embeddingApiKeyInput.trim()
-								embeddingApiKeyInput = ''
-								if (VALUE) SAVE.save('key', () => RUNTIME.updateEmbedding({apiKey: VALUE}))
-							}"
-						/>
-					</AppField>
-					<AppField :label="I18N.embedding.dimensions" class="w-[11rem] shrink-0">
-						<input
-							v-model="embeddingDimensions"
-							type="number"
-							min="1"
-							class="input-base"
-							:placeholder="I18N.embedding.dimensionsPlaceholder"
-							@focus="embeddingDimensionsField.focus"
-							@input="embeddingDimensionsField.touch"
-							@blur="saveDimensions"
-						/>
-					</AppField>
-				</div>
-
-				<p class="text-hint leading-relaxed">{{ I18N.embedding.dimensionsHint }}</p>
-
-				<p
-					v-if="embeddingTestMessage"
-					class="text-sm font-500"
-					:class="embeddingTestSuccess ? 'text-nori-teal-bright' : 'text-danger-text'"
-					role="status"
-				>{{ embeddingTestMessage }}</p>
-				<p v-if="reembedMessage" class="text-sm text-nori-teal-bright">{{ reembedMessage }}</p>
+				<p v-if="reembedMessage" class="text-sm text-nori-teal-bright" role="status">{{ reembedMessage }}</p>
 			</AppCard>
 
+			<!-- 2. 高级检索与记忆衰减配置 -->
 			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.advanced.title" icon="settings">
 				<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-					<AppField :label="I18N.advanced.reflectionRounds"><input :value="reflectionRounds" type="number" min="1" max="32" class="input-base" @focus="reflectionRoundsField.focus" @input="updateNumberField(reflectionRoundsField, $event)" @blur="saveMemorySetting('reflectionRounds', reflectionRoundsField, reflectionRounds)"/></AppField>
-					<AppField :label="I18N.advanced.reflectionMinChars"><input :value="reflectionMinChars" type="number" min="100" max="20000" class="input-base" @focus="reflectionMinCharsField.focus" @input="updateNumberField(reflectionMinCharsField, $event)" @blur="saveMemorySetting('reflectionMinChars', reflectionMinCharsField, reflectionMinChars)"/></AppField>
-					<AppField :label="I18N.advanced.recallTopK"><input :value="recallTopK" type="number" min="1" max="20" class="input-base" @focus="recallTopKField.focus" @input="updateNumberField(recallTopKField, $event)" @blur="saveMemorySetting('recallTopK', recallTopKField, recallTopK)"/></AppField>
-					<AppField :label="I18N.advanced.keywordTopK"><input :value="keywordTopK" type="number" min="1" max="100" class="input-base" @focus="keywordTopKField.focus" @input="updateNumberField(keywordTopKField, $event)" @blur="saveMemorySetting('keywordTopK', keywordTopKField, keywordTopK)"/></AppField>
-					<AppField :label="I18N.advanced.vectorTopK"><input :value="vectorTopK" type="number" min="1" max="100" class="input-base" @focus="vectorTopKField.focus" @input="updateNumberField(vectorTopKField, $event)" @blur="saveMemorySetting('vectorTopK', vectorTopKField, vectorTopK)"/></AppField>
-					<AppField :label="I18N.advanced.rrfK"><input :value="rrfK" type="number" min="1" max="500" class="input-base" @focus="rrfKField.focus" @input="updateNumberField(rrfKField, $event)" @blur="saveMemorySetting('rrfK', rrfKField, rrfK)"/></AppField>
-					<AppField :label="I18N.advanced.minSimilarity"><input :value="minSimilarity" type="number" min="0" max="1" step="0.01" class="input-base" @focus="minSimilarityField.focus" @input="updateNumberField(minSimilarityField, $event)" @blur="saveMemorySetting('minSimilarity', minSimilarityField, minSimilarity)"/></AppField>
-					<AppField :label="I18N.advanced.archiveThreshold"><input :value="archiveThreshold" type="number" min="0" max="1" step="0.01" class="input-base" @focus="archiveThresholdField.focus" @input="updateNumberField(archiveThresholdField, $event)" @blur="saveMemorySetting('archiveThreshold', archiveThresholdField, archiveThreshold)"/></AppField>
+					<AppField :label="I18N.advanced.reflectionRounds" :state="reflectionRoundsField.state.value" :error="reflectionRoundsField.error.value">
+						<input :value="reflectionRounds" type="number" min="1" max="32" class="input-base" @focus="reflectionRoundsField.focus" @input="updateNumberField(reflectionRoundsField, $event)" @blur="reflectionRoundsField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.reflectionMinChars" :state="reflectionMinCharsField.state.value" :error="reflectionMinCharsField.error.value">
+						<input :value="reflectionMinChars" type="number" min="100" max="20000" class="input-base" @focus="reflectionMinCharsField.focus" @input="updateNumberField(reflectionMinCharsField, $event)" @blur="reflectionMinCharsField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.recallTopK" :state="recallTopKField.state.value" :error="recallTopKField.error.value">
+						<input :value="recallTopK" type="number" min="1" max="20" class="input-base" @focus="recallTopKField.focus" @input="updateNumberField(recallTopKField, $event)" @blur="recallTopKField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.keywordTopK" :state="keywordTopKField.state.value" :error="keywordTopKField.error.value">
+						<input :value="keywordTopK" type="number" min="1" max="100" class="input-base" @focus="keywordTopKField.focus" @input="updateNumberField(keywordTopKField, $event)" @blur="keywordTopKField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.vectorTopK" :state="vectorTopKField.state.value" :error="vectorTopKField.error.value">
+						<input :value="vectorTopK" type="number" min="1" max="100" class="input-base" @focus="vectorTopKField.focus" @input="updateNumberField(vectorTopKField, $event)" @blur="vectorTopKField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.rrfK" :state="rrfKField.state.value" :error="rrfKField.error.value">
+						<input :value="rrfK" type="number" min="1" max="500" class="input-base" @focus="rrfKField.focus" @input="updateNumberField(rrfKField, $event)" @blur="rrfKField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.minSimilarity" :state="minSimilarityField.state.value" :error="minSimilarityField.error.value">
+						<input :value="minSimilarity" type="number" min="0" max="1" step="0.01" class="input-base" @focus="minSimilarityField.focus" @input="updateNumberField(minSimilarityField, $event)" @blur="minSimilarityField.save()"/>
+					</AppField>
+					<AppField :label="I18N.advanced.archiveThreshold" :state="archiveThresholdField.state.value" :error="archiveThresholdField.error.value">
+						<input :value="archiveThreshold" type="number" min="0" max="1" step="0.01" class="input-base" @focus="archiveThresholdField.focus" @input="updateNumberField(archiveThresholdField, $event)" @blur="archiveThresholdField.save()"/>
+					</AppField>
 				</div>
 				<div class="grid grid-cols-2 gap-2 md:grid-cols-4">
-					<AppChip :tone="knowledgeEnabled ? 'success' : 'warning'" class="cursor-pointer" @click="saveMemorySetting('knowledgeEnabled', knowledgeEnabledField, !knowledgeEnabled)">{{ I18N.advanced.knowledge }}: {{ knowledgeEnabled ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>
-					<AppChip :tone="knowledgeWatch ? 'success' : 'warning'" class="cursor-pointer" @click="saveMemorySetting('knowledgeWatch', knowledgeWatchField, !knowledgeWatch)">{{ I18N.advanced.watch }}: {{ knowledgeWatch ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>
-					<AppChip :tone="debugRetrieval ? 'success' : 'warning'" class="cursor-pointer" @click="saveMemorySetting('debugRetrieval', debugRetrievalField, !debugRetrieval)">{{ I18N.advanced.debug }}: {{ debugRetrieval ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>
+					<AppChip :tone="knowledgeEnabled ? 'success' : 'warning'" class="cursor-pointer" @click="() => { knowledgeEnabled = !knowledgeEnabled; knowledgeEnabledField.saveNow() }">{{ I18N.advanced.knowledge }}: {{ knowledgeEnabled ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>
+					<AppChip :tone="knowledgeWatch ? 'success' : 'warning'" class="cursor-pointer" @click="() => { knowledgeWatch = !knowledgeWatch; knowledgeWatchField.saveNow() }">{{ I18N.advanced.watch }}: {{ knowledgeWatch ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>
+					<AppChip :tone="debugRetrieval ? 'success' : 'warning'" class="cursor-pointer" @click="() => { debugRetrieval = !debugRetrieval; debugRetrievalField.saveNow() }">{{ I18N.advanced.debug }}: {{ debugRetrieval ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip>
 				</div>
 			</AppCard>
 
-			<!-- 2. 新增记忆 -->
+			<!-- 3. 新增记忆 -->
 			<AppCard v-if="CURRENT_SECTION === 'memories'" :title="I18N.add.title" icon="sparkles">
 				<textarea
 					v-model="newContent"
@@ -714,7 +636,7 @@ const clearAll = async () => {
 				</div>
 			</AppCard>
 
-			<!-- 3. 记忆库列表与搜索 -->
+			<!-- 4. 记忆库列表与搜索 -->
 			<AppCard v-if="CURRENT_SECTION === 'memories' || CURRENT_SECTION === 'archive'" :title="`${I18N.list.title} (${memoryTotal})`" icon="package">
 				<template #actions>
 					<n-popconfirm

@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import {computed, onMounted, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
-import {useDebouncedSave} from "../../composables/useDebouncedSave"
-import {useSnapshotField} from "../../composables/useSnapshotField"
+import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {feedback} from "../../services/feedback"
 import {i18n} from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
@@ -14,14 +13,34 @@ import AppButton from "../ui/AppButton.vue"
 
 const TEXT = computed(() => useLanguages().views.main.proactive)
 
-// 主动交互配置: 快照驱动且保留本地脏字段。
-const idleEnabledField = useSnapshotField(snapshot => snapshot.proactive.idleEnabled, true)
-const dailyGreetingField = useSnapshotField(snapshot => snapshot.proactive.dailyGreeting, true)
-const idleMinutesField = useSnapshotField(snapshot => snapshot.proactive.idleMinutes, 15)
+const SAVE_MGR = useSnapshotSave({
+	onError: (_key, error) => feedback.error(TEXT.value.reminders.addFailed, error),
+})
+const {defineField} = SAVE_MGR
+
+const idleEnabledField = defineField(
+	"idleEnabled",
+	snapshot => snapshot.proactive.idleEnabled,
+	true,
+	val => RUNTIME.updateProactive({idleEnabled: val}),
+)
 const idleEnabled = idleEnabledField.value
+
+const dailyGreetingField = defineField(
+	"dailyGreeting",
+	snapshot => snapshot.proactive.dailyGreeting,
+	true,
+	val => RUNTIME.updateProactive({dailyGreeting: val}),
+)
 const dailyGreeting = dailyGreetingField.value
+
+const idleMinutesField = defineField(
+	"idleMinutes",
+	snapshot => snapshot.proactive.idleMinutes,
+	15,
+	val => RUNTIME.updateProactive({idleMinutes: val}),
+)
 const idleMinutes = idleMinutesField.value
-const SAVE = useDebouncedSave({onError: (_key, error) => feedback.error(TEXT.value.reminders.addFailed, error)})
 
 // 提醒列表
 interface ReminderView {
@@ -50,33 +69,19 @@ onMounted(async () => {
 	await RUNTIME.init()
 })
 
-const saveProactiveField = (key: string, field: {touch: () => void; blur: () => void; reset: () => void; commit: () => void}, task: () => Promise<void>): void => {
-	field.touch()
-	field.blur()
-	void SAVE.saveNow(key, async () => {
-		try {
-			await task()
-			field.commit()
-		} catch (error) {
-			field.reset()
-			throw error
-		}
-	})
-}
-
 const onIdleEnabledChange = (value: boolean) => {
 	idleEnabled.value = value
-	saveProactiveField("idleEnabled", idleEnabledField, () => RUNTIME.updateProactive({idleEnabled: value}))
+	void idleEnabledField.saveNow()
 }
 
 const onDailyGreetingChange = (value: boolean) => {
 	dailyGreeting.value = value
-	saveProactiveField("dailyGreeting", dailyGreetingField, () => RUNTIME.updateProactive({dailyGreeting: value}))
+	void dailyGreetingField.saveNow()
 }
 
 const onIdleMinutesChange = (value: number) => {
 	idleMinutes.value = value
-	saveProactiveField("idleMinutes", idleMinutesField, () => RUNTIME.updateProactive({idleMinutes: value}))
+	void idleMinutesField.saveNow()
 }
 
 // 手动创建提醒

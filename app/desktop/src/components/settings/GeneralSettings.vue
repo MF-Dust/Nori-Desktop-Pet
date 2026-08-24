@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onMounted} from "vue"
 import {RUNTIME} from "../../services/runtime"
-import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {useSnapshotField} from "../../composables/useSnapshotField"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
@@ -14,17 +14,37 @@ import Icon from "../Icon.vue"
 import zhCn from "../../assets/images/flags/cn.png"
 import enUs from "../../assets/images/flags/us.png"
 
+const TEXT = computed(() => useLanguages().views.main.general)
+
+const SAVE_MGR = useSnapshotSave({
+	onError: (_key, error) => feedback.error(TEXT.value.telemetry.saveFailed, error),
+})
+const {defineField, saveNow} = SAVE_MGR
+
 const currentLangField = useSnapshotField(snapshot => snapshot.general.language, "zh-CN")
-const autoSummonField = useSnapshotField(snapshot => snapshot.general.petAutoSummon, true)
-const telemetryEnabledField = useSnapshotField(snapshot => snapshot.telemetry.enabled, false)
 const currentLang = currentLangField.value
+
+const autoSummonField = defineField(
+	"petAutoSummon",
+	snapshot => snapshot.general.petAutoSummon,
+	true,
+	val => RUNTIME.updateGeneral({petAutoSummon: val}),
+)
 const autoSummon = autoSummonField.value
+
+const telemetryEnabledField = defineField(
+	"telemetryEnabled",
+	snapshot => snapshot.telemetry.enabled,
+	false,
+	val => RUNTIME.updateGeneral({telemetryEnabled: val}),
+)
 const telemetryEnabled = telemetryEnabledField.value
+
 const appVersion = computed(() => RUNTIME.snapshot.value?.app.productVersion ?? RUNTIME.snapshot.value?.app.appVersion ?? APP_VERSION)
 const telemetryAvailable = computed(() => RUNTIME.snapshot.value?.telemetry.available ?? false)
 const telemetryConsent = computed(() => RUNTIME.snapshot.value?.telemetry.consent ?? "unset")
 const SAFE_MODE = computed(() => RUNTIME.snapshot.value?.app.safeMode ?? false)
-const TEXT = computed(() => useLanguages().views.main.general)
+
 const ENGINE_TEXT = computed(() => {
 	switch (RUNTIME.snapshot.value?.platform.os) {
 		case "windows": return TEXT.value.about.engineWindows
@@ -44,20 +64,11 @@ const TELEMETRY_STATUS = computed(() => {
 	return telemetryEnabled.value ? TEXT.value.telemetry.statusEnabled : TEXT.value.telemetry.statusDisabled
 })
 
-const SAVE = useDebouncedSave({
-	onError: (key, error) => {
-		if (key === "language") currentLangField.reset()
-		if (key === "petAutoSummon") autoSummonField.reset()
-		if (key === "telemetryEnabled") telemetryEnabledField.reset()
-		feedback.error(TEXT.value.telemetry.saveFailed, error)
-	},
-})
-
 // 切换语言: 本地立即生效, 失败时回滚到快照语言。
 const onLanguageChange = (lang: string) => {
 	currentLang.value = lang
 	currentLangField.touch()
-	void SAVE.saveNow("language", async () => {
+	void saveNow("language", async () => {
 		try {
 			await useLanguage.setLanguage(lang)
 			await RUNTIME.updateGeneral({language: lang})
@@ -72,30 +83,12 @@ const onLanguageChange = (lang: string) => {
 
 const onAutoSummonChange = (val: boolean) => {
 	autoSummon.value = val
-	autoSummonField.touch()
-	void SAVE.saveNow("petAutoSummon", async () => {
-		try {
-			await RUNTIME.updateGeneral({petAutoSummon: val})
-			autoSummonField.commit()
-		} catch (error) {
-			autoSummonField.reset()
-			throw error
-		}
-	})
+	void autoSummonField.saveNow()
 }
 
 const onTelemetryChange = (val: boolean) => {
 	telemetryEnabled.value = val
-	telemetryEnabledField.touch()
-	void SAVE.saveNow("telemetryEnabled", async () => {
-		try {
-			await RUNTIME.updateGeneral({telemetryEnabled: val})
-			telemetryEnabledField.commit()
-		} catch (error) {
-			telemetryEnabledField.reset()
-			throw error
-		}
-	})
+	void telemetryEnabledField.saveNow()
 }
 
 onMounted(() => {
@@ -183,7 +176,7 @@ onMounted(() => {
 				<div class="flex flex-col">
 					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
 						<span class="text-sm text-text-muted">{{ TEXT.about.version }}</span>
-						<span class="text-sm text-text-primary mono">v{{ appVersion }}</span>
+						<span class="text-sm text-text-primary mono">{{ appVersion }}</span>
 					</div>
 					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
 						<span class="text-sm text-text-muted">{{ TEXT.about.license }}</span>
