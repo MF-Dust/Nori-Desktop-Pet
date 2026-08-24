@@ -244,6 +244,12 @@ public class McpTests : IDisposable
 		string status = JsonSerializer.Serialize((await manager.GetServersAsync())[0]);
 		Assert.DoesNotContain("do-not-return", status, StringComparison.Ordinal);
 		Assert.Contains("hasEnvironment", status, StringComparison.Ordinal);
+
+		await manager.SaveServerAsync(config with {Name = "Renamed", Env = null});
+		Assert.True(new McpEnvironmentStore(_configStore).HasConfiguredValues(config.Id));
+
+		await manager.SaveServerAsync(config with {Name = "Renamed", Env = new Dictionary<string, string>()});
+		Assert.False(new McpEnvironmentStore(_configStore).HasConfiguredValues(config.Id));
 	}
 
 	[Fact]

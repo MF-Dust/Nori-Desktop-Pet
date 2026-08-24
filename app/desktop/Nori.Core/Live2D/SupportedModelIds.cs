@@ -16,12 +16,19 @@ public static class SupportedModelIds
 	/// <summary>所有受支持的模型 ID.</summary>
 	public static IReadOnlyList<string> All { get; } = [ArgNori, Nori];
 
+	/// <summary>规范化受支持的模型 ID; 空值或未知值返回 null.</summary>
+	public static string? Normalize(string? modelId)
+	{
+		string value = modelId?.Trim() ?? "";
+		if (value.Equals(ArgNori, StringComparison.OrdinalIgnoreCase)) return ArgNori;
+		if (value.Equals(Nori, StringComparison.OrdinalIgnoreCase)) return Nori;
+		return null;
+	}
+
 	/// <summary>
 	/// 判断模型 ID 是否为 Nori 已支持的固定 ID.
 	/// </summary>
-	public static bool IsSupported(string modelId) =>
-		modelId.Equals(ArgNori, StringComparison.OrdinalIgnoreCase)
-		|| modelId.Equals(Nori, StringComparison.OrdinalIgnoreCase);
+	public static bool IsSupported(string modelId) => Normalize(modelId) is not null;
 
 	/// <summary>
 	/// 从 model3.json 文件名或其父目录解析固定模型 ID.

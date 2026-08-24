@@ -80,6 +80,9 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 			int existingIndex = configs.FindIndex(c => c.Id == config.Id);
 			if (existingIndex >= 0)
 			{
+				// Env=null 表示前端未回传秘密字段, 必须保留已有加密环境变量；
+				// 显式空字典才表示用户要求清除。
+				if (config.Env is null) config = config with {Env = configs[existingIndex].Env};
 				configs[existingIndex] = config;
 			}
 			else

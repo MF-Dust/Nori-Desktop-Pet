@@ -356,7 +356,11 @@ public class ResourceImportTests
 			{
 				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/ARGNori.model3.json").Open()))
 				{
-					writer.Write("""{"Version":3}""");
+					writer.Write("""{"Version":3,"FileReferences":{"Moc":"ARGNori.moc3","Textures":["tex/0.png"]}}""");
+				}
+				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/ARGNori.moc3").Open()))
+				{
+					writer.Write("MOC3");
 				}
 				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/tex/0.png").Open()))
 				{
@@ -418,14 +422,18 @@ public class ResourceImportTests
 
 			string sourceV1 = Path.Combine(tempDir, "src-v1", "ARGNori_web");
 			Directory.CreateDirectory(sourceV1);
-			File.WriteAllText(Path.Combine(sourceV1, "ARGNori.model3.json"), "{}");
+			File.WriteAllText(Path.Combine(sourceV1, "ARGNori.model3.json"),
+				"{\"FileReferences\":{\"Moc\":\"ARGNori.moc3\",\"Textures\":[\"tex/0.png\"]}}");
+			File.WriteAllText(Path.Combine(sourceV1, "ARGNori.moc3"), "MOC3");
 			Directory.CreateDirectory(Path.Combine(sourceV1, "tex"));
 			File.WriteAllText(Path.Combine(sourceV1, "tex", "0.png"), "v1");
 			manager.Import(ResourceType.Live2D, Path.Combine(tempDir, "src-v1"));
 
 			string sourceV2 = Path.Combine(tempDir, "src-v2", "ARGNori_web");
 			Directory.CreateDirectory(sourceV2);
-			File.WriteAllText(Path.Combine(sourceV2, "ARGNori.model3.json"), "{}");
+			File.WriteAllText(Path.Combine(sourceV2, "ARGNori.model3.json"),
+				"{\"FileReferences\":{\"Moc\":\"ARGNori.moc3\",\"Textures\":[\"tex/0.png\"]}}");
+			File.WriteAllText(Path.Combine(sourceV2, "ARGNori.moc3"), "MOC3");
 			Directory.CreateDirectory(Path.Combine(sourceV2, "tex"));
 			File.WriteAllText(Path.Combine(sourceV2, "tex", "0.png"), "v2");
 			manager.Import(ResourceType.Live2D, Path.Combine(tempDir, "src-v2"));
@@ -464,7 +472,11 @@ public class ResourceImportTests
 			{
 				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/ARGNori.model3.json").Open()))
 				{
-					writer.Write("{}");
+					writer.Write("{\"FileReferences\":{\"Moc\":\"ARGNori.moc3\",\"Textures\":[\"tex/0.png\"]}}");
+				}
+				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/ARGNori.moc3").Open()))
+				{
+					writer.Write("MOC3");
 				}
 				using (StreamWriter writer = new(archive.CreateEntry("ARGNori_web/tex/0.png").Open()))
 				{
@@ -472,7 +484,11 @@ public class ResourceImportTests
 				}
 				using (StreamWriter writer = new(archive.CreateEntry("Nori_pack/Nori.model3.json").Open()))
 				{
-					writer.Write("{}");
+					writer.Write("{\"FileReferences\":{\"Moc\":\"Nori.moc3\",\"Textures\":[]}}");
+				}
+				using (StreamWriter writer = new(archive.CreateEntry("Nori_pack/Nori.moc3").Open()))
+				{
+					writer.Write("MOC3");
 				}
 			}
 
@@ -605,14 +621,22 @@ public class ResourceImportTests
 		}
 	}
 
-	/// <summary>构造一个单模型 ZIP: <folder>/<modelJson> + tex/0.png</summary>
+	/// <summary>构造一个单模型 ZIP: model3 + moc3 + tex/0.png.</summary>
 	private static void WriteModelZip(string zipPath, string folder, string modelJson, string json, string texture)
 	{
 		using FileStream stream = File.Create(zipPath);
 		using ZipArchive archive = new(stream, ZipArchiveMode.Create);
+		string mocName = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(modelJson)) + ".moc3";
+		string modelContent = json == "{}"
+			? $"{{\"FileReferences\":{{\"Moc\":\"{mocName}\",\"Textures\":[\"tex/0.png\"]}}}}"
+			: json;
 		using (StreamWriter writer = new(archive.CreateEntry($"{folder}/{modelJson}").Open()))
 		{
-			writer.Write(json);
+			writer.Write(modelContent);
+		}
+		using (StreamWriter writer = new(archive.CreateEntry($"{folder}/{mocName}").Open()))
+		{
+			writer.Write("MOC3");
 		}
 		using (StreamWriter writer = new(archive.CreateEntry($"{folder}/tex/0.png").Open()))
 		{

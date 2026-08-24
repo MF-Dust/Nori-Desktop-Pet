@@ -243,20 +243,29 @@ public class BackendRuntimeModuleTests : IDisposable
 	}
 
 	[Fact]
-	public void 市场安装与导出导入JSON往返()
+	public void 自定义技能导出导入往返且内置ID不可覆盖()
 	{
 		SkillService skills = new(_config, new HttpClient());
 		skills.EnsureLoaded();
 
-		SkillRecord installed = skills.InstallFromMarketplace("gaming-partner");
-		Assert.True(installed.Enabled);
+		SkillRecord saved = skills.SaveCustom(new SkillRecord
+		{
+			Id = "custom-roundtrip",
+			Name = "往返测试",
+			Description = "验证自定义技能导入导出",
+			Instructions = "保持测试内容",
+			Enabled = true,
+		});
+		Assert.True(saved.Enabled);
 
-		string json = skills.Export("gaming-partner");
-		Assert.True(skills.Uninstall("gaming-partner"));
-
+		string json = skills.Export(saved.Id);
+		Assert.True(skills.Uninstall(saved.Id));
 		SkillRecord reimported = skills.ImportJson(json);
-		Assert.Equal("gaming-partner", reimported.Id);
+		Assert.Equal(saved.Id, reimported.Id);
 		Assert.Equal("custom", reimported.Source);
+
+		string builtinJson = skills.Export("code-reviewer");
+		Assert.Throws<InvalidOperationException>(() => skills.ImportJson(builtinJson));
 	}
 
 	[Fact]

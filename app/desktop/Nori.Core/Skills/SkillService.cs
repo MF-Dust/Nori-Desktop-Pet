@@ -201,9 +201,34 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		}
 
 		SkillRecord skill = text.TrimStart().StartsWith("---") ? ParseSkillMarkdown(text, url) : ParseSkillJson(text, url);
-		SkillRecord remote = SkillLimits.Normalize(skill with {Enabled = false, Source = "url", Url = url}, remote: true);
+		string remoteId = AvailableRemoteId(skill.Id);
+		SkillRecord remote = SkillLimits.Normalize(skill with
+		{
+			Id = remoteId,
+			Enabled = false,
+			Source = "url",
+			Url = url,
+		}, remote: true);
 		Upsert(remote);
 		return remote;
+	}
+
+	private string AvailableRemoteId(string requestedId)
+	{
+		const int suffixLength = 16;
+		string baseId = string.IsNullOrWhiteSpace(requestedId) ? "remote-skill" : requestedId.Trim();
+		baseId = SkillLimits.Cap(baseId, SkillLimits.MaxIdCharacters - suffixLength);
+		lock (_gate)
+		{
+			if (SkillPresets.Find(baseId) is null && !_skills.ContainsKey(baseId)) return baseId;
+			string candidate;
+			do
+			{
+				candidate = $"{baseId}-remote-{Guid.NewGuid().ToString("N")[..8]}";
+			}
+			while (SkillPresets.Find(candidate) is not null || _skills.ContainsKey(candidate));
+			return candidate;
+		}
 	}
 
 	private SkillRecord ParseSkillJson(string text, string url)

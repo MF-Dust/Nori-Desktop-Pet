@@ -58,7 +58,9 @@ public sealed class AssetServer : IAsyncDisposable
 	public string AppUrl => _options.DevMode ? "http://localhost:1420/index.html" : $"{Origin}{Prefix}/{AppSegment}/index.html";
 
 	/// <summary>按 token 拼出媒体端点 URL (下载与上传同一地址, 区分在 HTTP 方法)</summary>
-	public string MediaUrl(string token) => $"{Origin}{Prefix}/{MediaSegment}/{token}";
+	public string MediaUrl(string token) => _options.DevMode
+		? $"/{MediaSegment}/{token}"
+		: $"{Origin}{Prefix}/{MediaSegment}/{token}";
 
 	private AssetServer(WebApplication app, AssetServerOptions options, string prefix, string origin, Nori.Core.Voice.MediaExchange media)
 	{

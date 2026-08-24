@@ -420,33 +420,21 @@ public sealed class ResourceManager(string? dataDir = null)
 		}
 	}
 
-	/// <summary>递归判断目录下是否存在 .model3.json.</summary>
-	private static bool HasModel3Json(string dir)
+	private static bool IsInstalledAt(ResourceType type, string dir)
 	{
+		if (type != ResourceType.Live2D) return Directory.Exists(dir);
 		try
 		{
 			List<string> modelFiles = [];
 			CollectFiles(dir, dir, modelFiles, CancellationToken.None);
-			return modelFiles.Count > 0;
+			if (modelFiles.Count != 1) return false;
+			Model3ReferenceValidator.Validate(dir, modelFiles[0]);
+			return true;
 		}
-		catch (ResourceException)
+		catch (Exception exception) when (exception is ResourceException or IOException or UnauthorizedAccessException)
 		{
 			return false;
 		}
-		catch (IOException)
-		{
-			return false;
-		}
-		catch (UnauthorizedAccessException)
-		{
-			return false;
-		}
-	}
-
-	private static bool IsInstalledAt(ResourceType type, string dir)
-	{
-		if (type != ResourceType.Live2D) return Directory.Exists(dir);
-		return HasModel3Json(dir);
 	}
 
 	/// <summary>递归计算目录大小, 遇到链接或不可读目录时返回 0.</summary>

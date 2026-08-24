@@ -15,20 +15,6 @@ public enum Live2DPowerSource
 	Battery,
 }
 
-/// <summary>当前原生桌宠支持质量策略的模型目录。</summary>
-public static class Live2DModelCatalog
-{
-	private static readonly string[] NativeModelIds = ["arg-nori", "nori"];
-
-	/// <summary>判断模型是否属于当前原生性能切片。</summary>
-	public static bool IsNativeModel(string? modelId) =>
-		!string.IsNullOrWhiteSpace(modelId)
-		&& NativeModelIds.Any(item => item.Equals(modelId.Trim(), StringComparison.OrdinalIgnoreCase));
-
-	/// <summary>取得当前性能切片支持的模型 ID。</summary>
-	public static IReadOnlyList<string> GetNativeModelIds() => NativeModelIds;
-}
-
 /// <summary>
 /// 原生 Live2D 显示配置的归一化结果。
 ///

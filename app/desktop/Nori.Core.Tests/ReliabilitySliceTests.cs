@@ -32,7 +32,8 @@ public sealed class ReliabilitySliceTests
 			});
 			Assert.Equal("blob", type);
 			Assert.Null(legacy);
-			Assert.Equal([1.0f, -2.5f, 0.25f], store.Get(item.Id)!.GetVector());
+			float[] storedVector = Assert.IsType<float[]>(store.Get(item.Id)!.GetVector());
+			Assert.Equal([1.0f, -2.5f, 0.25f], storedVector);
 
 			database.Locked(connection =>
 			{
@@ -86,9 +87,9 @@ public sealed class ReliabilitySliceTests
 			});
 
 			IReadOnlyList<MemorySearchResult> results = store.SearchSemantic([1, 0, 0], 5, 0.1);
-			Assert.Equal(1, results.Count);
-			Assert.Equal("候选 1199", results[0].Item.Content);
-			Assert.Equal(1, results[0].Similarity, precision: 4);
+			MemorySearchResult result = Assert.Single(results);
+			Assert.Equal("候选 1199", result.Item.Content);
+			Assert.Equal(1, result.Similarity, precision: 4);
 		}
 		finally
 		{
@@ -220,11 +221,22 @@ public sealed class DatabaseMigrationReliabilityTests
 					command.CommandText = "PRAGMA user_version";
 					return Convert.ToInt64(command.ExecuteScalar());
 				}));
-				Assert.Equal("blob", database.Locked(connection =>
+				// v5 结构迁移只补列, 旧 JSON 在首次语义检索时惰性转成 BLOB。
+				Assert.Equal("null", database.Locked(connection =>
 				{
 					using SqliteCommand command = connection.CreateCommand();
 					command.CommandText = "SELECT typeof(embedding_blob) FROM memories LIMIT 1";
 					return command.ExecuteScalar()?.ToString();
+				}));
+
+				MemoryStore store = new(database);
+				MemorySearchResult match = Assert.Single(store.SearchSemantic([1, 0], 1, 0));
+				Assert.Equal("保留旧向量", match.Item.Content);
+				Assert.Equal("blob", database.Locked(connection =>
+				{
+					using SqliteCommand command = connection.CreateCommand();
+					command.CommandText = "SELECT typeof(embedding_blob) FROM memories LIMIT 1";
+					return Assert.IsType<string>(command.ExecuteScalar());
 				}));
 			}
 			string[] backups = Directory.GetFiles(Path.GetDirectoryName(path)!, $"{Path.GetFileName(path)}.pre-migration-*.bak");

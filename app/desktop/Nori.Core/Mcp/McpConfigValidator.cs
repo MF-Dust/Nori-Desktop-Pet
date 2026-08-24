@@ -44,7 +44,7 @@ public static partial class McpConfigValidator
 		if (transport == McpTransportType.Sse)
 		{
 			if (!Uri.TryCreate(config.Url, UriKind.Absolute, out Uri? endpoint)
-				|| endpoint.Scheme is not (Uri.UriSchemeHttp or Uri.UriSchemeHttps)
+				|| (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps)
 				|| endpoint.UserInfo.Length > 0)
 			{
 				throw new InvalidOperationException("MCP SSE URL 必须是无用户信息的 http/https 地址");
@@ -54,7 +54,7 @@ public static partial class McpConfigValidator
 
 		string[] args = ValidateArguments(config.Args);
 		Dictionary<string, string>? environment = null;
-		if (config.Env is {Count: > 0})
+		if (config.Env is not null)
 		{
 			if (config.Env.Count > MaxEnvironmentEntries) throw new InvalidOperationException("MCP 环境变量数量超过上限");
 			environment = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -67,8 +67,6 @@ public static partial class McpConfigValidator
 			}
 		}
 
-		// 远程导入只保留配置，不在导入瞬间启动进程或发起网络连接。
-		bool importedRemote = IsRemoteImport(id);
 		return config with
 		{
 			Id = id,
@@ -78,8 +76,6 @@ public static partial class McpConfigValidator
 			Args = args,
 			Env = environment,
 			Url = url,
-			Enabled = importedRemote ? false : config.Enabled,
-			AutoConnect = importedRemote ? false : config.AutoConnect,
 		};
 	}
 
@@ -132,7 +128,6 @@ public static partial class McpConfigValidator
 		};
 	}
 
-	public static bool IsRemoteImport(string id) => id.StartsWith("mcp_import_", StringComparison.OrdinalIgnoreCase);
 
 	private static string Required(string? value, string label, int max)
 	{

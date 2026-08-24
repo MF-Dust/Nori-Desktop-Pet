@@ -90,7 +90,8 @@ public class MemoryStoreTests : IDisposable
 
 		Assert.True(_memory.Update(item.Id, "新内容", embedding: "[0, 1]"));
 		MemoryItem updated = Assert.Single(_memory.GetAll());
-		Assert.Equal("[0, 1]", updated.Embedding);
+		float[] vector = Assert.IsType<float[]>(updated.GetVector());
+		Assert.Equal(new float[] {0, 1}, vector);
 		Assert.Equal("新内容", Assert.Single(_memory.SearchSemantic([0, 1], 5, 0)).Item.Content);
 	}
 

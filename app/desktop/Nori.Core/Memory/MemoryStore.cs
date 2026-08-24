@@ -86,7 +86,7 @@ public sealed class MemoryStore
 
 	private float[]? VectorOf(MemoryItem item)
 	{
-		if (string.IsNullOrWhiteSpace(item.Embedding)) return null;
+		if (string.IsNullOrWhiteSpace(item.Embedding) && item.EmbeddingBlob is not {Length: > 0}) return null;
 		lock (_vectorCacheGate)
 		{
 			if (_vectorCache.Remove(item.Id, out (string UpdatedAt, float[] Vector) cached))

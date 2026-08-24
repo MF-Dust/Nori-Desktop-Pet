@@ -158,7 +158,7 @@ public sealed class ProactiveScheduler : IDisposable
 		bool enabled = ParseBool(_config.GetStringOr("proactive_idle_enabled", "true")) ?? true;
 		if (!enabled) return;
 		double thresholdSeconds = Math.Max(1,
-			ParseDouble(_config.GetStringOr("proactive_idle_minutes", DefaultIdleMinutes.ToString(CultureInfo.InvariantCulture)), DefaultIdleMinutes) * 60);
+			ReadNumberConfig(_config, "proactive_idle_minutes", DefaultIdleMinutes) * 60);
 
 		double? idleSeconds = _idleSecondsProvider();
 		if (idleSeconds is not { } idle || idle < thresholdSeconds)
@@ -195,8 +195,14 @@ public sealed class ProactiveScheduler : IDisposable
 		_ => null,
 	};
 
-	private static double ParseDouble(string raw, double fallback) =>
-		double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) ? value : fallback;
+	private static double ReadNumberConfig(ConfigStore config, string key, double fallback) => config.Get(key) switch
+	{
+		ConfigValue.Integer integer => integer.Value,
+		// SQLite 的历史类型推断会把字符串 "1"/"0" 读成布尔值, 数值配置必须兼容。
+		ConfigValue.Boolean boolean => boolean.Value ? 1 : 0,
+		ConfigValue.Text text when double.TryParse(text.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) => value,
+		_ => fallback,
+	};
 
 	private bool IsEnglish() => _config.GetStringOr(ConfigStore.KeyLanguage, "zh-CN").StartsWith("en", StringComparison.OrdinalIgnoreCase);
 

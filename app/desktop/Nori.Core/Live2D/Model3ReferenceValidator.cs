@@ -46,14 +46,14 @@ public static class Model3ReferenceValidator
 			{
 				throw new ResourceException($"model3.json 根节点无效: {Path.GetFileName(model3Path)}");
 			}
-			if (!root.TryGetProperty("FileReferences", out JsonElement references)) return;
-			if (references.ValueKind != JsonValueKind.Object)
+			if (!root.TryGetProperty("FileReferences", out JsonElement references)
+				|| references.ValueKind != JsonValueKind.Object)
 			{
-				throw new ResourceException("model3.json 的 FileReferences 必须是对象");
+				throw new ResourceException("model3.json 缺少有效的 FileReferences 对象");
 			}
 
 			string referenceDir = Path.GetDirectoryName(canonicalModelPath) ?? canonicalModelDir;
-			ValidatePathProperty(references, "Moc", referenceDir, canonicalModelPath, cancellationToken, required: false);
+			ValidatePathProperty(references, "Moc", referenceDir, canonicalModelPath, cancellationToken, required: true);
 			ValidateTextures(references, referenceDir, canonicalModelPath, cancellationToken);
 			ValidatePathProperty(references, "Physics", referenceDir, canonicalModelPath, cancellationToken, required: false);
 			ValidatePathProperty(references, "Pose", referenceDir, canonicalModelPath, cancellationToken, required: false);
@@ -171,10 +171,34 @@ public static class Model3ReferenceValidator
 		CancellationToken cancellationToken,
 		bool required)
 	{
-		if (!references.TryGetProperty(property, out JsonElement value)) return;
+		if (!references.TryGetProperty(property, out JsonElement value))
+		{
+			if (required) throw new ResourceException($"model3.json 缺少 FileReferences.{property}");
+			return;
+		}
 		if (value.ValueKind == JsonValueKind.Null && !required) return;
 		string reference = RequiredString(value, $"FileReferences.{property}");
-		ResolveReferencePath(referenceDir, model3Path, reference, $"FileReferences.{property}");
+		string resolved = ResolveReferencePath(referenceDir, model3Path, reference, $"FileReferences.{property}");
+		if (property == "Moc") ValidateMoc3(resolved);
+	}
+
+	private static void ValidateMoc3(string path)
+	{
+		Span<byte> header = stackalloc byte[4];
+		try
+		{
+			using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			if (stream.Read(header) != header.Length || !header.SequenceEqual("MOC3"u8))
+				throw new ResourceException("Moc 文件头无效, 不是可识别的 Cubism .moc3 文件");
+		}
+		catch (ResourceException)
+		{
+			throw;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			throw new ResourceException("无法读取 Cubism .moc3 文件", exception);
+		}
 	}
 
 	private static string RequiredPropertyString(JsonElement parent, string property, string label)

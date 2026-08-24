@@ -31,7 +31,7 @@ public sealed class Model3ReferenceValidatorTests : IDisposable
 	[Fact]
 	public void 所有支持的模型引用都通过校验()
 	{
-		WriteFile("model.moc3", "moc");
+		WriteFile("model.moc3", "MOC3");
 		WriteFile("tex/0.png", "png");
 		WriteFile("physics.physics3.json", "{}");
 		WriteFile("pose.pose3.json", "{}");
@@ -72,13 +72,35 @@ public sealed class Model3ReferenceValidatorTests : IDisposable
 	[Fact]
 	public void 缺失的模型引用文件被拒绝()
 	{
+		WriteFile("model.moc3", "MOC3");
 		WriteFile("model3.json", """
-			{"FileReferences":{"Textures":["missing.png"]}}
+			{"FileReferences":{"Moc":"model.moc3","Textures":["missing.png"]}}
 			""");
 
 		ResourceException error = Assert.Throws<ResourceException>(() =>
 			Model3ReferenceValidator.Validate(_modelDir, Path.Combine(_modelDir, "model3.json")));
 		Assert.Contains("不存在", error.Message, StringComparison.Ordinal);
+	}
+
+	[Theory]
+	[InlineData("{}")]
+	[InlineData("{\"FileReferences\":{\"Textures\":[]}}")]
+	public void 缺少FileReferences或Moc时被拒绝(string json)
+	{
+		WriteFile("model3.json", json);
+		ResourceException error = Assert.Throws<ResourceException>(() =>
+			Model3ReferenceValidator.Validate(_modelDir, Path.Combine(_modelDir, "model3.json")));
+		Assert.Contains("FileReferences", error.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void 无效Moc文件头被拒绝()
+	{
+		WriteFile("model.moc3", "NOT-MOC");
+		WriteFile("model3.json", "{\"FileReferences\":{\"Moc\":\"model.moc3\",\"Textures\":[]}}");
+		ResourceException error = Assert.Throws<ResourceException>(() =>
+			Model3ReferenceValidator.Validate(_modelDir, Path.Combine(_modelDir, "model3.json")));
+		Assert.Contains("Moc 文件头无效", error.Message, StringComparison.Ordinal);
 	}
 
 	[Fact]

@@ -24,9 +24,10 @@ public sealed class Live2DRenderSettingsTests
 	[Fact]
 	public void NativeSliceContainsOnlyTheTwoExistingModelIds()
 	{
-		Assert.True(Live2DModelCatalog.IsNativeModel("arg-nori"));
-		Assert.True(Live2DModelCatalog.IsNativeModel("NORI"));
-		Assert.False(Live2DModelCatalog.IsNativeModel("imported-model"));
+		Assert.Equal(["arg-nori", "nori"], SupportedModelIds.All);
+		Assert.Equal("arg-nori", SupportedModelIds.Normalize("ARG-NORI"));
+		Assert.Equal("nori", SupportedModelIds.Normalize("NORI"));
+		Assert.Null(SupportedModelIds.Normalize("imported-model"));
 	}
 
 	[Fact]
