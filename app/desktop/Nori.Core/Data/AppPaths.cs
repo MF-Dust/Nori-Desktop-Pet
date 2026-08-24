@@ -6,7 +6,7 @@ namespace Nori.Core.Data;
 /// 必须与 Tauri 版的 app_data_dir() 完全一致, 否则老用户的 nori.db 与本地模型会"丢失":
 /// Windows: %APPDATA%/&lt;应用标识&gt;/data
 /// macOS:   ~/Library/Application Support/&lt;应用标识&gt;/data
-/// Linux:   ~/.local/share/&lt;应用标识&gt;/data
+/// Linux:   $XDG_DATA_HOME/&lt;应用标识&gt;/data (缺省 ~/.local/share/&lt;应用标识&gt;/data)
 /// </summary>
 public static class AppPaths
 {
@@ -84,8 +84,8 @@ public static class AppPaths
 	/// <summary>
 	/// 平台数据根目录
 	///
-	/// Environment.SpecialFolder.ApplicationData 在三个平台上分别是:
-	/// Windows → %APPDATA%; macOS → ~/.config (与 Tauri 不同, 需要单独处理); Linux → ~/.local/share (XDG_DATA_HOME)
+	/// Windows 使用 %APPDATA%, macOS 使用 ~/Library/Application Support, Linux 使用 XDG_DATA_HOME.
+	/// .NET 的 ApplicationData 在 Linux 上映射到配置目录 (~/.config), 不能用于这里的数据目录。
 	/// </summary>
 	private static string AppDataRoot()
 	{
@@ -95,6 +95,16 @@ public static class AppPaths
 			string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 			return Path.Combine(home, "Library", "Application Support");
 		}
+
+		if (OperatingSystem.IsLinux())
+		{
+			string? xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+			if (!string.IsNullOrWhiteSpace(xdgDataHome)) return xdgDataHome;
+
+			string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+			return Path.Combine(home, ".local", "share");
+		}
+
 		return Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 	}
 }

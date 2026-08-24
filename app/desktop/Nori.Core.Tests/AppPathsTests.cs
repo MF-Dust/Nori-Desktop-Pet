@@ -52,13 +52,10 @@ public class AppPathsTests
 	public void Linux落在XDG数据目录下()
 	{
 		if (!OperatingSystem.IsLinux()) return;
-		// SpecialFolder.ApplicationData 在 Linux 上就是 $XDG_DATA_HOME (缺省 ~/.local/share)
-		string root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-		Assert.Equal(Path.Combine(root, AppPaths.Identifier, "data"), AppPaths.DataDir);
-
+		// .NET 的 ApplicationData 在 Linux 上是配置目录 (~/.config), 不能代表 XDG 数据目录。
 		string xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME") ?? "";
 		string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-		string expectedRoot = xdg.Length > 0 ? xdg : Path.Combine(home, ".local", "share");
+		string expectedRoot = !string.IsNullOrWhiteSpace(xdg) ? xdg : Path.Combine(home, ".local", "share");
 		Assert.Equal(Path.Combine(expectedRoot, AppPaths.Identifier, "data"), AppPaths.DataDir);
 	}
 }

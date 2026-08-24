@@ -67,6 +67,10 @@ internal static class ResourcePathSafety
 
 	private static void EnsureNoReparsePoint(string path, string message)
 	{
+		// macOS 将 /etc、/tmp、/var 暴露为指向 /private 下目录的系统别名。
+		// 这些别名不是资源目录里的用户可控链接, 不能让它们阻断系统临时目录下的合法资源。
+		if (IsMacOsSystemAlias(path)) return;
+
 		FileAttributes attributes;
 		try
 		{
@@ -119,6 +123,12 @@ internal static class ResourcePathSafety
 		{
 			throw new ResourceException($"无法检查资源路径: {path}", exception);
 		}
+	}
+
+	private static bool IsMacOsSystemAlias(string path)
+	{
+		if (!OperatingSystem.IsMacOS()) return false;
+		return path is "/etc" or "/tmp" or "/var";
 	}
 
 	private static StringComparison Comparison => OperatingSystem.IsWindows()
