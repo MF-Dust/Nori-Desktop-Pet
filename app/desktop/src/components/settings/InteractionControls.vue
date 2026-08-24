@@ -195,7 +195,7 @@ const onExpressionNameChange = (name: string) => {
 				<div class="flex items-center p-0.5 rounded-sm bg-white/5 border border-line-subtle">
 					<button
 						type="button"
-						class="px-2.5 py-1 rounded-xs text-xs font-600 transition-all duration-150 focus-ring flex items-center gap-1.5"
+						class="px-2.5 py-1 rounded-sm text-xs font-600 transition-all duration-150 focus-ring flex items-center gap-1.5"
 						:class="editing ? 'bg-nori-teal-bright text-on-teal shadow-[0_0_0.8rem_var(--glow-teal)]' : 'text-text-muted hover:text-text-body'"
 						@click="emit('update:editing', true)"
 					>
@@ -204,7 +204,7 @@ const onExpressionNameChange = (name: string) => {
 					</button>
 					<button
 						type="button"
-						class="px-2.5 py-1 rounded-xs text-xs font-600 transition-all duration-150 focus-ring flex items-center gap-1.5"
+						class="px-2.5 py-1 rounded-sm text-xs font-600 transition-all duration-150 focus-ring flex items-center gap-1.5"
 						:class="!editing ? 'bg-nori-teal-bright text-on-teal shadow-[0_0_0.8rem_var(--glow-teal)]' : 'text-text-muted hover:text-text-body'"
 						@click="emit('update:editing', false)"
 					>
@@ -380,7 +380,7 @@ const onExpressionNameChange = (name: string) => {
 				<div class="w-full grid grid-cols-3 gap-2">
 					<button
 						type="button"
-						class="py-1.5 px-2 rounded-xs border text-xs font-600 transition-all focus-ring text-center"
+						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
 						:class="selectedRegion.motion.mode === 'none'
 							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
 							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
@@ -390,7 +390,7 @@ const onExpressionNameChange = (name: string) => {
 					</button>
 					<button
 						type="button"
-						class="py-1.5 px-2 rounded-xs border text-xs font-600 transition-all focus-ring text-center"
+						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
 						:class="selectedRegion.motion.mode === 'random'
 							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
 							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
@@ -400,7 +400,7 @@ const onExpressionNameChange = (name: string) => {
 					</button>
 					<button
 						type="button"
-						class="py-1.5 px-2 rounded-xs border text-xs font-600 transition-all focus-ring text-center"
+						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
 						:class="selectedRegion.motion.mode === 'selected'
 							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
 							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
@@ -446,7 +446,7 @@ const onExpressionNameChange = (name: string) => {
 				<div class="w-full grid grid-cols-3 gap-2">
 					<button
 						type="button"
-						class="py-1.5 px-2 rounded-xs border text-xs font-600 transition-all focus-ring text-center"
+						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
 						:class="selectedRegion.expression.mode === 'none'
 							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
 							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
@@ -456,7 +456,7 @@ const onExpressionNameChange = (name: string) => {
 					</button>
 					<button
 						type="button"
-						class="py-1.5 px-2 rounded-xs border text-xs font-600 transition-all focus-ring text-center"
+						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
 						:class="selectedRegion.expression.mode === 'random'
 							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
 							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
@@ -466,7 +466,7 @@ const onExpressionNameChange = (name: string) => {
 					</button>
 					<button
 						type="button"
-						class="py-1.5 px-2 rounded-xs border text-xs font-600 transition-all focus-ring text-center"
+						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
 						:class="selectedRegion.expression.mode === 'selected'
 							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
 							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"

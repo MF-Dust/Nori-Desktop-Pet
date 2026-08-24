@@ -9,6 +9,7 @@ import Icon from "../Icon.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppCard from "../ui/AppCard.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
+import AppButton from "../ui/AppButton.vue"
 
 const I18N = computed(() => useLanguages().views.main.voice)
 
@@ -195,9 +196,9 @@ const testVoice = async () => {
 					{{ I18N.notice.desc }}
 				</p>
 			</div>
-			<n-button size="small" @click="ackNotice">
+			<AppButton size="sm" @click="ackNotice">
 				{{ I18N.notice.ack }}
-			</n-button>
+			</AppButton>
 		</div>
 
 		<div class="flex flex-col gap-3.5 pb-5">
@@ -222,33 +223,33 @@ const testVoice = async () => {
 					<span class="field-label font-500">{{ I18N.tts.provider }}</span>
 					<div class="flex flex-wrap gap-2">
 						<label
-							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
 								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 							:class="ttsProvider === 'openai'
-								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 						>
 							<input v-model="ttsProvider" type="radio" value="openai" class="sr-only"
 								@change="onTtsProviderChange('openai')"/>
 							{{ I18N.tts.providerOpenai }}
 						</label>
 						<label
-							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
 								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 							:class="ttsProvider === 'custom'
-								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 						>
 							<input v-model="ttsProvider" type="radio" value="custom" class="sr-only"
 								@change="onTtsProviderChange('custom')"/>
 							{{ I18N.tts.providerCustom }}
 						</label>
 						<label
-							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
 								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 							:class="ttsProvider === 'gpt_sovits'
-								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 						>
 							<input v-model="ttsProvider" type="radio" value="gpt_sovits" class="sr-only"
 								@change="onTtsProviderChange('gpt_sovits')"/>
@@ -369,17 +370,16 @@ const testVoice = async () => {
 				</div>
 
 				<div class="flex gap-2 pt-1">
-					<n-button
-						type="primary"
+					<AppButton
+						variant="primary"
+						size="sm"
+						:icon="isSpeakingTest || isSpeaking ? undefined : 'play'"
 						:loading="isSpeakingTest || isSpeaking"
 						:disabled="isSpeakingTest || isSpeaking"
 						@click="testVoice"
 					>
-						<template #icon>
-							<Icon :name="isSpeakingTest || isSpeaking ? 'loading' : 'play'" :size="15"/>
-						</template>
 						{{ isSpeakingTest ? I18N.tts.testing : I18N.tts.test }}
-					</n-button>
+					</AppButton>
 				</div>
 			</AppCard>
 

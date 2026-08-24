@@ -241,11 +241,11 @@ const formatBytes = (bytes: number): string => {
 						<label
 							v-for="FILTER in LEVEL_FILTERS"
 							:key="FILTER"
-							class="inline-flex items-center px-3 py-1 rounded-pill border text-xs cursor-pointer
+							class="inline-flex items-center px-3.5 py-1 rounded-pill border text-xs cursor-pointer
 								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 							:class="levelFilter === FILTER
-								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/3 text-text-muted hover:(text-nori-teal-bright bg-white/6 border-nori-teal-soft)'"
+								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 						>
 							<input v-model="levelFilter" type="radio" :value="FILTER" class="sr-only"/>
 							{{ FILTER_LABELS[FILTER] }}

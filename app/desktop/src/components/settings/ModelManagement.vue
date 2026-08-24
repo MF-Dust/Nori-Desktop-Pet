@@ -502,30 +502,36 @@ const closeAdjust = () => {
 
 				<div class="absolute top-[5.6rem] left-[40rem] right-6 bottom-5 px-6 py-5 scroll-area glass-panel shadow-[0_0.8rem_3.2rem_rgba(0,0,0,0.5)]">
 					<!-- 标签页导航：基础与行为 vs 自定义互动区域 -->
-					<div class="w-full flex items-center gap-2 pb-4 mb-4 border-b border-line-subtle">
-						<button
-							type="button"
-							class="px-4 py-1.5 rounded-sm text-sm font-600 transition-all duration-200 focus-ring cursor-pointer"
-							:class="adjustTab === 'display'
-								? 'bg-nori-teal-bright text-on-teal shadow-[0_0_1.2rem_var(--glow-teal)]'
-								: 'bg-white/4 text-text-muted hover:(bg-white/8 text-text-body)'"
-							@click="adjustTab = 'display'"
-						>
-							{{ I18N.tabDisplay }}
-						</button>
-						<button
-							type="button"
-							class="px-4 py-1.5 rounded-sm text-sm font-600 transition-all duration-200 focus-ring cursor-pointer flex items-center gap-1.5"
-							:class="adjustTab === 'interactions'
-								? 'bg-nori-teal-bright text-on-teal shadow-[0_0_1.2rem_var(--glow-teal)]'
-								: 'bg-white/4 text-text-muted hover:(bg-white/8 text-text-body)'"
-							@click="adjustTab = 'interactions'"
-						>
-							<span>{{ I18N.tabInteractions }}</span>
-							<AppChip v-if="interactionsConfig.regions.length > 0" tone="teal" dot>
-								{{ interactionsConfig.regions.length }}
-							</AppChip>
-						</button>
+					<div class="w-full flex items-center pb-4 mb-4 border-b border-line-subtle">
+						<nav class="inline-flex items-center gap-1 p-1 rounded-pill bg-bg-abyss/80 border border-line-subtle shadow-inner" role="tablist">
+							<button
+								type="button"
+								role="tab"
+								class="px-4 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 focus-ring cursor-pointer"
+								:class="adjustTab === 'display'
+									? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+									: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
+								:aria-selected="adjustTab === 'display'"
+								@click="adjustTab = 'display'"
+							>
+								{{ I18N.tabDisplay }}
+							</button>
+							<button
+								type="button"
+								role="tab"
+								class="px-4 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 focus-ring cursor-pointer flex items-center gap-1.5"
+								:class="adjustTab === 'interactions'
+									? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+									: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
+								:aria-selected="adjustTab === 'interactions'"
+								@click="adjustTab = 'interactions'"
+							>
+								<span>{{ I18N.tabInteractions }}</span>
+								<AppChip v-if="interactionsConfig.regions.length > 0" tone="teal" dot>
+									{{ interactionsConfig.regions.length }}
+								</AppChip>
+							</button>
+						</nav>
 					</div>
 
 					<!-- 标签页 1: 基础显示与桌宠行为 -->

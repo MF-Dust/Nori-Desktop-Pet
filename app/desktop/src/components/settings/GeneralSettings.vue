@@ -10,6 +10,9 @@ import {APP_VERSION} from "../../services/version"
 import AppCard from "../ui/AppCard.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
+import Icon from "../Icon.vue"
+import zhCn from "../../assets/images/flags/cn.png"
+import enUs from "../../assets/images/flags/us.png"
 
 const currentLangField = useSnapshotField(snapshot => snapshot.general.language, "zh-CN")
 const autoSummonField = useSnapshotField(snapshot => snapshot.general.petAutoSummon, true)
@@ -48,7 +51,6 @@ const SAVE = useDebouncedSave({
 		if (key === "telemetryEnabled") telemetryEnabledField.reset()
 		feedback.error(TEXT.value.telemetry.saveFailed, error)
 	},
-
 })
 
 // 切换语言: 本地立即生效, 失败时回滚到快照语言。
@@ -108,15 +110,15 @@ onMounted(() => {
 		<div class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 界面语言 -->
 			<AppCard :title="TEXT.language.title" icon="noriOS">
-				<div class="flex flex-wrap gap-2">
+				<div class="flex flex-wrap gap-2.5">
 					<!-- 单选按钮本体用 sr-only 隐藏而非 display:none, 保留键盘可达与读屏语义 -->
 					<label
-						class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-sm cursor-pointer
+						class="inline-flex items-center gap-2 px-4 py-2 rounded-pill border text-sm cursor-pointer
 							transition-all duration-200
 							focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 						:class="currentLang === 'zh-CN'
-							? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-							: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-nori-teal-bright/6 border-nori-teal-soft)'"
+							? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.4rem_rgba(125,227,255,0.18)]'
+							: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 					>
 						<input
 							v-model="currentLang"
@@ -125,15 +127,19 @@ onMounted(() => {
 							class="sr-only"
 							@change="onLanguageChange('zh-CN')"
 						/>
-						🇨🇳 {{ TEXT.language.chinese }}
+						<span class="w-[2rem] h-[1.4rem] shrink-0 rounded-[0.2rem] overflow-hidden border border-white/15">
+							<img :src="zhCn" alt="CN" class="w-full h-full object-cover block"/>
+						</span>
+						<span>{{ TEXT.language.chinese }}</span>
+						<Icon v-if="currentLang === 'zh-CN'" name="check" :size="13" class="text-nori-teal-bright ml-0.5"/>
 					</label>
 					<label
-						class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-sm cursor-pointer
+						class="inline-flex items-center gap-2 px-4 py-2 rounded-pill border text-sm cursor-pointer
 							transition-all duration-200
 							focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 						:class="currentLang === 'en-US'
-							? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-							: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-nori-teal-bright/6 border-nori-teal-soft)'"
+							? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.4rem_rgba(125,227,255,0.18)]'
+							: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 					>
 						<input
 							v-model="currentLang"
@@ -142,7 +148,11 @@ onMounted(() => {
 							class="sr-only"
 							@change="onLanguageChange('en-US')"
 						/>
-						🇺🇸 {{ TEXT.language.english }}
+						<span class="w-[2rem] h-[1.4rem] shrink-0 rounded-[0.2rem] overflow-hidden border border-white/15">
+							<img :src="enUs" alt="US" class="w-full h-full object-cover block"/>
+						</span>
+						<span>{{ TEXT.language.english }}</span>
+						<Icon v-if="currentLang === 'en-US'" name="check" :size="13" class="text-nori-teal-bright ml-0.5"/>
 					</label>
 				</div>
 			</AppCard>

@@ -10,6 +10,9 @@ import AppCard from "../ui/AppCard.vue"
 import AppChip from "../ui/AppChip.vue"
 import AppField from "../ui/AppField.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppButton from "../ui/AppButton.vue"
+import AppModal from "../ui/AppModal.vue"
+import AppSwitchRow from "../ui/AppSwitchRow.vue"
 
 const I18N = computed(() => useLanguages().views.main.memory)
 const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
@@ -42,6 +45,28 @@ const editTags = ref("")
 const editKind = ref("general")
 const editImportance = ref(0.8)
 const editConfidence = ref(0.8)
+
+const KIND_OPTIONS = computed(() => [
+	{label: I18N.value.add.kindGeneral, value: "general"},
+	{label: I18N.value.add.kindFactual, value: "factual"},
+	{label: I18N.value.add.kindPreference, value: "preference"},
+	{label: I18N.value.add.kindRelational, value: "relational"},
+	{label: I18N.value.add.kindPlanned, value: "planned"},
+	{label: I18N.value.add.kindIdentity, value: "identity"},
+])
+
+const KIND_FILTER_OPTIONS = computed(() => [
+	{label: I18N.value.list.allKinds, value: ""},
+	...KIND_OPTIONS.value,
+])
+
+const STATUS_FILTER_OPTIONS = computed(() => [
+	{label: I18N.value.list.allStatuses, value: ""},
+	{label: I18N.value.list.active, value: "active"},
+	{label: I18N.value.list.dormant, value: "dormant"},
+	{label: I18N.value.list.expired, value: "expired"},
+])
+
 const SECTIONS = computed(() => [
 	{key: "overview" as MemorySection, label: I18N.value.tabs.overview},
 	{key: "memories" as MemorySection, label: I18N.value.tabs.memories},
@@ -151,10 +176,6 @@ const closeMemory = () => {
 	selectedMemory.value = null
 	selectedAtoms.value = []
 	selectedSources.value = []
-}
-
-const onModalUpdate = (show: boolean) => {
-	if (!show) closeMemory()
 }
 
 const saveMemory = async () => {
@@ -446,13 +467,17 @@ const clearAll = async () => {
 			:subtitle="I18N.header.subtitle"
 		/>
 
-		<nav class="flex flex-wrap gap-1.5" :aria-label="I18N.header.title">
+		<nav class="flex items-center gap-1.5 overflow-x-auto scroll-area pb-1 shrink-0" role="tablist" :aria-label="I18N.header.title">
 			<button
 				v-for="section in SECTIONS"
 				:key="section.key"
 				type="button"
-				:class="section.key === CURRENT_SECTION ? 'nav-item-active' : 'nav-item'"
-				class="focus-ring"
+				role="tab"
+				class="shrink-0 px-3.5 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 cursor-pointer focus-ring flex items-center gap-1.5"
+				:class="section.key === CURRENT_SECTION
+					? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+					: 'text-text-muted bg-white/4 border border-line-subtle hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+				:aria-selected="section.key === CURRENT_SECTION"
 				@click="changeSection(section.key)"
 			>
 				{{ section.label }}
@@ -460,20 +485,50 @@ const clearAll = async () => {
 		</nav>
 
 		<div v-if="CURRENT_SECTION === 'overview'" class="flex flex-col gap-3.5 pb-5">
-			<AppCard :title="I18N.header.title" icon="package">
-				<div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-					<div class="surface-card p-3"><p class="text-hint">{{ I18N.overview.active }}</p><p class="title-md">{{ SNAPSHOT?.memory?.active ?? 0 }}</p></div>
-					<div class="surface-card p-3"><p class="text-hint">{{ I18N.overview.atoms }}</p><p class="title-md">{{ SNAPSHOT?.memory?.atoms ?? 0 }}</p></div>
-					<div class="surface-card p-3"><p class="text-hint">{{ I18N.overview.archived }}</p><p class="title-md">{{ SNAPSHOT?.memory?.archived ?? 0 }}</p></div>
-					<div class="surface-card p-3"><p class="text-hint">{{ I18N.overview.knowledge }}</p><p class="title-md">{{ SNAPSHOT?.memory?.knowledgeChunks ?? 0 }}</p></div>
+			<!-- 1. 数据统计总览 -->
+			<AppCard :title="I18N.overview.active" icon="package">
+				<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
+						<span class="text-xs text-text-muted font-500">{{ I18N.overview.active }}</span>
+						<span class="text-2xl font-700 text-nori-teal-bright mono">{{ SNAPSHOT?.memory?.active ?? 0 }}</span>
+					</div>
+					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
+						<span class="text-xs text-text-muted font-500">{{ I18N.overview.atoms }}</span>
+						<span class="text-2xl font-700 text-nori-teal-bright mono">{{ SNAPSHOT?.memory?.atoms ?? 0 }}</span>
+					</div>
+					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
+						<span class="text-xs text-text-muted font-500">{{ I18N.overview.archived }}</span>
+						<span class="text-2xl font-700 text-text-body mono">{{ SNAPSHOT?.memory?.archived ?? 0 }}</span>
+					</div>
+					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
+						<span class="text-xs text-text-muted font-500">{{ I18N.overview.knowledge }}</span>
+						<span class="text-2xl font-700 text-nori-teal-soft mono">{{ SNAPSHOT?.memory?.knowledgeChunks ?? 0 }}</span>
+					</div>
 				</div>
-				<div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-					<button type="button" class="surface-card flex items-center justify-between p-3 text-left focus-ring" @click="toggleMemorySetting('enabled')"><span>{{ I18N.header.title }}</span><AppChip :tone="SNAPSHOT?.memory?.enabled ? 'success' : 'warning'">{{ SNAPSHOT?.memory?.enabled ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip></button>
-					<button type="button" class="surface-card flex items-center justify-between p-3 text-left focus-ring" @click="toggleMemorySetting('reflectionEnabled')"><span>{{ I18N.overview.reflection }}</span><AppChip :tone="SNAPSHOT?.memory?.reflectionEnabled ? 'success' : 'warning'">{{ SNAPSHOT?.memory?.reflectionEnabled ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip></button>
-					<button type="button" class="surface-card flex items-center justify-between p-3 text-left focus-ring" @click="toggleMemorySetting('decayEnabled')"><span>{{ I18N.overview.decay }}</span><AppChip :tone="SNAPSHOT?.memory?.decayEnabled ? 'success' : 'warning'">{{ SNAPSHOT?.memory?.decayEnabled ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip></button>
-					<button type="button" class="surface-card flex items-center justify-between p-3 text-left focus-ring" @click="toggleMemorySetting('archiveEnabled')"><span>{{ I18N.overview.archive }}</span><AppChip :tone="SNAPSHOT?.memory?.archiveEnabled ? 'success' : 'warning'">{{ SNAPSHOT?.memory?.archiveEnabled ? I18N.overview.enabled : I18N.overview.disabled }}</AppChip></button>
+
+				<div class="flex items-center gap-2 pt-2 border-t border-line-subtle text-xs text-text-muted">
+					<Icon name="info" :size="13" class="text-nori-teal-soft shrink-0"/>
+					<span>{{ I18N.overview.index }}: {{ SNAPSHOT?.memory?.indexState }} ({{ SNAPSHOT?.memory?.indexProcessed ?? 0 }} / {{ SNAPSHOT?.memory?.indexTotal ?? 0 }})</span>
 				</div>
-				<p class="text-hint">{{ I18N.overview.index }}: {{ SNAPSHOT?.memory?.indexState }} ({{ SNAPSHOT?.memory?.indexProcessed ?? 0 }}/{{ SNAPSHOT?.memory?.indexTotal ?? 0 }})</p>
+			</AppCard>
+
+			<!-- 2. 核心记忆机制开关 -->
+			<AppCard :title="I18N.header.title" icon="settings">
+				<AppSwitchRow :title="I18N.header.title" :desc="SNAPSHOT?.memory?.enabled ? I18N.overview.enabled : I18N.overview.disabled">
+					<n-switch :value="Boolean(SNAPSHOT?.memory?.enabled)" @update:value="() => toggleMemorySetting('enabled')"/>
+				</AppSwitchRow>
+
+				<AppSwitchRow :title="I18N.overview.reflection" :desc="SNAPSHOT?.memory?.reflectionEnabled ? I18N.overview.enabled : I18N.overview.disabled">
+					<n-switch :value="Boolean(SNAPSHOT?.memory?.reflectionEnabled)" @update:value="() => toggleMemorySetting('reflectionEnabled')"/>
+				</AppSwitchRow>
+
+				<AppSwitchRow :title="I18N.overview.decay" :desc="SNAPSHOT?.memory?.decayEnabled ? I18N.overview.enabled : I18N.overview.disabled">
+					<n-switch :value="Boolean(SNAPSHOT?.memory?.decayEnabled)" @update:value="() => toggleMemorySetting('decayEnabled')"/>
+				</AppSwitchRow>
+
+				<AppSwitchRow :title="I18N.overview.archive" :desc="SNAPSHOT?.memory?.archiveEnabled ? I18N.overview.enabled : I18N.overview.disabled">
+					<n-switch :value="Boolean(SNAPSHOT?.memory?.archiveEnabled)" @update:value="() => toggleMemorySetting('archiveEnabled')"/>
+				</AppSwitchRow>
 			</AppCard>
 		</div>
 
@@ -490,7 +545,12 @@ const clearAll = async () => {
 
 		<div v-if="CURRENT_SECTION === 'knowledge'" class="flex flex-col gap-3.5 pb-5">
 			<AppCard :title="I18N.knowledge.title" icon="package">
-				<template #actions><div class="flex gap-2"><n-button secondary @click="openKnowledge">{{ I18N.knowledge.open }}</n-button><n-button type="primary" :loading="knowledgeLoading" @click="reindexKnowledge">{{ I18N.knowledge.reindex }}</n-button></div></template>
+				<template #actions>
+					<div class="flex gap-2">
+						<AppButton size="sm" @click="openKnowledge">{{ I18N.knowledge.open }}</AppButton>
+						<AppButton variant="primary" size="sm" :loading="knowledgeLoading" @click="reindexKnowledge">{{ I18N.knowledge.reindex }}</AppButton>
+					</div>
+				</template>
 				<div class="flex flex-col gap-2 text-sm text-text-muted"><div class="flex justify-between gap-3"><span>{{ I18N.knowledge.path }}</span><span class="mono break-all text-right">{{ SNAPSHOT?.memory?.knowledgePath }}</span></div><div class="flex justify-between"><span>{{ I18N.knowledge.chunks }}</span><span>{{ knowledgeStatus.total ?? SNAPSHOT?.memory?.knowledgeChunks ?? 0 }}</span></div><div class="flex justify-between"><span>{{ I18N.knowledge.status }}</span><span>{{ knowledgeStatus.state ?? SNAPSHOT?.memory?.indexState }}</span></div></div>
 				<p v-if="knowledgeStatus.lastError" class="text-sm text-danger-text">{{ knowledgeStatus.lastError }}</p>
 			</AppCard>
@@ -498,7 +558,10 @@ const clearAll = async () => {
 
 		<div v-if="CURRENT_SECTION === 'debugger'" class="flex flex-col gap-3.5 pb-5">
 			<AppCard :title="I18N.debugger.title" icon="terminal">
-				<div class="flex gap-2"><input v-model="debugQuery" class="input-base flex-1" :placeholder="I18N.debugger.placeholder" @keyup.enter="runDebugger"/><n-button type="primary" :loading="debugLoading" @click="runDebugger">{{ I18N.debugger.run }}</n-button></div>
+				<div class="flex gap-2">
+					<input v-model="debugQuery" class="input-base flex-1" :placeholder="I18N.debugger.placeholder" @keyup.enter="runDebugger"/>
+					<AppButton variant="primary" size="sm" :loading="debugLoading" @click="runDebugger">{{ I18N.debugger.run }}</AppButton>
+				</div>
 				<div v-if="debugResult" class="flex flex-col gap-2 text-sm">
 					<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.query }}</p><p class="mono whitespace-pre-wrap text-text-muted">{{ debugResult.trace?.expandedQuery }}</p></div>
 					<div class="grid grid-cols-2 gap-2">
@@ -520,15 +583,15 @@ const clearAll = async () => {
 			<!-- 1. Embedding 向量嵌入配置 -->
 			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.embedding.title" icon="sparkles">
 				<template #actions>
-					<n-button :loading="embeddingTesting" :disabled="isReembedding || embeddingTesting" @click="testEmbeddingConnection">
+					<AppButton size="sm" :loading="embeddingTesting" :disabled="isReembedding || embeddingTesting" @click="testEmbeddingConnection">
 						{{ embeddingTesting ? I18N.embedding.testingConnection : I18N.embedding.testConnection }}
-					</n-button>
-					<n-button type="primary" :loading="isReembedding" :disabled="isReembedding || embeddingTesting" @click="reembedAll">
+					</AppButton>
+					<AppButton variant="primary" size="sm" :loading="isReembedding" :disabled="isReembedding || embeddingTesting" @click="reembedAll">
 						<template #icon>
 							<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
 						</template>
 						{{ isReembedding ? I18N.embedding.indexing : I18N.embedding.reembed }}
-					</n-button>
+					</AppButton>
 				</template>
 
 				<div class="flex gap-3">
@@ -621,14 +684,7 @@ const clearAll = async () => {
 				/>
 
 				<div class="flex items-center gap-3">
-					<select v-model="newKind" class="input-base w-[10rem]" aria-label="memory kind">
-						<option value="general">{{ I18N.add.kindGeneral }}</option>
-						<option value="factual">{{ I18N.add.kindFactual }}</option>
-						<option value="preference">{{ I18N.add.kindPreference }}</option>
-						<option value="relational">{{ I18N.add.kindRelational }}</option>
-						<option value="planned">{{ I18N.add.kindPlanned }}</option>
-						<option value="identity">{{ I18N.add.kindIdentity }}</option>
-					</select>
+					<n-select v-model:value="newKind" :options="KIND_OPTIONS" class="w-[12rem] shrink-0"/>
 					<div class="flex-1">
 						<input
 							v-model="newTags"
@@ -649,12 +705,12 @@ const clearAll = async () => {
 						/>
 					</div>
 
-					<n-button type="primary" :disabled="!newContent.trim() || adding" :loading="adding" @click="addMemory">
+					<AppButton variant="primary" size="sm" :disabled="!newContent.trim() || adding" :loading="adding" @click="addMemory">
 						<template #icon>
 							<Icon :name="adding ? 'loading' : 'check'" :size="14"/>
 						</template>
 						{{ I18N.add.submit }}
-					</n-button>
+					</AppButton>
 				</div>
 			</AppCard>
 
@@ -687,21 +743,8 @@ const clearAll = async () => {
 						:placeholder="I18N.list.searchPlaceholder"
 						@input="resetMemoryPage"
 					/>
-					<select v-model="kindFilter" class="input-base w-[10rem]" :aria-label="I18N.list.kind" @change="resetMemoryPage">
-						<option value="">{{ I18N.list.allKinds }}</option>
-						<option value="general">{{ I18N.add.kindGeneral }}</option>
-						<option value="factual">{{ I18N.add.kindFactual }}</option>
-						<option value="preference">{{ I18N.add.kindPreference }}</option>
-						<option value="relational">{{ I18N.add.kindRelational }}</option>
-						<option value="planned">{{ I18N.add.kindPlanned }}</option>
-						<option value="identity">{{ I18N.add.kindIdentity }}</option>
-					</select>
-					<select v-if="CURRENT_SECTION === 'memories'" v-model="statusFilter" class="input-base w-[10rem]" :aria-label="I18N.list.status" @change="resetMemoryPage">
-						<option value="">{{ I18N.list.allStatuses }}</option>
-						<option value="active">{{ I18N.list.active }}</option>
-						<option value="dormant">{{ I18N.list.dormant }}</option>
-						<option value="expired">{{ I18N.list.expired }}</option>
-					</select>
+					<n-select v-model:value="kindFilter" :options="KIND_FILTER_OPTIONS" class="w-[12rem] shrink-0" @update:value="resetMemoryPage"/>
+					<n-select v-if="CURRENT_SECTION === 'memories'" v-model:value="statusFilter" :options="STATUS_FILTER_OPTIONS" class="w-[12rem] shrink-0" @update:value="resetMemoryPage"/>
 				</div>
 
 				<div class="flex flex-col gap-2 max-h-[28rem] scroll-area">
@@ -776,30 +819,37 @@ const clearAll = async () => {
 			</AppCard>
 		</div>
 
-		<n-modal :show="selectedMemory !== null" :mask-closable="false" @update:show="onModalUpdate">
-			<AppCard v-if="selectedMemory" :title="`${I18N.detail.title} #${selectedMemory.id}`" icon="package">
-				<div v-if="detailLoading" class="py-4 text-center text-text-faint">{{ I18N.detail.loading }}</div>
-				<div v-else class="flex max-h-[70vh] flex-col gap-3 overflow-auto">
-					<AppField :label="I18N.detail.content"><textarea v-model="editContent" class="input-base resize-y" rows="3"/></AppField>
-					<div class="grid grid-cols-2 gap-3">
-						<AppField :label="I18N.detail.canonical"><textarea v-model="editCanonical" class="input-base resize-y" rows="2"/></AppField>
-						<AppField :label="I18N.detail.persona"><textarea v-model="editPersona" class="input-base resize-y" rows="2"/></AppField>
-					</div>
-					<div class="grid grid-cols-2 gap-3">
-						<AppField :label="I18N.detail.kind"><select v-model="editKind" class="input-base"><option value="general">{{ I18N.add.kindGeneral }}</option><option value="factual">{{ I18N.add.kindFactual }}</option><option value="preference">{{ I18N.add.kindPreference }}</option><option value="relational">{{ I18N.add.kindRelational }}</option><option value="planned">{{ I18N.add.kindPlanned }}</option><option value="identity">{{ I18N.add.kindIdentity }}</option></select></AppField>
-						<AppField :label="I18N.detail.tags"><input v-model="editTags" class="input-base"/></AppField>
-						<AppField :label="I18N.detail.confidence"><input v-model.number="editConfidence" type="number" min="0" max="1" step="0.05" class="input-base"/></AppField>
-						<AppField :label="I18N.add.importance"><input v-model.number="editImportance" type="number" min="0" max="1" step="0.05" class="input-base"/></AppField>
-					</div>
-					<div class="surface-card p-3"><p class="field-label">{{ I18N.detail.atoms }}</p><p v-for="atom in selectedAtoms" :key="atom.id" class="text-sm">#{{ atom.id }} · {{ atom.content }}</p><p v-if="selectedAtoms.length === 0" class="text-hint">{{ I18N.detail.empty }}</p></div>
-					<div class="surface-card p-3"><p class="field-label">{{ I18N.detail.sources }}</p><p v-for="source in selectedSources" :key="source.id" class="text-sm">{{ source.role }} · {{ source.content }}</p><p v-if="selectedSources.length === 0" class="text-hint">{{ I18N.detail.empty }}</p></div>
-					<div class="flex justify-end gap-2">
-						<n-button secondary @click="closeMemory">{{ I18N.common.cancel }}</n-button>
-						<n-button v-if="selectedMemory.status === 'active'" secondary @click="archiveMemory(selectedMemory.id)">{{ I18N.list.archiveThis }}</n-button>
-						<n-button type="primary" :loading="savingDetail" @click="saveMemory">{{ I18N.detail.save }}</n-button>
-					</div>
+		<AppModal
+			:show="selectedMemory !== null"
+			:title="selectedMemory ? `${I18N.detail.title} #${selectedMemory.id}` : ''"
+			:close-label="I18N.common.cancel"
+			:mask-closable="false"
+			panel-class="w-[min(56rem,94vw)] max-h-[86vh]"
+			@close="closeMemory"
+		>
+			<div v-if="detailLoading" class="py-4 text-center text-text-faint">{{ I18N.detail.loading }}</div>
+			<div v-else-if="selectedMemory" class="flex flex-col gap-3">
+				<AppField :label="I18N.detail.content"><textarea v-model="editContent" class="input-base resize-y" rows="3"/></AppField>
+				<div class="grid grid-cols-2 gap-3">
+					<AppField :label="I18N.detail.canonical"><textarea v-model="editCanonical" class="input-base resize-y" rows="2"/></AppField>
+					<AppField :label="I18N.detail.persona"><textarea v-model="editPersona" class="input-base resize-y" rows="2"/></AppField>
 				</div>
-			</AppCard>
-		</n-modal>
+				<div class="grid grid-cols-2 gap-3">
+					<AppField :label="I18N.detail.kind">
+						<n-select v-model:value="editKind" :options="KIND_OPTIONS"/>
+					</AppField>
+					<AppField :label="I18N.detail.tags"><input v-model="editTags" class="input-base"/></AppField>
+					<AppField :label="I18N.detail.confidence"><input v-model.number="editConfidence" type="number" min="0" max="1" step="0.05" class="input-base"/></AppField>
+					<AppField :label="I18N.add.importance"><input v-model.number="editImportance" type="number" min="0" max="1" step="0.05" class="input-base"/></AppField>
+				</div>
+				<div class="surface-card p-3"><p class="field-label">{{ I18N.detail.atoms }}</p><p v-for="atom in selectedAtoms" :key="atom.id" class="text-sm">#{{ atom.id }} · {{ atom.content }}</p><p v-if="selectedAtoms.length === 0" class="text-hint">{{ I18N.detail.empty }}</p></div>
+				<div class="surface-card p-3"><p class="field-label">{{ I18N.detail.sources }}</p><p v-for="source in selectedSources" :key="source.id" class="text-sm">{{ source.role }} · {{ source.content }}</p><p v-if="selectedSources.length === 0" class="text-hint">{{ I18N.detail.empty }}</p></div>
+			</div>
+			<template #footer>
+				<AppButton @click="closeMemory">{{ I18N.common.cancel }}</AppButton>
+				<AppButton v-if="selectedMemory?.status === 'active'" variant="danger" @click="selectedMemory && archiveMemory(selectedMemory.id)">{{ I18N.list.archiveThis }}</AppButton>
+				<AppButton variant="primary" :loading="savingDetail" @click="saveMemory">{{ I18N.detail.save }}</AppButton>
+			</template>
+		</AppModal>
 	</div>
 </template>

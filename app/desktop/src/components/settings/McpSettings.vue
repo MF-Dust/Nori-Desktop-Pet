@@ -7,8 +7,13 @@ import Icon from "../Icon.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppButton from "../ui/AppButton.vue"
 import AppChip from "../ui/AppChip.vue"
+import AppModal from "../ui/AppModal.vue"
 
 const I18N = computed(() => useLanguages().views.main.mcp)
+const TRANSPORT_OPTIONS = [
+	{label: "Stdio", value: "stdio"},
+	{label: "SSE", value: "sse"},
+]
 const SUB_TAB = ref<"servers" | "builtin">("servers")
 const SERVERS = ref<McpServerStatusInfo[]>([])
 const LOADING = ref(false)
@@ -263,28 +268,32 @@ const importConfig = async () => {
 			</template>
 		</AppSectionHeader>
 
-		<nav class="flex gap-1.5 border-b border-line-subtle shrink-0">
+		<nav class="inline-flex self-start items-center gap-1 p-1 rounded-pill bg-bg-abyss/80 border border-line-subtle shadow-inner shrink-0" role="tablist">
 			<button
 				type="button"
-				class="px-3 py-[0.7rem] bg-transparent border-b-2 text-sm font-inherit cursor-pointer transition-colors duration-200 focus-ring"
+				role="tab"
+				class="px-4 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 cursor-pointer focus-ring flex items-center gap-1.5"
 				:class="SUB_TAB === 'servers'
-					? 'text-nori-teal-bright border-b-nori-teal'
-					: 'text-text-muted border-b-transparent hover:text-text-primary'"
-				:aria-pressed="SUB_TAB === 'servers'"
+					? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+					: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
+				:aria-selected="SUB_TAB === 'servers'"
 				@click="SUB_TAB = 'servers'"
 			>
-				{{ I18N.tabs.servers }} ({{ SERVERS.length }})
+				<Icon name="server" :size="13"/>
+				<span>{{ I18N.tabs.servers }} ({{ SERVERS.length }})</span>
 			</button>
 			<button
 				type="button"
-				class="px-3 py-[0.7rem] bg-transparent border-b-2 text-sm font-inherit cursor-pointer transition-colors duration-200 focus-ring"
+				role="tab"
+				class="px-4 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 cursor-pointer focus-ring flex items-center gap-1.5"
 				:class="SUB_TAB === 'builtin'
-					? 'text-nori-teal-bright border-b-nori-teal'
-					: 'text-text-muted border-b-transparent hover:text-text-primary'"
-				:aria-pressed="SUB_TAB === 'builtin'"
+					? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+					: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
+				:aria-selected="SUB_TAB === 'builtin'"
 				@click="SUB_TAB = 'builtin'"
 			>
-				{{ I18N.tabs.builtin }} ({{ BUILTIN_TOOLS.length }})
+				<Icon name="tool" :size="13"/>
+				<span>{{ I18N.tabs.builtin }} ({{ BUILTIN_TOOLS.length }})</span>
 			</button>
 		</nav>
 
@@ -328,7 +337,7 @@ const importConfig = async () => {
 						@positive-click="remove(server.serverId)"
 					>
 						<template #trigger>
-							<button type="button" class="btn-danger px-3 py-1.5 text-sm">{{ I18N.common.delete }}</button>
+							<AppButton variant="danger" size="sm">{{ I18N.common.delete }}</AppButton>
 						</template>
 						<span class="flex flex-col gap-1">
 							<span>{{ I18N.server.deleteConfirm }}</span>
@@ -371,106 +380,81 @@ const importConfig = async () => {
 		</section>
 
 		<!-- 添加 MCP 服务器弹窗 -->
-		<div
-			v-if="MODAL_OPEN"
-			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/72 backdrop-blur-[0.4rem]"
-			@click.self="MODAL_OPEN = false"
+		<AppModal
+			:show="MODAL_OPEN"
+			:title="I18N.server.modalTitle"
+			:close-label="I18N.common.close"
+			panel-class="w-[min(48rem,92vw)] max-h-[86vh]"
+			@close="MODAL_OPEN = false"
 		>
-			<div class="w-[min(48rem,92vw)] max-h-[86vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg">
-				<header class="flex items-center justify-between gap-2 px-[1.5rem] py-[1.1rem] border-b border-line-subtle">
-					<h3 class="m-0 text-md text-text-primary">{{ I18N.server.modalTitle }}</h3>
-					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="MODAL_OPEN = false">
-						<Icon name="close" :size="16"/>
-					</button>
-				</header>
-				<div class="flex flex-col gap-2.5 px-[1.5rem] py-3.5 scroll-area">
-					<label class="field field-label">{{ I18N.server.name }}<input v-model="FORM.name" class="input-base text-sm"/></label>
-					<label class="field field-label">
-						{{ I18N.server.transport }}
-						<select v-model="FORM.transport" class="input-base text-sm">
-							<option value="stdio">Stdio</option>
-							<option value="sse">SSE</option>
-						</select>
-					</label>
-					<template v-if="FORM.transport === 'stdio'">
-						<label class="field field-label">{{ I18N.server.command }}<input v-model="FORM.command" class="input-base text-sm" placeholder="npx / python / node"/></label>
-						<label class="field field-label">{{ I18N.server.args }}<input v-model="ARGS_INPUT" class="input-base text-sm"/></label>
-						<label class="field field-label">
-							{{ I18N.server.env }}
-							<textarea v-model="ENV_INPUT" class="input-base text-sm resize-y leading-relaxed" rows="3"/>
-						</label>
-					</template>
-					<label v-else class="field field-label">{{ I18N.server.sseUrl }}<input v-model="FORM.url" class="input-base text-sm" placeholder="http://localhost:3000/sse"/></label>
-					<div class="flex gap-4 text-xs text-text-muted">
-						<label class="inline-flex items-center gap-1 cursor-pointer"><input v-model="FORM.enabled" type="checkbox"/>{{ I18N.server.enabled }}</label>
-						<label class="inline-flex items-center gap-1 cursor-pointer"><input v-model="FORM.autoConnect" type="checkbox"/>{{ I18N.server.autoConnect }}</label>
-					</div>
-					<div
-						v-if="TEST_RESULT"
-						class="px-2.5 py-[0.7rem] rounded-sm text-xs"
-						:class="TEST_RESULT.status === 'connected' ? 'text-success bg-success/10' : 'text-danger-text bg-danger/10'"
-					>
-						<template v-if="TEST_RESULT.status === 'connected'">
-							{{ I18N.test.foundPrefix }} {{ TEST_RESULT.tools?.length || 0 }} {{ I18N.test.foundUnit }}
-						</template>
-						<template v-else>{{ TEST_RESULT.errorMessage }}</template>
-					</div>
-				</div>
-				<footer class="flex items-center justify-end gap-[0.7rem] px-[1.5rem] py-[1.1rem] border-t border-line-subtle">
-					<AppButton variant="ghost" size="sm" :loading="TESTING" @click="testServer">{{ TESTING ? I18N.test.testing : I18N.test.run }}</AppButton>
-					<AppButton variant="primary" size="sm" :disabled="LOADING" @click="saveServer">{{ I18N.common.save }}</AppButton>
-				</footer>
+			<label class="field field-label">{{ I18N.server.name }}<input v-model="FORM.name" class="input-base text-sm"/></label>
+			<label class="field field-label">
+				{{ I18N.server.transport }}
+				<n-select v-model:value="FORM.transport" :options="TRANSPORT_OPTIONS"/>
+			</label>
+			<template v-if="FORM.transport === 'stdio'">
+				<label class="field field-label">{{ I18N.server.command }}<input v-model="FORM.command" class="input-base text-sm" placeholder="npx / python / node"/></label>
+				<label class="field field-label">{{ I18N.server.args }}<input v-model="ARGS_INPUT" class="input-base text-sm"/></label>
+				<label class="field field-label">
+					{{ I18N.server.env }}
+					<textarea v-model="ENV_INPUT" class="input-base text-sm resize-y leading-relaxed" rows="3"/>
+				</label>
+			</template>
+			<label v-else class="field field-label">{{ I18N.server.sseUrl }}<input v-model="FORM.url" class="input-base text-sm" placeholder="http://localhost:3000/sse"/></label>
+			<div class="flex gap-4 text-xs text-text-muted">
+				<label class="inline-flex items-center gap-1 cursor-pointer"><input v-model="FORM.enabled" type="checkbox"/>{{ I18N.server.enabled }}</label>
+				<label class="inline-flex items-center gap-1 cursor-pointer"><input v-model="FORM.autoConnect" type="checkbox"/>{{ I18N.server.autoConnect }}</label>
 			</div>
-		</div>
+			<div
+				v-if="TEST_RESULT"
+				class="px-2.5 py-[0.7rem] rounded-sm text-xs"
+				:class="TEST_RESULT.status === 'connected' ? 'text-success bg-success/10' : 'text-danger-text bg-danger/10'"
+			>
+				<template v-if="TEST_RESULT.status === 'connected'">
+					{{ I18N.test.foundPrefix }} {{ TEST_RESULT.tools?.length || 0 }} {{ I18N.test.foundUnit }}
+				</template>
+				<template v-else>{{ TEST_RESULT.errorMessage }}</template>
+			</div>
+			<template #footer>
+				<AppButton variant="ghost" size="sm" :loading="TESTING" @click="testServer">{{ TESTING ? I18N.test.testing : I18N.test.run }}</AppButton>
+				<AppButton variant="primary" size="sm" :disabled="LOADING" @click="saveServer">{{ I18N.common.save }}</AppButton>
+			</template>
+		</AppModal>
 
 		<!-- 导入 MCP JSON 弹窗 -->
-		<div
-			v-if="IMPORT_OPEN"
-			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/72 backdrop-blur-[0.4rem]"
-			@click.self="IMPORT_OPEN = false"
+		<AppModal
+			:show="IMPORT_OPEN"
+			:title="I18N.import.title"
+			:close-label="I18N.common.close"
+			panel-class="w-[min(48rem,92vw)] max-h-[86vh]"
+			@close="IMPORT_OPEN = false"
 		>
-			<div class="w-[min(48rem,92vw)] max-h-[86vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg">
-				<header class="flex items-center justify-between gap-2 px-[1.5rem] py-[1.1rem] border-b border-line-subtle">
-					<h3 class="m-0 text-md text-text-primary">{{ I18N.import.title }}</h3>
-					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="IMPORT_OPEN = false">
-						<Icon name="close" :size="16"/>
-					</button>
-				</header>
-				<div class="flex flex-col gap-2.5 px-[1.5rem] py-3.5 scroll-area">
-					<p class="m-0 text-hint">{{ I18N.import.hint }}</p>
-					<input v-model="IMPORT_URL" class="input-base text-sm" placeholder="https://.../mcp.json"/>
-					<p v-if="IMPORT_ERROR" class="m-0 text-xs text-danger-text" role="alert">{{ IMPORT_ERROR }}</p>
-				</div>
-				<footer class="flex items-center justify-end gap-[0.7rem] px-[1.5rem] py-[1.1rem] border-t border-line-subtle">
-					<AppButton variant="ghost" size="sm" @click="IMPORT_OPEN = false">{{ I18N.common.cancel }}</AppButton>
-					<AppButton variant="primary" size="sm" :loading="IMPORTING" :disabled="IMPORTING || !IMPORT_URL.trim()" @click="importConfig">{{ I18N.import.confirm }}</AppButton>
-				</footer>
-			</div>
-		</div>
+			<p class="m-0 text-hint">{{ I18N.import.hint }}</p>
+			<input v-model="IMPORT_URL" class="input-base text-sm" placeholder="https://.../mcp.json"/>
+			<p v-if="IMPORT_ERROR" class="m-0 text-xs text-danger-text" role="alert">{{ IMPORT_ERROR }}</p>
+			<template #footer>
+				<AppButton variant="ghost" size="sm" @click="IMPORT_OPEN = false">{{ I18N.common.cancel }}</AppButton>
+				<AppButton variant="primary" size="sm" :loading="IMPORTING" :disabled="IMPORTING || !IMPORT_URL.trim()" @click="importConfig">{{ I18N.import.confirm }}</AppButton>
+			</template>
+		</AppModal>
 
 		<!-- 测试工具弹窗 -->
-		<div
-			v-if="TOOL_MODAL_OPEN && ACTIVE_TOOL"
-			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/72 backdrop-blur-[0.4rem]"
-			@click.self="TOOL_MODAL_OPEN = false"
+		<AppModal
+			:show="TOOL_MODAL_OPEN && ACTIVE_TOOL !== null"
+			:title="ACTIVE_TOOL ? `${I18N.tool.testTitle}: ${ACTIVE_TOOL.name}` : ''"
+			:close-label="I18N.common.close"
+			panel-class="w-[min(48rem,92vw)] max-h-[86vh]"
+			@close="TOOL_MODAL_OPEN = false"
 		>
-			<div class="w-[min(48rem,92vw)] max-h-[86vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg">
-				<header class="flex items-center justify-between gap-2 px-[1.5rem] py-[1.1rem] border-b border-line-subtle">
-					<h3 class="m-0 text-md text-text-primary">{{ I18N.tool.testTitle }}: {{ ACTIVE_TOOL.name }}</h3>
-					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="TOOL_MODAL_OPEN = false">
-						<Icon name="close" :size="16"/>
-					</button>
-				</header>
-				<div class="flex flex-col gap-2.5 px-[1.5rem] py-3.5 scroll-area">
-					<p class="m-0 text-hint">{{ ACTIVE_TOOL.description }}</p>
-					<textarea v-model="TOOL_ARGS" class="input-base text-sm resize-y leading-relaxed" rows="7"/>
-					<pre v-if="TOOL_OUTPUT" class="m-0 p-2 max-h-[18rem] overflow-auto rounded-sm bg-black/25 text-xs text-text-body whitespace-pre-wrap">{{ TOOL_OUTPUT }}</pre>
-				</div>
-				<footer class="flex items-center justify-end gap-[0.7rem] px-[1.5rem] py-[1.1rem] border-t border-line-subtle">
-					<AppButton variant="ghost" size="sm" @click="TOOL_MODAL_OPEN = false">{{ I18N.common.close }}</AppButton>
-					<AppButton variant="primary" size="sm" :loading="TOOL_RUNNING" :disabled="TOOL_RUNNING" @click="executeTool">{{ TOOL_RUNNING ? I18N.tool.running : I18N.tool.execute }}</AppButton>
-				</footer>
-			</div>
-		</div>
+			<template v-if="ACTIVE_TOOL">
+				<p class="m-0 text-hint">{{ ACTIVE_TOOL.description }}</p>
+				<textarea v-model="TOOL_ARGS" class="input-base text-sm resize-y leading-relaxed" rows="7"/>
+				<pre v-if="TOOL_OUTPUT" class="m-0 p-2 max-h-[18rem] overflow-auto rounded-sm bg-black/25 text-xs text-text-body whitespace-pre-wrap">{{ TOOL_OUTPUT }}</pre>
+			</template>
+			<template #footer>
+				<AppButton variant="ghost" size="sm" @click="TOOL_MODAL_OPEN = false">{{ I18N.common.close }}</AppButton>
+				<AppButton variant="primary" size="sm" :loading="TOOL_RUNNING" :disabled="TOOL_RUNNING" @click="executeTool">{{ TOOL_RUNNING ? I18N.tool.running : I18N.tool.execute }}</AppButton>
+			</template>
+		</AppModal>
 	</div>
 </template>

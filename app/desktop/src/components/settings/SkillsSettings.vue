@@ -6,6 +6,7 @@ import AppButton from "../ui/AppButton.vue"
 import AppChip from "../ui/AppChip.vue"
 import AppEmpty from "../ui/AppEmpty.vue"
 import AppField from "../ui/AppField.vue"
+import AppModal from "../ui/AppModal.vue"
 import {feedback} from "../../services/feedback"
 import {RUNTIME, type SkillDto} from "../../services/runtime"
 
@@ -267,34 +268,34 @@ const viewSkillDetail = async (skill: SkillDto) => {
 	<div class="w-full h-full flex flex-col gap-3 px-5 py-3.5 scroll-area">
 		<!-- 头部导航与操作 -->
 		<div class="flex items-center justify-between gap-2.5">
-			<div class="flex gap-1.5">
+			<nav class="inline-flex items-center gap-1 p-1 rounded-pill bg-bg-abyss/80 border border-line-subtle shadow-inner" role="tablist">
 				<button
 					type="button"
-					class="inline-flex items-center gap-1.5 px-[1.1rem] py-[0.55rem] rounded-sm border text-sm font-inherit
-						cursor-pointer transition-all duration-200 focus-ring"
+					role="tab"
+					class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-pill text-xs font-500 cursor-pointer transition-all duration-200 focus-ring"
 					:class="activeTab === 'installed'
-						? 'text-nori-teal-bright border-nori-teal-bright/30 bg-nori-teal-bright/10'
-						: 'text-text-muted border-line-subtle bg-white/3 hover:(text-text-primary border-nori-teal-soft)'"
-					:aria-pressed="activeTab === 'installed'"
+						? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+						: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
+					:aria-selected="activeTab === 'installed'"
 					@click="activeTab = 'installed'"
 				>
-					<Icon name="sparkles" :size="14"/>
+					<Icon name="sparkles" :size="13"/>
 					<span>{{ I18N.tab.installed }} ({{ installedSkills.length }})</span>
 				</button>
 				<button
 					type="button"
-					class="inline-flex items-center gap-1.5 px-[1.1rem] py-[0.55rem] rounded-sm border text-sm font-inherit
-						cursor-pointer transition-all duration-200 focus-ring"
+					role="tab"
+					class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-pill text-xs font-500 cursor-pointer transition-all duration-200 focus-ring"
 					:class="activeTab === 'market'
-						? 'text-nori-teal-bright border-nori-teal-bright/30 bg-nori-teal-bright/10'
-						: 'text-text-muted border-line-subtle bg-white/3 hover:(text-text-primary border-nori-teal-soft)'"
-					:aria-pressed="activeTab === 'market'"
+						? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
+						: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
+					:aria-selected="activeTab === 'market'"
 					@click="activeTab = 'market'"
 				>
-					<Icon name="package" :size="14"/>
+					<Icon name="package" :size="13"/>
 					<span>{{ I18N.tab.market }}</span>
 				</button>
-			</div>
+			</nav>
 
 			<div class="flex gap-1.5">
 				<AppButton variant="ghost" size="sm" icon="external-link" @click="openUrlModal">{{ I18N.action.installFromUrl }}</AppButton>
@@ -307,7 +308,7 @@ const viewSkillDetail = async (skill: SkillDto) => {
 			<div class="flex-1 min-w-[14rem]">
 				<input
 					v-model="searchQuery"
-					class="input-base rounded-pill text-sm"
+					class="input-base text-sm"
 					:placeholder="I18N.search.placeholder"
 				/>
 			</div>
@@ -317,9 +318,9 @@ const viewSkillDetail = async (skill: SkillDto) => {
 					v-for="cat in CATEGORIES"
 					:key="cat.key"
 					type="button"
-					class="px-[0.9rem] py-1 rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring"
+					class="px-3 py-1 rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring"
 					:class="selectedCategory === cat.key
-						? 'text-nori-teal-bright border-nori-teal-bright/35 bg-nori-teal-bright/8'
+						? 'text-nori-teal-bright border-nori-teal-bright/35 bg-nori-teal-bright/10 font-500 shadow-[0_0_1rem_var(--glow-teal-soft)]'
 						: 'text-text-faint border-line-subtle bg-transparent hover:(text-text-body border-nori-teal-soft)'"
 					:aria-pressed="selectedCategory === cat.key"
 					@click="selectedCategory = cat.key"
@@ -433,7 +434,6 @@ const viewSkillDetail = async (skill: SkillDto) => {
 									variant="primary"
 									size="sm"
 									icon="plus"
-									class="rounded-pill"
 									:disabled="loading"
 									@click="installFromMarket(item)"
 								>
@@ -457,134 +457,113 @@ const viewSkillDetail = async (skill: SkillDto) => {
 		</div>
 
 		<!-- 从 URL 安装弹窗 -->
-		<div
-			v-if="isUrlModalOpen"
-			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/70 backdrop-blur-[0.4rem]"
-			@click.self="isUrlModalOpen = false"
+		<AppModal
+			:show="isUrlModalOpen"
+			:title="I18N.urlModal.title"
+			:close-label="I18N.common.close"
+			panel-class="w-[min(46rem,92vw)] max-h-[84vh]"
+			@close="isUrlModalOpen = false"
 		>
-			<div class="w-[min(46rem,92vw)] max-h-[84vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg shadow-[0_1.6rem_4.8rem_rgba(0,0,0,0.7)]">
-				<div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-line-subtle">
-					<h3 class="m-0 text-md text-text-primary">{{ I18N.urlModal.title }}</h3>
-					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="isUrlModalOpen = false">
-						<Icon name="close" :size="16"/>
-					</button>
-				</div>
+			<p class="m-0 text-xs text-text-muted leading-relaxed">
+				{{ I18N.urlModal.hintBefore }} <code class="mono">SKILL.md</code> {{ I18N.urlModal.hintAfter }}
+			</p>
 
-				<div class="flex flex-col gap-[1.1rem] px-4 py-3.5 scroll-area">
-					<p class="m-0 text-xs text-text-muted leading-relaxed">
-						{{ I18N.urlModal.hintBefore }} <code class="mono">SKILL.md</code> {{ I18N.urlModal.hintAfter }}
-					</p>
+			<AppField :label="I18N.urlModal.urlLabel">
+				<input
+					v-model="installUrl"
+					class="input-base text-sm"
+					placeholder="https://raw.githubusercontent.com/.../SKILL.md"
+				/>
+			</AppField>
 
-					<AppField :label="I18N.urlModal.urlLabel">
-						<input
-							v-model="installUrl"
-							class="input-base text-sm"
-							placeholder="https://raw.githubusercontent.com/.../SKILL.md"
-						/>
-					</AppField>
-
-					<div
-						v-if="urlInstallError"
-						class="flex items-center gap-1.5 px-2.5 py-[0.7rem] rounded-sm text-xs text-danger-text bg-danger/10 border border-danger/30"
-						role="alert"
-					>
-						<Icon name="alert" :size="13"/>
-						<span>{{ urlInstallError }}</span>
-					</div>
-				</div>
-
-				<div class="flex justify-end gap-2 px-4 py-[1.1rem] border-t border-line-subtle">
-					<AppButton variant="ghost" @click="isUrlModalOpen = false">{{ I18N.common.cancel }}</AppButton>
-					<AppButton
-						variant="primary"
-						:loading="isUrlInstalling"
-						:disabled="isUrlInstalling || !installUrl.trim()"
-						@click="executeUrlInstall"
-					>
-						{{ isUrlInstalling ? I18N.urlModal.downloading : I18N.urlModal.submit }}
-					</AppButton>
-				</div>
+			<div
+				v-if="urlInstallError"
+				class="flex items-center gap-1.5 px-2.5 py-[0.7rem] rounded-sm text-xs text-danger-text bg-danger/10 border border-danger/30"
+				role="alert"
+			>
+				<Icon name="alert" :size="13"/>
+				<span>{{ urlInstallError }}</span>
 			</div>
-		</div>
+
+			<template #footer>
+				<AppButton variant="ghost" @click="isUrlModalOpen = false">{{ I18N.common.cancel }}</AppButton>
+				<AppButton
+					variant="primary"
+					:loading="isUrlInstalling"
+					:disabled="isUrlInstalling || !installUrl.trim()"
+					@click="executeUrlInstall"
+				>
+					{{ isUrlInstalling ? I18N.urlModal.downloading : I18N.urlModal.submit }}
+				</AppButton>
+			</template>
+		</AppModal>
 
 		<!-- 新建 / 编辑技能弹窗 -->
-		<div
-			v-if="isEditModalOpen"
-			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/70 backdrop-blur-[0.4rem]"
-			@click.self="isEditModalOpen = false"
+		<AppModal
+			:show="isEditModalOpen"
+			:title="isEditing ? I18N.editModal.titleEdit : I18N.editModal.titleCreate"
+			:close-label="I18N.common.close"
+			panel-class="w-[min(60rem,94vw)] max-h-[84vh]"
+			@close="isEditModalOpen = false"
 		>
-			<div class="w-[min(60rem,94vw)] max-h-[84vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg shadow-[0_1.6rem_4.8rem_rgba(0,0,0,0.7)]">
-				<div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-line-subtle">
-					<h3 class="m-0 text-md text-text-primary">{{ isEditing ? I18N.editModal.titleEdit : I18N.editModal.titleCreate }}</h3>
-					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="isEditModalOpen = false">
-						<Icon name="close" :size="16"/>
-					</button>
-				</div>
-
-				<div class="flex flex-col gap-[1.1rem] px-4 py-3.5 scroll-area">
-					<div class="grid grid-cols-2 gap-2.5">
-						<AppField :label="I18N.editModal.name">
-							<input v-model="editForm.name" class="input-base text-sm" :placeholder="I18N.editModal.namePlaceholder"/>
-						</AppField>
-						<AppField :label="I18N.editModal.author">
-							<input v-model="editForm.author" class="input-base text-sm" :placeholder="I18N.editModal.authorPlaceholder"/>
-						</AppField>
-					</div>
-
-					<AppField :label="I18N.editModal.description">
-						<input v-model="editForm.description" class="input-base text-sm" :placeholder="I18N.editModal.descriptionPlaceholder"/>
-					</AppField>
-
-					<AppField :label="I18N.editModal.instructions">
-						<textarea
-							v-model="editForm.instructions"
-							class="input-base text-sm resize-y leading-relaxed"
-							rows="6"
-							:placeholder="I18N.editModal.instructionsPlaceholder"
-						/>
-					</AppField>
-
-					<div class="grid grid-cols-2 gap-2.5">
-						<AppField :label="I18N.editModal.tags">
-							<input v-model="tagsInput" class="input-base text-sm" :placeholder="I18N.editModal.tagsPlaceholder"/>
-						</AppField>
-						<AppField :label="I18N.editModal.tools">
-							<input v-model="toolsInput" class="input-base text-sm" placeholder="calculate, searchWeb"/>
-						</AppField>
-					</div>
-				</div>
-
-				<div class="flex justify-end gap-2 px-4 py-[1.1rem] border-t border-line-subtle">
-					<AppButton variant="ghost" @click="isEditModalOpen = false">{{ I18N.common.cancel }}</AppButton>
-					<AppButton
-						variant="primary"
-						:disabled="!editForm.name.trim() || !editForm.instructions.trim()"
-						@click="saveSkill"
-					>
-						{{ isEditing ? I18N.editModal.submitEdit : I18N.editModal.submitCreate }}
-					</AppButton>
-				</div>
+			<div class="grid grid-cols-2 gap-2.5">
+				<AppField :label="I18N.editModal.name">
+					<input v-model="editForm.name" class="input-base text-sm" :placeholder="I18N.editModal.namePlaceholder"/>
+				</AppField>
+				<AppField :label="I18N.editModal.author">
+					<input v-model="editForm.author" class="input-base text-sm" :placeholder="I18N.editModal.authorPlaceholder"/>
+				</AppField>
 			</div>
-		</div>
+
+			<AppField :label="I18N.editModal.description">
+				<input v-model="editForm.description" class="input-base text-sm" :placeholder="I18N.editModal.descriptionPlaceholder"/>
+			</AppField>
+
+			<AppField :label="I18N.editModal.instructions">
+				<textarea
+					v-model="editForm.instructions"
+					class="input-base text-sm resize-y leading-relaxed"
+					rows="6"
+					:placeholder="I18N.editModal.instructionsPlaceholder"
+				/>
+			</AppField>
+
+			<div class="grid grid-cols-2 gap-2.5">
+				<AppField :label="I18N.editModal.tags">
+					<input v-model="tagsInput" class="input-base text-sm" :placeholder="I18N.editModal.tagsPlaceholder"/>
+				</AppField>
+				<AppField :label="I18N.editModal.tools">
+					<input v-model="toolsInput" class="input-base text-sm" placeholder="calculate, searchWeb"/>
+				</AppField>
+			</div>
+
+			<template #footer>
+				<AppButton variant="ghost" @click="isEditModalOpen = false">{{ I18N.common.cancel }}</AppButton>
+				<AppButton
+					variant="primary"
+					:disabled="!editForm.name.trim() || !editForm.instructions.trim()"
+					@click="saveSkill"
+				>
+					{{ isEditing ? I18N.editModal.submitEdit : I18N.editModal.submitCreate }}
+				</AppButton>
+			</template>
+		</AppModal>
 
 		<!-- 技能详情弹窗 -->
-		<div
-			v-if="isDetailModalOpen && activeSkill"
-			class="fixed inset-0 z-100 flex items-center justify-center bg-bg-abyss/70 backdrop-blur-[0.4rem]"
-			@click.self="isDetailModalOpen = false"
+		<AppModal
+			:show="isDetailModalOpen && activeSkill !== null"
+			:title="activeSkill ? `${activeSkill.name} (v${activeSkill.version})` : ''"
+			:close-label="I18N.common.close"
+			panel-class="w-[min(60rem,94vw)] max-h-[84vh]"
+			@close="isDetailModalOpen = false"
 		>
-			<div class="w-[min(60rem,94vw)] max-h-[84vh] flex flex-col bg-bg-glass-modal border border-line-strong rounded-lg shadow-[0_1.6rem_4.8rem_rgba(0,0,0,0.7)]">
-				<div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-line-subtle">
-					<h3 class="m-0 text-md text-text-primary">{{ activeSkill.name }} (v{{ activeSkill.version }})</h3>
-					<button type="button" class="btn-close" :aria-label="I18N.common.close" @click="isDetailModalOpen = false">
-						<Icon name="close" :size="16"/>
-					</button>
-				</div>
-				<div class="flex flex-col gap-[1.1rem] px-4 py-3.5 scroll-area">
-					<p class="m-0 text-xs text-text-muted leading-relaxed">{{ activeSkill.description }}</p>
-					<pre class="m-0 p-2.5 rounded-sm bg-white/4 border border-line-subtle text-sm text-text-body leading-relaxed whitespace-pre-wrap font-inherit">{{ activeSkill.instructions || I18N.detail.emptyInstructions }}</pre>
-				</div>
-			</div>
-		</div>
+			<template v-if="activeSkill">
+				<p class="m-0 text-xs text-text-muted leading-relaxed">{{ activeSkill.description }}</p>
+				<pre class="m-0 p-2.5 rounded-sm bg-white/4 border border-line-subtle text-sm text-text-body leading-relaxed whitespace-pre-wrap font-inherit">{{ activeSkill.instructions || I18N.detail.emptyInstructions }}</pre>
+			</template>
+			<template #footer>
+				<AppButton @click="isDetailModalOpen = false">{{ I18N.common.close }}</AppButton>
+			</template>
+		</AppModal>
 	</div>
 </template>

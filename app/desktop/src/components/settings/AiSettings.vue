@@ -7,6 +7,7 @@ import {feedback} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppField from "../ui/AppField.vue"
+import AppButton from "../ui/AppButton.vue"
 
 const I18N = computed(() => useLanguages().views.main.ai)
 
@@ -269,21 +270,24 @@ const modelOptions = computed(() => {
 						@update:value="onSelectModel"
 					/>
 					<div class="flex items-center gap-2">
-						<n-button
-							type="primary"
+						<AppButton
+							variant="primary"
+							size="sm"
 							:loading="loading"
 							:disabled="loading || testing"
 							@click="fetchModels"
 						>
 							{{ loading ? I18N.getting : I18N.getModel }}
-						</n-button>
-						<n-button
+						</AppButton>
+						<AppButton
+							variant="ghost"
+							size="sm"
 							:loading="testing"
 							:disabled="loading || testing"
 							@click="testConnection"
 						>
 							{{ testing ? I18N.testingConnection : I18N.testConnection }}
-						</n-button>
+						</AppButton>
 					</div>
 				</div>
 			</div>

@@ -415,20 +415,18 @@ const toggleVoiceInput = async () => {
 				@click="onBubbleClick"
 			>
 				<!-- 更早的历史按需加载 -->
-				<button
+				<AppButton
 					v-if="CHAT.hasMoreHistory.value"
-					type="button"
-					class="btn-ghost self-center rounded-pill px-4 py-1 text-xs"
+					variant="ghost"
+					size="sm"
+					class="self-center"
+					:loading="CHAT.loadingHistory.value"
 					:disabled="CHAT.loadingHistory.value"
+					:icon="CHAT.loadingHistory.value ? undefined : 'arrow-up'"
 					@click="loadOlderHistory"
 				>
-					<Icon
-						:name="CHAT.loadingHistory.value ? 'loading' : 'arrow-up'"
-						:class="{spin: CHAT.loadingHistory.value}"
-						:size="12"
-					/>
-					<span>{{ I18N.loadEarlier }}</span>
-				</button>
+					{{ I18N.loadEarlier }}
+				</AppButton>
 
 				<!-- 空历史时的快捷破冰卡片 -->
 				<div v-if="displayBubbles.length === 0" class="my-auto flex flex-col items-center gap-5 px-3 py-8">

@@ -10,6 +10,7 @@ import Icon from "../Icon.vue"
 import AppCard from "../ui/AppCard.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
+import AppButton from "../ui/AppButton.vue"
 
 const TEXT = computed(() => useLanguages().views.main.proactive)
 
@@ -122,12 +123,12 @@ const cancelReminder = async (id: string) => {
 						<label
 							v-for="min in [5, 15, 30, 60]"
 							:key="min"
-							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-pill border text-xs cursor-pointer
+							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
 								transition-all duration-200
 								focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
 							:class="idleMinutes === min
-								? 'border-transparent bg-gradient-to-br from-nori-teal-bright to-nori-teal text-on-teal font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/3 text-text-body hover:(text-nori-teal-bright bg-nori-teal-bright/6 border-nori-teal-soft)'"
+								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
+								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
 						>
 							<input
 								v-model="idleMinutes"
@@ -166,9 +167,9 @@ const cancelReminder = async (id: string) => {
 						:options="REMINDER_OPTIONS"
 						class="w-[14rem]"
 					/>
-					<n-button type="primary" :disabled="!newReminderText.trim()" @click="createReminder">
+					<AppButton variant="primary" size="sm" :disabled="!newReminderText.trim()" @click="createReminder">
 						{{ TEXT.reminders.add }}
-					</n-button>
+					</AppButton>
 				</div>
 
 				<div class="flex flex-col gap-2 mt-1.5">
