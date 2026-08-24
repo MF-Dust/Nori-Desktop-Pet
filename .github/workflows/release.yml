@@ -269,7 +269,16 @@ jobs:
           dotnet publish Nori.Desktop/Nori.Desktop.csproj --configuration Release --runtime win-x64 --self-contained false --no-restore `
             -p:Version=$env:NORI_VERSION -p:NoriSentryDsnNative=$env:NORI_SENTRY_DSN_NATIVE `
             -p:NoriSentryRelease=$env:NORI_SENTRY_RELEASE -p:NoriSentryEnvironment=$env:NORI_SENTRY_ENVIRONMENT `
-            -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=None -p:DebugSymbols=false -o $publish
+            -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=portable -p:DebugSymbols=true -o $publish
+      - name: 上传 Windows Native Sentry 符号并从发布目录移除
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $cli = Get-ChildItem "$env:USERPROFILE\.nuget\packages\sentry\6.9.0\tools\sentry-cli-Windows-*.exe" | Select-Object -First 1
+          if ($null -eq $cli) { throw '找不到 Sentry CLI' }
+          & $cli.FullName debug-files upload --org $env:SENTRY_ORG --project $env:SENTRY_PROJECT_NATIVE --type portablepdb bin/release-publish/win-x64
+          if ($LASTEXITCODE -ne 0) { throw "Sentry 符号上传失败: $LASTEXITCODE" }
+          Get-ChildItem bin/release-publish/win-x64 -Recurse -Filter *.pdb | Remove-Item -Force
       - name: Windows ZIP / checksum / SBOM / third-party notices
         if: matrix.name == 'windows'
         shell: pwsh
@@ -384,13 +393,17 @@ jobs:
           test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256"
           test -f release-artifacts/SBOM.cdx.json
           test -f release-artifacts/THIRD-PARTY-NOTICES.json
-          gh release create "$TAG" \
-            --verify-tag \
-            --title "$TAG" \
-            --generate-notes \
-            release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip \
-            release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256 \
-            release-artifacts/SBOM.cdx.json \
-            release-artifacts/THIRD-PARTY-NOTICES.json \
-            release-artifacts/THIRD-PARTY-NOTICES.md \
+          assets=(
+            release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip
+            release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256
+            release-artifacts/SBOM.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES.json
+            release-artifacts/THIRD-PARTY-NOTICES.md
             release-artifacts/RELEASE-MANIFEST.json
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --title "$TAG"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${assets[@]}"
+          fi

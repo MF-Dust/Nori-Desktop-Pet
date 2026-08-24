@@ -93,6 +93,7 @@ Categories=Utility;
 StartupWMClass=Nori.Desktop
 DESKTOP
 
+	cp "$out_dir/nori.desktop" "$publish_dir/nori.desktop"
 	tar -czf "$out_dir/nori-$APP_VERSION-$rid.tar.gz" -C "$publish_dir" .
 	echo "已生成 $out_dir/nori-$APP_VERSION-$rid.tar.gz"
 }

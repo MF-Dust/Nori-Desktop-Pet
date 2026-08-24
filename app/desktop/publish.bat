@@ -16,6 +16,10 @@ if /I "%NORI_INCLUDE_RUNTIME%"=="true" (
 
 if /I "%NORI_SKIP_FRONTEND%"=="1" (
 	echo [1/2] 跳过前端构建; 使用现有 dist/...
+	if not exist dist\index.html (
+		echo [错误] NORI_SKIP_FRONTEND=1 但 dist\index.html 不存在。
+		exit /b 2
+	)
 ) else (
 	echo [1/2] 构建前端 (pnpm build)...
 	call pnpm build
@@ -26,6 +30,10 @@ echo [2/2] 发布 Nori.Desktop (.NET 10, win-x64, framework-dependent)...
 if exist bin\publish\win-x64 rmdir /s /q bin\publish\win-x64
 dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r win-x64 --self-contained false -p:Version="%APP_VERSION%" -p:NoriSentryDsnNative="%NORI_SENTRY_DSN_NATIVE%" -p:NoriSentryRelease="%NORI_SENTRY_RELEASE%" -p:NoriSentryEnvironment="%NORI_SENTRY_ENVIRONMENT%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o bin/publish/win-x64
 if errorlevel 1 goto :error
+if not exist bin\publish\win-x64\wwwroot\index.html (
+	echo [错误] 发布目录缺少 wwwroot\index.html。
+	exit /b 2
+)
 if not "%KEEP_SYMBOLS%"=="1" if /I not "%KEEP_SYMBOLS%"=="true" for /r "bin\publish\win-x64" %%F in (*.pdb) do del /q "%%F"
 
 echo.
