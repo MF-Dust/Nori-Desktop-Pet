@@ -201,6 +201,12 @@ public static class CrashReporter
 	{
 		try
 		{
+			if (IsTransientWebViewFocusException(e.Exception))
+			{
+				WriteLogSafe($"忽略 WebView2 聚焦竞态: {SensitiveDataRedactor.ExceptionSummary(e.Exception)}");
+				e.Handled = true;
+				return;
+			}
 			Report(e.Exception, critical: false);
 			e.Handled = true; // 兜底成功, 进程继续运行
 		}
@@ -324,13 +330,13 @@ public static class CrashReporter
 			{
 				WriteLogSafe($"重启应用失败: {failure.Message}");
 			}
-			_lifetime?.Shutdown(0);
+			ShutdownSafely(0);
 		});
 
 		Button exitButton = CreateButton("退出应用", (_, _) =>
 		{
 			resolved = true;
-			_lifetime?.Shutdown(1);
+			ShutdownSafely(1);
 		});
 
 		Grid buttonRow = new() { ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) } };
@@ -381,13 +387,23 @@ public static class CrashReporter
 			if (critical && !resolved)
 			{
 				FlushTelemetrySafe();
-				_lifetime?.Shutdown(1);
+				ShutdownSafely(1);
 			}
 		};
 
 		_crashWindow = window;
-		window.Show();
-		window.Activate();
+		try
+		{
+			window.Show();
+			window.Activate();
+		}
+		catch (InvalidOperationException exception)
+		{
+			_crashWindow = null;
+			closed.TrySetResult();
+			WriteLogSafe($"崩溃窗口无法显示: {SensitiveDataRedactor.ExceptionSummary(exception)}");
+			if (critical) ShutdownSafely(1);
+		}
 		return closed.Task;
 	}
 
@@ -414,19 +430,27 @@ public static class CrashReporter
 
 	private static void ExitProcess(int code)
 	{
-		try
+		if (_lifetime is not null)
 		{
-			if (_lifetime is not null)
-			{
-				_lifetime.Shutdown(code);
-				return;
-			}
-		}
-		catch
-		{
-			// Fall through to a hard exit when the UI lifetime is unavailable.
+			ShutdownSafely(code);
+			return;
 		}
 		Environment.Exit(code);
+	}
+
+	private static void ShutdownSafely(int code)
+	{
+		try { _lifetime?.Shutdown(code); }
+		catch (InvalidOperationException) { }
+	}
+
+	private static bool IsTransientWebViewFocusException(Exception exception)
+	{
+		for (Exception? current = exception; current is not null; current = current.InnerException)
+		{
+			if (current is COMException && current.HResult == unchecked((int)0x80070718)) return true;
+		}
+		return false;
 	}
 
 	private static void WriteLogSafe(string message)

@@ -53,6 +53,16 @@ public class VoiceServiceTests : IDisposable
 		Assert.Equal([true, false], states);
 	}
 
+	[Fact]
+	public async Task 合成失败不会被流水线取消异常覆盖()
+	{
+		using HttpClient client = new(new FailingHandler());
+		using VoiceService voice = new(client, _config, new FakePlayback(), () => null);
+
+		await Assert.ThrowsAsync<HttpRequestException>(() => voice.SpeakAsync("失败测试"));
+		Assert.False(voice.IsSpeaking);
+	}
+
 	public void Dispose()
 	{
 		_database.Dispose();
@@ -73,6 +83,12 @@ public class VoiceServiceTests : IDisposable
 			content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav");
 			return content;
 		}
+	}
+
+	private sealed class FailingHandler : HttpMessageHandler
+	{
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+			throw new HttpRequestException("test connection failure");
 	}
 
 	private sealed class FakePlayback : IAudioPlayback

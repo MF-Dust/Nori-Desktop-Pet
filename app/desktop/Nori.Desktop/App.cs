@@ -120,7 +120,20 @@ public sealed class App : Application
 		}
 
 		cancellationToken.ThrowIfCancellationRequested();
-		NoriDatabase database = NoriDatabase.Open();
+		NoriDatabase database;
+		try
+		{
+			database = NoriDatabase.Open();
+		}
+		catch (Exception exception) when (exception is InvalidOperationException
+			or IOException
+			or UnauthorizedAccessException
+			or Microsoft.Data.Sqlite.SqliteException)
+		{
+			logger.Write(LogSource.Backend, "error", $"数据库打开或迁移失败: {exception.Message}");
+			CrashReporter.ReportStartupFatal("数据库打开或迁移失败", exception.Message);
+			return;
+		}
 		_startupDatabase = database;
 		ConfigStore config = new(database);
 		try

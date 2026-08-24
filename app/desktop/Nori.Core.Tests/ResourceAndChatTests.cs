@@ -110,6 +110,7 @@ public class ZipExtractorTests
 			using (FileStream stream = File.Create(zipPath))
 			using (ZipArchive archive = new(stream, ZipArchiveMode.Create))
 			{
+				archive.CreateEntry("arg-nori/");
 				using (StreamWriter writer = new(archive.CreateEntry("arg-nori/ARGNori.model3.json").Open()))
 				{
 					writer.Write("""{"Version":3}""");

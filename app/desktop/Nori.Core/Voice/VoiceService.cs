@@ -186,6 +186,11 @@ public sealed class VoiceService : IDisposable
 					await player.PlayAsync(audio, pipelineCts.Token);
 				}
 			}
+			catch (OperationCanceledException) when (
+				pipelineCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+			{
+				// 生产者失败时会取消流水线以停止消费者；保留生产者的原始异常。
+			}
 			catch
 			{
 				pipelineCts.Cancel();

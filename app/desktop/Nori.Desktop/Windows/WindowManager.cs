@@ -184,7 +184,14 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 				else if (window is PetWindow petWindow) petWindow.AllowClose = true;
 			}
 
-			_lifetime.Shutdown(0);
+			try
+			{
+				_lifetime.Shutdown(0);
+			}
+			catch (InvalidOperationException)
+			{
+				// 另一个退出请求已经进入 Avalonia 生命周期。
+			}
 		});
 	}
 }
