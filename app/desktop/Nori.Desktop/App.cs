@@ -234,7 +234,7 @@ public sealed class App : Application
 				if (firstRun != expectedFirstRun)
 					throw new InvalidOperationException("启动冒烟分支与 profile 状态不一致");
 				SmokeTestRuntime.WriteReady(smokeTest, firstRun);
-				SmokeTestRuntime.ScheduleBoundedExit(desktop);
+				SmokeTestRuntime.ScheduleBoundedExit(services.Windows);
 			}
 		});
 	}

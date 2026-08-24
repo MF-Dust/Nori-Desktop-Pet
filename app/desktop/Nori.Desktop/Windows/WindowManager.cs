@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 using Nori.Core.Assets;
 using Nori.Desktop.Bridge;
 
@@ -20,6 +21,7 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 	private readonly Dictionary<string, Window> _windows = [];
 	private readonly ConcurrentDictionary<string, bool> _visible = new();
 	private PetWindow? _petWindow;
+	private int _shutdownRequested;
 
 	/// <inheritdoc />
 	public event Action<string, bool>? VisibilityChanged;
@@ -166,6 +168,23 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 
 	/// <summary>
 	/// 退出应用
+	///
+	/// 托盘菜单与桥接命令可能在关闭回调或后台线程中触发退出。统一延迟到 UI 线程执行,
+	/// 并在真正关闭前放行所有受管窗口, 避免窗口关闭处理器把退出请求变成隐藏窗口。
 	/// </summary>
-	public void Shutdown() => _lifetime.Shutdown(0);
+	public void Shutdown()
+	{
+		if (Interlocked.Exchange(ref _shutdownRequested, 1) != 0) return;
+
+		Dispatcher.UIThread.Post(() =>
+		{
+			foreach (Window window in _windows.Values)
+			{
+				if (window is NoriWindow noriWindow) noriWindow.AllowClose = true;
+				else if (window is PetWindow petWindow) petWindow.AllowClose = true;
+			}
+
+			_lifetime.Shutdown(0);
+		});
+	}
 }

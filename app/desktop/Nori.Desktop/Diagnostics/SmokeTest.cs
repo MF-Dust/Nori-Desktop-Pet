@@ -1,7 +1,6 @@
 using System.Text.Json;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Threading;
 using Nori.Core.Data;
+using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Diagnostics;
 
@@ -144,15 +143,15 @@ public static class SmokeTestRuntime
 	}
 
 	/// <summary>检查点写入后自动退出, 防止 CI 遗留 GUI 进程。</summary>
-	public static void ScheduleBoundedExit(IClassicDesktopStyleApplicationLifetime lifetime)
+	public static void ScheduleBoundedExit(IWindowManager windowManager)
 	{
-		_ = ExitAfterCheckpointAsync(lifetime);
+		_ = ExitAfterCheckpointAsync(windowManager);
 	}
 
-	private static async Task ExitAfterCheckpointAsync(IClassicDesktopStyleApplicationLifetime lifetime)
+	private static async Task ExitAfterCheckpointAsync(IWindowManager windowManager)
 	{
 		await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
-		Dispatcher.UIThread.Post(() => lifetime.Shutdown(0));
+		windowManager.Shutdown();
 		// 强制终止由外部 smoke-published.ps1 watchdog 负责；进程内必须让正常退出清理跑完。
 	}
 }
