@@ -14,7 +14,6 @@
 		<!-- NativeControlHost 需要这份 manifest 声明受支持的 OS, 否则 WebView 启动即失败 (仅 Windows 有意义) -->
 		<ApplicationManifest Condition="'$(NoriIsWindowsBuild)' == 'true'">app.manifest</ApplicationManifest>
 		<ApplicationIcon Condition="'$(NoriIsWindowsBuild)' == 'true'">Assets/icon.ico</ApplicationIcon>
-		<Version Condition="'$(Version)' == ''">0.1.0</Version>
 		<!-- 发布构建可通过 -p:NoriSentry* 或同名环境变量把非秘密 DSN/release 编译进应用。 -->
 		<NoriSentryDsnNative Condition="'$(NoriSentryDsnNative)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_SENTRY_DSN_NATIVE'))</NoriSentryDsnNative>
 		<NoriSentryRelease Condition="'$(NoriSentryRelease)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_SENTRY_RELEASE'))</NoriSentryRelease>

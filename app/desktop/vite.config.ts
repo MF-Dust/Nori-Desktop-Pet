@@ -1,3 +1,4 @@
+import {readFileSync} from "node:fs"
 import {defineConfig} from "vite"
 import vue from "@vitejs/plugin-vue"
 import UnoCSS from "unocss/vite"
@@ -7,6 +8,8 @@ import {sentryVitePlugin} from "@sentry/vite-plugin"
 
 // 宿主开发模式下 AssetServer 固定监听的端口 (见 Nori.Core/Assets/AssetServer.cs)
 const HOST_ASSET_PORT = 14201
+const PACKAGE_VERSION = ((JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as {version?: string}).version ?? "").trim()
+if (!PACKAGE_VERSION) throw new Error("package.json 缺少 version")
 
 // https://vite.dev/config/
 export default defineConfig(async () => {
@@ -15,6 +18,7 @@ export default defineConfig(async () => {
 	const SENTRY_ORG = process.env.SENTRY_ORG ?? ""
 	const SENTRY_PROJECT = process.env.SENTRY_PROJECT_WEB ?? ""
 	const SENTRY_URL = process.env.SENTRY_URL ?? ""
+	const PRODUCT_VERSION = process.env.NORI_PRODUCT_VERSION?.trim() || PACKAGE_VERSION
 	const SHOULD_UPLOAD_SOURCEMAPS = Boolean(SENTRY_RELEASE && SENTRY_AUTH_TOKEN && SENTRY_ORG && SENTRY_PROJECT)
 	const PLUGINS = [
 		vue(),
@@ -51,6 +55,7 @@ export default defineConfig(async () => {
 		// 桌面端使用现代 WebView(WebView2/系统 webview), 放宽构建目标以支持
 		// import.meta.glob 等生成的 top-level await, 避免 es2020 转译失败
 		define: {
+			"import.meta.env.VITE_APP_VERSION": JSON.stringify(PRODUCT_VERSION),
 			"import.meta.env.VITE_SENTRY_RELEASE": JSON.stringify(SENTRY_RELEASE),
 			"import.meta.env.VITE_SENTRY_ENVIRONMENT": JSON.stringify(process.env.NORI_SENTRY_ENVIRONMENT ?? "production"),
 		},

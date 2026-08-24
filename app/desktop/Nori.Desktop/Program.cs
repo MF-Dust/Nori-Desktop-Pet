@@ -13,6 +13,8 @@ internal static class Program
 {
 	private static int _activationPending;
 
+	internal static StartupOptions? Options { get; private set; }
+
 	internal static bool ConsumePendingActivation() => Interlocked.Exchange(ref _activationPending, 0) == 1;
 
 	private static void ActivateFirstInstance()
@@ -24,13 +26,16 @@ internal static class Program
 	[STAThread]
 	public static void Main(string[] args)
 	{
-		if (!SmokeTestOptions.TryParse(args, out SmokeTestOptions? smokeTest, out string parseError))
+		if (!StartupOptions.TryParse(args, out StartupOptions? startup, out string parseError))
 		{
 			Console.Error.WriteLine($"启动参数错误: {parseError}");
 			Environment.ExitCode = 2;
 			return;
 		}
 
+		Options = startup;
+		bool safeMode = startup?.SafeMode == true;
+		SmokeTestOptions? smokeTest = startup?.SmokeTest;
 		if (smokeTest is not null)
 		{
 			try
@@ -50,9 +55,17 @@ internal static class Program
 		CrashReporter.RegisterDomainHandler();
 		// 冒烟使用隔离 profile，不能被用户正在运行的正式实例互斥量拦截。
 		using SingleInstanceGuard? singleInstance = smokeTest is null
-			? SingleInstanceGuard.TryAcquire(ActivateFirstInstance)
+			? SingleInstanceGuard.TryAcquire(ActivateFirstInstance, signalExisting: !safeMode)
 			: null;
-		if (smokeTest is null && OperatingSystem.IsWindows() && singleInstance is null) return;
+		if (smokeTest is null && OperatingSystem.IsWindows() && singleInstance is null)
+		{
+			if (safeMode)
+			{
+				Console.Error.WriteLine("安全模式无法启动: Nori 已有一个实例正在运行");
+				Environment.ExitCode = 3;
+			}
+			return;
+		}
 		BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 	}
 

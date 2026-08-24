@@ -13,7 +13,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="Nori.Desktop"
-APP_VERSION="${NORI_VERSION:-0.1.0}"
+DEFAULT_VERSION="$(sed -nE 's/.*<NoriProductVersion[^>]*>([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?<\/NoriProductVersion>.*/\1\2/p' version.props | tail -n1)"
+if [[ -z "$DEFAULT_VERSION" ]]; then
+	echo "无法从 version.props 读取 NoriProductVersion" >&2
+	exit 2
+fi
+APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-$DEFAULT_VERSION}}"
+export NORI_VERSION="$APP_VERSION"
+export NORI_PRODUCT_VERSION="$APP_VERSION"
 BUNDLE_ID="cn.erhio.noriDesktopPet"
 
 if [[ "${NORI_INCLUDE_RUNTIME:-0}" =~ ^(1|true|TRUE|yes)$ ]]; then

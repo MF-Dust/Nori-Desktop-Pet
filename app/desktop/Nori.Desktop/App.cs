@@ -1,4 +1,3 @@
-using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -88,6 +87,7 @@ public sealed class App : Application
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		bool devMode = Environment.GetEnvironmentVariable("NORI_DEV") == "1";
+		bool safeMode = Program.Options?.SafeMode == true;
 
 		AppPaths.EnsureCreated();
 
@@ -187,6 +187,7 @@ public sealed class App : Application
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
 			ShutdownToken = _shutdownCts.Token,
+			SafeMode = safeMode,
 		};
 		_services = services;
 		_startupDatabase = null;
@@ -195,8 +196,12 @@ public sealed class App : Application
 		_startupAssets = null;
 		_startupMcp = null;
 
-		// 异步自动连接已启用的 MCP 服务; 后台任务失败只记日志, 不崩进程
-		CrashReporter.Forget(mcp.AutoConnectEnabledAsync(), "MCP 自动连接");
+		// 安全模式不自动连接 MCP, 便于用户进入界面修复配置。
+		if (!safeMode)
+		{
+			// 异步自动连接已启用的 MCP 服务; 后台任务失败只记日志, 不崩进程
+			CrashReporter.Forget(mcp.AutoConnectEnabledAsync(), "MCP 自动连接");
+		}
 
 		cancellationToken.ThrowIfCancellationRequested();
 		await Dispatcher.UIThread.InvokeAsync(() =>
@@ -233,7 +238,7 @@ public sealed class App : Application
 				bool expectedFirstRun = smokeTest.Mode == SmokeTestMode.FirstRun;
 				if (firstRun != expectedFirstRun)
 					throw new InvalidOperationException("启动冒烟分支与 profile 状态不一致");
-				SmokeTestRuntime.WriteReady(smokeTest, firstRun);
+				SmokeTestRuntime.WriteReady(smokeTest, firstRun, safeMode);
 				SmokeTestRuntime.ScheduleBoundedExit(services.Windows);
 			}
 		});
@@ -308,8 +313,7 @@ public sealed class App : Application
 	/// <summary>
 	/// 应用版本, 写入 app_version 配置
 	/// </summary>
-	private static string AppVersion() =>
-		Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1.0";
+	private static string AppVersion() => Nori.Core.ProductVersion.Current;
 
 	/// <summary>
 	/// 解析布尔配置文本, 与 PetRuntime.ParseBool 同口径

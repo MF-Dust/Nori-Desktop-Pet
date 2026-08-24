@@ -63,7 +63,7 @@ public sealed class McpClient : IAsyncDisposable
 				clientInfo = new
 				{
 					name = "NoriDesktopPet",
-					version = "0.1.0",
+					version = ProductVersion.Current,
 				},
 			},
 		};

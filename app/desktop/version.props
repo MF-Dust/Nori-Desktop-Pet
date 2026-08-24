@@ -1,0 +1,7 @@
+<Project>
+	<PropertyGroup>
+		<!-- 发布版本唯一来源；CI 可通过 -p:NoriProductVersion 或 NORI_PRODUCT_VERSION 覆盖。 -->
+		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_PRODUCT_VERSION'))</NoriProductVersion>
+		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">1.0.3</NoriProductVersion>
+	</PropertyGroup>
+</Project>

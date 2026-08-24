@@ -251,6 +251,11 @@ public sealed class PetRuntime
 		string savedModel = _services.Config.GetStringOr("selected_model", "arg-nori");
 		if (!string.IsNullOrWhiteSpace(savedModel)) _currentModelId = savedModel.Trim();
 		LoadConfigs();
+		if (_services.SafeMode)
+		{
+			LastModelLoadError = "安全模式已禁用桌宠模型自动加载";
+			return;
+		}
 		RequestModelLoad(_currentModelId);
 	}
 

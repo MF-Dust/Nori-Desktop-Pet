@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -70,6 +71,8 @@ public sealed class AgentEngine
 	private const int DefaultReservedOutputTokens = 2_000;
 	private readonly int _maxToolIterations;
 	private readonly AgentSessionCoordinator _sessionCoordinator;
+	private readonly AgentTraceSink _trace;
+	private readonly Func<LlmProvider, HttpClient, ILlmAdapter> _adapterFactory;
 
 	private readonly HttpClient _http;
 	private readonly ConfigStore _config;
@@ -96,7 +99,9 @@ public sealed class AgentEngine
 		Func<IReadOnlyList<string>> motionNames,
 		Func<IReadOnlyList<string>> expressionNames,
 		int maxToolIterations = 5,
-		AgentSessionCoordinator? sessionCoordinator = null)
+		AgentSessionCoordinator? sessionCoordinator = null,
+		AgentTraceSink? trace = null,
+		Func<LlmProvider, HttpClient, ILlmAdapter>? adapterFactory = null)
 	{
 		_http = http;
 		_config = config;
@@ -111,6 +116,8 @@ public sealed class AgentEngine
 		if (maxToolIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxToolIterations), "工具轮数上限必须为正数");
 		_maxToolIterations = maxToolIterations;
 		_sessionCoordinator = sessionCoordinator ?? new AgentSessionCoordinator();
+		_trace = trace ?? AgentTraceSink.Noop;
+		_adapterFactory = adapterFactory ?? LlmClient.CreateAdapter;
 	}
 
 	/// <summary>
@@ -124,12 +131,15 @@ public sealed class AgentEngine
 		ArgumentNullException.ThrowIfNull(callbacks);
 		using AgentSessionLease session = _sessionCoordinator.Start(sessionId, cancellationToken);
 		CancellationToken runToken = session.CancellationToken;
+		Stopwatch runClock = Stopwatch.StartNew();
+		WriteTrace(sessionId, "run", 0, null, null, "started");
 
 		void SetState(AgentRunState state) => callbacks.OnState?.Invoke(state);
 
 		SetState(AgentRunState.Thinking);
 
 		// 1. 读取 AI 与用户自定义人设配置 (秘密只在后端流转)
+		Stopwatch configClock = Stopwatch.StartNew();
 		string provider = _config.GetStringOr("llm_provider", "openai");
 		string baseUrl = _config.GetStringOr("llm_api_base", "").Trim();
 		string apiKey = _config.GetStringOr("llm_api_key", "");
@@ -137,13 +147,25 @@ public sealed class AgentEngine
 		string userPersona = _config.GetStringOr("nori_user_persona", "");
 		if (baseUrl.Length == 0 || apiKey.Length == 0 || model.Length == 0)
 		{
+			WriteTrace(sessionId, "config", configClock.ElapsedMilliseconds, null, null, "error", "invalid_config");
 			throw new InvalidOperationException("尚未配置完整的 LLM 参数 (API Base, API Key 或 Model 缺失)");
 		}
 		LlmProvider providerKind = LlmProviderExtensions.ParseProvider(provider);
+		WriteTrace(sessionId, "config", configClock.ElapsedMilliseconds, null, null, "completed");
 
 		// 2. 组装静态上下文: 最近对话 / 分层记忆 / 情绪 / 动作 / 表情 / 技能 / 工具清单
+		Stopwatch contextClock = Stopwatch.StartNew();
 		IReadOnlyList<(string Role, string Content)> recent = AgentHistory.NormalizeRecent(_chat.GetHistory(MaxContextRounds * 2, 0));
-		MemoryContext memoryContext = await _memory.BuildContextAsync(userText, recent, runToken);
+		MemoryContext memoryContext;
+		try
+		{
+			memoryContext = await _memory.BuildContextAsync(userText, recent, runToken);
+		}
+		catch (Exception exception)
+		{
+			WriteTrace(sessionId, "context", contextClock.ElapsedMilliseconds, null, null, "error", FailureCategory(exception));
+			throw;
+		}
 		string currentEmotion = _emotion.CurrentType;
 		IReadOnlyList<string> motions = _motionNames();
 		IReadOnlyList<string> expressions = _expressionNames();
@@ -183,15 +205,17 @@ public sealed class AgentEngine
 			userText,
 			budgetOptions);
 		string systemPrompt = initialBudget.SystemPrompt;
+		WriteTrace(sessionId, "context", contextClock.ElapsedMilliseconds, null, null, "completed");
 
 		// 3. 准备工作历史: 最近 N 条 + 当前输入 (滑动窗口截断)
 		List<(string Role, string Content)> working = initialBudget.Messages
 			.Select(message => (message.Role, message.Content)).ToList();
 		ToolExecutionTracker executionTracker = new();
 		ProtocolMessage finalMessage = new("", null, null, null);
+		int currentIteration = -1;
 		try
 		{
-			ILlmAdapter adapter = LlmClient.CreateAdapter(providerKind, _http);
+			ILlmAdapter adapter = _adapterFactory(providerKind, _http);
 			async Task<ToolResult> ExecuteToolAsync(string name, JsonNode? arguments, CancellationToken token, string? callId = null)
 			{
 				runToken.ThrowIfCancellationRequested();
@@ -199,25 +223,40 @@ public sealed class AgentEngine
 				if (executionTracker.TryGetCompleted(executionKey, out ToolResult? previous)) return previous;
 				if (!executionTracker.TryStart(executionKey))
 				{
+					WriteTrace(sessionId, "tool", 0, currentIteration, name, "blocked", "duplicate");
 					return new ToolResult(null, $"工具调用 {name} 已执行过，已阻止重复副作用");
 				}
 
-				callbacks.OnToolExecuting?.Invoke(name, arguments);
-				ToolResult result = await _tools.ExecuteAsync(name, arguments, new ToolContext
+				Stopwatch toolClock = Stopwatch.StartNew();
+				WriteTrace(sessionId, "tool", 0, currentIteration, name, "started");
+				try
 				{
-					SessionId = sessionId,
-					CancellationToken = token,
-					Approve = callbacks.RequestApproval is { } approve
-						? request => approve(request)
-						: null,
-				});
-				executionTracker.Complete(executionKey, result);
-				callbacks.OnToolExecuted?.Invoke(name, result.Result, result.Error);
-				return result;
+					callbacks.OnToolExecuting?.Invoke(name, arguments);
+					ToolResult result = await _tools.ExecuteAsync(name, arguments, new ToolContext
+					{
+						SessionId = sessionId,
+						CancellationToken = token,
+						Approve = callbacks.RequestApproval is { } approve
+							? request => approve(request)
+							: null,
+					});
+					executionTracker.Complete(executionKey, result);
+					callbacks.OnToolExecuted?.Invoke(name, result.Result, result.Error);
+					WriteTrace(sessionId, "tool", toolClock.ElapsedMilliseconds, currentIteration, name,
+						result.Error is null ? "completed" : "error",
+						result.Error is null ? null : "tool_error");
+					return result;
+				}
+				catch (Exception exception)
+				{
+					WriteTrace(sessionId, "tool", toolClock.ElapsedMilliseconds, currentIteration, name, "error", FailureCategory(exception));
+					throw;
+				}
 			}
 
 			for (int iteration = 0; iteration < _maxToolIterations; iteration++)
 			{
+				currentIteration = iteration;
 				runToken.ThrowIfCancellationRequested();
 				ContextBudgetResult roundBudget = ContextBudgeter.Build(promptOptions, working, userText, budgetOptions);
 				IReadOnlyList<ChatMessageInput> requestMessages = roundBudget.Messages;
@@ -244,41 +283,58 @@ public sealed class AgentEngine
 					if (projection.IsCorrection) callbacks.OnTextCorrection?.Invoke(projection.FullText);
 					if (coalescer.Push(projection.Delta) is {Length: > 0} batch) EmitText(batch);
 				};
-				Action<LlmUsageInfo> onUsage = usage => callbacks.OnUsage?.Invoke(new AgentUsage(
-					usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens,
-					usage.CacheHitRate, usage.DurationMs, usage.Model));
-				IReadOnlyList<RegisteredTool> enabledTools = _tools.ListEnabled();
-				string raw;
-				if (adapter is IToolCallingLlmAdapter toolAdapter)
+				AgentTraceUsage? traceUsage = null;
+				Action<LlmUsageInfo> onUsage = usage =>
 				{
-					try
+					traceUsage = new AgentTraceUsage(
+						usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens,
+						usage.CacheHitRate, usage.Model);
+					callbacks.OnUsage?.Invoke(new AgentUsage(
+						usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens,
+						usage.CacheHitRate, usage.DurationMs, usage.Model));
+				};
+				IReadOnlyList<RegisteredTool> enabledTools = _tools.ListEnabled();
+				Stopwatch llmClock = Stopwatch.StartNew();
+				string raw;
+				try
+				{
+					if (adapter is IToolCallingLlmAdapter toolAdapter)
 					{
-						raw = await toolAdapter.StreamWithToolsAsync(
-							baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
-							requestMessages,
-							enabledTools,
-							(name, arguments) => ExecuteToolAsync(name, arguments, timeout.Token),
-							onChunk, onUsage, timeout.Token);
+						try
+						{
+							raw = await toolAdapter.StreamWithToolsAsync(
+								baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
+								requestMessages,
+								enabledTools,
+								(name, arguments) => ExecuteToolAsync(name, arguments, timeout.Token),
+								onChunk, onUsage, timeout.Token);
+						}
+						catch (ToolsUnsupportedException) when (!executionTracker.HasStarted && !projector.HasProjectedText && !emittedText)
+						{
+							// 只有明确的 typed capability error 才允许一次 portable fallback。
+							rawResponseText.Clear();
+							projector.Reset();
+							coalescer.Reset();
+							raw = await adapter.StreamAsync(
+								baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
+								requestMessages,
+								onChunk, onUsage, timeout.Token);
+						}
 					}
-					catch (ToolsUnsupportedException) when (!executionTracker.HasStarted && !projector.HasProjectedText && !emittedText)
+					else
 					{
-						// 只有明确的 typed capability error 才允许一次 portable fallback。
-						rawResponseText.Clear();
-						projector.Reset();
-						coalescer.Reset();
 						raw = await adapter.StreamAsync(
 							baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
 							requestMessages,
 							onChunk, onUsage, timeout.Token);
 					}
 				}
-				else
+				catch (Exception exception)
 				{
-					raw = await adapter.StreamAsync(
-						baseUrl.TrimEnd('/'), apiKey, model, systemPrompt,
-						requestMessages,
-						onChunk, onUsage, timeout.Token);
+					WriteTrace(sessionId, "llm", llmClock.ElapsedMilliseconds, iteration, null, "error", FailureCategory(exception), traceUsage);
+					throw;
 				}
+				WriteTrace(sessionId, "llm", llmClock.ElapsedMilliseconds, iteration, null, "completed", null, traceUsage);
 
 				if (await coalescer.FlushAsync(timeout.Token) is {Length: > 0} finalBatch) EmitText(finalBatch);
 				runToken.ThrowIfCancellationRequested();
@@ -355,21 +411,25 @@ public sealed class AgentEngine
 			_chat.SaveMessage("user", userText);
 			_chat.SaveMessage("assistant", finalMessage.Text);
 			callbacks.OnComplete?.Invoke(finalMessage);
+			WriteTrace(sessionId, "run", runClock.ElapsedMilliseconds, null, null, "completed");
 			return finalMessage;
 		}
 		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
 		{
 			// 非用户取消的超时: 转成可读错误而不是当作正常中止
+			WriteTrace(sessionId, "run", runClock.ElapsedMilliseconds, null, null, "error", "timeout");
 			throw new ChatException($"回复超时 ({CallTimeoutSeconds}s), 请稍后重试");
 		}
 		catch (OperationCanceledException)
 		{
 			SetState(AgentRunState.Idle);
+			WriteTrace(sessionId, "run", runClock.ElapsedMilliseconds, null, null, "cancelled", "cancelled");
 			throw;
 		}
-		catch (Exception)
+		catch (Exception exception)
 		{
 			SetState(AgentRunState.Error);
+			WriteTrace(sessionId, "run", runClock.ElapsedMilliseconds, null, null, "error", FailureCategory(exception));
 			throw;
 		}
 	}
@@ -434,6 +494,39 @@ public sealed class AgentEngine
 		{
 			return [];
 		}
+	}
+
+	private void WriteTrace(
+		string sessionId,
+		string phase,
+		long durationMs,
+		int? iteration,
+		string? toolName,
+		string status,
+		string? failureCategory = null,
+		AgentTraceUsage? usage = null)
+	{
+		try
+		{
+			_trace.Record(new AgentTraceRecord(
+				sessionId, phase, durationMs, iteration, toolName, status, failureCategory, usage));
+		}
+		catch
+		{
+			// Trace 不得影响 Agent 的业务输出、工具副作用或持久化。
+		}
+	}
+
+	private static string FailureCategory(Exception exception)
+	{
+		return exception switch
+		{
+			OperationCanceledException => "cancelled",
+			ToolsUnsupportedException => "tools_unsupported",
+			AgentToolRoundsExceededException => "tool_rounds_exceeded",
+			ChatException => "chat",
+			_ => "exception",
+		};
 	}
 
 	private int ReadConfigInt(string key, int fallback, int min, int max)

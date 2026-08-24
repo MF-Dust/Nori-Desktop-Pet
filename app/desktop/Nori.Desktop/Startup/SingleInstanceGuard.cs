@@ -46,7 +46,7 @@ internal sealed class SingleInstanceGuard : IDisposable
 	/// <summary>
 	/// 尝试成为第一个实例。返回 null 表示已经向现有实例发送激活信号。
 	/// </summary>
-	public static SingleInstanceGuard? TryAcquire(Action onActivate)
+	public static SingleInstanceGuard? TryAcquire(Action onActivate, bool signalExisting = true)
 	{
 		ArgumentNullException.ThrowIfNull(onActivate);
 		if (!OperatingSystem.IsWindows()) return new SingleInstanceGuard(null, null, false, onActivate);
@@ -66,7 +66,7 @@ internal sealed class SingleInstanceGuard : IDisposable
 
 			if (!ownsMutex)
 			{
-				SignalExistingInstance();
+				if (signalExisting) SignalExistingInstance();
 				mutex.Dispose();
 				return null;
 			}

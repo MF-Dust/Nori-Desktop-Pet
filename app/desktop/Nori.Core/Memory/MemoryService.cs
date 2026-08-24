@@ -32,12 +32,18 @@ public sealed class MemoryService : IAsyncDisposable
 	private readonly Task _embeddingWorker;
 	private int _disposed;
 
-	public MemoryService(MemoryStore store, IEmbeddingAdapter embedding, ConfigStore config)
+	public MemoryService(
+		MemoryStore store,
+		IEmbeddingAdapter embedding,
+		ConfigStore config,
+		bool startBackgroundWorker = true)
 	{
 		_store = store;
 		_embedding = embedding;
 		_config = config;
-		_embeddingWorker = Task.Run(ProcessEmbeddingQueueAsync);
+		_embeddingWorker = startBackgroundWorker
+			? Task.Run(ProcessEmbeddingQueueAsync)
+			: Task.CompletedTask;
 	}
 
 	public MemoryStore Store => _store;

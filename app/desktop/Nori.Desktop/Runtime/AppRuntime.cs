@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Avalonia.Threading;
+using Nori.Core;
 using Nori.Core.Agent;
 using Nori.Core.Configuration;
 using Nori.Core.Emotion;
@@ -119,7 +120,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		Services = services;
 		ConfigStore config = services.Config;
 
-		Memory = new MemoryService(services.Memory, services.Embedding, config);
+		Memory = new MemoryService(services.Memory, services.Embedding, config, startBackgroundWorker: !services.SafeMode);
 		Knowledge = new KnowledgeService(services.Database, Memory, config);
 		Knowledge.StatusChanged = () => InvalidateSnapshot("memory");
 		Memory.Knowledge = Knowledge;
@@ -164,7 +165,8 @@ public sealed class AppRuntime : IAsyncDisposable
 			Memory,
 			pet: new PetActionsAdapter(() => services.PetRuntime),
 			motionNames: () => FlattenMotionNames(),
-			expressionNames: () => services.PetRuntime?.Expressions ?? []);
+			expressionNames: () => services.PetRuntime?.Expressions ?? [],
+			trace: services.AgentTrace);
 
 		// 窗口显隐变化 (含托盘切换桌宠) 直接作废快照, 主界面的桌宠状态因此不会陈旧
 		if (services.Windows is not null)
@@ -225,15 +227,18 @@ public sealed class AppRuntime : IAsyncDisposable
 			}
 		}
 
-		Proactive.Message += message => Dispatcher.UIThread.Post(() => OnProactiveMessage(message));
-		Proactive.Start();
+		if (!Services.SafeMode)
+		{
+			Proactive.Message += message => Dispatcher.UIThread.Post(() => OnProactiveMessage(message));
+			Proactive.Start();
 
-		// Knowledge 和 Reflection 都在后台启动；索引或整理失败不能阻塞聊天。
-		_reflectionWorker.Start();
-		_reflectionWorker.TryEnqueue(new ReflectionJob("startup"));
-		TrackBackground(InitializeKnowledgeAsync, "Memory.md index");
-		TrackBackground(() => Memory.ReembedAllAsync(_lifetimeCts.Token, false), "memory embedding rebuild");
-		TrackBackground(RunMemoryMaintenanceAsync, "memory lifecycle");
+			// Knowledge 和 Reflection 都在后台启动；索引或整理失败不能阻塞聊天。
+			_reflectionWorker.Start();
+			_reflectionWorker.TryEnqueue(new ReflectionJob("startup"));
+			TrackBackground(InitializeKnowledgeAsync, "Memory.md index");
+			TrackBackground(() => Memory.ReembedAllAsync(_lifetimeCts.Token, false), "memory embedding rebuild");
+			TrackBackground(RunMemoryMaintenanceAsync, "memory lifecycle");
+		}
 
 		// 口型同步: 前端回传的播放音量采样直驱原生桌宠嘴型
 		_playback.VolumeSampled += level =>
@@ -263,8 +268,11 @@ public sealed class AppRuntime : IAsyncDisposable
 		Voice.VolumeChanged += volume => _playback.SetDeviceVolume(volume);
 		_playback.SetDeviceVolume(Voice.GetVolume());
 
-		DetectLegacyVoiceConfig();
-		TrackBackground(() => RefreshMcpToolsAsync(), "MCP tools refresh");
+		if (!Services.SafeMode)
+		{
+			DetectLegacyVoiceConfig();
+			TrackBackground(() => RefreshMcpToolsAsync(), "MCP tools refresh");
+		}
 
 		InvalidateSnapshot("all");
 	}
@@ -465,7 +473,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		&& Services.PetRuntime.ModelGeneration == trigger.ModelGeneration;
 
 	private bool IsPetInteractionAiEnabled() =>
-		ParseBoolFlag(Services.Config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false;
+		!Services.SafeMode
+		&& (ParseBoolFlag(Services.Config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false);
 
 	private bool IsLlmConfigured() =>
 		Services.Config.GetStringOr("llm_api_base", "").Trim().Length > 0
@@ -907,9 +916,11 @@ public sealed class AppRuntime : IAsyncDisposable
 			version = snapshotVersion,
 			app = new
 			{
-				appVersion = config.GetStringOr("app_version", "0.1.0"),
+				appVersion = ProductVersion.Current,
+				productVersion = ProductVersion.Current,
 				platform = PlatformOsName(),
 				debugCrashTestsAvailable = !SentryTelemetry.IsProductionBuild,
+				safeMode = Services.SafeMode,
 			},
 			general = new
 			{
@@ -972,7 +983,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				lipSync = ParseBoolFlag(config.GetStringOr("l2d_lip_sync", "true")) ?? true,
 				shadow = modelRenderSettings.ShadowEnabled,
 				beatSync = ParseBoolFlag(config.GetStringOr("l2d_beat_sync", "")) ?? false,
-				aiInteraction = ParseBoolFlag(config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false,
+				aiInteraction = !Services.SafeMode && (ParseBoolFlag(config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false),
 				opacity = modelRenderSettings.Opacity,
 				renderScale = modelRenderSettings.RenderScale,
 				qualityMode = Live2DRenderSettings.QualityModeToStorage(modelRenderSettings.QualityMode),
@@ -981,7 +992,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			memory = new
 			{
 				enabled = memorySettings.Enabled,
-				reflectionEnabled = memorySettings.ReflectionEnabled,
+				reflectionEnabled = !Services.SafeMode && memorySettings.ReflectionEnabled,
 				decayEnabled = memorySettings.DecayEnabled,
 				archiveEnabled = memorySettings.ArchiveEnabled,
 				active = activeMemories,
@@ -1007,7 +1018,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				sourceRetentionThreshold = memorySettings.SourceRetentionThreshold,
 				archiveThreshold = memorySettings.ArchiveThreshold,
 				knowledgeEnabled = memorySettings.KnowledgeEnabled,
-				knowledgeWatch = memorySettings.KnowledgeWatch,
+				knowledgeWatch = !Services.SafeMode && memorySettings.KnowledgeWatch,
 				debugRetrieval = memorySettings.DebugRetrieval,
 			},
 			voice = new
@@ -1038,9 +1049,9 @@ public sealed class AppRuntime : IAsyncDisposable
 			},
 			proactive = new
 			{
-				idleEnabled = ParseBoolFlag(config.GetStringOr("proactive_idle_enabled", "true")) ?? true,
+				idleEnabled = !Services.SafeMode && (ParseBoolFlag(config.GetStringOr("proactive_idle_enabled", "true")) ?? true),
 				idleMinutes = (int)(ReadFloat(config, "proactive_idle_minutes") ?? ProactiveScheduler.DefaultIdleMinutes),
-				dailyGreeting = ParseBoolFlag(config.GetStringOr("proactive_daily_greeting", "true")) ?? true,
+				dailyGreeting = !Services.SafeMode && (ParseBoolFlag(config.GetStringOr("proactive_daily_greeting", "true")) ?? true),
 				reminders = Proactive.ListReminders().Select(item => new
 				{
 					id = item.Id, content = item.Content, triggerTime = item.TriggerAt,

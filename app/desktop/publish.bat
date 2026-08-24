@@ -3,7 +3,16 @@ setlocal
 cd /d "%~dp0"
 
 set "APP_VERSION=%NORI_VERSION%"
-if "%APP_VERSION%"=="" set "APP_VERSION=0.1.0"
+if "%APP_VERSION%"=="" set "APP_VERSION=%NORI_PRODUCT_VERSION%"
+if "%APP_VERSION%"=="" (
+	for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$v=([xml](Get-Content -Raw 'version.props')).Project.PropertyGroup.NoriProductVersion; for($i=$v.Count-1;$i -ge 0;$i--){ if([string]$v[$i].InnerText -match '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'){ $v[$i].InnerText; break } }"`) do set "APP_VERSION=%%V"
+)
+if "%APP_VERSION%"=="" (
+	echo [错误] 无法从 version.props 读取 NoriProductVersion。
+	exit /b 2
+)
+set "NORI_VERSION=%APP_VERSION%"
+set "NORI_PRODUCT_VERSION=%APP_VERSION%"
 set "KEEP_SYMBOLS=%NORI_KEEP_SYMBOLS%"
 if /I "%NORI_INCLUDE_RUNTIME%"=="1" (
 	echo [错误] Windows 发布固定为 framework-dependent, 不支持打包 .NET Runtime。

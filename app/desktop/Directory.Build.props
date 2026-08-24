@@ -1,5 +1,7 @@
 <Project>
 
+	<Import Project="$(MSBuildThisFileDirectory)version.props" />
+
 	<!--
 		全项目统一的编译口径
 
@@ -10,6 +12,7 @@
 		Android head 将来加进来时, 在这里按 TargetFramework 条件分流即可。
 	-->
 	<PropertyGroup>
+		<Version Condition="'$(Version)' == ''">$(NoriProductVersion)</Version>
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>

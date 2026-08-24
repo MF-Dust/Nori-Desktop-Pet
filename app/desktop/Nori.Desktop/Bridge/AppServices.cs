@@ -1,4 +1,5 @@
 using Nori.Core.Assets;
+using Nori.Core.Agent;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
@@ -66,6 +67,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>Agent 聊天/MCP 操作取消注册表</summary>
 	public required Bridge.AgentOperationRegistry AgentOperations { get; init; }
 
+	/// <summary>有界的 Agent 性能 Trace；只保存阶段/用量元数据，不保存正文。</summary>
+	public AgentTraceCollector AgentTrace { get; } = new();
+
 	/// <summary>窗口调度, 窗口建好后回填</summary>
 	public IWindowManager Windows { get; set; } = null!;
 
@@ -83,6 +87,9 @@ public sealed class AppServices : IAsyncDisposable
 
 	/// <summary>应用级取消令牌, 启动退出时取消并传给桥接请求。</summary>
 	public CancellationToken ShutdownToken { get; set; }
+
+	/// <summary>是否以手动安全模式启动。</summary>
+	public bool SafeMode { get; init; }
 
 	private int _disposed;
 
