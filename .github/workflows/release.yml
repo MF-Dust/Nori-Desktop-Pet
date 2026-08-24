@@ -388,6 +388,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.create_tag.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip"
           test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256"
@@ -401,9 +402,9 @@ jobs:
             release-artifacts/THIRD-PARTY-NOTICES.md
             release-artifacts/RELEASE-MANIFEST.json
           )
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "${assets[@]}" --clobber
-            gh release edit "$TAG" --title "$TAG"
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --repo "$REPO" --clobber
+            gh release edit "$TAG" --repo "$REPO" --title "$TAG"
           else
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${assets[@]}"
+            gh release create "$TAG" --repo "$REPO" --verify-tag --title "$TAG" --generate-notes "${assets[@]}"
           fi
