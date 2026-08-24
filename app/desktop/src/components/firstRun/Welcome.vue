@@ -108,7 +108,7 @@ const handleLink = async (link: Link) => {
 					<Icon name="sparkles" :size="12"/>
 					<span>Live2D Cyber Pet</span>
 				</span>
-				<span class="chip mono">v{{ VERSION }}</span>
+				<span class="chip mono">{{ VERSION }}</span>
 			</div>
 
 			<h1 class="text-3xl font-800 glow-teal">{{ I18N.title }}</h1>

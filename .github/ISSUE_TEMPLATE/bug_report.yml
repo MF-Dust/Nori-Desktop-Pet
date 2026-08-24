@@ -83,7 +83,7 @@ body:
         - 显卡与图形驱动（如集成显卡 / NVIDIA / AMD）
       placeholder: |
         - 操作系统：Windows 11 专业版 23H2
-        - Nori 版本：v0.1.0
+        - Nori 版本：Dev 或发布页中的完整版本
         - WebView2 运行时：已安装最新版
         - 模型：默认 Nori 模型
         - 显卡：NVIDIA RTX 4060

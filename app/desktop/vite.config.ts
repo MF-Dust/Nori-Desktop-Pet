@@ -1,4 +1,3 @@
-import {readFileSync} from "node:fs"
 import {defineConfig} from "vite"
 import vue from "@vitejs/plugin-vue"
 import UnoCSS from "unocss/vite"
@@ -8,9 +7,6 @@ import {sentryVitePlugin} from "@sentry/vite-plugin"
 
 // 宿主开发模式下 AssetServer 固定监听的端口 (见 Nori.Core/Assets/AssetServer.cs)
 const HOST_ASSET_PORT = 14201
-const PACKAGE_VERSION = ((JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as {version?: string}).version ?? "").trim()
-if (!PACKAGE_VERSION) throw new Error("package.json 缺少 version")
-
 // https://vite.dev/config/
 export default defineConfig(async () => {
 	const SENTRY_RELEASE = process.env.NORI_SENTRY_RELEASE ?? ""
@@ -18,7 +14,15 @@ export default defineConfig(async () => {
 	const SENTRY_ORG = process.env.SENTRY_ORG ?? ""
 	const SENTRY_PROJECT = process.env.SENTRY_PROJECT_WEB ?? ""
 	const SENTRY_URL = process.env.SENTRY_URL ?? ""
-	const PRODUCT_VERSION = process.env.NORI_PRODUCT_VERSION?.trim() || PACKAGE_VERSION
+	const PRODUCT_VERSION_INPUT = process.env.NORI_PRODUCT_VERSION?.trim() || "Dev"
+	const PRODUCT_INFORMATIONAL_VERSION = process.env.NORI_PRODUCT_INFORMATIONAL_VERSION?.trim() || ""
+	const COMMIT_SHA = process.env.NORI_COMMIT_SHA?.trim() || "unknown"
+	const SHORT_COMMIT_SHA = COMMIT_SHA.length >= 7 ? COMMIT_SHA.slice(0, 7) : COMMIT_SHA
+	const PRODUCT_VERSION_CORE = PRODUCT_VERSION_INPUT.replace(/^v/i, "")
+	const PRODUCT_VERSION = PRODUCT_INFORMATIONAL_VERSION
+		|| (PRODUCT_VERSION_INPUT === "Dev"
+			? "Dev"
+			: `v${PRODUCT_VERSION_CORE}${PRODUCT_VERSION_CORE.includes("+") ? "" : `+${SHORT_COMMIT_SHA}`}`)
 	const SHOULD_UPLOAD_SOURCEMAPS = Boolean(SENTRY_RELEASE && SENTRY_AUTH_TOKEN && SENTRY_ORG && SENTRY_PROJECT)
 	const PLUGINS = [
 		vue(),

@@ -31,7 +31,7 @@ NORI_SENTRY_RELEASE
 NORI_SENTRY_ENVIRONMENT
 ```
 
-`SENTRY_AUTH_TOKEN` 只用于构建期 source map/发布管理，不能进入 ZIP。DSN 是公开项目标识，不是鉴权令牌。产品版本默认来自 `app/desktop/version.props`（当前 `1.0.3`），Release 通过 `NORI_PRODUCT_VERSION` 注入前端并通过 MSBuild `Version` 注入宿主；不再维护独立的 `0.1.0` 回退。
+`SENTRY_AUTH_TOKEN` 只用于构建期 source map/发布管理，不能进入 ZIP。DSN 是公开项目标识，不是鉴权令牌。普通构建的产品版本精确为 `Dev`；Release 由 GitHub Actions 通过 `NORI_PRODUCT_VERSION` 注入稳定版本、通过 `NORI_PRODUCT_INFORMATIONAL_VERSION` 注入带短提交 hash 的 informational version，Native 与 Web 使用不带 hash 的 `<version>-<codename>` Sentry release。
 
 ## GitHub Actions Secrets
 

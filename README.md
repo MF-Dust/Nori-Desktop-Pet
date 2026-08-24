@@ -222,7 +222,7 @@ publish.bat
 
 ## 当前稳定化口径
 
-产品版本默认由 `app/desktop/version.props` 提供（`1.0.3`）。开发门禁：
+普通构建的产品版本精确为 `Dev`；GitHub Actions Release 手动输入唯一 codename，并以数字版本和短提交 hash 派生稳定标签、Sentry release 与 informational version。开发门禁：
 
 ```bash
 cd app/desktop

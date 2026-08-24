@@ -13,14 +13,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="Nori.Desktop"
-DEFAULT_VERSION="$(sed -nE 's/.*<NoriProductVersion[^>]*>([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?<\/NoriProductVersion>.*/\1\2/p' version.props | tail -n1)"
-if [[ -z "$DEFAULT_VERSION" ]]; then
-	echo "无法从 version.props 读取 NoriProductVersion" >&2
-	exit 2
-fi
-APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-$DEFAULT_VERSION}}"
+APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-Dev}}"
+APP_NUMERIC_VERSION="${APP_VERSION%%-*}"
+APP_NUMERIC_VERSION="${APP_NUMERIC_VERSION%%+*}"
+APP_NUMERIC_VERSION="${APP_NUMERIC_VERSION#v}"
+if [[ ! "$APP_NUMERIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then APP_NUMERIC_VERSION="0.0.0"; fi
+if [[ -z "${NORI_COMMIT_SHA:-}" ]]; then NORI_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"; fi
 export NORI_VERSION="$APP_VERSION"
 export NORI_PRODUCT_VERSION="$APP_VERSION"
+export NORI_COMMIT_SHA
 BUNDLE_ID="cn.erhio.noriDesktopPet"
 
 if [[ "${NORI_INCLUDE_RUNTIME:-0}" =~ ^(1|true|TRUE|yes)$ ]]; then
@@ -67,8 +68,8 @@ make_macos_bundle() {
 	<key>CFBundleName</key><string>Nori</string>
 	<key>CFBundleDisplayName</key><string>Nori Desktop Pet</string>
 	<key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-	<key>CFBundleVersion</key><string>$APP_VERSION</string>
-	<key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+	<key>CFBundleVersion</key><string>$APP_NUMERIC_VERSION</string>
+	<key>CFBundleShortVersionString</key><string>$APP_NUMERIC_VERSION</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleExecutable</key><string>$APP_NAME</string>
 	<key>LSMinimumSystemVersion</key><string>12.0</string>
@@ -129,7 +130,7 @@ for rid in "${RIDS[@]}"; do
 	rm -rf "bin/publish/$rid"
 	publish_args=(
 		-c Release -r "$rid" --self-contained false
-		-p:Version="$APP_VERSION"
+		-p:NoriProductVersion="$APP_VERSION"
 		-p:NoriSentryDsnNative="${NORI_SENTRY_DSN_NATIVE:-}"
 		-p:NoriSentryRelease="${NORI_SENTRY_RELEASE:-}"
 		-p:NoriSentryEnvironment="${NORI_SENTRY_ENVIRONMENT:-production}"

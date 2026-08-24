@@ -12,7 +12,8 @@
 		Android head 将来加进来时, 在这里按 TargetFramework 条件分流即可。
 	-->
 	<PropertyGroup>
-		<Version Condition="'$(Version)' == ''">$(NoriProductVersion)</Version>
+		<!-- version.props 已分别设置数字包版本和完整 informational version。 -->
+		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 		<TargetFramework>net10.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>

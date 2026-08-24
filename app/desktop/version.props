@@ -1,7 +1,30 @@
 <Project>
 	<PropertyGroup>
-		<!-- 发布版本唯一来源；CI 可通过 -p:NoriProductVersion 或 NORI_PRODUCT_VERSION 覆盖。 -->
+		<!-- 产品版本只由构建环境或 CI 注入; 未注入时开发构建明确标记为 Dev。 -->
 		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_PRODUCT_VERSION'))</NoriProductVersion>
-		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">1.0.3</NoriProductVersion>
+		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">Dev</NoriProductVersion>
+
+		<!-- CLR、文件和 NuGet 元数据只能使用数字版本; Dev 构建使用合法的 0.0.0。
+		     允许直接传入 v1.0.3-Arona+hash, 但不把展示版本写入数字字段。 -->
+		<NoriNumericCandidate>$([System.Text.RegularExpressions.Regex]::Match('$(NoriProductVersion)', '^[vV]?[0-9]+\.[0-9]+\.[0-9]+').Value)</NoriNumericCandidate>
+		<NoriNumericVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(NoriNumericCandidate)', '^[vV]', ''))</NoriNumericVersion>
+		<NoriNumericVersion Condition="'$(NoriNumericVersion)' == ''">0.0.0</NoriNumericVersion>
+		<NoriProductVersionCore>$([System.Text.RegularExpressions.Regex]::Replace('$(NoriProductVersion)', '^[vV]', ''))</NoriProductVersionCore>
+		<NoriProductVersionHasMetadata Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(NoriProductVersion)', '^[vV]?[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9][A-Za-z0-9.-]*\+[A-Za-z0-9]+$'))">true</NoriProductVersionHasMetadata>
+		<Version>$(NoriNumericVersion)</Version>
+		<AssemblyVersion>$(NoriNumericVersion)</AssemblyVersion>
+		<FileVersion>$(NoriNumericVersion)</FileVersion>
+
+		<!-- Release 的可追踪版本由稳定产品版本和当前提交短 hash 组成; Dev 保持精确为 Dev。 -->
+		<NoriCommitSha Condition="'$(NoriCommitSha)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_COMMIT_SHA'))</NoriCommitSha>
+		<NoriCommitSha Condition="'$(NoriCommitSha)' == ''">unknown</NoriCommitSha>
+		<NoriShortCommitSha Condition="'$(NoriShortCommitSha)' == '' AND $([System.String]::Copy('$(NoriCommitSha)').Length) &gt;= 7">$([System.String]::Copy('$(NoriCommitSha)').Substring(0, 7))</NoriShortCommitSha>
+		<NoriShortCommitSha Condition="'$(NoriShortCommitSha)' == ''">$(NoriCommitSha)</NoriShortCommitSha>
+		<NoriInformationalVersion Condition="'$(NoriInformationalVersion)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_PRODUCT_INFORMATIONAL_VERSION'))</NoriInformationalVersion>
+		<NoriInformationalVersion Condition="'$(NoriInformationalVersion)' == '' AND '$(NoriProductVersion)' == 'Dev'">Dev</NoriInformationalVersion>
+		<!-- 已带 +hash 的完整输入按原样保留; 稳定版本输入则统一补 v 与短 hash。 -->
+		<NoriInformationalVersion Condition="'$(NoriInformationalVersion)' == '' AND '$(NoriProductVersion)' != 'Dev' AND '$(NoriProductVersionHasMetadata)' == 'true'">v$(NoriProductVersionCore)</NoriInformationalVersion>
+		<NoriInformationalVersion Condition="'$(NoriInformationalVersion)' == '' AND '$(NoriProductVersion)' != 'Dev'">v$(NoriProductVersionCore)+$(NoriShortCommitSha)</NoriInformationalVersion>
+		<InformationalVersion>$(NoriInformationalVersion)</InformationalVersion>
 	</PropertyGroup>
 </Project>

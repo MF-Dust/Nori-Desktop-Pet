@@ -186,7 +186,7 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-first-run-$env:GITHUB_RUN_ID"
-          $expectedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $expectedVersion = "Dev"
 
           ./scripts/smoke-published.ps1 `
             -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
@@ -199,7 +199,7 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-initialized-$env:GITHUB_RUN_ID"
-          $expectedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $expectedVersion = "Dev"
 
           ./scripts/smoke-published.ps1 `
             -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
@@ -212,7 +212,7 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-safe-mode-$env:GITHUB_RUN_ID"
-          $expectedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $expectedVersion = "Dev"
 
           ./scripts/smoke-published.ps1 `
             -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `

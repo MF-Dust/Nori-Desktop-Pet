@@ -341,7 +341,7 @@ onMounted(() => {
 			<div class="flex items-center gap-2.5 flex-wrap text-xs text-text-faint pt-1">
 				<span class="flex items-center">
 					<span>{{ I18N.system.appVersion }}:</span>
-					<span class="ml-1 text-text-muted mono font-600">v{{ SNAPSHOT?.app.productVersion ?? SNAPSHOT?.app.appVersion ?? APP_VERSION }}</span>
+					<span class="ml-1 text-text-muted mono font-600">{{ SNAPSHOT?.app.productVersion ?? SNAPSHOT?.app.appVersion ?? APP_VERSION }}</span>
 				</span>
 				<span class="opacity-30">/</span>
 				<span class="flex items-center">

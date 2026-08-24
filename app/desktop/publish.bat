@@ -4,13 +4,8 @@ cd /d "%~dp0"
 
 set "APP_VERSION=%NORI_VERSION%"
 if "%APP_VERSION%"=="" set "APP_VERSION=%NORI_PRODUCT_VERSION%"
-if "%APP_VERSION%"=="" (
-	for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$v=([xml](Get-Content -Raw 'version.props')).Project.PropertyGroup.NoriProductVersion; for($i=$v.Count-1;$i -ge 0;$i--){ if([string]$v[$i].InnerText -match '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'){ $v[$i].InnerText; break } }"`) do set "APP_VERSION=%%V"
-)
-if "%APP_VERSION%"=="" (
-	echo [错误] 无法从 version.props 读取 NoriProductVersion。
-	exit /b 2
-)
+if "%APP_VERSION%"=="" set "APP_VERSION=Dev"
+if "%NORI_COMMIT_SHA%"=="" for /f "delims=" %%H in ('git rev-parse HEAD 2^>nul') do set "NORI_COMMIT_SHA=%%H"
 set "NORI_VERSION=%APP_VERSION%"
 set "NORI_PRODUCT_VERSION=%APP_VERSION%"
 set "KEEP_SYMBOLS=%NORI_KEEP_SYMBOLS%"
@@ -37,7 +32,7 @@ if /I "%NORI_SKIP_FRONTEND%"=="1" (
 
 echo [2/2] 发布 Nori.Desktop (.NET 10, win-x64, framework-dependent)...
 if exist bin\publish\win-x64 rmdir /s /q bin\publish\win-x64
-dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r win-x64 --self-contained false -p:Version="%APP_VERSION%" -p:NoriSentryDsnNative="%NORI_SENTRY_DSN_NATIVE%" -p:NoriSentryRelease="%NORI_SENTRY_RELEASE%" -p:NoriSentryEnvironment="%NORI_SENTRY_ENVIRONMENT%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o bin/publish/win-x64
+dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r win-x64 --self-contained false -p:NoriProductVersion="%APP_VERSION%" -p:NoriSentryDsnNative="%NORI_SENTRY_DSN_NATIVE%" -p:NoriSentryRelease="%NORI_SENTRY_RELEASE%" -p:NoriSentryEnvironment="%NORI_SENTRY_ENVIRONMENT%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o bin/publish/win-x64
 if errorlevel 1 goto :error
 if not exist bin\publish\win-x64\wwwroot\index.html (
 	echo [错误] 发布目录缺少 wwwroot\index.html。

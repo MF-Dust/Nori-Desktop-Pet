@@ -37,7 +37,7 @@ const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
 			<dl class="w-full max-w-[38rem] flex flex-col gap-0 mt-2 p-3.5 rounded-md bg-white/3 border border-line-subtle">
 				<div class="flex items-center justify-between py-2 border-b border-line-subtle">
 					<dt class="text-sm text-text-muted font-500">{{ GENERAL_I18N.version }}</dt>
-					<dd class="text-sm text-text-primary mono font-600">v{{ SNAPSHOT?.app.productVersion ?? SNAPSHOT?.app.appVersion ?? APP_VERSION }}</dd>
+					<dd class="text-sm text-text-primary mono font-600">{{ SNAPSHOT?.app.productVersion ?? SNAPSHOT?.app.appVersion ?? APP_VERSION }}</dd>
 				</div>
 				<div class="flex items-center justify-between py-2 border-b border-line-subtle">
 					<dt class="text-sm text-text-muted font-500">{{ GENERAL_I18N.license }}</dt>

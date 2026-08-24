@@ -3,19 +3,19 @@ name: release
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "已有标签时填写 v1.0.0；留空则按 bump 计算新标签"
+      version:
+        description: "显式数字版本 (例如 1.0.4 或 v1.0.4)；留空则从上一数字版本按 bump 递增"
         required: false
         type: string
       bump:
-        description: "没有填写标签时的版本递增级别"
+        description: "未填写显式版本时的版本递增级别"
         required: true
         default: patch
         type: choice
         options: [patch, minor, major]
       codename:
-        description: "新标签 Codename，可留空"
-        required: false
+        description: "本次发布必须填写且每次不同的 Codename"
+        required: true
         type: string
       confirm_avalonia_webview_distribution_license:
         description: "确认本次分发包含 Avalonia WebView 且维护者已确认其分发许可"
@@ -44,6 +44,7 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
+      informational: ${{ steps.version.outputs.informational }}
       release: ${{ steps.version.outputs.release }}
     env:
       NORI_AVALONIA_WEBVIEW_DISTRIBUTION_LICENSE_CONFIRMED: ${{ inputs.confirm_avalonia_webview_distribution_license }}
@@ -70,68 +71,68 @@ jobs:
         name: 计算目标标签但暂不创建
         shell: bash
         env:
-          TAG_INPUT: ${{ inputs.tag }}
+          VERSION_INPUT: ${{ inputs.version }}
           BUMP: ${{ inputs.bump }}
           CODENAME: ${{ inputs.codename }}
         run: |
+          set -euo pipefail
           git fetch --tags --force
+          numeric_pattern='^[vV]?[0-9]+\.[0-9]+\.[0-9]+$'
           tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
-          version_pattern='^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
           codename_pattern='^[A-Za-z0-9][A-Za-z0-9.-]*$'
-          tag="$TAG_INPUT"
-          if [ -n "$tag" ]; then
-            if [[ ! "$tag" =~ $tag_pattern ]]; then
-              echo "标签必须匹配 v<major>.<minor>.<patch>[-Codename]: $tag" >&2
+          codename="$CODENAME"
+          if [[ ! "$codename" =~ $codename_pattern ]]; then
+            echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
+            exit 1
+          fi
+
+          latest="$(git tag --list 'v*' | grep -E "$tag_pattern" | sed -E 's/-[A-Za-z0-9][A-Za-z0-9.-]*$//' | sort -V | tail -n1 || true)"
+          if [ -n "$VERSION_INPUT" ]; then
+            if [[ ! "$VERSION_INPUT" =~ $numeric_pattern ]]; then
+              echo "显式版本必须是 major.minor.patch 数字版本: $VERSION_INPUT" >&2
               exit 1
             fi
-            if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
-              tagged_sha="$(git rev-list -n1 "refs/tags/$tag")"
-              if [ "$tagged_sha" != "$GITHUB_SHA" ]; then
-                echo "已有标签没有指向本次 workflow 的提交: $tag" >&2
-                exit 1
-              fi
-            fi
+            version="${VERSION_INPUT#v}"
+            version="${version#V}"
           else
-            latest="$(git tag --list 'v*' | grep -E "$tag_pattern" | sort -V | tail -n1 || true)"
             if [ -z "$latest" ]; then
-              base_version="$(sed -nE 's/.*<NoriProductVersion[^>]*>([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?<\/NoriProductVersion>.*/\1\2/p' app/desktop/version.props | tail -n1)"
-              if [ -z "$base_version" ]; then
-                echo "无法从 app/desktop/version.props 读取 NoriProductVersion" >&2
-                exit 1
-              fi
-              codename="$CODENAME"
-              if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
-                echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
-                exit 1
-              fi
-              if [ -n "$codename" ]; then tag="v$base_version-$codename"; else tag="v$base_version"; fi
-            else
-              if [[ ! "$latest" =~ $version_pattern ]]; then echo "无法解析最新标签: $latest" >&2; exit 1; fi
-              major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"; patch="${BASH_REMATCH[3]}"
-              suffix="${BASH_REMATCH[4]:-}"
-              codename="$CODENAME"
-              if [ -z "$codename" ] && [ -n "$suffix" ]; then codename="${suffix#-}"; fi
-              if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
-                echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
-                exit 1
-              fi
-              case "$BUMP" in
-                major) major=$((major + 1)); minor=0; patch=0 ;;
-                minor) minor=$((minor + 1)); patch=0 ;;
-                patch) patch=$((patch + 1)) ;;
-                *) echo "不支持的递增级别: $BUMP" >&2; exit 1 ;;
-              esac
-              if [ -n "$codename" ]; then tag="v$major.$minor.$patch-$codename"; else tag="v$major.$minor.$patch"; fi
+              echo "没有可递增的历史数字版本, 请手动填写显式版本。" >&2
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            case "$BUMP" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "不支持的递增级别: $BUMP" >&2; exit 1 ;;
+            esac
+            version="$major.$minor.$patch"
+          fi
+
+          tag="v$version-$codename"
+          if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
+            tagged_sha="$(git rev-list -n1 "refs/tags/$tag")"
+            if [ "$tagged_sha" != "$GITHUB_SHA" ]; then
+              echo "目标标签已存在且没有指向本次 workflow 的提交: $tag" >&2
+              exit 1
             fi
           fi
-          if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
-            echo "目标标签已存在, 只能发布指向本次提交的已有标签: $tag"
-          fi
-          version="${tag#v}"
+          while IFS= read -r existing_tag; do
+            if [[ "$existing_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-([A-Za-z0-9][A-Za-z0-9.-]*)$ ]] && [[ "${BASH_REMATCH[1],,}" == "${codename,,}" && "$existing_tag" != "$tag" ]]; then
+              echo "Codename 必须与所有历史发布不同: $codename" >&2
+              exit 1
+            fi
+          done < <(git tag --list 'v*')
+
+          short_sha="$(git rev-parse --short=7 "$GITHUB_SHA")"
+          stable_version="$version-$codename"
+          informational="v$stable_version+$short_sha"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "release=nori@$version" >> "$GITHUB_OUTPUT"
-          echo "目标版本: $version (标签将在所有测试通过后创建)"
+          echo "version=$stable_version" >> "$GITHUB_OUTPUT"
+          echo "informational=$informational" >> "$GITHUB_OUTPUT"
+          echo "release=$stable_version" >> "$GITHUB_OUTPUT"
+          echo "目标版本: $stable_version"
+          echo "程序 informational version: $informational (标签将在所有测试通过后创建)"
 
   preflight:
     name: Ubuntu 四道门与前端产物
@@ -145,6 +146,8 @@ jobs:
       VITE_SENTRY_DSN_WEB: ${{ secrets.SENTRY_DSN_WEB }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
       NORI_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
+      NORI_PRODUCT_INFORMATIONAL_VERSION: ${{ needs.validate.outputs.informational }}
+      NORI_COMMIT_SHA: ${{ github.sha }}
       NORI_SENTRY_ENVIRONMENT: production
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
@@ -222,6 +225,8 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       NORI_VERSION: ${{ needs.validate.outputs.version }}
       NORI_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
+      NORI_PRODUCT_INFORMATIONAL_VERSION: ${{ needs.validate.outputs.informational }}
+      NORI_COMMIT_SHA: ${{ github.sha }}
       NORI_SENTRY_DSN_NATIVE: ${{ secrets.SENTRY_DSN_NATIVE }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
       NORI_SENTRY_ENVIRONMENT: production
@@ -279,7 +284,7 @@ jobs:
           $publish = "bin/release-publish/win-x64"
           if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
           dotnet publish Nori.Desktop/Nori.Desktop.csproj --configuration Release --runtime win-x64 --self-contained false --no-restore `
-            -p:Version=$env:NORI_VERSION -p:NoriSentryDsnNative=$env:NORI_SENTRY_DSN_NATIVE `
+            -p:NoriProductVersion=$env:NORI_PRODUCT_VERSION -p:NoriSentryDsnNative=$env:NORI_SENTRY_DSN_NATIVE `
             -p:NoriSentryRelease=$env:NORI_SENTRY_RELEASE -p:NoriSentryEnvironment=$env:NORI_SENTRY_ENVIRONMENT `
             -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=portable -p:DebugSymbols=true -o $publish
       - name: 上传 Windows Native Sentry 符号并从发布目录移除
@@ -300,19 +305,19 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-first-run-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile -ExpectedVersion $env:NORI_VERSION
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION
       - name: Windows initialized 启动冒烟
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-initialized-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_VERSION
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION
       - name: Windows safe-mode 启动冒烟
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-safe-mode-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_VERSION -SafeMode
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION -SafeMode
 
       - name: 上传待发布 Windows 产物
         if: matrix.name == 'windows'
