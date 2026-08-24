@@ -249,7 +249,7 @@ export default {
 				toolExecuting: "正在执行工具",
 				newMessages: "有新消息",
 				backToLatest: "回到最新消息",
-				tokens: "令牌",
+				tokens: "词元",
 				metrics: {
 					context: "上下文",
 					cache: "缓存命中",
