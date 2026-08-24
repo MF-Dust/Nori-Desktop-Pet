@@ -94,8 +94,11 @@ jobs:
           else
             latest="$(git tag --list 'v*' | grep -E "$tag_pattern" | sort -V | tail -n1 || true)"
             if [ -z "$latest" ]; then
-              base_version="$(sed -nE 's/.*<Version[^>]*>([0-9]+\.[0-9]+\.[0-9]+)<\/Version>.*/\1/p' app/desktop/Nori.Desktop/Nori.Desktop.csproj | head -n1)"
-              base_version="${base_version:-0.1.0}"
+              base_version="$(sed -nE 's/.*<NoriProductVersion[^>]*>([0-9]+\.[0-9]+\.[0-9]+)(-[A-Za-z0-9][A-Za-z0-9.-]*)?<\/NoriProductVersion>.*/\1\2/p' app/desktop/version.props | tail -n1)"
+              if [ -z "$base_version" ]; then
+                echo "无法从 app/desktop/version.props 读取 NoriProductVersion" >&2
+                exit 1
+              fi
               codename="$CODENAME"
               if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
                 echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
@@ -141,6 +144,7 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       VITE_SENTRY_DSN_WEB: ${{ secrets.SENTRY_DSN_WEB }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
+      NORI_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
       NORI_SENTRY_ENVIRONMENT: production
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
@@ -217,6 +221,7 @@ jobs:
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       NORI_VERSION: ${{ needs.validate.outputs.version }}
+      NORI_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
       NORI_SENTRY_DSN_NATIVE: ${{ secrets.SENTRY_DSN_NATIVE }}
       NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
       NORI_SENTRY_ENVIRONMENT: production
@@ -295,13 +300,20 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-first-run-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile -ExpectedVersion $env:NORI_VERSION
       - name: Windows initialized 启动冒烟
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-initialized-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_VERSION
+      - name: Windows safe-mode 启动冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-safe-mode-$env:GITHUB_RUN_ID"
+          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_VERSION -SafeMode
+
       - name: 上传待发布 Windows 产物
         if: matrix.name == 'windows'
         uses: actions/upload-artifact@v4

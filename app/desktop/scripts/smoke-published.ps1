@@ -7,6 +7,8 @@ param(
 	[string] $Mode = "first-run",
 
 	[string] $Profile = "",
+	[string] $ExpectedVersion = "",
+	[switch] $SafeMode,
 	[int] $TimeoutSeconds = 30
 )
 
@@ -40,6 +42,7 @@ $process = $null
 try {
 	$workingDirectory = Split-Path -Parent $binary
 	$arguments = "--smoke-test $Mode --profile `"$profile`""
+	if ($SafeMode) { $arguments += " --safe-mode" }
 	$process = Start-Process -FilePath $binary -ArgumentList $arguments -WorkingDirectory $workingDirectory `
 		-RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
 
@@ -58,6 +61,16 @@ try {
 	$ready = Get-Content -LiteralPath $readinessPath -Raw | ConvertFrom-Json
 	if ($ready.status -ne "ready") { throw "readiness status 不正确: $($ready.status)" }
 	if ($ready.mode -ne $Mode) { throw "readiness mode 不正确: $($ready.mode)" }
+	if ($null -eq $ready.schema_version -or [int]$ready.schema_version -ne 2) { throw "readiness schema_version 必须为 2" }
+	if ([string]::IsNullOrWhiteSpace([string]$ready.product_version)) { throw "readiness 缺少 product_version" }
+	if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $ready.product_version -ne $ExpectedVersion) {
+		throw "readiness product_version 不匹配: $($ready.product_version) != $ExpectedVersion"
+	}
+	if ($null -eq $ready.database_schema_version -or [int]$ready.database_schema_version -lt 1) { throw "readiness database_schema_version 无效" }
+	if ($null -eq $ready.config_schema_version -or [int]$ready.config_schema_version -lt 1) { throw "readiness config_schema_version 无效" }
+	if ($null -eq $ready.safe_mode -or [bool]$ready.safe_mode -ne [bool]$SafeMode) {
+		throw "readiness safe_mode 不匹配: $($ready.safe_mode) != $SafeMode"
+	}
 	$expectedDataDir = [IO.Path]::GetFullPath((Join-Path $profile "data"))
 	$actualDataDir = [IO.Path]::GetFullPath([string]$ready.data_dir)
 	if (-not [StringComparer]::OrdinalIgnoreCase.Equals($actualDataDir, $expectedDataDir)) {

@@ -31,7 +31,7 @@ NORI_SENTRY_RELEASE
 NORI_SENTRY_ENVIRONMENT
 ```
 
-`SENTRY_AUTH_TOKEN` 只用于构建期 source map/发布管理，不能进入 ZIP。DSN 是公开项目标识，不是鉴权令牌。
+`SENTRY_AUTH_TOKEN` 只用于构建期 source map/发布管理，不能进入 ZIP。DSN 是公开项目标识，不是鉴权令牌。产品版本默认来自 `app/desktop/version.props`（当前 `1.0.3`），Release 通过 `NORI_PRODUCT_VERSION` 注入前端并通过 MSBuild `Version` 注入宿主；不再维护独立的 `0.1.0` 回退。
 
 ## GitHub Actions Secrets
 
@@ -84,7 +84,9 @@ Nori.Desktop.exe --smoke-test first-run --profile "$env:TEMP\nori-smoke-first-ru
 Nori.Desktop.exe --smoke-test initialized --profile "$env:TEMP\nori-smoke-initialized"
 ```
 
-`--profile` 是强制的隔离目录。宿主在数据库、AssetServer、窗口和托盘装配完成后原子写出 `readiness.json`，随后自动退出；`scripts/smoke-published.ps1` 还会校验数据目录没有越界并设置等待/退出超时。该模式不会接触真实用户目录，也不改变普通启动路径。
+`--profile` 是强制的隔离目录。宿主在数据库、AssetServer、窗口和托盘装配完成后原子写出 schema v2 `readiness.json`（包含版本、数据库/配置 schema 和 `safe_mode`），随后自动退出；`scripts/smoke-published.ps1` 还会校验这些字段、数据目录没有越界并设置等待/退出超时。CI 同时覆盖普通 initialized 与 `--safe-mode` initialized。该模式不会接触真实用户目录，也不改变普通启动路径。
+
+普通维护可在主窗口导出脱敏诊断 ZIP。它只包含有界日志和 Agent 性能元数据，不包含数据库、用户内容、请求正文、录音、资源、凭据或真实路径；`--safe-mode` 保留该入口用于手动修复。
 
 ## 当前产品边界
 

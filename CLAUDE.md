@@ -9,7 +9,7 @@ Two independent deliverables, no shared build:
 - `app/desktop/` — the Nori desktop pet. **.NET 10 + Avalonia 12 host** (`Nori.Desktop/`, `Nori.Core/`, C#) + Vue 3 SPA (`src/`, TypeScript + **UnoCSS**) rendered in Avalonia's **cross-platform NativeWebView** (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux). This is where nearly all work happens.
 - `docs/` — Chinese design docs. `规范.md` is a binding style contract, not advice — read it before touching frontend or C# code. `技术.md` is the module/tech map (and records the pet-window transparency verification), `跨平台.md` the platform support matrix + degradation table, `开发任务清单.md` the roadmap, `windows.md` an Avalonia window-property reference.
 
-`README.md` is empty.
+`README.md` contains the project overview, current stabilization boundary and development gates.
 
 ## Commands
 
@@ -36,6 +36,14 @@ pnpm dev                                      # vite only; must be running for N
 ```
 
 `规范.md` requires `pnpm build`, `dotnet build` and `dotnet test` to pass before a change is considered done. `tsconfig.json` sets `noUnusedLocals`/`noUnusedParameters`; the C# projects set `TreatWarningsAsErrors`.
+
+### Stabilization contracts
+
+- 产品版本默认唯一来源是 `app/desktop/version.props`（当前 `1.0.3`）；Release/CI 可通过 `NORI_PRODUCT_VERSION` 或 MSBuild 属性覆盖。不要新增 `0.1.0` 回退。`ProductVersion.Current` 进入 snapshot、Smoke readiness、诊断、Crash 报告和 MCP clientInfo。
+- `--safe-mode` 只接受人工命令行启动，不自动恢复。它保留 UI、日志、诊断和本地手动修复，跳过 MCP 自动连接、Proactive/Reflection、知识与记忆后台维护、AI 桌宠交互及 Live2D 自动模型加载；Bridge 入口同时拒绝交互式联网、Provider/MCP/语音外部操作。
+- `readiness.json` schema v2 必须包含 `product_version`、`database_schema_version`、`config_schema_version` 和 `safe_mode`；Windows CI 覆盖 first-run、initialized 和 initialized safe-mode。
+- `export_diagnostics` 只生成大小受限、脱敏白名单 ZIP；不得包含数据库、聊天/记忆/提示词、工具参数/结果、请求正文、录音、资源、凭据或真实用户路径。Provider 连接测试发送固定探测且不持久化配置或内容。
+- 迁移前备份使用 `VACUUM INTO`，单文件上限 64 MiB、最多保留 3 份；新增迁移必须保持这条保护。
 
 ## Architecture
 

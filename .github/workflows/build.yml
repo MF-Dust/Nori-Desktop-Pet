@@ -186,22 +186,40 @@ jobs:
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-first-run-$env:GITHUB_RUN_ID"
+          $expectedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
 
           ./scripts/smoke-published.ps1 `
             -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
             -Mode first-run `
-            -Profile $profile
+            -Profile $profile `
+            -ExpectedVersion $expectedVersion
 
       - name: Windows initialized 启动冒烟
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-initialized-$env:GITHUB_RUN_ID"
+          $expectedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
 
           ./scripts/smoke-published.ps1 `
             -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
             -Mode initialized `
-            -Profile $profile
+            -Profile $profile `
+            -ExpectedVersion $expectedVersion
+
+      - name: Windows safe-mode 启动冒烟
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP "nori-smoke-safe-mode-$env:GITHUB_RUN_ID"
+          $expectedVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+
+          ./scripts/smoke-published.ps1 `
+            -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
+            -Mode initialized `
+            -Profile $profile `
+            -ExpectedVersion $expectedVersion `
+            -SafeMode
 
       - name: 上传 Windows CI 产物
         if: matrix.name == 'windows'

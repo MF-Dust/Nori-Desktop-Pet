@@ -219,3 +219,18 @@ publish.bat
 ## 开源许可证
 
 本项目基于 [GNU General Public License v3.0 (GPLv3)](./LICENSE) 协议开源。欢迎参与贡献、提交 Issue 或发起 Pull Request！
+
+## 当前稳定化口径
+
+产品版本默认由 `app/desktop/version.props` 提供（`1.0.3`）。开发门禁：
+
+```bash
+cd app/desktop
+pnpm install
+pnpm build
+pnpm test
+dotnet build Nori.slnx
+dotnet test Nori.slnx
+```
+
+发布为 framework-dependent；Windows 需要 .NET 10 Runtime 与 WebView2。模型只支持本地导入，不提供远程模型下载。出现启动问题时可人工使用 `--safe-mode`，它保留诊断和手动修复入口，不会自动恢复或删除用户数据。
