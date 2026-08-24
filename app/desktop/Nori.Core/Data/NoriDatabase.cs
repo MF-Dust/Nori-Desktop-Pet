@@ -50,9 +50,15 @@ public sealed class NoriDatabase : IDisposable
 		CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at, id);
 		""";
 	private readonly SqliteConnection _connection;
+	private readonly string _databasePath;
 	private readonly Lock _gate = new();
+	private bool _migrationBackupAttempted;
 
-	private NoriDatabase(SqliteConnection connection) => _connection = connection;
+	private NoriDatabase(SqliteConnection connection, string databasePath)
+	{
+		_connection = connection;
+		_databasePath = databasePath;
+	}
 
 	/// <summary>
 	/// 打开数据库文件. 传 null 走默认数据目录, 测试可传临时路径.
@@ -60,6 +66,7 @@ public sealed class NoriDatabase : IDisposable
 	public static NoriDatabase Open(string? databasePath = null)
 	{
 		string path = databasePath ?? AppPaths.DatabasePath;
+		bool databaseExisted = File.Exists(path);
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		SqliteConnection connection = new(new SqliteConnectionStringBuilder
 		{
@@ -67,7 +74,7 @@ public sealed class NoriDatabase : IDisposable
 			Mode = SqliteOpenMode.ReadWriteCreate,
 		}.ToString());
 		connection.Open();
-		NoriDatabase database = new(connection);
+		NoriDatabase database = new(connection, path);
 		try
 		{
 			// 外键必须在事务开始前启用, 记忆删除时由 SQLite 清理 Atom/Source/Knowledge 子记录.
@@ -82,7 +89,7 @@ public sealed class NoriDatabase : IDisposable
 			database.Execute("PRAGMA busy_timeout=5000;");
 
 			long current = ReadUserVersion(connection);
-			if (current < DatabaseSchemaVersion) database.CreateMigrationBackup(path);
+			if (databaseExisted && current < DatabaseSchemaVersion) database.EnsureMigrationBackup();
 			database.Execute(Schema);
 			database.MigrateSchema();
 			database.OptimizeAndCheckpoint();
@@ -255,42 +262,73 @@ public sealed class NoriDatabase : IDisposable
 	}
 
 	/// <summary>
-	/// 在结构迁移前生成一致性备份。VACUUM INTO 会包含 WAL 中已提交的数据；
-	/// 备份失败不阻止事务迁移，数量和单文件大小均有上限。
+	/// 生成本次进程内唯一的迁移前一致性备份。
+	/// VACUUM INTO 会包含 WAL 中已提交的数据；备份失败时拒绝继续迁移。
 	/// </summary>
+	public void EnsureMigrationBackup()
+	{
+		lock (_gate)
+		{
+			if (_migrationBackupAttempted) return;
+			CreateMigrationBackup(_databasePath);
+			_migrationBackupAttempted = true;
+		}
+	}
+
 	private void CreateMigrationBackup(string databasePath)
 	{
+		FileInfo source = new(databasePath);
+		if (!source.Exists || source.Length == 0)
+			throw new InvalidOperationException("迁移前备份失败: 数据库文件不存在或为空");
+		if (source.Length > MigrationBackupMaxBytes)
+			throw new InvalidOperationException($"迁移前备份失败: 数据库超过 {MigrationBackupMaxBytes / 1024 / 1024} MiB 限制");
+
+		string directory = source.DirectoryName ?? ".";
+		string temporary = Path.Combine(directory, $"{source.Name}{MigrationBackupMarker}{Guid.NewGuid():N}.tmp");
+		string backup = Path.Combine(directory, $"{source.Name}{MigrationBackupMarker}{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.bak");
 		try
 		{
-			FileInfo source = new(databasePath);
-			if (!source.Exists || source.Length == 0 || source.Length > MigrationBackupMaxBytes) return;
-			string directory = source.DirectoryName ?? ".";
-			string temporary = Path.Combine(directory, $"{source.Name}{MigrationBackupMarker}{Guid.NewGuid():N}.tmp");
-			string backup = Path.Combine(directory, $"{source.Name}{MigrationBackupMarker}{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.bak");
-			try
+			using (SqliteCommand command = _connection.CreateCommand())
 			{
-				using SqliteCommand command = _connection.CreateCommand();
 				command.CommandText = "VACUUM INTO $path";
 				command.Parameters.AddWithValue("$path", temporary);
 				command.ExecuteNonQuery();
-				FileInfo created = new(temporary);
-				if (!created.Exists || created.Length == 0 || created.Length > MigrationBackupMaxBytes)
-				{
-					TryDelete(temporary);
-					return;
-				}
-				File.Move(temporary, backup);
-				PruneMigrationBackups(directory, source.Name);
 			}
-			finally
-			{
-				TryDelete(temporary);
-			}
+
+			FileInfo created = new(temporary);
+			if (!created.Exists || created.Length == 0 || created.Length > MigrationBackupMaxBytes)
+				throw new InvalidOperationException("迁移前备份失败: 备份文件大小无效");
+
+			// 临时文件和最终文件位于同一目录，重命名不会暴露半成品备份。
+			File.Move(temporary, backup);
+			VerifyMigrationBackup(backup);
+			PruneMigrationBackups(directory, source.Name);
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
+		catch (Exception exception)
 		{
-			// 迁移事务本身仍提供原子性，备份属于尽力而为的额外保护。
+			TryDelete(temporary);
+			TryDelete(backup);
+			throw new InvalidOperationException("迁移前备份失败，已中止迁移", exception);
 		}
+		finally
+		{
+			TryDelete(temporary);
+		}
+	}
+
+	private static void VerifyMigrationBackup(string backupPath)
+	{
+		using SqliteConnection connection = new(new SqliteConnectionStringBuilder
+		{
+			DataSource = backupPath,
+			Mode = SqliteOpenMode.ReadOnly,
+		}.ToString());
+		connection.Open();
+		using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "PRAGMA integrity_check;";
+		string result = command.ExecuteScalar()?.ToString() ?? "";
+		if (!result.Equals("ok", StringComparison.OrdinalIgnoreCase))
+			throw new InvalidOperationException("备份完整性校验失败");
 	}
 
 	private static void PruneMigrationBackups(string directory, string databaseName)

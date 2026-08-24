@@ -215,19 +215,21 @@ public sealed class DatabaseMigrationReliabilityTests
 
 			using (NoriDatabase database = NoriDatabase.Open(path))
 			{
-				Assert.Equal(NoriDatabase.DatabaseSchemaVersion, database.Locked(connection =>
+				long userVersion = database.Locked(connection =>
 				{
 					using SqliteCommand command = connection.CreateCommand();
 					command.CommandText = "PRAGMA user_version";
 					return Convert.ToInt64(command.ExecuteScalar());
-				}));
+				});
+				Assert.Equal(NoriDatabase.DatabaseSchemaVersion, userVersion);
 				// v5 结构迁移只补列, 旧 JSON 在首次语义检索时惰性转成 BLOB。
-				Assert.Equal("null", database.Locked(connection =>
+				string embeddingType = database.Locked(connection =>
 				{
 					using SqliteCommand command = connection.CreateCommand();
 					command.CommandText = "SELECT typeof(embedding_blob) FROM memories LIMIT 1";
-					return command.ExecuteScalar()?.ToString();
-				}));
+					return command.ExecuteScalar()?.ToString() ?? "";
+				});
+				Assert.Equal("null", embeddingType);
 
 				MemoryStore store = new(database);
 				MemorySearchResult match = Assert.Single(store.SearchSemantic([1, 0], 1, 0));

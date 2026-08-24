@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia;
@@ -236,7 +235,7 @@ public static class CrashReporter
 
 	private static void AppendEnvironmentInfo(StringBuilder report)
 	{
-		string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1.0";
+		string version = Nori.Core.ProductVersion.Current;
 		report.AppendLine($"Nori v{version}");
 		report.AppendLine($"OS: {RuntimeInformation.OSDescription} ({RuntimeInformation.OSArchitecture})");
 		report.AppendLine($"时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");

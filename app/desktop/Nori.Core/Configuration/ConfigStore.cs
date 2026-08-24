@@ -298,7 +298,8 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	/// </summary>
 	public void InitDefaults(string appVersion)
 	{
-		EnsureSchemaVersion();
+		// 新数据库没有旧配置可迁移；跳过空库迁移，避免为初始化空库生成无意义备份。
+		if (GetAll().Count > 0) EnsureSchemaVersion();
 		_database.Locked(connection =>
 		{
 			(string Key, ConfigValue Value)[] defaults =
@@ -348,7 +349,11 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		{
 			throw new InvalidOperationException($"配置数据库版本 {current} 高于当前应用支持版本 {ConfigSchemaVersion}, 请升级应用");
 		}
-		if (current < ConfigSchemaVersion) MigrateSchema(current, ConfigSchemaVersion);
+		if (current < ConfigSchemaVersion)
+		{
+			_database.EnsureMigrationBackup();
+			MigrateSchema(current, ConfigSchemaVersion);
+		}
 	}
 
 	/// <summary>数据库结构迁移: v1 语言键, v2 遥测布尔键迁移为三态同意。</summary>

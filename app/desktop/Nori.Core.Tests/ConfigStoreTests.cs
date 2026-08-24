@@ -43,6 +43,26 @@ public class ConfigStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void 配置迁移会复用一次可恢复的迁移前备份()
+	{
+		_config.Set(ConfigStore.KeyConfigSchemaVersion, new ConfigValue.Integer(1));
+		_config.Set(ConfigStore.LegacyKeyLanguage, new ConfigValue.Text("en-US"));
+
+		_config.EnsureSchemaVersion();
+		_config.EnsureSchemaVersion();
+
+		string directory = Path.GetDirectoryName(_path)!;
+		string pattern = $"{Path.GetFileName(_path)}.pre-migration-*.bak";
+		string[] backups = Directory.GetFiles(directory, pattern);
+		Assert.Single(backups);
+		Assert.True(new FileInfo(backups[0]).Length > 0);
+
+		using NoriDatabase backupDatabase = NoriDatabase.Open(backups[0]);
+		ConfigStore backupConfig = new(backupDatabase, new FixedKeyStore());
+		Assert.True(backupConfig.GetBoolOr(ConfigStore.KeyConfigSchemaVersion, false));
+	}
+
+	[Fact]
 	public void 默认配置在初始化后就位()
 	{
 		Assert.Equal("arg-nori", _config.GetStringOr(ConfigStore.KeySelectedModel, ""));

@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using Nori.Core.Data;
 using Nori.Core.Security;
@@ -20,14 +19,15 @@ public static class DiagnosticInfo
 	public static Dictionary<string, string> Build() => Build(null);
 
 	/// <summary>构建诊断信息并附带当前桌宠渲染指标。</summary>
-	public static Dictionary<string, string> Build(PetRuntime? pet)
+	public static Dictionary<string, string> Build(PetRuntime? pet, bool safeMode = false)
 	{
-		string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.1.0";
+		string version = Nori.Core.ProductVersion.Current;
 		PetRenderMetrics? render = pet?.RenderMetrics;
 		long dbBytes = FileSizeOrDefault(AppPaths.DatabasePath);
 		return new Dictionary<string, string>
 		{
 			["app_version"] = version,
+			["safe_mode"] = safeMode.ToString().ToLowerInvariant(),
 			["dotnet_version"] = Environment.Version.ToString(),
 			["os_version"] = RuntimeInformation.OSDescription,
 			["os_arch"] = RuntimeInformation.OSArchitecture.ToString(),

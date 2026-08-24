@@ -124,13 +124,17 @@ public static class SmokeTestRuntime
 	///
 	/// 只有资源服务、窗口和配置数据库都已经装配后才会调用, 因此它代表宿主已就绪而非仅仅进程已启动。
 	/// </summary>
-	public static void WriteReady(SmokeTestOptions options, bool firstRun)
+	public static void WriteReady(SmokeTestOptions options, bool firstRun, bool safeMode = false)
 	{
 		var checkpoint = new
 		{
-			schema_version = 1,
+			schema_version = 2,
 			status = "ready",
+			product_version = Nori.Core.ProductVersion.Current,
+			database_schema_version = NoriDatabase.DatabaseSchemaVersion,
+			config_schema_version = Nori.Core.Configuration.ConfigStore.ConfigSchemaVersion,
 			mode = options.Mode == SmokeTestMode.FirstRun ? "first-run" : "initialized",
+			safe_mode = safeMode,
 			first_run = firstRun,
 			initial_window = firstRun ? "first-run" : "init",
 			data_dir = AppPaths.DataDir,

@@ -87,7 +87,11 @@ public class BridgeCommandsTests : IDisposable
 	private readonly AppServices _services;
 	private readonly AppRuntime _runtime;
 
-	public BridgeCommandsTests()
+	public BridgeCommandsTests() : this(false)
+	{
+	}
+
+	private BridgeCommandsTests(bool safeMode)
 	{
 		Directory.CreateDirectory(_tempDir);
 		_dbPath = Path.Combine(_tempDir, "nori.db");
@@ -109,6 +113,7 @@ public class BridgeCommandsTests : IDisposable
 			Http = _http,
 			AgentOperations = new AgentOperationRegistry(),
 			Windows = _windows,
+			SafeMode = safeMode,
 		};
 		_runtime = new AppRuntime(_services);
 		_services.Runtime = _runtime;
@@ -229,6 +234,32 @@ public class BridgeCommandsTests : IDisposable
 			await Assert.ThrowsAsync<InvalidOperationException>(() =>
 				commands.InvokeAsync(new FakeBridgeSource("init"), cmd, Args(new { })));
 		}
+	}
+
+	[Fact]
+	public async Task 安全模式在Bridge入口拒绝联网命令()
+	{
+		using BridgeCommandsTests safeFixture = new(true);
+		BridgeCommands commands = safeFixture.CreateCommands();
+		string[] networkCommands =
+		[
+			"llm_fetch_models", "llm_test_connection", "embedding_test_connection", "chat_start",
+			"memory_search_hybrid", "memory_reembed_all", "memory_recall_debug", "memory_knowledge_reindex",
+			"skills_install_url", "mcp_get_servers", "mcp_connect_server", "mcp_test_server",
+			"mcp_call_tool", "mcp_import_url", "tts_test", "stt_start", "stt_stop", "open_url",
+		];
+
+		foreach (string command in networkCommands)
+		{
+			InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+				commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), command, Args(new { })));
+			Assert.Contains("安全模式", exception.Message, StringComparison.Ordinal);
+		}
+
+		InvalidOperationException autoConnectException = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "mcp_save_server",
+				Args(new {enabled = true, autoConnect = true})));
+		Assert.Contains("安全模式", autoConnectException.Message, StringComparison.Ordinal);
 	}
 
 

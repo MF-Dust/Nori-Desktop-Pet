@@ -68,6 +68,10 @@ public sealed class BridgeCommands
 		CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		if (_services.SafeMode && IsNetworkCommand(cmd, args))
+		{
+			throw new InvalidOperationException("安全模式已禁用联网和外部服务，请退出安全模式后重试");
+		}
 		object? result = cmd switch
 		{
 		// ---- 应用 ----
@@ -116,6 +120,8 @@ public sealed class BridgeCommands
 		// ---- AI 设置 ----
 		// invoke("llm_fetch_models", {provider, baseUrl, apiKey})
 		"llm_fetch_models" => await FetchModelsWithSourceCheckAsync(source, args),
+		// invoke("llm_test_connection", {provider?, baseUrl?, apiKey?, model?})
+		"llm_test_connection" => await TestLlmConnectionAsync(source, args, cancellationToken),
 
 		// invoke("settings_update_ai", {provider?, baseUrl?, apiKey?, model?, persona?})
 		"settings_update_ai" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
@@ -191,6 +197,8 @@ public sealed class BridgeCommands
 				UpdateOptionalConfig(args, "dimensions", "embedding_dimensions");
 				Runtime.QueueEmbeddingRebuild();
 			})),
+		// invoke("embedding_test_connection", {baseUrl?, apiKey?, model?, dimensions?})
+		"embedding_test_connection" => await TestEmbeddingConnectionAsync(source, args, cancellationToken),
 
 		// invoke("tools_set_enabled", {name: "getTime", enabled: false})
 		"tools_set_enabled" => RequireMain(source, () =>
@@ -500,7 +508,9 @@ public sealed class BridgeCommands
 			message = entry.Message,
 		}).ToArray()),
 		"clear_recent_logs" => RequireMain(source, () => Run(_services.Logger.ClearRecentLogs)),
-		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime)),
+		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime, _services.SafeMode)),
+		// invoke("export_diagnostics") → {fileName, bytes, skipped}
+		"export_diagnostics" => await ExportDiagnosticsAsync(source, cancellationToken),
 		"open_log_folder" => RequireMain(source, () => Run(OpenLogFolder)),
 		"run_gc_collect" => RequireMain(source, RunGcCollect),
 		"debug_crash_test" => RequireMain(source, () => Run(() => DebugCrashTest(Str(args, "mode")))),
@@ -509,6 +519,36 @@ public sealed class BridgeCommands
 		};
 		cancellationToken.ThrowIfCancellationRequested();
 		return result;
+	}
+
+	private static bool IsNetworkCommand(string command, JsonElement args)
+	{
+		if (command is
+			"llm_fetch_models"
+			or "llm_test_connection"
+			or "embedding_test_connection"
+			or "chat_start"
+			or "memory_search_hybrid"
+			or "memory_reembed_all"
+			or "memory_recall_debug"
+			or "memory_knowledge_reindex"
+			or "skills_install_url"
+			or "mcp_get_servers"
+			or "mcp_connect_server"
+			or "mcp_test_server"
+			or "mcp_call_tool"
+			or "mcp_import_url"
+			or "tts_test"
+			or "stt_start"
+			or "stt_stop"
+			or "open_url") return true;
+
+		// 安全模式仍允许手动保存不自动连接的 MCP 配置，但不能借此触发自动连接。
+		if (command == "mcp_save_server"
+			&& args.ValueKind == JsonValueKind.Object
+			&& OptionalBool(args, "enabled") == true
+			&& OptionalBool(args, "autoConnect") == true) return true;
+		return false;
 	}
 
 	private static object? RequireWebViewSource(IBridgeSource source, Func<object?> factory)
@@ -1071,7 +1111,7 @@ public sealed class BridgeCommands
 		await OnUi(() =>
 		{
 			_services.Windows.Show(WindowLabels.Main);
-			if (modelValid && autoSummon) _services.Windows.Show(WindowLabels.Pet);
+			if (modelValid && autoSummon && !_services.SafeMode) _services.Windows.Show(WindowLabels.Pet);
 			else _services.Windows.Hide(WindowLabels.Pet);
 			_services.Windows.Hide(WindowLabels.Init);
 			return (object?)null;
@@ -1235,6 +1275,36 @@ public sealed class BridgeCommands
 		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
 		return await _services.Llm.FetchModelsAsync(
 			OptionalStr(args, "provider"), Str(args, "baseUrl"), apiKey);
+	}
+
+	private async Task<object?> TestLlmConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	{
+		RequireMainVoid(source);
+		string provider = OptionalStr(args, "provider") ?? _services.Config.GetStringOr("llm_provider", "openai");
+		string baseUrl = OptionalStr(args, "baseUrl") ?? _services.Config.GetStringOr("llm_api_base", "");
+		string apiKey = OptionalStr(args, "apiKey") ?? "";
+		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
+		string model = OptionalStr(args, "model") ?? _services.Config.GetStringOr("llm_model", "");
+		ProviderConnectionTester tester = new(_services.Http, _services.Embedding);
+		return await tester.TestLlmAsync(provider, baseUrl, apiKey, model, cancellationToken);
+	}
+
+	private async Task<object?> TestEmbeddingConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	{
+		RequireMainVoid(source);
+		string baseUrl = OptionalStr(args, "baseUrl") ?? _services.Config.GetStringOr("embedding_api_base", "");
+		if (baseUrl.Length == 0) baseUrl = _services.Config.GetStringOr("llm_api_base", "");
+		string apiKey = OptionalStr(args, "apiKey") ?? "";
+		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("embedding_api_key", "");
+		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
+		string model = OptionalStr(args, "model") ?? _services.Config.GetStringOr("embedding_model", "BAAI/bge-m3");
+		int? dimensions = OptionalInt(args, "dimensions");
+		if (dimensions is null && int.TryParse(OptionalStr(args, "dimensions"), out int supplied))
+			dimensions = supplied > 0 ? supplied : null;
+		if (dimensions is null && int.TryParse(_services.Config.GetStringOr("embedding_dimensions", ""), out int configured))
+			dimensions = configured > 0 ? configured : null;
+		ProviderConnectionTester tester = new(_services.Http, _services.Embedding);
+		return await tester.TestEmbeddingAsync(baseUrl, apiKey, model, dimensions, cancellationToken);
 	}
 
 	private object SkillServiceMarketplace() => Nori.Core.Skills.SkillPresets.All.Select(skill => new
@@ -1540,6 +1610,33 @@ public sealed class BridgeCommands
 	{
 		Directory.CreateDirectory(AppPaths.LogDir);
 		Process.Start(new ProcessStartInfo {FileName = AppPaths.LogDir, UseShellExecute = true});
+	}
+
+	/// <summary>弹出保存位置并在后台生成脱敏诊断 ZIP。</summary>
+	private async Task<object?> ExportDiagnosticsAsync(IBridgeSource source, CancellationToken cancellationToken)
+	{
+		RequireMainVoid(source);
+		Window self = source.Self ?? throw new InvalidOperationException("来源窗口不可用");
+		string? targetPath = await Dispatcher.UIThread.InvokeAsync(async () =>
+		{
+			IStorageFile? file = await self.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+			{
+				Title = "导出 Nori 诊断信息",
+				SuggestedFileName = $"nori-diagnostics-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip",
+				ShowOverwritePrompt = true,
+				FileTypeChoices =
+				[
+					new FilePickerFileType("诊断压缩包 (*.zip)") {Patterns = ["*.zip"]},
+				],
+			});
+			return file?.Path.LocalPath;
+		});
+
+		if (string.IsNullOrWhiteSpace(targetPath)) return null;
+		DiagnosticExporter.Result result = await Task.Run(
+			() => DiagnosticExporter.Export(targetPath, _services.Logger, _services.PetRuntime, _services.SafeMode, cancellationToken, _services.AgentTrace),
+			cancellationToken);
+		return new {fileName = result.FileName, bytes = result.Bytes, skipped = result.Skipped};
 	}
 
 	private object? RunGcCollect()
