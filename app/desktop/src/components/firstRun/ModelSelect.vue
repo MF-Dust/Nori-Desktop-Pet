@@ -1,56 +1,74 @@
 <script setup lang="ts">
-import {ref, onMounted, computed} from "vue"
+import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../../services/runtime"
 import {feedback} from "../../services/feedback"
 import Icon from "../../components/Icon.vue"
+import AppButton from "../ui/AppButton.vue"
 import {MODEL_LIST} from "../../services/live2d/models"
 
 const I18N = computed(() => useLanguages().components.firstRun.modelSelect)
 const WIZARD_I18N = computed(() => useLanguages().views.firstRun)
 
 const emit = defineEmits<{
-	/** 保存失败时报错 (空串 = 清除错误) */
 	error: [message: string]
-	/** 当前选中的模型 id */
 	selected: [modelId: string]
 }>()
 
-// 可选模型列表
 const models = MODEL_LIST
+const selected = ref("")
+const installedMap = ref<Record<string, boolean>>({})
+const importing = ref<"zip" | "folder" | "">("")
+const importStatus = ref("")
 
-// 选中的模型 id
-const selected = ref("arg-nori")
-const saving = ref("")
+const syncModels = async (preferredId?: string): Promise<void> => {
+	await RUNTIME.refresh()
+	const ITEMS = RUNTIME.snapshot.value?.models.items ?? []
+	installedMap.value = Object.fromEntries(ITEMS.map(item => [item.id, item.installed]))
+	const SAVED = preferredId ?? RUNTIME.snapshot.value?.models.selected ?? ""
+	const NEXT = models.find(model => model.id === SAVED && installedMap.value[model.id])?.id
+		?? models.find(model => installedMap.value[model.id])?.id
+		?? ""
+	selected.value = NEXT
+	emit("selected", NEXT)
+	emit("error", NEXT ? "" : I18N.value.importRequired)
+}
 
-// 组件挂载时读取后端快照
 onMounted(async () => {
 	try {
 		await RUNTIME.init()
-		const SAVED = RUNTIME.snapshot.value?.models.selected
-		if (SAVED && models.some(model => model.id === SAVED)) selected.value = SAVED
-		emit("selected", selected.value)
+		await syncModels()
 	} catch (error) {
 		feedback.error(WIZARD_I18N.value.error.selectModel, error)
+		emit("error", WIZARD_I18N.value.error.selectModel)
 	}
 })
 
-// 选中模型: 显式提交 + 失败可见 (原来靠 watch 静默提交, 失败时界面毫无变化)
-const selectModel = async (modelId: string): Promise<void> => {
-	if (saving.value) return
-	const PREVIOUS = selected.value
+const selectModel = (modelId: string): void => {
+	if (importing.value || !installedMap.value[modelId]) return
 	selected.value = modelId
-	saving.value = modelId
+	emit("selected", modelId)
+	emit("error", "")
+}
+
+const importModel = async (sourceKind: "zip" | "folder"): Promise<void> => {
+	if (importing.value) return
+	importing.value = sourceKind
+	importStatus.value = I18N.value.importing
 	try {
-		await RUNTIME.firstRunSelectModel(modelId)
-		emit("error", "")
-		emit("selected", modelId)
+		const IMPORTED = await RUNTIME.importLocalModel(sourceKind)
+		if (!IMPORTED?.length) {
+			importStatus.value = ""
+			return
+		}
+		const PREFERRED = IMPORTED.find(id => models.some(model => model.id === id))
+		await syncModels(PREFERRED)
+		importStatus.value = `${I18N.value.importSuccess}: ${IMPORTED.join(", ")}`
 	} catch (error) {
-		selected.value = PREVIOUS
-		feedback.error(WIZARD_I18N.value.error.selectModel, error)
-		emit("error", WIZARD_I18N.value.error.selectModel)
+		feedback.error(I18N.value.importFailed, error)
+		importStatus.value = ""
 	} finally {
-		saving.value = ""
+		importing.value = ""
 	}
 }
 </script>
@@ -60,7 +78,7 @@ const selectModel = async (modelId: string): Promise<void> => {
 		<div class="flex flex-col items-center gap-1.5">
 			<span class="chip-teal">
 				<Icon name="package" :size="12"/>
-				<span>Character Selection</span>
+				<span>{{ I18N.badge }}</span>
 			</span>
 			<h2 class="text-2xl font-700 glow-teal">{{ I18N.title }}</h2>
 			<p class="text-sub">{{ I18N.hint }}</p>
@@ -72,12 +90,11 @@ const selectModel = async (modelId: string): Promise<void> => {
 				:key="model.id"
 				type="button"
 				class="group relative w-[17rem] flex flex-col items-center gap-2 p-2.5 pb-3 rounded-md overflow-hidden
-					cursor-pointer border-2 border-line-subtle bg-white/3 transition-all duration-250 focus-ring
-					hover:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.3rem] shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.35)])"
-				:class="[
-					selected === model.id ? 'border-nori-teal bg-nori-teal-bright/12 shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.4),0_0_2rem_var(--glow-teal)]' : '',
-					saving === model.id ? 'opacity-75 cursor-progress' : '',
-				]"
+					border-2 border-line-subtle bg-white/3 transition-all duration-250 focus-ring
+					hover:not-disabled:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.3rem] shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.35)])
+					disabled:(opacity-45 cursor-not-allowed)"
+				:class="selected === model.id ? 'border-nori-teal bg-nori-teal-bright/12 shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.4),0_0_2rem_var(--glow-teal)]' : ''"
+				:disabled="!installedMap[model.id] || Boolean(importing)"
 				:aria-pressed="selected === model.id"
 				@click="selectModel(model.id)"
 			>
@@ -89,11 +106,16 @@ const selectModel = async (modelId: string): Promise<void> => {
 					/>
 					<span class="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-bg-abyss/80 pointer-events-none"/>
 					<span
+						v-if="!installedMap[model.id]"
+						class="absolute inset-x-2 bottom-2 rounded-pill bg-bg-abyss/90 px-2 py-1 text-xs text-text-muted"
+					>{{ I18N.notInstalled }}</span>
+					<span
+						v-else
 						class="absolute top-2 right-2 w-[2.2rem] h-[2.2rem] rounded-full flex items-center justify-center
 							bg-nori-teal text-on-teal shadow-[0_0.2rem_0.8rem_rgba(0,0,0,0.4)] transition-all duration-200"
-						:class="selected === model.id || saving === model.id ? 'opacity-100 scale-100' : 'opacity-0 scale-60'"
+						:class="selected === model.id ? 'opacity-100 scale-100' : 'opacity-0 scale-60'"
 					>
-						<Icon :name="saving === model.id ? 'loading' : 'check'" :class="{spin: saving === model.id}" :size="12"/>
+						<Icon name="check" :size="12"/>
 					</span>
 				</span>
 
@@ -103,5 +125,15 @@ const selectModel = async (modelId: string): Promise<void> => {
 				>{{ model.name }}</span>
 			</button>
 		</div>
+
+		<div class="flex items-center justify-center gap-2">
+			<AppButton icon="package" :loading="importing === 'zip'" :disabled="Boolean(importing)" @click="importModel('zip')">
+				{{ I18N.importZip }}
+			</AppButton>
+			<AppButton icon="package" :loading="importing === 'folder'" :disabled="Boolean(importing)" @click="importModel('folder')">
+				{{ I18N.importFolder }}
+			</AppButton>
+		</div>
+		<p v-if="importStatus" class="m-0 text-xs text-nori-teal-bright" aria-live="polite">{{ importStatus }}</p>
 	</section>
 </template>

@@ -88,6 +88,7 @@ export interface ModelItem {
 export interface ModelsState {
 	selected: string
 	items: ModelItem[]
+	loadError?: string | null
 	scale: number
 	expressions: string[]
 }
@@ -483,6 +484,11 @@ export interface InteractionConfig {
 export interface ModelMeta {
 	modelId: string
 	scale: number
+	opacity: number
+	shadow: boolean
+	renderScale: number
+	qualityMode: "adaptive" | "quality" | "eco"
+	maxFps: number
 	expressions: string[]
 	motions: {group: string; names: string[]}[]
 	interactions: InteractionConfig

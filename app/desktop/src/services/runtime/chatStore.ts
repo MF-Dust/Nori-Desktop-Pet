@@ -4,7 +4,7 @@
  * 订阅后端 Agent 事件并维护气泡列表/状态/指标/待决授权队列。
  * 业务真相在后端: 这里只做事件到 UI 投影的转换, 不落库、不解析历史。
  */
-import {ref, type Ref} from "vue"
+import {ref} from "vue"
 import {RUNTIME, type ApprovalRequestDto, type AgentEventPayload, type AgentState, type UsageMetrics} from "./index"
 
 /** 聊天气泡 */
@@ -18,7 +18,7 @@ export interface ChatBubble {
 export interface PendingApproval {
 	request: ApprovalRequestDto
 	resolve: (approved: boolean) => void
-	remainingSeconds: Ref<number>
+	remainingSeconds: number
 }
 
 /**
@@ -227,15 +227,15 @@ export function createChatStore(options: {watchdogMs?: number; approvalTimeoutMs
 			case "approval-request": {
 				if (payload.sessionId !== activeSessionId) return
 				if (pendingApprovals.value.some(item => item.request.requestId === payload.requestId)) return
-				const REMAINING = ref(Math.max(1, Math.ceil(APPROVAL_TIMEOUT_MS / 1000)))
-				pendingApprovals.value.push({
+				const ITEM: PendingApproval = {
 					request: payload,
 					resolve: (approved) => void decideApproval(payload.requestId, approved),
-					remainingSeconds: REMAINING,
-				})
+					remainingSeconds: Math.max(1, Math.ceil(APPROVAL_TIMEOUT_MS / 1000)),
+				}
+				pendingApprovals.value.push(ITEM)
 				const TIMER = setInterval(() => {
-					const NEXT = REMAINING.value - 1
-					REMAINING.value = Math.max(0, NEXT)
+					const NEXT = ITEM.remainingSeconds - 1
+					ITEM.remainingSeconds = Math.max(0, NEXT)
 					if (NEXT <= 0) {
 						clearApprovalTimer(payload.requestId)
 						void decideApproval(payload.requestId, false, true).catch(error => console.error("工具授权超时响应失败:", error))

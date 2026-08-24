@@ -76,7 +76,7 @@ const newForm = () => {
 		name: I18N.value.server.defaultName,
 		transport: "stdio",
 		command: "npx",
-		args: ["-y", "@modelcontextprotocol/server-filesystem", "C:/"],
+		args: ["-y", "@modelcontextprotocol/server-filesystem"],
 		env: {},
 		url: "",
 		enabled: true,
@@ -99,14 +99,29 @@ const parseEnv = (raw: string): Record<string, string> => {
 	const RESULT: Record<string, string> = {}
 	for (const LINE of raw.split(/\r?\n/)) {
 		const INDEX = LINE.indexOf("=")
-		if (INDEX > 0) RESULT[LINE.slice(0, INDEX).trim()] = LINE.slice(INDEX + 1).trim()
+		if (INDEX > 0) RESULT[LINE.slice(0, INDEX).trim()] = LINE.slice(INDEX + 1)
 	}
+	return RESULT
+}
+
+const parseArgs = (raw: string): string[] => {
+	const RESULT: string[] = []
+	const PATTERN = /"([^"]*)"|'([^']*)'|(\S+)/g
+	let cursor = 0
+	for (const MATCH of raw.matchAll(PATTERN)) {
+		const INDEX = MATCH.index ?? 0
+		if (raw.slice(cursor, INDEX).trim() || MATCH[3]?.includes("\"") || MATCH[3]?.includes("'"))
+			throw new Error(I18N.value.error.argsInvalid)
+		RESULT.push(MATCH[1] ?? MATCH[2] ?? MATCH[3] ?? "")
+		cursor = INDEX + MATCH[0].length
+	}
+	if (raw.slice(cursor).trim()) throw new Error(I18N.value.error.argsInvalid)
 	return RESULT
 }
 
 const formPayload = () => ({
 	...FORM.value,
-	args: FORM.value.transport === "stdio" ? ARGS_INPUT.value.split(/\s+/).filter(Boolean) : [],
+	args: FORM.value.transport === "stdio" ? parseArgs(ARGS_INPUT.value) : [],
 	env: parseEnv(ENV_INPUT.value),
 	url: FORM.value.transport === "sse" ? FORM.value.url.trim() : undefined,
 })

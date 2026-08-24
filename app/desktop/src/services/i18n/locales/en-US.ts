@@ -17,6 +17,11 @@ export default {
 				bootstrapTitle: "Runtime startup failed",
 				bootstrapDesc: "Nori could not read the application state. Check the host environment and try again.",
 				bootstrapRetrying: "Retrying...",
+				telemetryConsentTitle: "Send anonymous diagnostics?",
+				telemetryConsentDesc: "Only scrubbed errors, fixed operation names, and performance metrics are sent. Chats, memories, keys, recordings, and request bodies are excluded. Sentry stays disconnected until you choose.",
+				telemetryConsentAllow: "Allow diagnostics",
+				telemetryConsentDeny: "Keep disabled",
+				telemetryConsentSaveFailed: "Failed to save telemetry choice",
 			},
 		},
 		firstRun: {
@@ -60,7 +65,15 @@ export default {
 			modelSelect: {
 				title: "Choose Model",
 				sub: "You can change this later in settings",
-				hint: "You can switch characters and import new models anytime from the main panel",
+				badge: "Character Selection",
+				hint: "Import and select a local ARG Nori or Nori model before continuing",
+				importZip: "Import ZIP",
+				importFolder: "Import Folder",
+				importing: "Validating and importing model...",
+				importSuccess: "Import complete",
+				importFailed: "Failed to import the Live2D model",
+				importRequired: "Import and select a supported local Live2D model first",
+				notInstalled: "Not imported",
 			},
 			ready: {
 				title: "All Set!",
@@ -133,6 +146,9 @@ export default {
 				about: "About",
 			},
 			home: {
+				modelMissingTitle: "Local Live2D model unavailable",
+				modelMissingDesc: "The model may have been moved, deleted, or damaged. Import ARG Nori or Nori again.",
+				importModel: "Import Model",
 				petStatusOnline: "Pet Active",
 				petStatusOffline: "Pet Standby",
 				petStatusDescOnline: "Nori is currently active on your desktop",
@@ -162,6 +178,7 @@ export default {
 						title: "Model & Outfits",
 						desc: "Switch outfits, costumes and manage expressions",
 						current: "Current model",
+						missing: "Current model unavailable",
 						action: "Manage Models",
 					},
 					ai: {
@@ -342,6 +359,8 @@ export default {
 				},
 				import: {
 					button: "Import local Live2D",
+					zipButton: "Import ZIP",
+					folderButton: "Import Folder",
 					importing: "Importing...",
 					picking: "Selecting and importing Live2D files...",
 					success: "Imported",
@@ -652,7 +671,7 @@ export default {
 					name: "Name",
 					transport: "Transport",
 					command: "Command",
-					args: "Arguments (space separated)",
+					args: "Arguments (space separated; quote paths containing spaces)",
 					env: "Environment variables (KEY=VALUE per line)",
 					sseUrl: "SSE URL",
 					enabled: "Enabled",
@@ -697,6 +716,7 @@ export default {
 					disconnect: "Disconnect failed",
 					delete: "Delete failed",
 					toolToggle: "Failed to update tool",
+					argsInvalid: "Command argument quotes or separators are invalid",
 				},
 			},
 			skills: {

@@ -319,9 +319,6 @@ export const RUNTIME = {
 	selectModel(modelId: string): Promise<void> {
 		return invoke<void>("model_select", {modelId})
 	},
-	firstRunSelectModel(modelId: string): Promise<void> {
-		return invoke<void>("first_run_select_model", {modelId})
-	},
 	completeFirstRun(modelId: string, telemetryEnabled: boolean): Promise<void> {
 		return invoke<void>("complete_first_run", {modelId, telemetryEnabled})
 	},
@@ -342,13 +339,21 @@ export const RUNTIME = {
 	initReady(): Promise<{initStartPending: boolean}> {
 		return invoke<{initStartPending: boolean}>("init_ready")
 	},
-	importLocalModel(): Promise<string[] | null> {
-		return invoke<string[] | null>("model_import_local", {resourceType: "live2d"})
+	importLocalModel(sourceKind: "zip" | "folder" = "zip"): Promise<string[] | null> {
+		return invoke<string[] | null>("model_import_local", {resourceType: "live2d", sourceKind})
 	},
 	modelMeta(modelId: string): Promise<ModelMeta> {
 		return invoke<ModelMeta>("model_get_meta", {modelId})
 	},
-	setModelDisplay(modelId: string, patch: {scale?: number; expressions?: string[]}): Promise<void> {
+	setModelDisplay(modelId: string, patch: {
+		scale?: number
+		expressions?: string[]
+		opacity?: number
+		shadow?: boolean
+		renderScale?: number
+		qualityMode?: "adaptive" | "quality" | "eco"
+		maxFps?: number
+	}): Promise<void> {
 		return invoke<void>("model_set_display", {modelId, ...patch})
 	},
 	setModelInteractions(modelId: string, interactions: InteractionConfig): Promise<void> {

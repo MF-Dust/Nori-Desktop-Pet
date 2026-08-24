@@ -8,11 +8,12 @@ describe("遥测策略", () => {
 		expect(REPLAY_OPTIONS).toEqual({maskAllText: true, maskAllInputs: true, blockAllMedia: true})
 	})
 
-	it("没有 DSN 或用户关闭时不启用 transport", () => {
-		expect(ShouldEnableTelemetry("", {available: true, enabled: true})).toBe(false)
-		expect(ShouldEnableTelemetry("https://example", {available: false, enabled: true})).toBe(false)
-		expect(ShouldEnableTelemetry("https://example", {available: true, enabled: false})).toBe(false)
-		expect(ShouldEnableTelemetry("https://example", {available: true, enabled: true})).toBe(true)
+	it("没有 DSN、不可用、用户关闭或未明确同意时不启用 transport", () => {
+		expect(ShouldEnableTelemetry("", {available: true, enabled: true, consent: "granted"})).toBe(false)
+		expect(ShouldEnableTelemetry("https://example", {available: false, enabled: true, consent: "granted"})).toBe(false)
+		expect(ShouldEnableTelemetry("https://example", {available: true, enabled: false, consent: "denied"})).toBe(false)
+		expect(ShouldEnableTelemetry("https://example", {available: true, enabled: true, consent: "unset"})).toBe(false)
+		expect(ShouldEnableTelemetry("https://example", {available: true, enabled: true, consent: "granted"})).toBe(true)
 	})
 
 	it("操作名不携带路径参数或用户文字", () => {

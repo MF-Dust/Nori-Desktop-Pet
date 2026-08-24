@@ -55,7 +55,6 @@ let levelTimer: ReturnType<typeof setInterval> | null = null
 let currentToken = ""
 let playbackGeneration = 0
 let rmsBuffer = new Float32Array(1024)
-const FINALIZED_TOKENS = new Set<string>()
 
 let recorder: MediaRecorder | null = null
 let recorderChunks: Blob[] = []
@@ -145,8 +144,7 @@ const reportFinished = (token: string, error?: string) => {
 }
 
 const reportFinalLevel = (token: string) => {
-	if (!token || FINALIZED_TOKENS.has(token)) return
-	FINALIZED_TOKENS.add(token)
+	if (!token) return
 	void invoke("audio_level", {level: 0}).catch(() => {
 		/* 宿主已退出时忽略 */
 	})
@@ -295,7 +293,6 @@ const stopRecording = async (payload?: RecordStopPayload): Promise<void> => {
 				reject(error)
 			}
 		})
-		STREAM?.getTracks().forEach(track => track.stop())
 		const MIME = normalizeAudioMime(ACTIVE.mimeType || recorderChunks[0]?.type)
 		const BLOB = new Blob(recorderChunks, {type: MIME})
 		recorderChunks = []
@@ -314,6 +311,10 @@ const stopRecording = async (payload?: RecordStopPayload): Promise<void> => {
 		recorderChunks = []
 		console.error("上传录音失败:", error)
 		reportRecordingFailure(TOKEN, error, true)
+	} finally {
+		STREAM?.getTracks().forEach(track => track.stop())
+		ACTIVE.onstop = null
+		ACTIVE.onerror = null
 	}
 }
 

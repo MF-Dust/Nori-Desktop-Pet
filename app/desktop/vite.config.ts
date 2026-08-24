@@ -84,6 +84,10 @@ export default defineConfig(async () => {
 					target: `http://127.0.0.1:${HOST_ASSET_PORT}`,
 					changeOrigin: false,
 				},
+				"/media": {
+					target: `http://127.0.0.1:${HOST_ASSET_PORT}`,
+					changeOrigin: false,
+				},
 			},
 			watch: {
 				// 4. 不监听 .NET 构建产物

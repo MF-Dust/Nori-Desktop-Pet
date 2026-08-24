@@ -14,3 +14,7 @@ if (typeof (globalThis as {window?: unknown}).window === "undefined") {
 		configurable: true,
 	})
 }
+
+if (typeof (window as any).Live2DCubismCore === "undefined") {
+	(window as any).Live2DCubismCore = {}
+}

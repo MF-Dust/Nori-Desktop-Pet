@@ -15,7 +15,7 @@ const I18N = computed(() => useLanguages().views.firstRun)
 
 // 首次运行期间仅保存用于展示/日志的快照信息
 const appVersion = ref("0.1.0")
-const selectedModel = ref("arg-nori")
+const selectedModel = ref("")
 const telemetryEnabled = ref(true)
 
 // 步骤名称 (i18n)
@@ -31,7 +31,9 @@ const STEPS_COUNT = WIZARD_STEPS.length
 onMounted(async () => {
 	await RUNTIME.init()
 	appVersion.value = RUNTIME.snapshot.value?.app.appVersion ?? appVersion.value
-	selectedModel.value = RUNTIME.snapshot.value?.models.selected ?? selectedModel.value
+	const SNAPSHOT = RUNTIME.snapshot.value
+	const SELECTED = SNAPSHOT?.models.selected ?? ""
+	selectedModel.value = SNAPSHOT?.models.items.some(item => item.id === SELECTED && item.installed) ? SELECTED : ""
 })
 
 // 向导状态机 (步进、守卫与提交状态全在 services/firstRun/wizard.ts)
@@ -176,7 +178,7 @@ const finish = async () => {
 				<span>{{ stepError || finishError }}</span>
 			</p>
 
-			<AppButton v-if="!isLast" variant="primary" @click="next">
+			<AppButton v-if="!isLast" variant="primary" :disabled="!state.canNext" @click="next">
 				<span class="inline-flex items-center gap-2">
 					<span>{{ I18N.next }}</span>
 					<Icon name="arrow-right" :size="15"/>

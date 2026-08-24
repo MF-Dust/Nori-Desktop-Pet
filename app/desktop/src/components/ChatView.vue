@@ -172,7 +172,17 @@ const approvalVisible = computed({
 		})
 	},
 })
-const approvalSeconds = computed(() => activeApproval.value?.remainingSeconds.value ?? 0)
+const approvalSeconds = computed(() => activeApproval.value?.remainingSeconds ?? 0)
+
+const decideActiveApproval = async (approved: boolean): Promise<void> => {
+	const REQUEST = activeApproval.value?.request
+	if (!REQUEST) return
+	try {
+		await CHAT.decideApproval(REQUEST.requestId, approved)
+	} catch (error) {
+		feedback.error(I18N.value.cancelFailed, error)
+	}
+}
 
 // 历史翻页
 const loadOlderHistory = async () => {
@@ -600,4 +610,28 @@ const toggleVoiceInput = async () => {
 			</div>
 		</template>
 	</section>
+
+	<AppModal
+		v-model:show="approvalVisible"
+		:title="I18N.approvalTitle"
+		:close-label="I18N.deny"
+		:mask-closable="false"
+	>
+		<template v-if="activeApproval">
+			<p class="m-0 text-base font-600 text-nori-teal-bright">
+				{{ activeApproval.request.toolName }}
+			</p>
+			<p v-if="activeApproval.request.description" class="m-0 text-sm text-text-muted">
+				{{ activeApproval.request.description }}
+			</p>
+			<pre class="m-0 max-h-[16rem] overflow-auto rounded-sm bg-white/5 p-2.5 text-sm leading-relaxed whitespace-pre-wrap mono">{{ JSON.stringify(activeApproval.request.arguments ?? {}, null, 2) }}</pre>
+			<p class="m-0 text-xs text-text-muted" role="status" aria-live="polite">
+				{{ I18N.approvalCountdown }}: {{ approvalSeconds }}
+			</p>
+		</template>
+		<template #footer>
+			<AppButton variant="ghost" @click="decideActiveApproval(false)">{{ I18N.deny }}</AppButton>
+			<AppButton variant="primary" @click="decideActiveApproval(true)">{{ I18N.approve }}</AppButton>
+		</template>
+	</AppModal>
 </template>

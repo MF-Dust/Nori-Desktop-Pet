@@ -42,9 +42,10 @@ const gcFailed = ref(false)
 const busy = ref(false)
 const DEBUG_CRASH_TESTS_AVAILABLE = computed(() => RUNTIME.snapshot.value?.app.debugCrashTestsAvailable ?? false)
 
-const FILTERED_LOGS = computed(() =>
-	levelFilter.value === "all" ? logs.value : logs.value.filter((item) => item.level === levelFilter.value)
-)
+const FILTERED_LOGS = computed(() => {
+	const LIST = logs.value ?? []
+	return levelFilter.value === "all" ? LIST : LIST.filter((item) => item.level === levelFilter.value)
+})
 
 // 垃圾回收结果提示: 标签与数值分开拼接, 不在 i18n 值里放占位符
 const GC_TEXT = computed(() => {
@@ -54,7 +55,7 @@ const GC_TEXT = computed(() => {
 
 const refreshLogs = async () => {
 	try {
-		logs.value = await RUNTIME.getRecentLogs()
+		logs.value = (await RUNTIME.getRecentLogs()) ?? []
 	} catch (error) {
 		feedback.error(I18N.value.logs.loadFailed, error)
 	}

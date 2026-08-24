@@ -21,6 +21,11 @@ export default () => {
 					bootstrapTitle: t("components.ui.state.bootstrapTitle"),
 					bootstrapDesc: t("components.ui.state.bootstrapDesc"),
 					bootstrapRetrying: t("components.ui.state.bootstrapRetrying"),
+					telemetryConsentTitle: t("components.ui.state.telemetryConsentTitle"),
+					telemetryConsentDesc: t("components.ui.state.telemetryConsentDesc"),
+					telemetryConsentAllow: t("components.ui.state.telemetryConsentAllow"),
+					telemetryConsentDeny: t("components.ui.state.telemetryConsentDeny"),
+					telemetryConsentSaveFailed: t("components.ui.state.telemetryConsentSaveFailed"),
 				},
 			},
 			firstRun: {
@@ -64,7 +69,15 @@ export default () => {
 				modelSelect: {
 					title: t("components.firstRun.modelSelect.title"),
 					sub: t("components.firstRun.modelSelect.sub"),
+					badge: t("components.firstRun.modelSelect.badge"),
 					hint: t("components.firstRun.modelSelect.hint"),
+					importZip: t("components.firstRun.modelSelect.importZip"),
+					importFolder: t("components.firstRun.modelSelect.importFolder"),
+					importing: t("components.firstRun.modelSelect.importing"),
+					importSuccess: t("components.firstRun.modelSelect.importSuccess"),
+					importFailed: t("components.firstRun.modelSelect.importFailed"),
+					importRequired: t("components.firstRun.modelSelect.importRequired"),
+					notInstalled: t("components.firstRun.modelSelect.notInstalled"),
 				},
 				ready: {
 					title: t("components.firstRun.ready.title"),
@@ -137,6 +150,9 @@ export default () => {
 					about: t("views.main.nav.about"),
 				},
 				home: {
+					modelMissingTitle: t("views.main.home.modelMissingTitle"),
+					modelMissingDesc: t("views.main.home.modelMissingDesc"),
+					importModel: t("views.main.home.importModel"),
 					petStatusOnline: t("views.main.home.petStatusOnline"),
 					petStatusOffline: t("views.main.home.petStatusOffline"),
 					petStatusDescOnline: t("views.main.home.petStatusDescOnline"),
@@ -166,6 +182,7 @@ export default () => {
 							title: t("views.main.home.cards.model.title"),
 							desc: t("views.main.home.cards.model.desc"),
 							current: t("views.main.home.cards.model.current"),
+							missing: t("views.main.home.cards.model.missing"),
 							action: t("views.main.home.cards.model.action"),
 						},
 						ai: {
@@ -346,6 +363,8 @@ export default () => {
 					},
 					import: {
 						button: t("views.main.model.import.button"),
+						zipButton: t("views.main.model.import.zipButton"),
+						folderButton: t("views.main.model.import.folderButton"),
 						importing: t("views.main.model.import.importing"),
 						picking: t("views.main.model.import.picking"),
 						success: t("views.main.model.import.success"),
@@ -701,6 +720,7 @@ export default () => {
 						disconnect: t("views.main.mcp.error.disconnect"),
 						delete: t("views.main.mcp.error.delete"),
 						toolToggle: t("views.main.mcp.error.toolToggle"),
+						argsInvalid: t("views.main.mcp.error.argsInvalid"),
 					},
 				},
 				skills: {

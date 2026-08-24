@@ -24,6 +24,9 @@ const I18N = computed(() => useLanguages().views.main.home)
 const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
 const selectedModelId = computed(() => SNAPSHOT.value?.models.selected ?? "arg-nori")
 const currentModel = computed(() => MODEL_LIST.find(model => model.id === selectedModelId.value) ?? MODEL_LIST[0])
+const modelInstalled = computed(() =>
+	(SNAPSHOT.value?.models.items.some(item => item.id === selectedModelId.value && item.installed) ?? false)
+	&& !SNAPSHOT.value?.models.loadError)
 const aiConfigured = computed(() => SNAPSHOT.value?.ai.configured ?? false)
 const aiProvider = computed(() => SNAPSHOT.value?.ai.provider ?? "")
 const aiModel = computed(() => SNAPSHOT.value?.ai.model ?? "")
@@ -124,8 +127,10 @@ const NAV_CARDS = computed<NavCard[]>(() => [
 		title: I18N.value.cards.model.title,
 		desc: I18N.value.cards.model.desc,
 		action: I18N.value.cards.model.action,
-		status: `${I18N.value.cards.model.current}: ${currentModel.value.name}`,
-		ok: true,
+		status: modelInstalled.value
+			? `${I18N.value.cards.model.current}: ${currentModel.value.name}`
+			: I18N.value.cards.model.missing,
+		ok: modelInstalled.value,
 	},
 	{
 		key: "settings",
@@ -143,6 +148,10 @@ const NAV_CARDS = computed<NavCard[]>(() => [
 
 // 快速动作: 触发打招呼/随机动作
 const triggerQuickMotion = async () => {
+	if (!modelInstalled.value) {
+		emit("navigate", "model")
+		return
+	}
 	try {
 		const PLAYED = await RUNTIME.petPlayMotion()
 		if (!PLAYED) return
@@ -188,6 +197,21 @@ onMounted(() => {
 
 <template>
 	<div class="w-full h-full flex flex-col gap-4 px-0.5 py-0.5 scroll-area">
+		<section
+			v-if="!modelInstalled"
+			class="flex items-center justify-between gap-3 rounded-md border border-warning/35 bg-warning/8 px-4 py-3"
+			role="alert"
+		>
+			<div class="flex min-w-0 items-center gap-2.5">
+				<Icon name="alert" :size="17" class="shrink-0 text-warning"/>
+				<div class="flex min-w-0 flex-col gap-0.5">
+					<span class="text-sm font-600 text-text-primary">{{ I18N.modelMissingTitle }}</span>
+					<span class="text-xs text-text-muted">{{ SNAPSHOT?.models.loadError || I18N.modelMissingDesc }}</span>
+				</div>
+			</div>
+			<AppButton icon="package" @click="emit('navigate', 'model')">{{ I18N.importModel }}</AppButton>
+		</section>
+
 		<!-- 顶部 Hero 角色中枢舞台 -->
 		<section
 			class="relative overflow-hidden flex items-center justify-between gap-5 p-5 rounded-lg
@@ -234,15 +258,15 @@ onMounted(() => {
 			<div class="relative flex items-center gap-2.5 shrink-0">
 				<AppButton
 					:variant="props.petVisible ? 'ghost' : 'primary'"
-					:icon="props.petVisible ? 'close' : 'sparkles'"
+					:icon="modelInstalled ? (props.petVisible ? 'close' : 'sparkles') : 'package'"
 					class="px-4 py-2"
-					@click="emit('toggle-pet')"
+					@click="modelInstalled ? emit('toggle-pet') : emit('navigate', 'model')"
 				>
-					{{ props.petVisible ? I18N.hidePet : I18N.summonPet }}
+					{{ modelInstalled ? (props.petVisible ? I18N.hidePet : I18N.summonPet) : I18N.importModel }}
 				</AppButton>
 
 				<AppButton
-					v-if="props.petVisible"
+					v-if="props.petVisible && modelInstalled"
 					icon="sparkles"
 					:disabled="motionFeedback"
 					class="px-3.5 py-2"

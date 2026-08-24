@@ -8,7 +8,7 @@
  * 这里的规则是: 快照变化时只同步「用户没在编辑」的字段;
  * 字段一旦获得焦点或本地改过 (dirty), 就以本地值为准, 直到显式 commit/reset。
  */
-import {ref, watch} from "vue"
+import {ref, watch, type Ref} from "vue"
 import {RUNTIME} from "../services/runtime"
 import type {UiSnapshot} from "../services/runtime"
 
@@ -18,7 +18,7 @@ import type {UiSnapshot} from "../services/runtime"
  * @param read 从快照读值
  */
 export function useSnapshotField<T>(read: (snapshot: UiSnapshot) => T, fallback: T) {
-	const value = ref<T>(RUNTIME.snapshot.value ? read(RUNTIME.snapshot.value) : fallback) as {value: T}
+	const value = ref(RUNTIME.snapshot.value ? read(RUNTIME.snapshot.value) : fallback) as Ref<T>
 	const dirty = ref(false)
 	const editing = ref(false)
 

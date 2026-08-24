@@ -38,12 +38,12 @@ const importing = ref(false)
 const importStatusText = ref("")
 
 // 本地导入 Live2D 模型 (文件选择与导入均由宿主完成)
-const importLocalModel = async () => {
+const importLocalModel = async (sourceKind: "zip" | "folder") => {
 	if (importing.value) return
 	importing.value = true
 	importStatusText.value = I18N.value.import.picking
 	try {
-		const imported = await RUNTIME.importLocalModel()
+		const imported = await RUNTIME.importLocalModel(sourceKind)
 		if (imported?.length) {
 			importStatusText.value = `${I18N.value.import.success}: ${imported.join(", ")}`
 			await refreshStatus()
@@ -361,9 +361,17 @@ const closeAdjust = () => {
 					icon="package"
 					class="text-nori-teal-bright border-line-strong bg-nori-teal-bright/10 shadow-[0_0_1.4rem_rgba(125,227,255,0.12)] hover:bg-nori-teal-bright/15"
 					:loading="importing"
-					@click="importLocalModel"
+					:disabled="importing"
+					@click="importLocalModel('zip')"
 				>
-					{{ importing ? I18N.import.importing : I18N.import.button }}
+					{{ I18N.import.zipButton }}
+				</AppButton>
+				<AppButton
+					icon="package"
+					:disabled="importing"
+					@click="importLocalModel('folder')"
+				>
+					{{ I18N.import.folderButton }}
 				</AppButton>
 			</template>
 		</AppSectionHeader>

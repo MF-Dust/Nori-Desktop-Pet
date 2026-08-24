@@ -7,13 +7,18 @@ import useLanguage from "./services/i18n"
 import {naiveDarkTheme, naiveThemeOverrides} from "./assets/style/naiveTheme"
 import FeedbackHost from "./components/ui/FeedbackHost.vue"
 import AppButton from "./components/ui/AppButton.vue"
+import AppModal from "./components/ui/AppModal.vue"
 import Icon from "./components/Icon.vue"
 import useLanguages from "./services/i18n/useLanguages.ts"
-import {errorText} from "./services/feedback"
+import {errorText, feedback} from "./services/feedback"
 
 const ROUTER = useRouter()
 const I18N = computed(() => useLanguages().components.ui.state)
 const retryingBootstrap = ref(false)
+const currentLabel = ref("")
+const decidingTelemetry = ref(false)
+const telemetryConsentRequired = computed(() =>
+	currentLabel.value === "main" && RUNTIME.snapshot.value?.telemetry.consent === "unset")
 const bootstrapErrorText = computed(() => {
 	const ERROR = RUNTIME.bootstrapError.value
 	return ERROR ? errorText(ERROR) : ""
@@ -31,10 +36,23 @@ const retryBootstrap = async (): Promise<void> => {
 	}
 }
 
+const decideTelemetry = async (enabled: boolean): Promise<void> => {
+	if (decidingTelemetry.value) return
+	decidingTelemetry.value = true
+	try {
+		await RUNTIME.updateGeneral({telemetryEnabled: enabled})
+	} catch (error) {
+		feedback.error(I18N.value.telemetryConsentSaveFailed, error)
+	} finally {
+		decidingTelemetry.value = false
+	}
+}
+
 onMounted(async () => {
 	// 窗口导航: 按当前窗口 label 跳转到对应页面 (纯浏览器调试时跳过)
 	try {
 		const LABEL = await getCurrentWindowLabel()
+		currentLabel.value = LABEL ?? ""
 		const TARGET = await navigateToOwnWindow(ROUTER)
 		await RUNTIME.writeLog("info", `窗口 ${LABEL} 已挂载, 跳转到 ${TARGET}`)
 	} catch {
@@ -74,6 +92,19 @@ RUNTIME.onLanguageChanged((language) => {
 					<template v-else>
 						<FeedbackHost/>
 						<RouterView/>
+						<AppModal
+							:show="telemetryConsentRequired"
+							:title="I18N.telemetryConsentTitle"
+							:close-label="I18N.telemetryConsentDeny"
+							:mask-closable="false"
+							@update:show="value => { if (!value) void decideTelemetry(false) }"
+						>
+							<p class="m-0 text-base leading-relaxed text-text-body">{{ I18N.telemetryConsentDesc }}</p>
+							<template #footer>
+								<AppButton :disabled="decidingTelemetry" @click="decideTelemetry(false)">{{ I18N.telemetryConsentDeny }}</AppButton>
+								<AppButton variant="primary" :loading="decidingTelemetry" @click="decideTelemetry(true)">{{ I18N.telemetryConsentAllow }}</AppButton>
+							</template>
+						</AppModal>
 					</template>
 				</NNotificationProvider>
 			</NDialogProvider>

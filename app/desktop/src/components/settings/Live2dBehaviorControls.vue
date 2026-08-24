@@ -56,7 +56,14 @@ const idleAnimToggle = makeToggle("idleAnimation", idleAnimation)
 const clickInteractionToggle = makeToggle("clickInteraction", clickInteraction)
 const expressionEnabledToggle = makeToggle("expressionEnabled", expressionEnabled)
 const lipSyncToggle = makeToggle("lipSync", lipSync)
-const shadowToggle = makeToggle("shadow", shadow)
+const shadowToggle = computed({
+	get: () => shadow.value,
+	set: (value: boolean) => {
+		if (!props.modelId) return
+		shadow.value = value
+		void SAVE.saveNow("shadow", () => RUNTIME.setModelDisplay(props.modelId, {shadow: value}))
+	},
+})
 const beatSyncToggle = makeToggle("beatSync", beatSync)
 const aiInteractionToggle = computed({
 	get: () => aiInteraction.value && aiConfigured.value,
@@ -83,14 +90,23 @@ onMounted(async () => {
 		renderScale.value = BEHAVIOR.renderScale
 		maxFps.value = BEHAVIOR.maxFps
 	}
-	if (props.modelId) {
-		try { modelScale.value = (await RUNTIME.modelMeta(props.modelId)).scale } catch (error) { feedback.error(I18N.value.scaleLoadFailed, error) }
-	}
+	if (props.modelId) await loadModelDisplay(props.modelId)
 })
 
+const loadModelDisplay = async (modelId: string): Promise<void> => {
+	try {
+		const META = await RUNTIME.modelMeta(modelId)
+		modelScale.value = META.scale
+		shadow.value = META.shadow
+		renderScale.value = META.renderScale
+		maxFps.value = META.maxFps
+	} catch (error) {
+		feedback.error(I18N.value.scaleLoadFailed, error)
+	}
+}
+
 watch(() => props.modelId, async modelId => {
-	if (!modelId) return
-	try { modelScale.value = (await RUNTIME.modelMeta(modelId)).scale } catch (error) { feedback.error(I18N.value.scaleLoadFailed, error) }
+	if (modelId) await loadModelDisplay(modelId)
 })
 
 const onModelScaleUpdate = (value: number) => {
@@ -99,13 +115,15 @@ const onModelScaleUpdate = (value: number) => {
 }
 
 const onRenderScaleUpdate = (value: number) => {
+	if (!props.modelId) return
 	renderScale.value = value
-	SAVE.save("renderScale", () => RUNTIME.setModelBehavior({renderScale: value}))
+	SAVE.save("renderScale", () => RUNTIME.setModelDisplay(props.modelId, {renderScale: value}))
 }
 
 const onMaxFpsUpdate = (value: number) => {
+	if (!props.modelId) return
 	maxFps.value = value
-	saveBehavior("maxFps", value)
+	void SAVE.saveNow("maxFps", () => RUNTIME.setModelDisplay(props.modelId, {maxFps: value}))
 }
 
 const fpsOptions = computed(() => [

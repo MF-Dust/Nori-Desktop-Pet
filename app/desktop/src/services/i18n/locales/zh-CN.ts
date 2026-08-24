@@ -17,6 +17,11 @@ export default {
 				bootstrapTitle: "运行环境启动失败",
 				bootstrapDesc: "Nori 暂时无法读取应用状态, 请检查宿主环境后重试。",
 				bootstrapRetrying: "正在重试...",
+				telemetryConsentTitle: "是否发送匿名诊断数据？",
+				telemetryConsentDesc: "仅发送脱敏错误、固定操作名和性能指标，不包含聊天、记忆、密钥、录音或请求正文。作出选择前不会连接 Sentry。",
+				telemetryConsentAllow: "允许发送",
+				telemetryConsentDeny: "保持关闭",
+				telemetryConsentSaveFailed: "保存遥测选择失败",
 			},
 		},
 		firstRun: {
@@ -60,7 +65,15 @@ export default {
 			modelSelect: {
 				title: "选择模型",
 				sub: "可后期切换",
-				hint: "在后续主面板中可随时自由更换造型与导入新模型",
+				badge: "角色选择",
+				hint: "首次使用必须从本地导入并选择 ARG Nori 或 Nori 模型",
+				importZip: "导入 ZIP",
+				importFolder: "导入文件夹",
+				importing: "正在验证并导入模型...",
+				importSuccess: "导入成功",
+				importFailed: "导入 Live2D 模型失败",
+				importRequired: "请先导入并选择一个受支持的本地 Live2D 模型",
+				notInstalled: "尚未导入",
 			},
 			ready: {
 				title: "准备就绪",
@@ -133,6 +146,9 @@ export default {
 				about: "声明",
 			},
 			home: {
+				modelMissingTitle: "本地 Live2D 模型不可用",
+				modelMissingDesc: "模型可能被移动、删除或损坏，请重新导入 ARG Nori 或 Nori。",
+				importModel: "导入模型",
 				petStatusOnline: "桌宠已就绪",
 				petStatusOffline: "桌宠待命中",
 				petStatusDescOnline: "Nori 正在桌面上陪伴着你",
@@ -162,6 +178,7 @@ export default {
 						title: "模型换装",
 						desc: "切换不同造型外观与预设表情包",
 						current: "当前造型",
+						missing: "当前模型不可用",
 						action: "进入换装",
 					},
 					ai: {
@@ -342,6 +359,8 @@ export default {
 				},
 				import: {
 					button: "导入本地 Live2D",
+					zipButton: "导入 ZIP",
+					folderButton: "导入文件夹",
 					importing: "正在导入...",
 					picking: "正在选择并导入 Live2D 文件...",
 					success: "导入成功",
@@ -652,7 +671,7 @@ export default {
 					name: "名称",
 					transport: "传输协议",
 					command: "命令",
-					args: "参数 (空格分隔)",
+					args: "参数 (空格分隔，含空格的路径请加引号)",
 					env: "环境变量 (每行 KEY=VALUE)",
 					sseUrl: "SSE 地址",
 					enabled: "启用",
@@ -697,6 +716,7 @@ export default {
 					disconnect: "断开失败",
 					delete: "删除失败",
 					toolToggle: "更新工具失败",
+					argsInvalid: "命令参数引号或分隔格式无效",
 				},
 			},
 			skills: {

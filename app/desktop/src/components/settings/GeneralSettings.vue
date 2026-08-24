@@ -160,7 +160,6 @@ onMounted(() => {
 				<AppSwitchRow :title="TEXT.telemetry.enabled" :desc="TELEMETRY_DESC">
 					<n-switch
 						:value="telemetryEnabled"
-						:disabled="!telemetryAvailable"
 						@update:value="(val: boolean) => onTelemetryChange(val)"
 					/>
 				</AppSwitchRow>

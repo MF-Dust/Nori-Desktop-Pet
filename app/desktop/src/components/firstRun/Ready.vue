@@ -86,7 +86,6 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 			<AppSwitchRow :title="I18N.telemetry.title" :desc="TELEMETRY_DESC">
 				<n-switch
 					:value="telemetryEnabled"
-					:disabled="!telemetryAvailable"
 					@update:value="(value: boolean) => onTelemetryChange(value)"
 				/>
 			</AppSwitchRow>

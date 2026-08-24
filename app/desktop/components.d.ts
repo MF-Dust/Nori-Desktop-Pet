@@ -19,6 +19,7 @@ declare module 'vue' {
     AppChip: typeof import('./src/components/ui/AppChip.vue')['default']
     AppEmpty: typeof import('./src/components/ui/AppEmpty.vue')['default']
     AppField: typeof import('./src/components/ui/AppField.vue')['default']
+    AppModal: typeof import('./src/components/ui/AppModal.vue')['default']
     AppSectionHeader: typeof import('./src/components/ui/AppSectionHeader.vue')['default']
     AppSkeleton: typeof import('./src/components/ui/AppSkeleton.vue')['default']
     AppSwitchRow: typeof import('./src/components/ui/AppSwitchRow.vue')['default']
