@@ -8,25 +8,27 @@ import Icon from "../Icon.vue"
 import type {IconName} from "../../services/icon"
 
 defineProps<{
-	title: string
+	title?: string
 	icon?: IconName | string
 	desc?: string
 }>()
 </script>
 
 <template>
-	<section class="surface-card relative overflow-hidden flex flex-col gap-3 p-4 transition-all duration-250 hover:border-line-strong hover:shadow-[0_0.4rem_2rem_rgba(0,0,0,0.3)]">
+	<section class="surface-card relative overflow-hidden flex flex-col gap-3.5 p-4 transition-all duration-250 hover:border-line-strong hover:shadow-[0_0.4rem_2rem_rgba(0,0,0,0.3)]">
 		<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/20 to-transparent pointer-events-none"/>
 
-		<header v-if="title" class="flex items-center gap-2.5">
-			<span v-if="icon" class="w-7 h-7 rounded-sm flex items-center justify-center bg-nori-teal-bright/8 border border-nori-teal-bright/18 text-nori-teal-bright shrink-0">
-				<Icon :name="icon" :size="15"/>
-			</span>
-			<div class="flex flex-col gap-0.5 min-w-0">
-				<span class="title-sm">{{ title }}</span>
-				<span v-if="desc" class="text-hint">{{ desc }}</span>
-			</div>
-			<div class="ml-auto flex items-center gap-2">
+		<header v-if="title || $slots.header" class="flex items-center gap-2.5 min-h-[2.8rem]">
+			<slot name="header">
+				<span v-if="icon" class="w-7 h-7 rounded-sm flex items-center justify-center bg-nori-teal-bright/8 border border-nori-teal-bright/18 text-nori-teal-bright shrink-0 shadow-[0_0_0.8rem_var(--glow-teal-soft)]">
+					<Icon :name="icon" :size="15"/>
+				</span>
+				<div class="flex flex-col gap-0.5 min-w-0">
+					<span class="title-sm">{{ title }}</span>
+					<span v-if="desc" class="text-hint leading-relaxed">{{ desc }}</span>
+				</div>
+			</slot>
+			<div class="ml-auto flex items-center gap-2 shrink-0">
 				<slot name="actions"/>
 			</div>
 		</header>

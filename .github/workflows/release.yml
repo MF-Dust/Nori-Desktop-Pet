@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: false
 
 # 先跑完所有四道门和跨平台编译/单测, 再创建标签; 最后才创建 GitHub Release。
-# 正式产物只有 Windows framework-dependent ZIP, macOS/Linux 只做 compile + unit。
+# 正式产物为 Windows framework-dependent ZIP、Linux tar.gz 和 macOS ZIP。
 jobs:
   validate:
     name: 预检版本与分发确认
@@ -253,6 +253,13 @@ jobs:
           foreach ($name in $names) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) { throw "缺少 GitHub Secret: $name" }
           }
+      - name: 检查 Linux/macOS Native Sentry 变量
+        if: matrix.name != 'windows'
+        shell: bash
+        run: |
+          for name in NORI_SENTRY_DSN_NATIVE SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT_NATIVE; do
+            if [ -z "${!name}" ]; then echo "缺少 GitHub Secret: $name" >&2; exit 1; fi
+          done
       - uses: actions/setup-node@v4
         if: matrix.name == 'windows'
         with:
@@ -307,6 +314,75 @@ jobs:
             app/desktop/bin/release/THIRD-PARTY-NOTICES.json
             app/desktop/bin/release/THIRD-PARTY-NOTICES.md
             app/desktop/bin/release/RELEASE-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: 发布 Linux/macOS framework-dependent 产物
+        if: matrix.name != 'windows'
+        shell: bash
+        run: |
+          test -f dist/index.html
+          chmod +x publish.sh
+          NORI_SKIP_FRONTEND=1 NORI_KEEP_SYMBOLS=1 ./publish.sh "${{ matrix.rid }}"
+      - name: 上传 Linux/macOS Native Sentry 符号
+        if: matrix.name != 'windows'
+        shell: bash
+        run: |
+          if [ "${{ matrix.name }}" = "linux" ]; then
+            cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Linux-x86_64"
+          else
+            cli="$HOME/.nuget/packages/sentry/6.9.0/tools/sentry-cli-Darwin-arm64"
+          fi
+          test -f "$cli"
+          chmod +x "$cli"
+          "$cli" debug-files upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT_NATIVE" --type portablepdb "bin/publish/${{ matrix.rid }}"
+      - name: 移除 Linux/macOS 发布包中的符号
+        if: matrix.name != 'windows'
+        shell: bash
+        run: find "bin/publish/${{ matrix.rid }}" -name '*.pdb' -delete
+      - name: 打包 Linux/macOS Release 资产
+        if: matrix.name != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rid="${{ matrix.rid }}"
+          output="bin/release"
+          rm -rf "$output"
+          mkdir -p "$output"
+
+          if [ "${{ matrix.name }}" = "linux" ]; then
+            publish="bin/publish/$rid/app"
+            test -x "$publish/Nori.Desktop"
+            test -f "$publish/wwwroot/index.html"
+            test -f "$publish/libLive2DCubismCore.so"
+            rm -f "bin/publish/$rid/nori-${NORI_VERSION}-${rid}.tar.gz"
+            archive="$output/nori-${NORI_VERSION}-${rid}.tar.gz"
+            tar -czf "$archive" -C "$publish" .
+          else
+            app="bin/publish/$rid/Nori.app"
+            test -x "$app/Contents/MacOS/Nori.Desktop"
+            test -f "$app/Contents/Info.plist"
+            test -f "$app/Contents/MacOS/libLive2DCubismCore.dylib"
+            archive="$output/nori-${NORI_VERSION}-${rid}.zip"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
+          fi
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            hash="$(sha256sum "$archive" | awk '{print $1}')"
+          else
+            hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          fi
+          printf '%s  %s\\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
+          echo "已生成 $archive"
+      - name: 上传待发布 Linux/macOS 产物
+        if: matrix.name != 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-${{ matrix.name }}-release-${{ needs.validate.outputs.version }}
+          path: |
+            app/desktop/bin/release/*.zip
+            app/desktop/bin/release/*.tar.gz
+            app/desktop/bin/release/*.sha256
           if-no-files-found: error
           retention-days: 2
 
@@ -380,9 +456,10 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: nori-windows-release-${{ needs.validate.outputs.version }}
+          pattern: "nori-*-release-${{ needs.validate.outputs.version }}"
           path: release-artifacts
-      - name: 发布 Windows ZIP 与审计元数据
+          merge-multiple: true
+      - name: 发布 Windows、Linux、macOS 产物与审计元数据
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -390,18 +467,21 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip"
-          test -f "release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256"
-          test -f release-artifacts/SBOM.cdx.json
-          test -f release-artifacts/THIRD-PARTY-NOTICES.json
           assets=(
             release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip
             release-artifacts/nori-${VERSION}-win-x64-framework-dependent.zip.sha256
+            release-artifacts/nori-${VERSION}-linux-x64.tar.gz
+            release-artifacts/nori-${VERSION}-linux-x64.tar.gz.sha256
+            release-artifacts/nori-${VERSION}-osx-arm64.zip
+            release-artifacts/nori-${VERSION}-osx-arm64.zip.sha256
             release-artifacts/SBOM.cdx.json
             release-artifacts/THIRD-PARTY-NOTICES.json
             release-artifacts/THIRD-PARTY-NOTICES.md
             release-artifacts/RELEASE-MANIFEST.json
           )
+          for asset in "${assets[@]}"; do
+            test -f "$asset"
+          done
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" "${assets[@]}" --repo "$REPO" --clobber
             gh release edit "$TAG" --repo "$REPO" --title "$TAG"
