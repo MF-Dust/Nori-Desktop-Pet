@@ -220,18 +220,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown))
 			</div>
 
 			<!-- 内容滚动区 -->
-			<div class="flex-1 min-h-0 flex flex-col scroll-area p-5">
-				<Transition name="tab-fade" mode="out-in">
-					<AiSettings v-if="currentTab === 'ai'"/>
-					<MemorySettings v-else-if="currentTab === 'memory'"/>
-					<VoiceSettings v-else-if="currentTab === 'voice'"/>
-					<ProactiveSettings v-else-if="currentTab === 'proactive'"/>
-					<SkillsSettings v-else-if="currentTab === 'skills'"/>
-					<McpSettings v-else-if="currentTab === 'mcp'"/>
-					<GeneralSettings v-else-if="currentTab === 'general'"/>
-					<DebugSettings v-else-if="currentTab === 'debug'"/>
-					<AboutSettings v-else/>
-				</Transition>
+			<div
+				class="flex-1 min-h-0 flex flex-col scroll-area p-5"
+				:data-settings-panel="currentTab"
+			>
+				<AiSettings v-if="currentTab === 'ai'"/>
+				<MemorySettings v-else-if="currentTab === 'memory'"/>
+				<VoiceSettings v-else-if="currentTab === 'voice'"/>
+				<ProactiveSettings v-else-if="currentTab === 'proactive'"/>
+				<SkillsSettings v-else-if="currentTab === 'skills'"/>
+				<McpSettings v-else-if="currentTab === 'mcp'"/>
+				<GeneralSettings v-else-if="currentTab === 'general'"/>
+				<DebugSettings v-else-if="currentTab === 'debug'"/>
+				<AboutSettings v-else/>
 			</div>
 		</div>
 	</div>

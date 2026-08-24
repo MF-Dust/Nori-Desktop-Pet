@@ -290,21 +290,6 @@ button, input, textarea, select {
 }
 
 // ---------- Vue 过渡类 (无法用原子类表达, 全局保留) ----------
-.tab-fade-enter-active,
-.tab-fade-leave-active {
-	transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.tab-fade-enter-from {
-	opacity: 0;
-	transform: translateY(0.6rem);
-}
-
-.tab-fade-leave-to {
-	opacity: 0;
-	transform: translateY(-0.6rem);
-}
-
 .page-next-enter-active,
 .page-next-leave-active,
 .page-prev-enter-active,

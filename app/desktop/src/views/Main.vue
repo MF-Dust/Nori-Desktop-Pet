@@ -37,7 +37,7 @@ const PANEL_ERROR = () => h("div", {class: "flex flex-1 items-center justify-cen
 const PANEL_OPTIONS = {
 	loadingComponent: PANEL_LOADING,
 	errorComponent: PANEL_ERROR,
-	delay: 120,
+	delay: 0,
 	timeout: 15_000,
 } as const
 
@@ -218,31 +218,32 @@ onBeforeUnmount(() => {
 			</aside>
 
 			<!-- 主工作区 -->
-			<main class="flex-1 min-h-0 flex flex-col items-stretch overflow-hidden px-5 py-4 relative">
+			<main
+				class="flex-1 min-h-0 flex flex-col items-stretch overflow-hidden px-5 py-4 relative"
+				:data-main-panel="activeNav"
+			>
 				<p
 					v-if="panelError"
 					class="shrink-0 mb-2.5 px-3 py-1.5 rounded-sm text-sm text-danger-text bg-danger/12 border border-danger/28"
 					role="alert"
 				>{{ panelError }}</p>
 
-				<Transition name="tab-fade" mode="out-in">
-					<!-- 主页看板 -->
-					<HomePanel
-						v-if="activeNav === 'home'"
-						:pet-visible="petVisible"
-						@toggle-pet="togglePet"
-						@navigate="navigate"
-					/>
+				<!-- 主页看板 -->
+				<HomePanel
+					v-if="activeNav === 'home'"
+					:pet-visible="petVisible"
+					@toggle-pet="togglePet"
+					@navigate="navigate"
+				/>
 
-					<!-- 对话 -->
-					<ChatView v-else-if="activeNav === 'talk'" @go-settings="navigate('settings')"/>
+				<!-- 对话 -->
+				<ChatView v-else-if="activeNav === 'talk'" @go-settings="navigate('settings')"/>
 
-					<!-- 模型管理 -->
-					<ModelManagement v-else-if="activeNav === 'model'"/>
+				<!-- 模型管理 -->
+				<ModelManagement v-else-if="activeNav === 'model'"/>
 
-					<!-- 全功能设置面板 (含关于) -->
-					<SettingsPanel v-else :initial-tab="settingsTarget"/>
-				</Transition>
+				<!-- 全功能设置面板 (含关于) -->
+				<SettingsPanel v-else :initial-tab="settingsTarget"/>
 			</main>
 		</div>
 
