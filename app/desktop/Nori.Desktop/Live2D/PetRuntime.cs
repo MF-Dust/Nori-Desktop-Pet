@@ -114,6 +114,7 @@ public sealed class PetRuntime
 
 	public event Action? ModelChanged;
 	public event Action? ModelLoadRequested;
+	public event Action? ModelLoadFailed;
 	public event Action? FrameRendered;
 	public event Action<PetInteractionTrigger>? InteractionTriggered;
 
@@ -148,6 +149,7 @@ public sealed class PetRuntime
 
 	public LAppModel? CurrentModel => _currentModel;
 	public string CurrentModelId => _currentModelId;
+	public string? LastModelLoadError { get; private set; }
 	public IReadOnlyList<MotionGroupInfo> MotionGroups => _motionGroups;
 	public IReadOnlyList<string> Expressions => _expressionStore.AllGroupNames().Count > 0
 		? _expressionStore.AllGroupNames()
@@ -395,13 +397,20 @@ public sealed class PetRuntime
 	/// </summary>
 	public void RequestModelLoad(string modelId)
 	{
-		if (string.IsNullOrWhiteSpace(modelId)) return;
-		string trimmed = modelId.Trim();
+		string? normalized = SupportedModelIds.Normalize(modelId);
+		if (normalized is null)
+		{
+			ReportModelLoadFailure(modelId?.Trim() ?? "", _currentModel is null ? null : _currentModelId);
+			return;
+		}
+		string trimmed = normalized;
 
 		lock (_prepareGate)
 		{
 			_modelGeneration++;
 			long generation = _modelGeneration;
+			string? fallbackModelId = _currentModel is null ? null : _currentModelId;
+			LastModelLoadError = null;
 			_prepareCts?.Cancel();
 			_prepareCts?.Dispose();
 			CancellationTokenSource cts = new();
@@ -420,7 +429,7 @@ public sealed class PetRuntime
 				}
 				catch (Exception exception)
 				{
-					// 准备失败不带入渲染线程, 保留当前工作模型继续渲染
+					// 准备失败不带入渲染线程, 保留当前工作模型并回滚持久化选择。
 					try
 					{
 						_services.Logger.Write(LogSource.Backend, "error", $"后台准备 Live2D 模型失败 [{trimmed}]: {exception.Message}");
@@ -429,6 +438,7 @@ public sealed class PetRuntime
 					{
 						// 日志失败保持静默
 					}
+					ReportModelLoadFailure(trimmed, fallbackModelId);
 					return null;
 				}
 			}, CancellationToken.None);
@@ -463,56 +473,96 @@ public sealed class PetRuntime
 			return;
 		}
 
-		if (prepared is null || prepared.Generation != generation) return;
+		if (prepared is null || prepared.Generation != generation
+			|| prepared.Generation != Volatile.Read(ref _modelGeneration)) return;
 		ApplyPreparedOnGlThread(prepared);
 	}
 
+	private void ReportModelLoadFailure(string requestedModelId, string? fallbackModelId)
+	{
+		if (!string.IsNullOrWhiteSpace(fallbackModelId)
+			&& !string.Equals(requestedModelId, fallbackModelId, StringComparison.Ordinal))
+		{
+			try { _services.Config.Set(ConfigStore.KeySelectedModel, new ConfigValue.Text(fallbackModelId)); }
+			catch { /* 退出期间数据库可能已释放, 不掩盖模型加载失败。 */ }
+		}
+		LastModelLoadError = $"模型 {requestedModelId} 加载失败, 请重新导入";
+		try { ModelLoadFailed?.Invoke(); }
+		catch (Exception exception) { WriteCubismLog($"模型失败事件处理异常: {exception.Message}"); }
+	}
+
 	/// <summary>
-	/// GL 线程专属: 用已准备的元数据执行 SDK 资源交换、renderer 设置与表情提交
+	/// GL 线程专属: 先完整创建候选模型, 成功后再释放旧模型, 保证切换失败可回滚。
 	/// </summary>
 	private void ApplyPreparedOnGlThread(PreparedModel prepared)
 	{
-		if (_app is null || _gl is null || !Directory.Exists(prepared.ModelDir)) return;
+		if (_app is null || _gl is null) return;
+		if (!Directory.Exists(prepared.ModelDir))
+		{
+			ReportModelLoadFailure(prepared.ModelId, _currentModel is null ? null : _currentModelId);
+			return;
+		}
 
-		bool firstLoadOfModel = !string.Equals(prepared.ModelId, _currentModelId, StringComparison.Ordinal);
+		LAppModel? previousModel = _currentModel;
+		string previousModelId = _currentModelId;
+		string previousModelDir = _currentModelDir;
+		List<MotionGroupInfo> previousMotionGroups = [.. _motionGroups];
+		bool firstLoadOfModel = previousModel is null
+			|| !string.Equals(prepared.ModelId, previousModelId, StringComparison.Ordinal);
+		LAppModel? candidate = null;
 
 		try
 		{
-			// 模型归 LAppLive2DManager 所有, 只能由它释放。
-			// 这里如果先 _currentModel.Dispose() 再 ReleaseAllModel(), 同一个 CubismMoc 会被
-			// DeallocateAligned 两次, 直接堆损坏 (0xC0000374)。
-			_currentModel = null;
-			_app.Live2dManager.ReleaseAllModel();
-
-			_currentModel = _app.Live2dManager.LoadModel(prepared.ModelDir, prepared.Model3FileName);
+			// LoadModel 仅在构造完全成功后才加入 manager; 旧模型在此期间继续存活。
+			candidate = _app.Live2dManager.LoadModel(prepared.ModelDir, prepared.Model3FileName);
+			_currentModel = candidate;
 			_currentModelId = prepared.ModelId;
 			_currentModelDir = prepared.ModelDir;
-			lock (_interactionGate) _viewportMapping = null;
 
-			// 自定义值更新挂钩
-			_currentModel.CustomValueUpdate = true;
-			_currentModel.ValueUpdate = OnModelValueUpdate;
+			candidate.CustomValueUpdate = true;
+			candidate.ValueUpdate = OnModelValueUpdate;
 
 			// UseHighPrecisionMask 必须保持关闭: 打开后 SDK 会对每一个被蒙版裁剪的部件
 			// 单独把整张蒙版缓冲清空并重画一遍, 质量策略只调整缓冲尺寸与过滤等级。
 			_appliedMaskBufferSize = 0;
 			ApplyRenderQualityOnGlThread();
-
-			// 提交预解析的动作组与表情定义 (同步, 无 I/O)
+			_expressionBehavior.ApplyPrepared(prepared, candidate.Model);
 			_motionGroups = [.. prepared.MotionGroups];
-			_expressionBehavior.ApplyPrepared(prepared, _currentModel.Model);
-
-			// 显示参数随模型首次载入重新读取配置
 			if (firstLoadOfModel) LoadConfigs();
 
-			_services.Logger.Write(LogSource.Backend, "info", $"成功加载 Live2D 模型: {prepared.ModelId}");
-			ModelChanged?.Invoke();
+			// 候选模型已经可用后才释放旧对象; 旧对象清理异常不能反向销毁新模型。
+			if (previousModel is not null)
+			{
+				try { _app.Live2dManager.RemoveModel(previousModel); }
+				catch (Exception exception) { WriteCubismLog($"释放旧模型失败: {exception.Message}"); }
+			}
+			lock (_interactionGate) _viewportMapping = null;
+			LastModelLoadError = null;
 		}
 		catch (Exception exception)
 		{
-			// 加载失败时不清空工作现场之外的状态; 下一帧继续用旧数据渲染
+			if (candidate is not null)
+			{
+				try { _app.Live2dManager.RemoveModel(candidate); }
+				catch { /* 保留原始加载异常。 */ }
+			}
+			_currentModel = previousModel;
+			_currentModelId = previousModelId;
+			_currentModelDir = previousModelDir;
+			_motionGroups = previousMotionGroups;
+			_appliedMaskBufferSize = 0;
+			if (previousModel is not null)
+			{
+				try { ApplyRenderQualityOnGlThread(); } catch { }
+			}
 			_services.Logger.Write(LogSource.Backend, "error", $"加载 Live2D 模型失败 [{prepared.ModelId}]: {exception.Message}");
+			ReportModelLoadFailure(prepared.ModelId, previousModel is null ? null : previousModelId);
+			return;
 		}
+
+		try { _services.Logger.Write(LogSource.Backend, "info", $"成功加载 Live2D 模型: {prepared.ModelId}"); } catch { }
+		try { ModelChanged?.Invoke(); }
+		catch (Exception exception) { WriteCubismLog($"模型变更事件处理异常: {exception.Message}"); }
 	}
 
 	/// <summary>在 GL 上下文中应用质量策略到 Cubism renderer。</summary>

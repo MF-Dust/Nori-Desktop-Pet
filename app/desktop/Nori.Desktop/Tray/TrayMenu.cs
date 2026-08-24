@@ -1,7 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform;
+using Nori.Core.Configuration;
+using Nori.Core.Live2D;
 using Nori.Core.Logging;
+using Nori.Core.Resources;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Windows;
 
@@ -34,6 +37,12 @@ public static class TrayMenu
 		togglePet.Click += (_, _) =>
 		{
 			services.Logger.Write(LogSource.Backend, "info", "托盘菜单：切换桌宠显示");
+			if (!services.Windows.IsWindowVisible(WindowLabels.Pet) && !CanShowPet(services))
+			{
+				services.Logger.Write(LogSource.Backend, "warn", "当前 Live2D 模型不可用, 已打开主界面等待重新导入");
+				ShowMain(services);
+				return;
+			}
 			services.Windows.TogglePet();
 		};
 
@@ -65,6 +74,20 @@ public static class TrayMenu
 		}
 		services.Logger.Write(LogSource.Backend, "info", "托盘菜单初始化完成");
 		return true;
+	}
+
+	private static bool CanShowPet(AppServices services)
+	{
+		try
+		{
+			string? modelId = SupportedModelIds.Normalize(
+				services.Config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+			return modelId is not null && services.Resources.IsInstalled(ResourceType.Live2D, modelId);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ResourceException)
+		{
+			return false;
+		}
 	}
 
 	/// <summary>

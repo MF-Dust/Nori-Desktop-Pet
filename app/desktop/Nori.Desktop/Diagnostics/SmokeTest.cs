@@ -59,6 +59,12 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 		try
 		{
 			string fullProfile = Path.GetFullPath(profile);
+			if (Directory.Exists(fullProfile)
+				&& (File.GetAttributes(fullProfile) & FileAttributes.ReparsePoint) != 0)
+			{
+				error = "--profile 不能是符号链接、junction 或 reparse point";
+				return false;
+			}
 			if (Path.GetPathRoot(fullProfile)?.Equals(fullProfile, StringComparison.OrdinalIgnoreCase) == true)
 			{
 				error = "--profile 不能指向文件系统根目录";
@@ -147,10 +153,7 @@ public static class SmokeTestRuntime
 	{
 		await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
 		Dispatcher.UIThread.Post(() => lifetime.Shutdown(0));
-		// WebView 的退出清理可能在无头/CI 桌面环境卡住; 冒烟 profile 是一次性隔离目录,
-		// 因此再给一个硬上限, 确保不会留下发布进程。
-		await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
-		Environment.Exit(0);
+		// 强制终止由外部 smoke-published.ps1 watchdog 负责；进程内必须让正常退出清理跑完。
 	}
 }
 

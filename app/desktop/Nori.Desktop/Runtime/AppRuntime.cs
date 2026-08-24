@@ -89,6 +89,9 @@ public sealed class AppRuntime : IAsyncDisposable
 	public int SnapshotVersion => Volatile.Read(ref _snapshotVersion);
 
 	private int _snapshotVersion = 1;
+	private readonly Lock _snapshotCacheGate = new();
+	private object? _cachedSnapshot;
+	private int _cachedSnapshotVersion;
 
 	private int _initStartPending;
 
@@ -191,6 +194,9 @@ public sealed class AppRuntime : IAsyncDisposable
 			Services.PetRuntime.InteractionTriggered += OnPetInteractionTriggered;
 			Services.PetRuntime.ModelLoadRequested += CancelPetInteractionRequest;
 			Services.PetRuntime.ModelLoadRequested += CancelPetInteractionPresentation;
+			Services.PetRuntime.ModelLoadRequested += OnPetModelStateChanged;
+			Services.PetRuntime.ModelChanged += OnPetModelStateChanged;
+			Services.PetRuntime.ModelLoadFailed += OnPetModelStateChanged;
 			_petInteractionSubscribed = true;
 		}
 		Emotion.ExpressionRequested += expression =>
@@ -479,6 +485,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		CancelPetInteractionSpeech();
 		Dispatcher.UIThread.Post(Services.Windows.ClearPetSpeech);
 	}
+
+	private void OnPetModelStateChanged() => InvalidateSnapshot("models", "pet");
 
 	private void CancelPetInteractionSpeech()
 	{
@@ -842,8 +850,31 @@ public sealed class AppRuntime : IAsyncDisposable
 		BroadcastEvent("nori:state-changed", new {version = SnapshotVersion, topics});
 	}
 
-	/// <summary>构建脱敏 UI 状态快照</summary>
+	/// <summary>构建脱敏 UI 状态快照; 同一版本直接复用不可变 DTO。</summary>
 	public object BuildSnapshot(IBridgeSource source)
+	{
+		_ = source;
+		while (true)
+		{
+			int version = SnapshotVersion;
+			lock (_snapshotCacheGate)
+			{
+				if (_cachedSnapshotVersion == version && _cachedSnapshot is not null) return _cachedSnapshot;
+			}
+
+			object snapshot = BuildSnapshotCore(version);
+			if (SnapshotVersion != version) continue;
+			lock (_snapshotCacheGate)
+			{
+				if (SnapshotVersion != version) continue;
+				_cachedSnapshot = snapshot;
+				_cachedSnapshotVersion = version;
+				return snapshot;
+			}
+		}
+	}
+
+	private object BuildSnapshotCore(int snapshotVersion)
 	{
 		ConfigStore config = Services.Config;
 		string provider = config.GetStringOr("llm_provider", "openai");
@@ -856,7 +887,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		{
 			id,
 			installed = IsModelInstalled(id),
-		});
+		}).ToArray();
 
 		string selectedModel = config.GetStringOr("selected_model", ConfigStore.DefaultModel);
 		float modelOpacity = ReadFloat(config, $"l2d_opacity_{selectedModel}") ?? ReadFloat(config, "l2d_opacity") ?? 1.0f;
@@ -873,7 +904,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
 		return new
 		{
-			version = SnapshotVersion,
+			version = snapshotVersion,
 			app = new
 			{
 				appVersion = config.GetStringOr("app_version", "0.1.0"),
@@ -911,6 +942,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			{
 				selected = selectedModel,
 				items = models,
+				loadError = Services.PetRuntime?.LastModelLoadError,
 				scale = ReadFloat(config, $"l2d_scale_{selectedModel}") ?? ReadFloat(config, "l2d_scale") ?? 1.0,
 				expressions = ModelExpressions(selectedModel),
 			},
@@ -1012,21 +1044,21 @@ public sealed class AppRuntime : IAsyncDisposable
 				reminders = Proactive.ListReminders().Select(item => new
 				{
 					id = item.Id, content = item.Content, triggerTime = item.TriggerAt,
-				}),
+				}).ToArray(),
 			},
 			skills = Skills.GetInstalled().Select(skill => new
 			{
 				id = skill.Id, name = skill.Name, description = skill.Description, author = skill.Author,
-				version = skill.Version, icon = skill.Icon, tags = skill.Tags, category = skill.Category,
+				version = skill.Version, icon = skill.Icon, tags = skill.Tags.ToArray(), category = skill.Category,
 				instructions = "", // 详情按需 skills_export 获取, 避免快照膨胀
 				enabled = skill.Enabled, source = skill.Source,
-			}),
+			}).ToArray(),
 			enabledSkillsCount = Skills.GetEnabled().Count,
 			tools = Tools.List().Select(tool => new
 			{
 				name = tool.Name, description = tool.Description,
 				permissionLevel = tool.PermissionLevel, category = tool.Category, enabled = tool.Enabled,
-			}),
+			}).ToArray(),
 			mcpServersCount = McpServerCount(),
 			emotion = new {type = Emotion.CurrentType},
 		};
@@ -1042,7 +1074,7 @@ public sealed class AppRuntime : IAsyncDisposable
 	}
 
 	/// <summary>已知模型目录 (展示名由前端静态目录映射)</summary>
-	private static IReadOnlyList<string> ModelCatalogIds() => KnownModelIds.All;
+	private static IReadOnlyList<string> ModelCatalogIds() => SupportedModelIds.All;
 
 	private IReadOnlyList<string> ModelExpressions(string modelId)
 	{
@@ -1073,7 +1105,7 @@ public sealed class AppRuntime : IAsyncDisposable
 	{
 		try
 		{
-			return Services.Mcp.GetServersAsync().GetAwaiter().GetResult().Count;
+			return Services.Mcp.GetServerConfigs().Count;
 		}
 		catch
 		{
@@ -1162,6 +1194,9 @@ public sealed class AppRuntime : IAsyncDisposable
 			Services.PetRuntime.InteractionTriggered -= OnPetInteractionTriggered;
 			Services.PetRuntime.ModelLoadRequested -= CancelPetInteractionRequest;
 			Services.PetRuntime.ModelLoadRequested -= CancelPetInteractionPresentation;
+			Services.PetRuntime.ModelLoadRequested -= OnPetModelStateChanged;
+			Services.PetRuntime.ModelChanged -= OnPetModelStateChanged;
+			Services.PetRuntime.ModelLoadFailed -= OnPetModelStateChanged;
 			_petInteractionSubscribed = false;
 		}
 		CancelPetInteractionRequest();

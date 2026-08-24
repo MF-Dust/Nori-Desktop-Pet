@@ -11,6 +11,16 @@ namespace Nori.Desktop;
 /// </summary>
 internal static class Program
 {
+	private static int _activationPending;
+
+	internal static bool ConsumePendingActivation() => Interlocked.Exchange(ref _activationPending, 0) == 1;
+
+	private static void ActivateFirstInstance()
+	{
+		if (Application.Current is App app) app.ActivateMainWindow();
+		else Interlocked.Exchange(ref _activationPending, 1);
+	}
+
 	[STAThread]
 	public static void Main(string[] args)
 	{
@@ -38,11 +48,11 @@ internal static class Program
 
 		// 在 Avalonia 启动前就挂上域级兜底, 尽早覆盖启动期异常 (参考 ClassIsland Program.cs)
 		CrashReporter.RegisterDomainHandler();
-		using SingleInstanceGuard? singleInstance = SingleInstanceGuard.TryAcquire(() =>
-		{
-			if (Application.Current is App app) app.ActivateMainWindow();
-		});
-		if (OperatingSystem.IsWindows() && singleInstance is null) return;
+		// 冒烟使用隔离 profile，不能被用户正在运行的正式实例互斥量拦截。
+		using SingleInstanceGuard? singleInstance = smokeTest is null
+			? SingleInstanceGuard.TryAcquire(ActivateFirstInstance)
+			: null;
+		if (smokeTest is null && OperatingSystem.IsWindows() && singleInstance is null) return;
 		BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 	}
 

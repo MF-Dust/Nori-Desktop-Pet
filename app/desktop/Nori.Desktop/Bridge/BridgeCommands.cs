@@ -72,14 +72,14 @@ public sealed class BridgeCommands
 		{
 		// ---- 应用 ----
 		// invoke("exit_app")
-		"exit_app" => RequireMain(source, () =>
+		"exit_app" => RequireWebViewSource(source, () =>
 		{
 			_services.Windows.Shutdown();
 			return (object?)null;
 		}),
 
 		// invoke("write_log", {level: "info", message: "xxx"})
-		"write_log" => Run(() => _services.Logger.Write(LogSource.Frontend, Str(args, "level"), Str(args, "message"))),
+		"write_log" => WriteFrontendLog(args),
 
 		// invoke("get_system_language")
 		"get_system_language" => ConfigStore.SystemLanguage(),
@@ -87,13 +87,6 @@ public sealed class BridgeCommands
 		/// invoke("complete_first_run", {modelId: "arg-nori", telemetryEnabled: true})
 		"complete_first_run" => await CompleteFirstRunAsync(source, args, cancellationToken),
 
-		// invoke("first_run_select_model", {modelId: "arg-nori"})
-		"first_run_select_model" => RequireLabel(source, WindowLabels.FirstRun, () =>
-			Run(() =>
-			{
-				UpdateConfigDirect(ConfigStore.KeySelectedModel, Str(args, "modelId"));
-				Runtime.InvalidateSnapshot("models");
-			})),
 
 		// invoke("init_ready") → {initStartPending}
 		// init 页面订阅完 nori:init-start 后调用; 返回 true 说明广播已先于订阅发生, 页面应直接跑初始化
@@ -221,7 +214,7 @@ public sealed class BridgeCommands
 		"model_select" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
 			Run(() =>
 			{
-				string modelId = Str(args, "modelId");
+				string modelId = RequireKnownInstalledModel(Str(args, "modelId"));
 				UpdateConfigDirect(ConfigStore.KeySelectedModel, modelId);
 				ApplyPetConfigAndBroadcast(ConfigStore.KeySelectedModel, modelId);
 				_services.Logger.Write(LogSource.Backend, "info", $"启用模型: {modelId}");
@@ -234,13 +227,14 @@ public sealed class BridgeCommands
 		// invoke("model_get_meta", {modelId: "arg-nori"})
 		"model_get_meta" => RequireMain(source, () =>
 		{
-			string modelId = Str(args, "modelId");
+			string modelId = RequireKnownInstalledModel(Str(args, "modelId"));
 			string dir = _services.Resources.ResourceDir(ResourceType.Live2D, modelId);
 			Nori.Core.Live2D.Model3MetaInfo meta = Nori.Core.Live2D.Model3Meta.Read(dir);
 			float? scale = ReadFloatConfig($"l2d_scale_{modelId}") ?? ReadFloatConfig("l2d_scale") ?? 1f;
 			float? opacity = ReadFloatConfig($"l2d_opacity_{modelId}") ?? ReadFloatConfig("l2d_opacity") ?? 1f;
 			float? renderScale = ReadFloatConfig($"l2d_render_scale_{modelId}") ?? ReadFloatConfig("l2d_render_scale") ?? 2f;
 			string qualityMode = _services.Config.GetStringOr($"l2d_quality_mode_{modelId}", _services.Config.GetStringOr("l2d_quality_mode", "adaptive"));
+			int maxFps = (int)(ReadFloatConfig($"l2d_max_fps_{modelId}") ?? ReadFloatConfig("l2d_max_fps") ?? 0);
 			bool shadow = _services.Config.GetBoolOr($"l2d_shadow_{modelId}", _services.Config.GetBoolOr("l2d_shadow", true));
 			return new
 			{
@@ -249,6 +243,7 @@ public sealed class BridgeCommands
 				opacity,
 				renderScale,
 				qualityMode,
+				maxFps,
 				shadow,
 				expressions = meta.Expressions,
 				motions = meta.Motions.Select(group => new {group = group.Group, names = group.Names}),
@@ -402,9 +397,9 @@ public sealed class BridgeCommands
 		// invoke("mcp_test_server", {id, name, transport, command, args, env, url, enabled, autoConnect})
 		"mcp_test_server" => await McpTestServerAsync(source, args),
 		// invoke("mcp_call_tool", {serverId, toolName, arguments, sessionId?})
-		"mcp_call_tool" => await McpCallToolAsync(source, args),
+		"mcp_call_tool" => await McpCallToolAsync(source, args, cancellationToken),
 		// invoke("mcp_import_url", {url})
-		"mcp_import_url" => await McpImportUrlAsync(source, args),
+		"mcp_import_url" => await McpImportUrlAsync(source, args, cancellationToken),
 
 		// invoke("tools_execute_manual", {name, arguments}) — 设置页手动测试, 仅放行 safe 工具
 		"tools_execute_manual" => await ToolsExecuteManualAsync(source, args),
@@ -477,9 +472,9 @@ public sealed class BridgeCommands
 		"pet_get_state" => RequireMain(source, GetPetState),
 
 		// ---- 窗口 ----
-		"window_show" => await OnUi(() => Run(() => _services.Windows.Show(Str(args, "label")))),
-		"window_hide" => await OnUi(() => Run(() => _services.Windows.Hide(Str(args, "label")))),
-		"window_close" => await OnUi(() => Run(() => _services.Windows.Close(OptionalLabel(args) ?? source.Label))),
+		"window_show" => await OnUi(() => ShowWindow(source, args)),
+		"window_hide" => await OnUi(() => HideWindow(source, args)),
+		"window_close" => await OnUi(() => CloseWindow(source, args)),
 		"window_focus" => await OnUi(() => Run(() => Target(source, args).Activate())),
 		"window_is_visible" => await OnUi(() => (object?)Target(source, args).IsVisible),
 		"window_scale_factor" => await OnUi(() => (object?)Target(source, args).RenderScaling),
@@ -514,6 +509,13 @@ public sealed class BridgeCommands
 		};
 		cancellationToken.ThrowIfCancellationRequested();
 		return result;
+	}
+
+	private static object? RequireWebViewSource(IBridgeSource source, Func<object?> factory)
+	{
+		if (source.Label is not (WindowLabels.FirstRun or WindowLabels.Init or WindowLabels.Main))
+			throw new InvalidOperationException("命令来源窗口无权执行此操作");
+		return factory();
 	}
 
 	/// <summary>main 窗口校验 (无返回值场景)</summary>
@@ -820,7 +822,7 @@ public sealed class BridgeCommands
 		JsonElement args,
 		CancellationToken cancellationToken)
 	{
-		RequireMainVoid(source);
+		RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () => (object?)true);
 		return await ImportLocalResourceAsync(source, args, cancellationToken);
 	}
 
@@ -850,9 +852,7 @@ public sealed class BridgeCommands
 	private async Task<object?> ModelSetInteractionsAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		string modelId = Str(args, "modelId").Trim();
-		if (modelId.Length == 0) throw new InvalidOperationException("模型 ID 不能为空");
-		if (!_services.Resources.IsInstalled(ResourceType.Live2D, modelId)) throw new InvalidOperationException("模型尚未安装");
+		string modelId = RequireKnownInstalledModel(Str(args, "modelId"));
 		if (!args.TryGetProperty("interactions", out JsonElement interactionsElement)
 			|| interactionsElement.ValueKind != JsonValueKind.Object)
 		{
@@ -886,34 +886,74 @@ public sealed class BridgeCommands
 	private async Task<object?> ModelSetDisplayAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireMainVoid(source);
-		string modelId = Str(args, "modelId");
-		if (args.TryGetProperty("scale", out JsonElement scaleElem) && scaleElem.ValueKind == JsonValueKind.Number)
+		string modelId = RequireKnownInstalledModel(Str(args, "modelId"));
+		if (args.TryGetProperty("scale", out JsonElement scaleElem))
 		{
-			ApplyDisplayKey($"l2d_scale_{modelId}", scaleElem.GetRawText());
+			ApplyDisplayKey($"l2d_scale_{modelId}", ReadFiniteNumber(scaleElem, "模型缩放", 0.1f, 2.0f));
 		}
-		if (args.TryGetProperty("opacity", out JsonElement opacityElem) && opacityElem.ValueKind == JsonValueKind.Number)
+		if (args.TryGetProperty("opacity", out JsonElement opacityElem))
 		{
-			ApplyDisplayKey($"l2d_opacity_{modelId}", opacityElem.GetRawText());
+			ApplyDisplayKey($"l2d_opacity_{modelId}", ReadFiniteNumber(opacityElem, "模型透明度", 0.0f, 1.0f));
 		}
-		if (args.TryGetProperty("renderScale", out JsonElement renderScaleElem) && renderScaleElem.ValueKind == JsonValueKind.Number)
+		if (args.TryGetProperty("renderScale", out JsonElement renderScaleElem))
 		{
-			ApplyDisplayKey($"l2d_render_scale_{modelId}", renderScaleElem.GetRawText());
+			ApplyDisplayKey($"l2d_render_scale_{modelId}", ReadFiniteNumber(renderScaleElem, "渲染倍率",
+				Live2DRenderSettings.MinRenderScale, Live2DRenderSettings.MaxRenderScale));
 		}
-		if (args.TryGetProperty("qualityMode", out JsonElement qualityElem) && qualityElem.ValueKind == JsonValueKind.String)
+		if (args.TryGetProperty("qualityMode", out JsonElement qualityElem))
 		{
-			ApplyDisplayKey($"l2d_quality_mode_{modelId}", qualityElem.GetString() ?? "adaptive");
+			string qualityMode = qualityElem.ValueKind == JsonValueKind.String ? qualityElem.GetString() ?? "" : "";
+			Live2DQualityMode mode = Live2DRenderSettings.ParseQualityMode(qualityMode)
+				?? throw new InvalidOperationException("质量模式只能是 adaptive、quality 或 eco");
+			ApplyDisplayKey($"l2d_quality_mode_{modelId}", Live2DRenderSettings.QualityModeToStorage(mode));
 		}
-		if (args.TryGetProperty("shadow", out JsonElement shadowElem) && shadowElem.ValueKind is JsonValueKind.True or JsonValueKind.False)
+		if (args.TryGetProperty("maxFps", out JsonElement maxFpsElem))
 		{
+			ApplyDisplayKey($"l2d_max_fps_{modelId}", ReadInteger(maxFpsElem, "最大帧率", 0, Live2DRenderSettings.MaxExplicitFps));
+		}
+		if (args.TryGetProperty("shadow", out JsonElement shadowElem))
+		{
+			if (shadowElem.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+				throw new InvalidOperationException("阴影开关必须是布尔值");
 			ApplyDisplayKey($"l2d_shadow_{modelId}", shadowElem.GetBoolean() ? "1" : "0");
 		}
-		if (args.TryGetProperty("expressions", out JsonElement expElem) && expElem.ValueKind == JsonValueKind.Array)
+		if (args.TryGetProperty("expressions", out JsonElement expElem))
 		{
+			if (expElem.ValueKind != JsonValueKind.Array || expElem.GetArrayLength() > 64)
+				throw new InvalidOperationException("表情列表格式无效或数量超过上限");
+			HashSet<string> available = Model3Meta.Read(_services.Resources.ResourceDir(ResourceType.Live2D, modelId))
+				.Expressions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+			foreach (JsonElement expression in expElem.EnumerateArray())
+			{
+				string name = expression.ValueKind == JsonValueKind.String ? expression.GetString() ?? "" : "";
+				if (name.Length == 0 || name.Length > 128 || !available.Contains(name))
+					throw new InvalidOperationException($"模型不包含表情: {name}");
+			}
 			ApplyDisplayKey($"l2d_expression_{modelId}", expElem.GetRawText());
 		}
 		await Task.CompletedTask;
 		Runtime.InvalidateSnapshot("models");
 		return null;
+	}
+
+	private static string ReadFiniteNumber(JsonElement element, string label, float min, float max)
+	{
+		if (element.ValueKind != JsonValueKind.Number || !element.TryGetSingle(out float value)
+			|| !float.IsFinite(value) || value < min || value > max)
+		{
+			throw new InvalidOperationException($"{label}必须在 {min} 到 {max} 之间");
+		}
+		return value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+	}
+
+	private static string ReadInteger(JsonElement element, string label, int min, int max)
+	{
+		if (element.ValueKind != JsonValueKind.Number || !element.TryGetInt32(out int value)
+			|| value < min || value > max)
+		{
+			throw new InvalidOperationException($"{label}必须是 {min} 到 {max} 之间的整数");
+		}
+		return value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 	}
 
 	private void ApplyDisplayKey(string key, string storage)
@@ -933,13 +973,8 @@ public sealed class BridgeCommands
 		SetBehaviorKey(args, "idleAnimation", "l2d_idle_animation");
 		SetBehaviorKey(args, "expressionEnabled", "l2d_expression_enabled");
 		SetBehaviorKey(args, "lipSync", "l2d_lip_sync");
-		SetBehaviorKey(args, "shadow", "l2d_shadow");
 		SetBehaviorKey(args, "beatSync", "l2d_beat_sync");
 		SetBehaviorKey(args, "aiInteraction", PetInteractionConfig.AiEnabledKey);
-		SetBehaviorKey(args, "renderScale", "l2d_render_scale");
-		SetBehaviorKey(args, "qualityMode", "l2d_quality_mode");
-		SetBehaviorKey(args, "opacity", "l2d_opacity");
-		SetBehaviorKey(args, "maxFps", "l2d_max_fps");
 		await Task.CompletedTask;
 		Runtime.InvalidateSnapshot("behaviors");
 		return null;
@@ -1029,7 +1064,7 @@ public sealed class BridgeCommands
 		bool visible = await OnUi(() => (object?)source.IsVisible) is true;
 		if (!visible) throw new InvalidOperationException("初始化窗口不可见");
 
-		string? modelId = KnownModelIds.Normalize(_services.Config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+		string? modelId = SupportedModelIds.Normalize(_services.Config.GetStringOr(ConfigStore.KeySelectedModel, ""));
 		bool modelValid = modelId is not null && IsKnownInstalledModel(modelId);
 		bool autoSummon = _services.Config.GetBoolOr("pet_auto_summon", true);
 		cancellationToken.ThrowIfCancellationRequested();
@@ -1047,7 +1082,7 @@ public sealed class BridgeCommands
 	/// <summary>校验已知模型 ID 且确认本地模型资源已安装。</summary>
 	private string RequireKnownInstalledModel(string value)
 	{
-		string modelId = KnownModelIds.Normalize(value)
+		string modelId = SupportedModelIds.Normalize(value)
 			?? throw new InvalidOperationException("只支持 arg-nori 或 nori 模型");
 		if (!IsKnownInstalledModel(modelId)) throw new InvalidOperationException($"模型尚未安装: {modelId}");
 		return modelId;
@@ -1057,7 +1092,7 @@ public sealed class BridgeCommands
 	{
 		try
 		{
-			return KnownModelIds.Normalize(modelId) is not null
+			return SupportedModelIds.Normalize(modelId) is not null
 				&& _services.Resources.IsInstalled(ResourceType.Live2D, modelId);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ResourceException)
@@ -1145,15 +1180,9 @@ public sealed class BridgeCommands
 	private void SetBehaviorKey(JsonElement args, string argName, string configKey)
 	{
 		if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty(argName, out JsonElement value)) return;
-		string storage = value.ValueKind switch
-		{
-			JsonValueKind.True => "1",
-			JsonValueKind.False => "0",
-			JsonValueKind.Number => value.GetRawText(),
-			JsonValueKind.String => value.GetString() ?? "",
-			_ => "",
-		};
-		if (storage.Length == 0) return;
+		if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+			throw new InvalidOperationException($"{argName} 必须是布尔值");
+		string storage = value.GetBoolean() ? "1" : "0";
 		UpdateConfigDirect(configKey, storage);
 		ApplyPetConfigAndBroadcast(configKey, storage);
 	}
@@ -1225,23 +1254,24 @@ public sealed class BridgeCommands
 
 	private bool SkillsToggle(string id, bool enabled) => Runtime.Skills.Toggle(id, enabled);
 
-	private async Task<object?> McpImportUrlAsync(IBridgeSource source, JsonElement args)
+	private async Task<object?> McpImportUrlAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
 	{
 		RequireMainVoid(source);
 		string url = Str(args, "url");
 		Nori.Core.Network.UrlAccessPolicy.EnsurePublicHttp(new Uri(url));
 		using HttpResponseMessage response = await Nori.Core.Network.UrlAccessPolicy.GetWithSafeRedirectsAsync(
-			_services.PublicHttp, new Uri(url), allowPrivate: false);
+			_services.PublicHttp, new Uri(url), allowPrivate: false, cancellationToken: cancellationToken);
 		if (!response.IsSuccessStatusCode)
 		{
 			throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
 		}
 		string text = await Nori.Core.Network.UrlAccessPolicy.ReadCappedTextAsync(
-			response.Content, Nori.Core.Network.UrlAccessPolicy.MaxResponseBytes);
+			response.Content, Nori.Core.Network.UrlAccessPolicy.MaxResponseBytes, cancellationToken);
 
-		List<object> results = [];
-		void SaveOne(McpServerConfig config) => results.Add(_services.Mcp.SaveServerAsync(config).GetAwaiter().GetResult());
-
+		List<McpServerConfig> imported = [];
 		try
 		{
 			using JsonDocument document = JsonDocument.Parse(text);
@@ -1251,25 +1281,32 @@ public sealed class BridgeCommands
 			{
 				foreach (JsonProperty server in serversElem.EnumerateObject())
 				{
-					SaveOne(BuildImportedConfig(server.Name, server.Value));
+					imported.Add(BuildImportedConfig(server.Name, server.Value));
 				}
 			}
 			else if (root.ValueKind == JsonValueKind.Array)
 			{
 				foreach (JsonElement item in root.EnumerateArray())
 				{
-					SaveOne(BuildImportedConfig(OptionalGetString(item, "name") ?? "导入的 MCP 服务", item));
+					imported.Add(BuildImportedConfig(OptionalGetString(item, "name") ?? "导入的 MCP 服务", item));
 				}
 			}
 			else
 			{
-				SaveOne(BuildImportedConfig(
+				imported.Add(BuildImportedConfig(
 					OptionalGetString(root, "name") ?? OptionalGetString(root, "id") ?? "导入的 MCP 服务", root));
 			}
 		}
 		catch (JsonException exception)
 		{
 			throw new InvalidOperationException($"未识别的 MCP 配置文件结构: {exception.Message}");
+		}
+
+		List<McpServerStatusInfo> results = [];
+		foreach (McpServerConfig config in imported)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			results.Add(await _services.Mcp.SaveServerAsync(config));
 		}
 
 		InvalidateMcpSnapshot();
@@ -1300,8 +1337,8 @@ public sealed class BridgeCommands
 			Command = OptionalGetString(source, "command") ?? "npx",
 			Args = ReadArgs(source),
 			Url = OptionalGetString(source, "url"),
-			Enabled = true,
-			AutoConnect = true,
+			Enabled = false,
+			AutoConnect = false,
 		};
 	}
 
@@ -1348,10 +1385,13 @@ public sealed class BridgeCommands
 		return await _services.Mcp.TestServerAsync(ParseMcpConfig(args));
 	}
 
-	private async Task<object?> McpCallToolAsync(IBridgeSource source, JsonElement args)
+	private async Task<object?> McpCallToolAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
 	{
 		RequireMainVoid(source);
-		return await CallMcpToolCoreAsync(source, args);
+		return await CallMcpToolCoreAsync(source, args, cancellationToken);
 	}
 	private void InvalidateMcpSnapshot() => Runtime.InvalidateSnapshot("mcp");
 
@@ -1405,34 +1445,48 @@ public sealed class BridgeCommands
 		CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		string sourceKind = (OptionalStr(args, "sourceKind") ?? "zip").Trim().ToLowerInvariant();
+		if (sourceKind is not ("zip" or "folder")) throw new InvalidOperationException("导入来源只能是 zip 或 folder");
+
 		string? filePath = OptionalStr(args, "filePath");
 		if (string.IsNullOrWhiteSpace(filePath))
 		{
 			Avalonia.Controls.Window? self = source.Self ?? throw new InvalidOperationException("来源窗口不可用");
 			filePath = await Dispatcher.UIThread.InvokeAsync(async () =>
 			{
-				var files = await self.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+				if (sourceKind == "folder")
+				{
+					IReadOnlyList<IStorageFolder> folders = await self.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+					{
+						Title = "选择 Live2D 模型文件夹",
+						AllowMultiple = false,
+					});
+					return folders.Count > 0 ? folders[0].Path.LocalPath : null;
+				}
+
+				IReadOnlyList<IStorageFile> files = await self.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
 				{
 					Title = "选择 Live2D 资源文件 (.zip)",
 					AllowMultiple = false,
 					FileTypeFilter =
 					[
-						new FilePickerFileType("Live2D 压缩包 (*.zip)") { Patterns = ["*.zip"] },
-						new FilePickerFileType("所有文件 (*.*)") { Patterns = ["*.*"] },
+						new FilePickerFileType("Live2D 压缩包 (*.zip)") {Patterns = ["*.zip"]},
 					],
 				});
 				return files.Count > 0 ? files[0].Path.LocalPath : null;
 			});
 		}
 
-		if (string.IsNullOrWhiteSpace(filePath))
-		{
-			return null;
-		}
+		if (string.IsNullOrWhiteSpace(filePath)) return null;
+		if (sourceKind == "folder" && !Directory.Exists(filePath)) throw new InvalidOperationException("选择的 Live2D 文件夹不存在");
+		if (sourceKind == "zip" && (!File.Exists(filePath) || !filePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+			throw new InvalidOperationException("请选择有效的 Live2D ZIP 文件");
 
-		ResourceType type = ParseResourceType(OptionalStr(args, "resourceType") ?? "live2d");
-		IReadOnlyList<string> imported = await Task.Run(() => _services.Resources.Import(type, filePath), cancellationToken);
-		_services.Logger.Write(LogSource.Backend, "info", $"成功导入本地资源: {filePath} -> {string.Join(", ", imported)}");
+		const ResourceType type = ResourceType.Live2D;
+		IReadOnlyList<string> imported = await Task.Run(
+			() => _services.Resources.Import(type, filePath, cancellationToken),
+			cancellationToken);
+		_services.Logger.Write(LogSource.Backend, "info", $"成功导入本地 Live2D 资源: {string.Join(", ", imported)}");
 
 		// 广播资源更新
 		PostBroadcast("nori:config-changed", new {key = "resource_imported", value = string.Join(",", imported)});
@@ -1440,7 +1494,10 @@ public sealed class BridgeCommands
 		return imported;
 	}
 
-	private async Task<object?> CallMcpToolCoreAsync(IBridgeSource source, JsonElement args)
+	private async Task<object?> CallMcpToolCoreAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
 	{
 		string serverId = Str(args, "serverId");
 		string toolName = Str(args, "toolName");
@@ -1452,20 +1509,26 @@ public sealed class BridgeCommands
 
 		// 带 sessionId 的 MCP 调用可被宿主取消注册表取消
 		string? sessionId = OptionalStr(args, "sessionId");
+		McpToolResult result;
 		if (string.IsNullOrEmpty(sessionId))
 		{
-			return await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs);
+			result = await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs, cancellationToken);
+		}
+		else
+		{
+			CancellationTokenSource registered = _services.AgentOperations.Register(source.Label, sessionId, cancellationToken);
+			try
+			{
+				result = await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs, registered.Token);
+			}
+			finally
+			{
+				_services.AgentOperations.Complete(source.Label, sessionId, registered);
+			}
 		}
 
-		CancellationTokenSource registered = _services.AgentOperations.Register(source.Label, sessionId, CancellationToken.None);
-		try
-		{
-			return await _services.Mcp.CallToolAsync(serverId, toolName, toolArgs, registered.Token);
-		}
-		finally
-		{
-			_services.AgentOperations.Complete(source.Label, sessionId, registered);
-		}
+		if (result.IsError) throw new InvalidOperationException(result.AsText());
+		return result;
 	}
 
 	// ===================================================================
@@ -1511,6 +1574,18 @@ public sealed class BridgeCommands
 		return null;
 	}
 
+	private object? WriteFrontendLog(JsonElement args)
+	{
+		const int maxMessageCharacters = 16_384;
+		string level = Str(args, "level").Trim().ToLowerInvariant();
+		if (level is not ("debug" or "info" or "warn" or "error"))
+			throw new InvalidOperationException("日志级别无效");
+		string message = Str(args, "message");
+		if (message.Length > maxMessageCharacters) message = message[..maxMessageCharacters] + "…";
+		_services.Logger.Write(LogSource.Frontend, level, message);
+		return null;
+	}
+
 	private static async Task<object?> WriteClipboardAsync(IBridgeSource source, string text)
 	{
 		await OnUiAsync(async () =>
@@ -1529,14 +1604,45 @@ public sealed class BridgeCommands
 	/// <summary>切到 UI 线程后向所有 WebView 窗口广播事件</summary>
 	private void PostBroadcast(string name, object payload) => _postUi(() => _services.Windows.Broadcast(name, payload));
 
-	/// <summary>
-	/// 目标窗口: 参数里带 label 用 label, 否则用消息来源窗口
-	///
-	/// 返回基类 Window: 桌宠是原生 PetWindow 而非 NoriWindow, 按 NoriWindow 取会静默回退。
-	/// </summary>
-	private Window Target(IBridgeSource source, JsonElement args) =>
-		_services.Windows.Get(OptionalLabel(args)) ?? source.Self
-		?? throw new InvalidOperationException("目标窗口不存在");
+	private string AuthorizedWindowLabel(IBridgeSource source, JsonElement args, bool allowMainToTargetPet = false)
+	{
+		string label = OptionalLabel(args) ?? source.Label;
+		bool self = label == source.Label;
+		bool mainToPet = allowMainToTargetPet && source.Label == WindowLabels.Main && label == WindowLabels.Pet;
+		if (!self && !mainToPet) throw new InvalidOperationException("不能操作其它窗口");
+		return label;
+	}
+
+	private object? ShowWindow(IBridgeSource source, JsonElement args)
+	{
+		string label = AuthorizedWindowLabel(source, args, allowMainToTargetPet: true);
+		if (label == WindowLabels.Pet && !IsKnownInstalledModel(_services.Config.GetStringOr(ConfigStore.KeySelectedModel, "")))
+			throw new InvalidOperationException("当前 Live2D 模型不可用, 请先重新导入");
+		_services.Windows.Show(label);
+		return null;
+	}
+
+	private object? HideWindow(IBridgeSource source, JsonElement args)
+	{
+		string label = AuthorizedWindowLabel(source, args, allowMainToTargetPet: true);
+		_services.Windows.Hide(label);
+		return null;
+	}
+
+	private object? CloseWindow(IBridgeSource source, JsonElement args)
+	{
+		string label = AuthorizedWindowLabel(source, args);
+		_services.Windows.Close(label);
+		return null;
+	}
+
+	/// <summary>只有当前 WebView 可以读取或修改自己的窗口属性。</summary>
+	private Window Target(IBridgeSource source, JsonElement args)
+	{
+		string label = AuthorizedWindowLabel(source, args);
+		return _services.Windows.Get(label) ?? source.Self
+			?? throw new InvalidOperationException("目标窗口不存在");
+	}
 
 	private static nint NativeHandleOf(Window window) => window.TryGetPlatformHandle()?.Handle ?? 0;
 

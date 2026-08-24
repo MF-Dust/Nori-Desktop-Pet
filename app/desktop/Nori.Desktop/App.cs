@@ -219,10 +219,14 @@ public sealed class App : Application
 			// 首次启动显示向导, 否则直接进初始化窗口
 			bool firstRun = config.IsFirstRun();
 			logger.Write(LogSource.Backend, "info", firstRun ? "首次启动应用" : "应用启动完成");
-			if (Interlocked.Exchange(ref _secondInstanceActivationPending, 0) == 1)
+			bool activationPending = Program.ConsumePendingActivation()
+				|| Interlocked.Exchange(ref _secondInstanceActivationPending, 0) == 1;
+			if (firstRun)
+				services.Windows.Show(WindowLabels.FirstRun);
+			else if (activationPending)
 				services.Windows.Show(WindowLabels.Main);
 			else
-				services.Windows.Show(firstRun ? WindowLabels.FirstRun : WindowLabels.Init);
+				services.Windows.Show(WindowLabels.Init);
 
 			if (SmokeTestRuntime.Current is { } smokeTest)
 			{

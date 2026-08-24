@@ -34,6 +34,8 @@ public class PetModelPreparationTests : IDisposable
 		{
 		  "Version": 3,
 		  "FileReferences": {
+		    "Moc": "sample.moc3",
+		    "Textures": [],
 		    "Motions": {
 		      "Idle": [{"File": "motions/idle_01.motion3.json"}],
 		      "TapBody": [{"File": "motions/tap_a.motion3.json"}, {"File": "motions/tap_b.motion3.json"}]
@@ -50,6 +52,7 @@ public class PetModelPreparationTests : IDisposable
 	public async Task 有效模型解析动作与表情元数据()
 	{
 		WriteFile("sample.model3.json", MODEL3_JSON);
+		WriteFile("sample.moc3", "MOC3");
 		WriteFile("motions/idle_01.motion3.json", "{}");
 		WriteFile("motions/tap_a.motion3.json", "{}");
 		WriteFile("motions/tap_b.motion3.json", "{}");
@@ -125,6 +128,7 @@ public class PetModelPreparationTests : IDisposable
 	public async Task 单个表情文件损坏不影响其余表情()
 	{
 		WriteFile("sample.model3.json", MODEL3_JSON);
+		WriteFile("sample.moc3", "MOC3");
 		WriteFile("motions/idle_01.motion3.json", "{}");
 		WriteFile("motions/tap_a.motion3.json", "{}");
 		WriteFile("motions/tap_b.motion3.json", "{}");

@@ -143,11 +143,17 @@ public class BridgeCommandsTests : IDisposable
 		File.WriteAllText(Path.Combine(modelDir, "nori.model3.json"), """
 			{
 				"FileReferences": {
+					"Moc": "nori.moc3",
+					"Textures": [],
 					"Expressions": [{"Name": "01_Smile", "File": "01_Smile.exp3.json"}],
 					"Motions": {"Reactions": [{"File": "motions/01_Nod.motion3.json"}]}
 				}
 			}
 			""");
+		File.WriteAllText(Path.Combine(modelDir, "nori.moc3"), "MOC3");
+		File.WriteAllText(Path.Combine(modelDir, "01_Smile.exp3.json"), "{}");
+		Directory.CreateDirectory(Path.Combine(modelDir, "motions"));
+		File.WriteAllText(Path.Combine(modelDir, "motions", "01_Nod.motion3.json"), "{}");
 		PetInteractionConfig config = new()
 		{
 			Regions =
@@ -225,15 +231,21 @@ public class BridgeCommandsTests : IDisposable
 		}
 	}
 
+
 	[Fact]
-	public async Task first_run_select_model只允许首启窗口且写入配置()
+	public async Task 窗口命令只能操作自身且主界面召唤桌宠要求有效模型()
 	{
 		BridgeCommands commands = CreateCommands();
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.FirstRun), "exit_app", Args(new { }));
 		await Assert.ThrowsAsync<InvalidOperationException>(() =>
-			commands.InvokeAsync(new FakeBridgeSource("main"), "first_run_select_model", Args(new {modelId = "nori"})));
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "window_show", Args(new {label = WindowLabels.Main})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "window_show", Args(new {label = WindowLabels.Pet})));
 
-		await commands.InvokeAsync(new FakeBridgeSource("first-run"), "first_run_select_model", Args(new {modelId = "nori"}));
-		Assert.Equal("nori", _config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+		InstallKnownModel("nori");
+		_config.Set(ConfigStore.KeySelectedModel, new ConfigValue.Text("nori"));
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "window_show", Args(new {label = WindowLabels.Pet}));
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Pet));
 	}
 
 	[Fact]
@@ -339,7 +351,29 @@ public class BridgeCommandsTests : IDisposable
 	{
 		string directory = _services.Resources.ResourceDir(ResourceType.Live2D, modelId);
 		Directory.CreateDirectory(directory);
-		File.WriteAllText(Path.Combine(directory, $"{modelId}.model3.json"), "{}");
+		File.WriteAllText(Path.Combine(directory, $"{modelId}.model3.json"),
+			"{\"FileReferences\":{\"Moc\":\"model.moc3\",\"Textures\":[]}}");
+		File.WriteAllText(Path.Combine(directory, "model.moc3"), "MOC3");
+	}
+
+	[Fact]
+	public async Task model_select与显示参数拒绝未知未安装和越界输入()
+	{
+		BridgeCommands commands = CreateCommands();
+		FakeBridgeSource main = new(WindowLabels.Main);
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(main, "model_select", Args(new {modelId = "other"})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(main, "model_select", Args(new {modelId = "nori"})));
+
+		InstallKnownModel("nori");
+		await commands.InvokeAsync(main, "model_select", Args(new {modelId = "nori"}));
+		Assert.Equal("nori", _config.GetStringOr(ConfigStore.KeySelectedModel, ""));
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(main, "model_set_display", Args(new {modelId = "nori", opacity = 2})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(main, "model_set_display", Args(new {modelId = "nori", qualityMode = "unknown"})));
 	}
 
 	[Fact]
@@ -434,31 +468,55 @@ public class BridgeCommandsTests : IDisposable
 
 		string hidden = JsonSerializer.Serialize(
 			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
-		Assert.Contains("\"pet\":{\"visible\":false}", hidden, StringComparison.Ordinal);
-		Assert.Contains("\"sidebarCollapsed\":false", hidden, StringComparison.Ordinal);
+		using JsonDocument hiddenDocument = JsonDocument.Parse(hidden);
+		Assert.False(hiddenDocument.RootElement.GetProperty("pet").GetProperty("visible").GetBoolean());
+		Assert.False(hiddenDocument.RootElement.GetProperty("general").GetProperty("sidebarCollapsed").GetBoolean());
 
 		_windows.Show(WindowLabels.Pet);
 		await commands.InvokeAsync(new FakeBridgeSource("main"), "settings_update_general", Args(new {sidebarCollapsed = true}));
 
 		string shown = JsonSerializer.Serialize(
 			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
-		Assert.Contains("\"pet\":{\"visible\":true}", shown, StringComparison.Ordinal);
-		Assert.Contains("\"sidebarCollapsed\":true", shown, StringComparison.Ordinal);
+		using JsonDocument shownDocument = JsonDocument.Parse(shown);
+		Assert.True(shownDocument.RootElement.GetProperty("pet").GetProperty("visible").GetBoolean());
+		Assert.True(shownDocument.RootElement.GetProperty("general").GetProperty("sidebarCollapsed").GetBoolean());
 	}
 
 	[Fact]
 	public async Task 快照包含遥测状态且通用设置可即时关闭()
 	{
+		_config.SetTelemetryConsent(TelemetryConsent.Granted);
 		BridgeCommands commands = CreateCommands();
 		string before = JsonSerializer.Serialize(
 			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
-		Assert.Contains("\"telemetry\":{\"enabled\":true,\"available\":false}", before, StringComparison.Ordinal);
+		using JsonDocument beforeDocument = JsonDocument.Parse(before);
+		JsonElement beforeTelemetry = beforeDocument.RootElement.GetProperty("telemetry");
+		Assert.True(beforeTelemetry.GetProperty("enabled").GetBoolean());
+		Assert.False(beforeTelemetry.GetProperty("available").GetBoolean());
+		Assert.Equal("granted", beforeTelemetry.GetProperty("consent").GetString());
 
 		await commands.InvokeAsync(new FakeBridgeSource("main"), "settings_update_general", Args(new {telemetryEnabled = false}));
-		Assert.False(_config.GetBoolOr(ConfigStore.KeyTelemetryEnabled, true));
+		Assert.Equal(TelemetryConsent.Denied, _config.GetTelemetryConsent());
 		string after = JsonSerializer.Serialize(
 			await commands.InvokeAsync(new FakeBridgeSource("main"), "ui_get_snapshot", Args(new { })));
-		Assert.Contains("\"telemetry\":{\"enabled\":false,\"available\":false}", after, StringComparison.Ordinal);
+		using JsonDocument afterDocument = JsonDocument.Parse(after);
+		JsonElement afterTelemetry = afterDocument.RootElement.GetProperty("telemetry");
+		Assert.False(afterTelemetry.GetProperty("enabled").GetBoolean());
+		Assert.False(afterTelemetry.GetProperty("available").GetBoolean());
+		Assert.Equal("denied", afterTelemetry.GetProperty("consent").GetString());
+	}
+
+	[Fact]
+	public void 同版本快照复用缓存且失效后重建()
+	{
+		FakeBridgeSource source = new(WindowLabels.Main);
+		object first = _runtime.BuildSnapshot(source);
+		object cached = _runtime.BuildSnapshot(source);
+		Assert.Same(first, cached);
+
+		_runtime.InvalidateSnapshot("test");
+		object rebuilt = _runtime.BuildSnapshot(source);
+		Assert.NotSame(first, rebuilt);
 	}
 
 	[Fact]
