@@ -24,6 +24,7 @@ import type {
 	MemorySource,
 	ModelMeta,
 	PlatformState,
+	ProviderConnectionTestResult,
 	UiSnapshot,
 } from "./types"
 
@@ -58,6 +59,7 @@ export type {
 	ModelsState,
 	PetState,
 	PlatformState,
+	ProviderConnectionTestResult,
 	ProactiveState,
 	TelemetryState,
 	ReminderDto,
@@ -85,7 +87,7 @@ let lastLanguage: string | null = null
 const languageHandlers = new Set<(language: string) => void>()
 
 async function refreshCore(): Promise<void> {
-	const NEXT_SNAPSHOT = await invoke<UiSnapshot>("ui_get_snapshot")
+	const NEXT_SNAPSHOT = await invoke("ui_get_snapshot")
 	SNAPSHOT.value = NEXT_SNAPSHOT
 	const LANGUAGE = NEXT_SNAPSHOT.general.language
 	if (LANGUAGE && LANGUAGE !== lastLanguage) {
@@ -249,19 +251,19 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	startChat(text: string): Promise<string> {
-		return invoke<string>("chat_start", {text})
+		return invoke("chat_start", {text})
 	},
 	cancelChat(sessionId: string): Promise<boolean> {
-		return invoke<boolean>("chat_cancel", {sessionId})
+		return invoke("chat_cancel", {sessionId})
 	},
 	respondApproval(requestId: string, approved: boolean): Promise<boolean> {
-		return invoke<boolean>("approval_respond", {requestId, approved})
+		return invoke("approval_respond", {requestId, approved})
 	},
 	historyPage(limit = 50, beforeId = 0): Promise<HistoryMessage[]> {
-		return invoke<HistoryMessage[]>("chat_history_page", {limit, beforeId})
+		return invoke("chat_history_page", {limit, beforeId})
 	},
 	clearChat(): Promise<void> {
-		return invoke<void>("chat_clear")
+		return invoke("chat_clear")
 	},
 
 	// ------------------------------------------------------------------
@@ -269,7 +271,7 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	updateAi(patch: Partial<{provider: string; baseUrl: string; apiKey: string; model: string; persona: string}>): Promise<void> {
-		return invoke<void>("settings_update_ai", patch)
+		return invoke("settings_update_ai", patch)
 	},
 	updateVoice(patch: Partial<{
 		volume: string
@@ -287,26 +289,32 @@ export const RUNTIME = {
 		sttBaseUrl: string
 		sttApiKey: string
 	}>): Promise<void> {
-		return invoke<void>("settings_update_voice", patch)
+		return invoke("settings_update_voice", patch)
 	},
 	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean; sidebarCollapsed: boolean; telemetryEnabled: boolean}>): Promise<void> {
-		return invoke<void>("settings_update_general", patch)
+		return invoke("settings_update_general", patch)
 	},
 	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {
-		return invoke<void>("settings_update_proactive", patch)
+		return invoke("settings_update_proactive", patch)
 	},
 	updateEmbedding(patch: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>): Promise<void> {
-		return invoke<void>("settings_update_embedding", patch)
+		return invoke("settings_update_embedding", patch)
 	},
 	ackVoiceNotice(): Promise<void> {
-		return invoke<void>("settings_ack_voice_notice")
+		return invoke("settings_ack_voice_notice")
 	},
 	fetchModels(provider: string, baseUrl: string, apiKey: string): Promise<string[]> {
-		return invoke<string[]>("llm_fetch_models", {provider, baseUrl, apiKey})
+		return invoke("llm_fetch_models", {provider, baseUrl, apiKey})
+	},
+	testLlmConnection(provider: string, baseUrl: string, apiKey: string, model: string): Promise<ProviderConnectionTestResult> {
+		return invoke("llm_test_connection", {provider, baseUrl, apiKey, model})
+	},
+	testEmbeddingConnection(baseUrl: string, apiKey: string, model: string, dimensions?: string): Promise<ProviderConnectionTestResult> {
+		return invoke("embedding_test_connection", {baseUrl, apiKey, model, dimensions})
 	},
 
 	toolsSetEnabled(name: string, enabled: boolean): Promise<void> {
-		return invoke<void>("tools_set_enabled", {name, enabled})
+		return invoke("tools_set_enabled", {name, enabled})
 	},
 	toolsExecuteManual(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
 		return invoke("tools_execute_manual", {name, arguments: args})
@@ -317,17 +325,17 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	selectModel(modelId: string): Promise<void> {
-		return invoke<void>("model_select", {modelId})
+		return invoke("model_select", {modelId})
 	},
 	completeFirstRun(modelId: string, telemetryEnabled: boolean): Promise<void> {
-		return invoke<void>("complete_first_run", {modelId, telemetryEnabled})
+		return invoke("complete_first_run", {modelId, telemetryEnabled})
 	},
 
 	/**
 	 * init 窗口把主界面切换交给宿主；宿主会按模型有效性与 pet_auto_summon 决定桌宠显隐。
 	 */
 	initEnterMain(): Promise<void> {
-		return invoke<void>("init_enter_main")
+		return invoke("init_enter_main")
 	},
 
 	/**
@@ -337,13 +345,13 @@ export const RUNTIME = {
 	 * 调用方应直接执行初始化流程, 不能再等事件
 	 */
 	initReady(): Promise<{initStartPending: boolean}> {
-		return invoke<{initStartPending: boolean}>("init_ready")
+		return invoke("init_ready")
 	},
 	importLocalModel(sourceKind: "zip" | "folder" = "zip"): Promise<string[] | null> {
-		return invoke<string[] | null>("model_import_local", {resourceType: "live2d", sourceKind})
+		return invoke("model_import_local", {resourceType: "live2d", sourceKind})
 	},
 	modelMeta(modelId: string): Promise<ModelMeta> {
-		return invoke<ModelMeta>("model_get_meta", {modelId})
+		return invoke("model_get_meta", {modelId})
 	},
 	setModelDisplay(modelId: string, patch: {
 		scale?: number
@@ -354,13 +362,13 @@ export const RUNTIME = {
 		qualityMode?: "adaptive" | "quality" | "eco"
 		maxFps?: number
 	}): Promise<void> {
-		return invoke<void>("model_set_display", {modelId, ...patch})
+		return invoke("model_set_display", {modelId, ...patch})
 	},
 	setModelInteractions(modelId: string, interactions: InteractionConfig): Promise<void> {
-		return invoke<void>("model_set_interactions", {modelId, interactions})
+		return invoke("model_set_interactions", {modelId, interactions})
 	},
 	setModelBehavior(patch: Partial<BehaviorsState>): Promise<void> {
-		return invoke<void>("model_set_behavior", patch)
+		return invoke("model_set_behavior", patch)
 	},
 
 	// ------------------------------------------------------------------
@@ -368,61 +376,61 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	memoryAdd(content: string, importance = 0.8, tags?: string, kind?: string): Promise<MemoryItem> {
-		return invoke<MemoryItem>("memory_add", {content, importance, tags, kind})
+		return invoke("memory_add", {content, importance, tags, kind})
 	},
 	memoryList(limit = 50): Promise<MemoryItem[]> {
-		return invoke<MemoryItem[]>("memory_list", {limit})
+		return invoke("memory_list", {limit})
 	},
 	memoryListPage(query?: string, kind?: string, status?: string, limit = 50, offset = 0): Promise<MemoryListPage> {
-		return invoke<MemoryListPage>("memory_list_page", {query, kind, status, limit, offset})
+		return invoke("memory_list_page", {query, kind, status, limit, offset})
 	},
 	memoryGet(id: number): Promise<{item: MemoryItem; atoms: MemoryAtom[]; sources: MemorySource[]}> {
 		return invoke("memory_get", {id})
 	},
 	memoryUpdate(id: number, content: string, importance?: number, tags?: string, patch?: {kind?: string; canonicalSummary?: string; personaSummary?: string; confidence?: number}): Promise<boolean> {
-		return invoke<boolean>("memory_update", {id, content, importance, tags, ...patch})
+		return invoke("memory_update", {id, content, importance, tags, ...patch})
 	},
 	memoryArchive(id: number): Promise<boolean> {
-		return invoke<boolean>("memory_archive", {id})
+		return invoke("memory_archive", {id})
 	},
 	memoryRestore(id: number): Promise<boolean> {
-		return invoke<boolean>("memory_restore", {id})
+		return invoke("memory_restore", {id})
 	},
 	memoryDelete(id: number): Promise<boolean> {
-		return invoke<boolean>("memory_delete", {id, confirmToken: "DELETE_MEMORY"})
+		return invoke("memory_delete", {id, confirmToken: "DELETE_MEMORY"})
 	},
 	memoryClear(): Promise<void> {
-		return invoke<void>("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
+		return invoke("memory_clear", {confirmToken: "CLEAR_PERSONAL_MEMORY"})
 	},
 	memoryOverview(): Promise<MemoryOverview> {
-		return invoke<MemoryOverview>("memory_overview")
+		return invoke("memory_overview")
 	},
 	memoryAtoms(memoryId?: number, status?: string, limit = 50, offset = 0): Promise<MemoryAtom[]> {
-		return invoke<MemoryAtom[]>("memory_atom_list", {memoryId, status, limit, offset})
+		return invoke("memory_atom_list", {memoryId, status, limit, offset})
 	},
 	memorySearch(keyword: string, limit = 20): Promise<MemoryItem[]> {
-		return invoke<MemoryItem[]>("memory_search_hybrid", {keyword, limit})
+		return invoke("memory_search_hybrid", {keyword, limit})
 	},
 	memoryKnowledgeStatus(): Promise<MemoryIndexStatus> {
-		return invoke<MemoryIndexStatus>("memory_knowledge_status")
+		return invoke("memory_knowledge_status")
 	},
 	memoryKnowledgeReindex(): Promise<MemoryIndexStatus> {
-		return invoke<MemoryIndexStatus>("memory_knowledge_reindex")
+		return invoke("memory_knowledge_reindex")
 	},
 	memoryKnowledgeOpen(): Promise<void> {
-		return invoke<void>("memory_knowledge_open")
+		return invoke("memory_knowledge_open")
 	},
 	memoryRecallDebug(query: string): Promise<MemoryRecallDebug> {
-		return invoke<MemoryRecallDebug>("memory_recall_debug", {query})
+		return invoke("memory_recall_debug", {query})
 	},
 	memoryGetSettings(): Promise<MemorySettings> {
-		return invoke<MemorySettings>("memory_get_settings")
+		return invoke("memory_get_settings")
 	},
 	memoryUpdateSettings(settings: Partial<MemorySettings>): Promise<MemorySettings> {
-		return invoke<MemorySettings>("memory_update_settings", {settings})
+		return invoke("memory_update_settings", {settings})
 	},
 	memoryReembed(): Promise<number> {
-		return invoke<number>("memory_reembed_all")
+		return invoke("memory_reembed_all")
 	},
 
 	// ------------------------------------------------------------------
@@ -430,10 +438,10 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	skillsMarketplace() {
-		return invoke<import("./types").SkillDto[]>("skills_marketplace")
+		return invoke("skills_marketplace")
 	},
 	skillsToggle(id: string, enabled: boolean): Promise<void> {
-		return invoke<void>("skills_toggle", {id, enabled})
+		return invoke("skills_toggle", {id, enabled})
 	},
 	skillsInstallUrl(url: string): Promise<unknown> {
 		return invoke("skills_install_url", {url})
@@ -442,10 +450,10 @@ export const RUNTIME = {
 		return invoke("skills_save_custom", {skill})
 	},
 	skillsUninstall(id: string): Promise<void> {
-		return invoke<void>("skills_uninstall", {id})
+		return invoke("skills_uninstall", {id})
 	},
 	skillsExport(id: string): Promise<string> {
-		return invoke<string>("skills_export", {id})
+		return invoke("skills_export", {id})
 	},
 	skillsImportJson(json: string): Promise<unknown> {
 		return invoke("skills_import_json", {json})
@@ -456,22 +464,22 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	mcpGetServers(): Promise<McpServerStatusInfo[]> {
-		return invoke<McpServerStatusInfo[]>("mcp_get_servers")
+		return invoke("mcp_get_servers")
 	},
 	mcpSaveServer(config: Record<string, unknown>): Promise<McpServerStatusInfo> {
-		return invoke<McpServerStatusInfo>("mcp_save_server", config)
+		return invoke("mcp_save_server", config)
 	},
 	mcpDeleteServer(id: string): Promise<boolean> {
-		return invoke<boolean>("mcp_delete_server", {id})
+		return invoke("mcp_delete_server", {id})
 	},
 	mcpConnect(id: string): Promise<McpServerStatusInfo> {
-		return invoke<McpServerStatusInfo>("mcp_connect_server", {id})
+		return invoke("mcp_connect_server", {id})
 	},
 	mcpDisconnect(id: string): Promise<McpServerStatusInfo> {
-		return invoke<McpServerStatusInfo>("mcp_disconnect_server", {id})
+		return invoke("mcp_disconnect_server", {id})
 	},
 	mcpTestServer(config: Record<string, unknown>): Promise<McpServerStatusInfo> {
-		return invoke<McpServerStatusInfo>("mcp_test_server", config)
+		return invoke("mcp_test_server", config)
 	},
 	mcpCallTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
 		return invoke("mcp_call_tool", {serverId, toolName, arguments: args})
@@ -488,7 +496,7 @@ export const RUNTIME = {
 		return invoke("reminder_add", {content, delayMinutes})
 	},
 	reminderCancel(id: string): Promise<boolean> {
-		return invoke<boolean>("reminder_cancel", {id})
+		return invoke("reminder_cancel", {id})
 	},
 
 	// ------------------------------------------------------------------
@@ -496,16 +504,16 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	ttsTest(text?: string): Promise<void> {
-		return invoke<void>("tts_test", text ? {text} : {})
+		return invoke("tts_test", text ? {text} : {})
 	},
 	ttsStop(): Promise<void> {
-		return invoke<void>("tts_stop")
+		return invoke("tts_stop")
 	},
 	sttStart(): Promise<void> {
-		return invoke<void>("stt_start")
+		return invoke("stt_start")
 	},
 	sttStop(): Promise<{text: string}> {
-		return invoke<{text: string}>("stt_stop")
+		return invoke("stt_stop")
 	},
 
 	// ------------------------------------------------------------------
@@ -516,33 +524,36 @@ export const RUNTIME = {
 		return invoke("get_recent_logs")
 	},
 	clearRecentLogs(): Promise<void> {
-		return invoke<void>("clear_recent_logs")
+		return invoke("clear_recent_logs")
 	},
 	getDiagnosticInfo(): Promise<Record<string, string>> {
 		return invoke("get_diagnostic_info")
 	},
+	exportDiagnostics(): Promise<{fileName: string; bytes: number; skipped: string[]} | null> {
+		return invoke("export_diagnostics")
+	},
 	openLogFolder(): Promise<void> {
-		return invoke<void>("open_log_folder")
+		return invoke("open_log_folder")
 	},
 	runGcCollect(): Promise<{released_bytes: number}> {
 		return invoke("run_gc_collect")
 	},
 	debugCrashTest(mode: string): Promise<void> {
-		return invoke<void>("debug_crash_test", {mode})
+		return invoke("debug_crash_test", {mode})
 	},
 	petPlayMotion(name?: string): Promise<boolean> {
-		return invoke<boolean>("pet_play_motion", name ? {name} : {})
+		return invoke("pet_play_motion", name ? {name} : {})
 	},
 	writeLog(level: "info" | "warn" | "error", message: string): Promise<void> {
-		return invoke<void>("write_log", {level, message})
+		return invoke("write_log", {level, message})
 	},
 	exitApp(): Promise<void> {
-		return invoke<void>("exit_app")
+		return invoke("exit_app")
 	},
 	copyText(text: string): Promise<void> {
-		return invoke<void>("clipboard_write_text", {text})
+		return invoke("clipboard_write_text", {text})
 	},
 	openUrl(url: string): Promise<void> {
-		return invoke<void>("open_url", {url})
+		return invoke("open_url", {url})
 	},
 }

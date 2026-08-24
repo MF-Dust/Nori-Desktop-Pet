@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, ref} from "vue"
 import {RUNTIME} from "../../services/runtime"
+import {APP_VERSION} from "../../services/version"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../../components/Icon.vue"
 import {feedback} from "../../services/feedback"
@@ -8,7 +9,7 @@ import type {IconMode, IconName} from "../../services/icon"
 import logo from "../../assets/images/logo.png"
 
 const I18N = computed(() => useLanguages().components.firstRun.welcome)
-const APP_VERSION = computed(() => RUNTIME.snapshot.value?.app.appVersion ?? "0.1.0")
+const VERSION = computed(() => RUNTIME.snapshot.value?.app.productVersion ?? RUNTIME.snapshot.value?.app.appVersion ?? APP_VERSION)
 
 // 推广链接
 interface Link {
@@ -107,7 +108,7 @@ const handleLink = async (link: Link) => {
 					<Icon name="sparkles" :size="12"/>
 					<span>Live2D Cyber Pet</span>
 				</span>
-				<span class="chip mono">v{{ APP_VERSION }}</span>
+				<span class="chip mono">v{{ VERSION }}</span>
 			</div>
 
 			<h1 class="text-3xl font-800 glow-teal">{{ I18N.title }}</h1>

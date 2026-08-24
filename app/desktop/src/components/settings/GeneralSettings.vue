@@ -6,6 +6,7 @@ import {useSnapshotField} from "../../composables/useSnapshotField"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
 import {feedback} from "../../services/feedback"
+import {APP_VERSION} from "../../services/version"
 import AppCard from "../ui/AppCard.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
@@ -16,9 +17,10 @@ const telemetryEnabledField = useSnapshotField(snapshot => snapshot.telemetry.en
 const currentLang = currentLangField.value
 const autoSummon = autoSummonField.value
 const telemetryEnabled = telemetryEnabledField.value
-const appVersion = computed(() => RUNTIME.snapshot.value?.app.appVersion ?? "0.1.0")
+const appVersion = computed(() => RUNTIME.snapshot.value?.app.productVersion ?? RUNTIME.snapshot.value?.app.appVersion ?? APP_VERSION)
 const telemetryAvailable = computed(() => RUNTIME.snapshot.value?.telemetry.available ?? false)
 const telemetryConsent = computed(() => RUNTIME.snapshot.value?.telemetry.consent ?? "unset")
+const SAFE_MODE = computed(() => RUNTIME.snapshot.value?.app.safeMode ?? false)
 const TEXT = computed(() => useLanguages().views.main.general)
 const ENGINE_TEXT = computed(() => {
 	switch (RUNTIME.snapshot.value?.platform.os) {
@@ -176,6 +178,12 @@ onMounted(() => {
 					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
 						<span class="text-sm text-text-muted">{{ TEXT.about.license }}</span>
 						<span class="text-sm text-text-primary mono">{{ TEXT.about.licenseValue }}</span>
+					</div>
+					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
+						<span class="text-sm text-text-muted">{{ TEXT.about.safeMode }}</span>
+						<span class="text-sm mono" :class="SAFE_MODE ? 'text-warning' : 'text-text-primary'">
+							{{ SAFE_MODE ? TEXT.about.safeModeEnabled : TEXT.about.safeModeDisabled }}
+						</span>
 					</div>
 					<div class="flex items-center justify-between gap-3 py-2">
 						<span class="text-sm text-text-muted">{{ TEXT.about.renderer }}</span>

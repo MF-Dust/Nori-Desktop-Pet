@@ -5,13 +5,16 @@
  * 底层实现在 index.html 的引导脚本里 (window.__nori), 必须在应用代码之前同步就位.
  */
 
+import type {BridgeCommandArgs, BridgeCommandName, BridgeCommandResult} from "./commands"
+export type {BridgeCommandArgs, BridgeCommandMap, BridgeCommandName, BridgeCommandResult} from "./commands"
+
 /**
  * 引导脚本注入的宿主对象
  */
-interface NoriHost {
+export interface NoriHost {
 	assetBase: string
 	label: string | null
-	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+	invoke: <K extends BridgeCommandName>(cmd: K, args?: BridgeCommandArgs<K>) => Promise<BridgeCommandResult<K>>
 	emit: (event: string, payload?: unknown) => void
 	listen: (event: string, handler: (message: {payload: unknown}) => void) => () => void
 	dispatch: (raw: string) => void

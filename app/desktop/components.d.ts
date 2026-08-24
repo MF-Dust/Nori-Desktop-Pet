@@ -23,6 +23,7 @@ declare module 'vue' {
     AppSectionHeader: typeof import('./src/components/ui/AppSectionHeader.vue')['default']
     AppSkeleton: typeof import('./src/components/ui/AppSkeleton.vue')['default']
     AppSwitchRow: typeof import('./src/components/ui/AppSwitchRow.vue')['default']
+    ChatMessageBubble: typeof import('./src/components/chat/ChatMessageBubble.vue')['default']
     ChatView: typeof import('./src/components/ChatView.vue')['default']
     DebugSettings: typeof import('./src/components/settings/DebugSettings.vue')['default']
     FeedbackHost: typeof import('./src/components/ui/FeedbackHost.vue')['default']

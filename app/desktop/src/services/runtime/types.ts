@@ -11,9 +11,14 @@
 
 /** 应用信息 */
 export interface AppInfo {
+	/** 后端 UiSnapshot.app.appVersion; 与 ProductVersion.Current 对应 */
 	appVersion: string
+	/** 显式产品版本；旧宿主只提供 appVersion 时前端回退使用它。 */
+	productVersion?: string
 	platform: string
 	debugCrashTestsAvailable: boolean
+	/** 是否通过 --safe-mode 启动 */
+	safeMode: boolean
 }
 
 /** 通用设置 */
@@ -76,6 +81,15 @@ export interface AiState {
 	model: string
 	persona: string
 	hasApiKey: boolean
+}
+
+/** Provider 连接测试结果 (不包含密钥或请求正文) */
+export interface ProviderConnectionTestResult {
+	success: boolean
+	provider: string
+	latencyMs: number
+	category: string
+	message: string
 }
 
 /** 模型目录条目 */

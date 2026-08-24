@@ -10,11 +10,12 @@ import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
 import Ready from "../components/firstRun/Ready.vue"
 import {createWizard, WIZARD_STEPS} from "../services/firstRun/wizard"
+import {APP_VERSION} from "../services/version"
 
 const I18N = computed(() => useLanguages().views.firstRun)
 
 // 首次运行期间仅保存用于展示/日志的快照信息
-const appVersion = ref("0.1.0")
+const appVersion = ref(APP_VERSION)
 const selectedModel = ref("")
 const telemetryEnabled = ref(true)
 

@@ -89,19 +89,19 @@ export class HostWindow {
 	}
 
 	async isVisible(): Promise<boolean> {
-		return await invoke<boolean>("window_is_visible", {label: this.label})
+		return await invoke("window_is_visible", {label: this.label})
 	}
 
 	async scaleFactor(): Promise<number> {
 		const ENTRY = metricsOf(this.label)
-		if (ENTRY.scaleFactor == null) ENTRY.scaleFactor = await invoke<number>("window_scale_factor", {label: this.label})
+		if (ENTRY.scaleFactor == null) ENTRY.scaleFactor = await invoke("window_scale_factor", {label: this.label})
 		return ENTRY.scaleFactor
 	}
 
 	async outerPosition(): Promise<PhysicalPosition> {
 		const ENTRY = metricsOf(this.label)
 		if (!ENTRY.position) {
-			const POS = await invoke<{x: number; y: number}>("window_outer_position", {label: this.label})
+			const POS = await invoke("window_outer_position", {label: this.label})
 			ENTRY.position = new PhysicalPosition(POS.x, POS.y)
 		}
 		return ENTRY.position
@@ -110,7 +110,7 @@ export class HostWindow {
 	async outerSize(): Promise<PhysicalSize> {
 		const ENTRY = metricsOf(this.label)
 		if (!ENTRY.size) {
-			const SIZE = await invoke<{width: number; height: number}>("window_outer_size", {label: this.label})
+			const SIZE = await invoke("window_outer_size", {label: this.label})
 			ENTRY.size = new PhysicalSize(SIZE.width, SIZE.height)
 		}
 		return ENTRY.size

@@ -3,7 +3,7 @@ import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {useDebouncedSave} from "../../composables/useDebouncedSave"
 import {useSnapshotField} from "../../composables/useSnapshotField"
-import {feedback, errorText} from "../../services/feedback"
+import {feedback} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppField from "../ui/AppField.vue"
@@ -51,8 +51,11 @@ const baseUrlPlaceholder = computed(() => DEFAULT_BASE_URLS[provider.value] || "
 
 // 拉取模型
 const loading = ref(false)
+const testing = ref(false)
 const models = ref<string[]>([])
 const errorMsg = ref("")
+const connectionResult = ref("")
+const connectionSuccess = ref(false)
 
 onMounted(async () => {
 	await RUNTIME.init()
@@ -147,6 +150,28 @@ const onSelectModel = (value: string) => {
 	})
 }
 
+// 测试连接只发送当前编辑值, 不保存配置或聊天内容
+const testConnection = async () => {
+	connectionResult.value = ""
+	testing.value = true
+	const API_KEY = apiKeyInput.value.trim()
+	try {
+		const RESULT = await RUNTIME.testLlmConnection(provider.value, baseUrl.value.trim(), API_KEY, model.value.trim())
+		connectionSuccess.value = RESULT.success
+		connectionResult.value = RESULT.success
+			? I18N.value.testSuccess
+			: `${I18N.value.testFailed}: ${RESULT.message}`
+	} catch (error) {
+		connectionSuccess.value = false
+		connectionResult.value = I18N.value.connectionError
+		feedback.error(I18N.value.connectionError)
+		console.error("LLM 连接测试失败", error instanceof Error ? error.name : "未知错误")
+	} finally {
+		apiKeyInput.value = ""
+		testing.value = false
+	}
+}
+
 // 获取模型按钮 (密钥只在本次调用中发往后端, 不回显)
 const fetchModels = async () => {
 	errorMsg.value = ""
@@ -175,8 +200,8 @@ const fetchModels = async () => {
 			model.value = models.value[0]
 		}
 	} catch (error) {
-		errorMsg.value = `${I18N.value.fetchFailed}: ${errorText(error)}`
-		console.error("获取模型失败:", error)
+		errorMsg.value = I18N.value.fetchFailed
+		console.error("获取模型失败", error instanceof Error ? error.name : "未知错误")
 	} finally {
 		loading.value = false
 	}
@@ -243,14 +268,23 @@ const modelOptions = computed(() => {
 						class="flex-1"
 						@update:value="onSelectModel"
 					/>
-					<n-button
-						type="primary"
-						:loading="loading"
-						:disabled="loading"
-						@click="fetchModels"
-					>
-						{{ loading ? I18N.getting : I18N.getModel }}
-					</n-button>
+					<div class="flex items-center gap-2">
+						<n-button
+							type="primary"
+							:loading="loading"
+							:disabled="loading || testing"
+							@click="fetchModels"
+						>
+							{{ loading ? I18N.getting : I18N.getModel }}
+						</n-button>
+						<n-button
+							:loading="testing"
+							:disabled="loading || testing"
+							@click="testConnection"
+						>
+							{{ testing ? I18N.testingConnection : I18N.testConnection }}
+						</n-button>
+					</div>
 				</div>
 			</div>
 
@@ -271,6 +305,12 @@ const modelOptions = computed(() => {
 				class="px-3 py-2 rounded-sm text-sm text-danger-text bg-danger/12 border border-danger/35 font-500"
 				role="alert"
 			>{{ errorMsg }}</p>
+			<p
+				v-if="connectionResult"
+				class="px-3 py-2 rounded-sm text-sm font-500"
+				:class="connectionSuccess ? 'text-nori-teal-bright bg-nori-teal-bright/8 border border-nori-teal-soft/30' : 'text-danger-text bg-danger/12 border border-danger/35'"
+				role="status"
+			>{{ connectionResult }}</p>
 		</div>
 	</section>
 </template>

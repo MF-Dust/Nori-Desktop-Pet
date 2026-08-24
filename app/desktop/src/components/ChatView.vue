@@ -3,6 +3,7 @@ import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import {useTextareaAutosize} from "@vueuse/core"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
+import ChatMessageBubble, {type ChatDisplayBubble} from "./chat/ChatMessageBubble.vue"
 import AppChip from "./ui/AppChip.vue"
 import AppEmpty from "./ui/AppEmpty.vue"
 import AppButton from "./ui/AppButton.vue"
@@ -51,14 +52,6 @@ const QUICK_PROMPTS = computed<{icon: IconName; text: string}[]>(() => [
 ])
 
 // 展示列表: 助手一条回复 = 多个气泡 (流式期间不拆, 完成后一次成型, 避免边流边重排)
-interface DisplayBubble {
-	key: string
-	role: string
-	content: string
-	html?: string
-	isFirstInGroup: boolean
-}
-
 const MAX_RENDERED_BUBBLES = 500
 const MARKDOWN_CACHE = new Map<string, string>()
 const markdownFor = (key: string, content: string): string => {
@@ -71,8 +64,8 @@ const markdownFor = (key: string, content: string): string => {
 	return HTML
 }
 
-const displayBubbles = computed<DisplayBubble[]>(() => {
-	const LIST: DisplayBubble[] = []
+const displayBubbles = computed<ChatDisplayBubble[]>(() => {
+	const LIST: ChatDisplayBubble[] = []
 	const SOURCE = bubbles.value.length > MAX_RENDERED_BUBBLES
 		? bubbles.value.slice(-MAX_RENDERED_BUBBLES)
 		: bubbles.value
@@ -466,41 +459,15 @@ const toggleVoiceInput = async () => {
 				</div>
 
 				<!-- 气泡消息列表 (助手连发多条气泡) -->
-				<div
+				<ChatMessageBubble
 					v-for="bubble in displayBubbles"
 					:key="bubble.key"
-					v-memo="[bubble.content, bubble.html, bubble.isFirstInGroup]"
-					class="group flex max-w-[84%] animate-bubble-in"
-					:class="[
-						bubble.role === 'user' ? 'self-end flex-row-reverse' : 'self-start',
-						bubble.isFirstInGroup && bubble.role === 'assistant' ? 'mt-1' : '',
-					]"
-				>
-					<div class="relative flex items-center gap-1.5">
-						<div
-							class="px-4.5 py-3 text-base leading-relaxed break-words"
-							:class="bubble.role === 'user'
-								? 'rounded-[1.4rem_1.4rem_0.4rem_1.4rem] text-text-primary border border-nori-teal-bright/40 bg-[linear-gradient(135deg,rgba(94,234,212,0.22)_0%,rgba(125,227,255,0.1)_100%)] shadow-[0_0.4rem_2rem_rgba(94,234,212,0.12)] whitespace-pre-wrap'
-								: 'rounded-[1.4rem_1.4rem_1.4rem_0.4rem] text-text-primary border border-line-subtle bg-bg-card/85 backdrop-blur-[1.2rem] shadow-[0_0.4rem_2rem_rgba(0,0,0,0.35)] chat-markdown'"
-						>
-							<span v-if="bubble.role === 'user'">{{ bubble.content }}</span>
-							<!-- eslint-disable-next-line vue/no-v-html -->
-							<div v-else v-html="bubble.html"/>
-						</div>
-
-						<button
-							type="button"
-							class="btn-icon w-6.5 h-6.5 shrink-0 opacity-0 pointer-events-none transition-opacity duration-200
-								group-hover:(opacity-100 pointer-events-auto) group-focus-within:(opacity-100 pointer-events-auto)"
-							:class="copiedBubbleKey === bubble.key ? 'opacity-100 pointer-events-auto text-success' : ''"
-							:title="copiedBubbleKey === bubble.key ? UI_I18N.copied : UI_I18N.copy"
-							:aria-label="copiedBubbleKey === bubble.key ? UI_I18N.copied : UI_I18N.copy"
-							@click="copyMessage(bubble.key, bubble.content)"
-						>
-							<Icon :name="copiedBubbleKey === bubble.key ? 'check' : 'copy'" :size="12"/>
-						</button>
-					</div>
-				</div>
+					:bubble="bubble"
+					:copied="copiedBubbleKey === bubble.key"
+					:copy-label="UI_I18N.copy"
+					:copied-label="UI_I18N.copied"
+					@copy="copyMessage"
+				/>
 
 				<!-- 工具调用中提示 -->
 				<div v-if="executingTool" class="self-start mt-1">

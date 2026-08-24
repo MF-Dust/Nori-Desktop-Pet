@@ -205,6 +205,7 @@ export default {
 					engineLinux: "Avalonia + WebKitGTK",
 					engineUnknown: "Avalonia + system WebView",
 					statusNormal: "Normal",
+					statusSafeMode: "Safe mode",
 				},
 			},
 			about: {
@@ -436,6 +437,10 @@ export default {
 				modelEmpty: "No models available",
 				getModel: "Fetch Models",
 				getting: "Fetching...",
+				testConnection: "Test connection",
+				testingConnection: "Testing...",
+				testSuccess: "Connection succeeded",
+				testFailed: "Connection failed",
 				error: {
 					apiBaseUrl: "Please enter API Base URL",
 					apiKey: "Please enter API Key",
@@ -449,6 +454,7 @@ export default {
 				providerSaveFailed: "Failed to save provider",
 				modelSaveFailed: "Failed to save model",
 				fetchFailed: "Failed to fetch models",
+				connectionError: "Connection test failed",
 			},
 			sidebar: {
 				collapse: "Collapse sidebar",
@@ -518,6 +524,9 @@ export default {
 					engineMacos: "Avalonia UI + WKWebView",
 					engineLinux: "Avalonia UI + WebKitGTK",
 					engineUnknown: "Avalonia UI + system WebView",
+					safeMode: "Runtime mode",
+					safeModeEnabled: "Safe mode",
+					safeModeDisabled: "Standard mode",
 				},
 			},
 			proactive: {
@@ -564,6 +573,10 @@ export default {
 					copy: "Copy diagnostics",
 					copyFailed: "Failed to copy diagnostics",
 					loadFailed: "Failed to load diagnostics",
+					export: "Export diagnostics",
+					exporting: "Exporting…",
+					exportSuccess: "Diagnostics package saved",
+					exportFailed: "Failed to export diagnostics",
 				},
 				logs: {
 					title: "Runtime logs",
@@ -895,6 +908,10 @@ export default {
 					title: "Embedding & Semantic Search",
 					indexing: "Indexing...",
 					reembed: "Rebuild Memory Vectors",
+					testConnection: "Test connection",
+					testingConnection: "Testing...",
+					testSuccess: "Connection succeeded",
+					testFailed: "Connection failed",
 					model: "Embedding model",
 					baseUrl: "API URL (leave empty to reuse the AI brain settings)",
 					apiKeySaved: "(saved, encrypted)",
@@ -910,6 +927,7 @@ export default {
 					modelPlaceholder: "BAAI/bge-m3 or text-embedding-3-small",
 					baseUrlPlaceholder: "https://api.openai.com/v1",
 					apiKeyPlaceholder: "sk-...",
+					connectionError: "Embedding connection test failed",
 				},
 				add: {
 					title: "Add Memory",

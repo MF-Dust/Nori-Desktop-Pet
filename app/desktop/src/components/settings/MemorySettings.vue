@@ -62,6 +62,9 @@ const embeddingDimensions = embeddingDimensionsField.value
 const embeddingApiKeyInput = ref("")
 const hasEmbeddingApiKey = computed(() => RUNTIME.snapshot.value?.embedding.hasApiKey ?? false)
 const isReembedding = ref(false)
+const embeddingTesting = ref(false)
+const embeddingTestMessage = ref("")
+const embeddingTestSuccess = ref(false)
 const reembedMessage = ref("")
 const reflectionRoundsField = useSnapshotField(snapshot => snapshot.memory.reflectionRounds, 8)
 const reflectionMinCharsField = useSnapshotField(snapshot => snapshot.memory.reflectionMinChars, 2500)
@@ -310,6 +313,33 @@ const updateNumberField = (field: EditableMemoryField, event: Event): void => {
 const saveEmbeddingModel = () => saveEmbedding("model", embeddingModelField, () => RUNTIME.updateEmbedding({model: embeddingModel.value.trim()}))
 const saveEmbeddingBase = () => saveEmbedding("base", embeddingBaseUrlField, () => RUNTIME.updateEmbedding({baseUrl: embeddingBaseUrl.value.trim()}))
 
+const testEmbeddingConnection = async () => {
+	if (embeddingTesting.value) return
+	embeddingTesting.value = true
+	embeddingTestMessage.value = ""
+	const API_KEY = embeddingApiKeyInput.value.trim()
+	try {
+		const RESULT = await RUNTIME.testEmbeddingConnection(
+			embeddingBaseUrl.value.trim(),
+			API_KEY,
+			embeddingModel.value.trim(),
+			embeddingDimensions.value.trim() || undefined,
+		)
+		embeddingTestSuccess.value = RESULT.success
+		embeddingTestMessage.value = RESULT.success
+			? I18N.value.embedding.testSuccess
+			: `${I18N.value.embedding.testFailed}: ${RESULT.message}`
+	} catch (error) {
+		embeddingTestSuccess.value = false
+		embeddingTestMessage.value = I18N.value.embedding.connectionError
+		feedback.error(I18N.value.embedding.connectionError)
+		console.error("Embedding 连接测试失败", error instanceof Error ? error.name : "未知错误")
+	} finally {
+		embeddingApiKeyInput.value = ""
+		embeddingTesting.value = false
+	}
+}
+
 const saveDimensions = () => {
 	embeddingDimensionsField.blur()
 	const RAW = embeddingDimensions.value.trim()
@@ -490,7 +520,10 @@ const clearAll = async () => {
 			<!-- 1. Embedding 向量嵌入配置 -->
 			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.embedding.title" icon="sparkles">
 				<template #actions>
-					<n-button type="primary" :loading="isReembedding" :disabled="isReembedding" @click="reembedAll">
+					<n-button :loading="embeddingTesting" :disabled="isReembedding || embeddingTesting" @click="testEmbeddingConnection">
+						{{ embeddingTesting ? I18N.embedding.testingConnection : I18N.embedding.testConnection }}
+					</n-button>
+					<n-button type="primary" :loading="isReembedding" :disabled="isReembedding || embeddingTesting" @click="reembedAll">
 						<template #icon>
 							<Icon :name="isReembedding ? 'loading' : 'sparkles'" :size="14"/>
 						</template>
@@ -551,6 +584,12 @@ const clearAll = async () => {
 
 				<p class="text-hint leading-relaxed">{{ I18N.embedding.dimensionsHint }}</p>
 
+				<p
+					v-if="embeddingTestMessage"
+					class="text-sm font-500"
+					:class="embeddingTestSuccess ? 'text-nori-teal-bright' : 'text-danger-text'"
+					role="status"
+				>{{ embeddingTestMessage }}</p>
 				<p v-if="reembedMessage" class="text-sm text-nori-teal-bright">{{ reembedMessage }}</p>
 			</AppCard>
 

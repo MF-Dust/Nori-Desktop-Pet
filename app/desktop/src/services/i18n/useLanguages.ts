@@ -209,6 +209,7 @@ export default () => {
 						engineLinux: t("views.main.home.system.engineLinux"),
 						engineUnknown: t("views.main.home.system.engineUnknown"),
 						statusNormal: t("views.main.home.system.statusNormal"),
+						statusSafeMode: t("views.main.home.system.statusSafeMode"),
 					},
 				},
 				about: {
@@ -440,6 +441,10 @@ export default () => {
 					modelEmpty: t("views.main.ai.modelEmpty"),
 					getModel: t("views.main.ai.getModel"),
 					getting: t("views.main.ai.getting"),
+					testConnection: t("views.main.ai.testConnection"),
+					testingConnection: t("views.main.ai.testingConnection"),
+					testSuccess: t("views.main.ai.testSuccess"),
+					testFailed: t("views.main.ai.testFailed"),
 					error: {
 						apiBaseUrl: t("views.main.ai.error.apiBaseUrl"),
 						apiKey: t("views.main.ai.error.apiKey"),
@@ -453,6 +458,7 @@ export default () => {
 					providerSaveFailed: t("views.main.ai.providerSaveFailed"),
 					modelSaveFailed: t("views.main.ai.modelSaveFailed"),
 					fetchFailed: t("views.main.ai.fetchFailed"),
+					connectionError: t("views.main.ai.connectionError"),
 				},
 				sidebar: {
 					collapse: t("views.main.sidebar.collapse"),
@@ -522,6 +528,9 @@ export default () => {
 						engineMacos: t("views.main.general.about.engineMacos"),
 						engineLinux: t("views.main.general.about.engineLinux"),
 						engineUnknown: t("views.main.general.about.engineUnknown"),
+						safeMode: t("views.main.general.about.safeMode"),
+						safeModeEnabled: t("views.main.general.about.safeModeEnabled"),
+						safeModeDisabled: t("views.main.general.about.safeModeDisabled"),
 					},
 				},
 				proactive: {
@@ -568,6 +577,10 @@ export default () => {
 						copy: t("views.main.debug.diagnostic.copy"),
 						copyFailed: t("views.main.debug.diagnostic.copyFailed"),
 						loadFailed: t("views.main.debug.diagnostic.loadFailed"),
+						export: t("views.main.debug.diagnostic.export"),
+						exporting: t("views.main.debug.diagnostic.exporting"),
+						exportSuccess: t("views.main.debug.diagnostic.exportSuccess"),
+						exportFailed: t("views.main.debug.diagnostic.exportFailed"),
 					},
 					logs: {
 						title: t("views.main.debug.logs.title"),
@@ -899,6 +912,10 @@ export default () => {
 						title: t("views.main.memory.embedding.title"),
 						indexing: t("views.main.memory.embedding.indexing"),
 						reembed: t("views.main.memory.embedding.reembed"),
+						testConnection: t("views.main.memory.embedding.testConnection"),
+						testingConnection: t("views.main.memory.embedding.testingConnection"),
+						testSuccess: t("views.main.memory.embedding.testSuccess"),
+						testFailed: t("views.main.memory.embedding.testFailed"),
 						model: t("views.main.memory.embedding.model"),
 						baseUrl: t("views.main.memory.embedding.baseUrl"),
 						apiKeySaved: t("views.main.memory.embedding.apiKeySaved"),
@@ -914,6 +931,7 @@ export default () => {
 						modelPlaceholder: t("views.main.memory.embedding.modelPlaceholder"),
 						baseUrlPlaceholder: t("views.main.memory.embedding.baseUrlPlaceholder"),
 						apiKeyPlaceholder: t("views.main.memory.embedding.apiKeyPlaceholder"),
+						connectionError: t("views.main.memory.embedding.connectionError"),
 					},
 					add: {
 						title: t("views.main.memory.add.title"),

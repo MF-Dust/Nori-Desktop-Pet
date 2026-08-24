@@ -205,6 +205,7 @@ export default {
 					engineLinux: "Avalonia + WebKitGTK",
 					engineUnknown: "Avalonia + 系统 WebView",
 					statusNormal: "运行正常",
+					statusSafeMode: "安全模式运行",
 				},
 			},
 			about: {
@@ -436,6 +437,10 @@ export default {
 				modelEmpty: "暂无可用模型",
 				getModel: "获取模型",
 				getting: "获取中...",
+				testConnection: "测试连接",
+				testingConnection: "测试中...",
+				testSuccess: "连接成功",
+				testFailed: "连接失败",
 				error: {
 					apiBaseUrl: "请填写 API 地址",
 					apiKey: "请填写 API Key",
@@ -449,6 +454,7 @@ export default {
 				providerSaveFailed: "保存协议类型失败",
 				modelSaveFailed: "保存模型失败",
 				fetchFailed: "获取模型失败",
+				connectionError: "连接测试失败",
 			},
 			sidebar: {
 				collapse: "收起侧边栏",
@@ -518,6 +524,9 @@ export default {
 					engineMacos: "Avalonia UI + WKWebView",
 					engineLinux: "Avalonia UI + WebKitGTK",
 					engineUnknown: "Avalonia UI + 系统 WebView",
+					safeMode: "运行模式",
+					safeModeEnabled: "安全模式",
+					safeModeDisabled: "标准模式",
 				},
 			},
 			proactive: {
@@ -564,6 +573,10 @@ export default {
 					copy: "复制诊断信息",
 					copyFailed: "复制诊断信息失败",
 					loadFailed: "读取诊断信息失败",
+					export: "导出诊断包",
+					exporting: "正在导出…",
+					exportSuccess: "诊断包已保存",
+					exportFailed: "导出诊断包失败",
 				},
 				logs: {
 					title: "运行日志",
@@ -895,6 +908,10 @@ export default {
 					title: "向量嵌入与语义检索配置 (Embedding)",
 					indexing: "正在索引...",
 					reembed: "重新计算记忆向量",
+					testConnection: "测试连接",
+					testingConnection: "测试中...",
+					testSuccess: "连接成功",
+					testFailed: "连接失败",
 					model: "Embedding 向量模型",
 					baseUrl: "API 地址 (留空复用 AI 大脑配置)",
 					apiKeySaved: "(已加密保存)",
@@ -910,6 +927,7 @@ export default {
 					modelPlaceholder: "BAAI/bge-m3 或 text-embedding-3-small",
 					baseUrlPlaceholder: "https://api.openai.com/v1",
 					apiKeyPlaceholder: "sk-...",
+					connectionError: "Embedding 连接测试失败",
 				},
 				add: {
 					title: "添加长期记忆",

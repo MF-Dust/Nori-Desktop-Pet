@@ -40,6 +40,7 @@ const diagnostic = ref<Record<string, string>>({})
 const gcReleased = ref("")
 const gcFailed = ref(false)
 const busy = ref(false)
+const exporting = ref(false)
 const DEBUG_CRASH_TESTS_AVAILABLE = computed(() => RUNTIME.snapshot.value?.app.debugCrashTestsAvailable ?? false)
 
 const FILTERED_LOGS = computed(() => {
@@ -80,6 +81,19 @@ const clearLogs = async () => {
 		await refreshLogs()
 	} catch (error) {
 		feedback.error(I18N.value.logs.clearFailed, error)
+	}
+}
+
+const exportDiagnostics = async () => {
+	if (exporting.value) return
+	exporting.value = true
+	try {
+		const RESULT = await RUNTIME.exportDiagnostics()
+		if (RESULT) feedback.success(`${I18N.value.diagnostic.exportSuccess}: ${RESULT.fileName}`)
+	} catch (error) {
+		feedback.error(I18N.value.diagnostic.exportFailed, error)
+	} finally {
+		exporting.value = false
 	}
 }
 
@@ -198,6 +212,9 @@ const formatBytes = (bytes: number): string => {
 				<template #actions>
 					<AppButton size="sm" @click="refreshDiagnostic">{{ I18N.actions.refresh }}</AppButton>
 					<AppButton size="sm" @click="copyDiagnostic">{{ I18N.diagnostic.copy }}</AppButton>
+					<AppButton size="sm" :loading="exporting" @click="exportDiagnostics">
+						{{ exporting ? I18N.diagnostic.exporting : I18N.diagnostic.export }}
+					</AppButton>
 					<AppButton size="sm" @click="openLogFolder">{{ I18N.actions.openFolder }}</AppButton>
 				</template>
 

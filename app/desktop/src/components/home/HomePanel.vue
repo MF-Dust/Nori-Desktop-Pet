@@ -8,6 +8,7 @@ import type {IconMode, IconName} from "../../services/icon"
 import {MODEL_LIST} from "../../services/live2d/models"
 import {RUNTIME} from "../../services/runtime"
 import {feedback} from "../../services/feedback"
+import {APP_VERSION} from "../../services/version"
 
 const props = defineProps<{
 	petVisible: boolean
@@ -32,6 +33,7 @@ const aiProvider = computed(() => SNAPSHOT.value?.ai.provider ?? "")
 const aiModel = computed(() => SNAPSHOT.value?.ai.model ?? "")
 const enabledSkillsCount = computed(() => SNAPSHOT.value?.enabledSkillsCount ?? 0)
 const enabledToolsCount = computed(() => (SNAPSHOT.value?.tools ?? []).filter(tool => tool.enabled).length)
+const SAFE_MODE = computed(() => SNAPSHOT.value?.app.safeMode ?? false)
 const ENGINE_TEXT = computed(() => {
 	switch (SNAPSHOT.value?.platform.os) {
 		case "windows": return I18N.value.system.engineWindows
@@ -339,7 +341,7 @@ onMounted(() => {
 			<div class="flex items-center gap-2.5 flex-wrap text-xs text-text-faint pt-1">
 				<span class="flex items-center">
 					<span>{{ I18N.system.appVersion }}:</span>
-					<span class="ml-1 text-text-muted mono font-600">v{{ SNAPSHOT?.app.appVersion ?? "0.1.0" }}</span>
+					<span class="ml-1 text-text-muted mono font-600">v{{ SNAPSHOT?.app.productVersion ?? SNAPSHOT?.app.appVersion ?? APP_VERSION }}</span>
 				</span>
 				<span class="opacity-30">/</span>
 				<span class="flex items-center">
@@ -347,9 +349,15 @@ onMounted(() => {
 					<span class="ml-1 text-text-muted">{{ ENGINE_TEXT }}</span>
 				</span>
 				<span class="opacity-30">/</span>
-				<span class="inline-flex items-center gap-1.5 text-success font-500">
-					<span class="w-1.5 h-1.5 rounded-full bg-success shadow-[0_0_0.6rem_var(--success)]"/>
-					<span>{{ I18N.system.statusNormal }}</span>
+				<span
+					class="inline-flex items-center gap-1.5 font-500"
+					:class="SAFE_MODE ? 'text-warning' : 'text-success'"
+				>
+					<span
+						class="w-1.5 h-1.5 rounded-full"
+						:class="SAFE_MODE ? 'bg-warning shadow-[0_0_0.6rem_var(--warning)]' : 'bg-success shadow-[0_0_0.6rem_var(--success)]'"
+					/>
+					<span>{{ SAFE_MODE ? I18N.system.statusSafeMode : I18N.system.statusNormal }}</span>
 				</span>
 			</div>
 		</section>
