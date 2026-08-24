@@ -140,11 +140,12 @@ public sealed class AgentEngine
 
 		// 1. 读取 AI 与用户自定义人设配置 (秘密只在后端流转)
 		Stopwatch configClock = Stopwatch.StartNew();
-		string provider = _config.GetStringOr("llm_provider", "openai");
-		string baseUrl = _config.GetStringOr("llm_api_base", "").Trim();
-		string apiKey = _config.GetStringOr("llm_api_key", "");
-		string model = _config.GetStringOr("llm_model", "").Trim();
-		string userPersona = _config.GetStringOr("nori_user_persona", "");
+		AiChatSettings chatSettings = new AiSettingsStore(_config).Read().Chat;
+		string provider = chatSettings.Provider.AsString();
+		string baseUrl = chatSettings.BaseUrl;
+		string apiKey = chatSettings.ApiKey;
+		string model = chatSettings.Model;
+		string userPersona = chatSettings.Persona;
 		if (baseUrl.Length == 0 || apiKey.Length == 0 || model.Length == 0)
 		{
 			WriteTrace(sessionId, "config", configClock.ElapsedMilliseconds, null, null, "error", "invalid_config");

@@ -77,7 +77,7 @@ public sealed class ProviderConnectionTester(HttpClient httpClient, OpenAiEmbedd
 	{
 		const string providerName = "embedding";
 		if (string.IsNullOrWhiteSpace(baseUrl)) return Invalid(providerName, "Embedding API Base URL 不能为空");
-		if (string.IsNullOrWhiteSpace(apiKey)) return Invalid(providerName, "Embedding API Key 不能为空");
+		// OpenAI 兼容的本地/内网服务可以不要求 API Key。
 		if (string.IsNullOrWhiteSpace(model)) return Invalid(providerName, "Embedding 模型不能为空");
 
 		Stopwatch stopwatch = Stopwatch.StartNew();

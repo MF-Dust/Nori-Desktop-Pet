@@ -21,6 +21,7 @@ public sealed class MemoryService : IAsyncDisposable
 	private readonly MemoryStore _store;
 	private readonly IEmbeddingAdapter _embedding;
 	private readonly ConfigStore _config;
+	private readonly AiSettingsStore _aiSettings;
 	private readonly SemaphoreSlim _reembedGate = new(1, 1);
 	private readonly Channel<EmbeddingJob> _embeddingQueue = Channel.CreateBounded<EmbeddingJob>(new BoundedChannelOptions(128)
 	{
@@ -41,6 +42,7 @@ public sealed class MemoryService : IAsyncDisposable
 		_store = store;
 		_embedding = embedding;
 		_config = config;
+		_aiSettings = new AiSettingsStore(config);
 		_embeddingWorker = startBackgroundWorker
 			? Task.Run(ProcessEmbeddingQueueAsync)
 			: Task.CompletedTask;
@@ -72,30 +74,15 @@ public sealed class MemoryService : IAsyncDisposable
 		DebugRetrieval = _config.GetBoolOr("memory_debug_retrieval", false),
 	};
 
-	/// <summary>解析 Embedding 接入配置。</summary>
+	/// <summary>解析独立 Embedding 接入配置, 不从聊天配置回退。</summary>
 	public (string BaseUrl, string ApiKey, string Model, int? Dimensions) ResolveConfig()
 	{
-		string baseUrl = _config.GetStringOr("embedding_api_base", "").Trim();
-		if (baseUrl.Length == 0) baseUrl = _config.GetStringOr("llm_api_base", "https://api.openai.com/v1").Trim();
-		if (baseUrl.Length == 0) baseUrl = "https://api.openai.com/v1";
-		string apiKey = _config.GetStringOr("embedding_api_key", "");
-		if (apiKey.Length == 0) apiKey = _config.GetStringOr("llm_api_key", "");
-		string model = _config.GetStringOr("embedding_model", "BAAI/bge-m3");
-		int? dimensions = int.TryParse(_config.GetStringOr("embedding_dimensions", ""), out int parsed) && parsed > 0 ? parsed : null;
-		return (baseUrl, apiKey, model, dimensions);
+		AiEmbeddingSettings embedding = _aiSettings.Read().Embedding;
+		return (embedding.BaseUrl, embedding.ApiKey, embedding.Model, embedding.Dimensions);
 	}
 
 	/// <summary>当前 Embedding 配置指纹，不包含 API Key。</summary>
-	public bool EmbeddingConfigured
-	{
-		get
-		{
-			string explicitBase = _config.GetStringOr("embedding_api_base", "").Trim();
-			string key = _config.GetStringOr("embedding_api_key", "");
-			if (explicitBase.Length > 0 || key.Length > 0) return true;
-			return _config.GetStringOr("llm_api_key", "").Length > 0;
-		}
-	}
+	public bool EmbeddingConfigured => _aiSettings.Read().Embedding.IsConfigured;
 
 	public string ResolveEmbeddingFingerprint()
 	{

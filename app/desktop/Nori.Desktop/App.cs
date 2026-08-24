@@ -187,6 +187,7 @@ public sealed class App : Application
 		{
 			Database = database,
 			Config = config,
+			AiSettings = new AiSettingsStore(config),
 			Logger = logger,
 			Telemetry = telemetry,
 			Resources = new ResourceManager(),

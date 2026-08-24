@@ -60,10 +60,11 @@ public sealed class PetInteractionReactionService
 		CancellationToken cancellationToken = default)
 	{
 		ValidateRequest(request);
-		string providerText = _config.GetStringOr("llm_provider", "openai");
-		string baseUrl = _config.GetStringOr("llm_api_base", "").Trim();
-		string apiKey = _config.GetStringOr("llm_api_key", "");
-		string model = _config.GetStringOr("llm_model", "").Trim();
+		AiChatSettings chatSettings = new AiSettingsStore(_config).Read().Chat;
+		string providerText = chatSettings.Provider.AsString();
+		string baseUrl = chatSettings.BaseUrl;
+		string apiKey = chatSettings.ApiKey;
+		string model = chatSettings.Model;
 		if (baseUrl.Length == 0 || apiKey.Length == 0 || model.Length == 0)
 		{
 			throw new InvalidOperationException("桌宠互动缺少完整的 LLM 配置");

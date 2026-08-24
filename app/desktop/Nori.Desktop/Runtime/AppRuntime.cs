@@ -476,10 +476,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		!Services.SafeMode
 		&& (ParseBoolFlag(Services.Config.GetStringOr(PetInteractionConfig.AiEnabledKey, "")) ?? false);
 
-	private bool IsLlmConfigured() =>
-		Services.Config.GetStringOr("llm_api_base", "").Trim().Length > 0
-		&& Services.Config.GetStringOr("llm_api_key", "").Length > 0
-		&& Services.Config.GetStringOr("llm_model", "").Trim().Length > 0;
+	private bool IsLlmConfigured() => Services.AiSettings.Read().Chat.IsConfigured;
 
 	private void StartPetInteractionSpeech(string text)
 	{
@@ -886,11 +883,9 @@ public sealed class AppRuntime : IAsyncDisposable
 	private object BuildSnapshotCore(int snapshotVersion)
 	{
 		ConfigStore config = Services.Config;
-		string provider = config.GetStringOr("llm_provider", "openai");
-		string baseUrl = config.GetStringOr("llm_api_base", "");
-		string model = config.GetStringOr("llm_model", "");
-		string persona = config.GetStringOr("nori_user_persona", "");
-		bool hasApiKey = config.GetStringOr("llm_api_key", "").Length > 0;
+		AiProviderSettings aiSettings = Services.AiSettings.Read();
+		AiChatSettingsSnapshot chatSnapshot = AiChatSettingsSnapshot.From(aiSettings.Chat);
+		AiEmbeddingSettingsSnapshot embeddingSnapshot = AiEmbeddingSettingsSnapshot.From(aiSettings.Embedding);
 
 		var models = ModelCatalogIds().Select(id => new
 		{
@@ -942,12 +937,15 @@ public sealed class AppRuntime : IAsyncDisposable
 			}).ToArray(),
 			ai = new
 			{
-				configured = baseUrl.Length > 0 && hasApiKey && model.Length > 0,
-				provider,
-				baseUrl,
-				model,
-				persona,
-				hasApiKey,
+				// 保留旧版扁平字段, 同时提供统一的 chat/embedding DTO。
+				configured = chatSnapshot.Configured,
+				provider = chatSnapshot.Provider,
+				baseUrl = chatSnapshot.BaseUrl,
+				model = chatSnapshot.Model,
+				persona = chatSnapshot.Persona,
+				hasApiKey = chatSnapshot.HasApiKey,
+				chat = chatSnapshot,
+				embedding = embeddingSnapshot,
 			},
 			models = new
 			{
@@ -1040,13 +1038,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				noticePending = config.GetStringOr("voice_notice_pending", "") == "1",
 				speaking = Voice.IsSpeaking,
 			},
-			embedding = new
-			{
-				model = config.GetStringOr("embedding_model", "BAAI/bge-m3"),
-				baseUrl = config.GetStringOr("embedding_api_base", ""),
-				dimensions = config.GetStringOr("embedding_dimensions", ""),
-				hasApiKey = config.GetStringOr("embedding_api_key", "").Length > 0,
-			},
+			embedding = embeddingSnapshot,
 			proactive = new
 			{
 				idleEnabled = !Services.SafeMode && (ParseBoolFlag(config.GetStringOr("proactive_idle_enabled", "true")) ?? true),

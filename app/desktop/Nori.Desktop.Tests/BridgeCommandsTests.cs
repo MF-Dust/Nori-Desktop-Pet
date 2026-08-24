@@ -103,6 +103,7 @@ public class BridgeCommandsTests : IDisposable
 		{
 			Database = _database,
 			Config = _config,
+			AiSettings = new AiSettingsStore(_config),
 			Logger = new FileLogger(Path.Combine(_tempDir, "logs")),
 			Resources = new Nori.Core.Resources.ResourceManager(_tempDir),
 			Chat = new ChatService(_http, _database, _config),
@@ -243,7 +244,7 @@ public class BridgeCommandsTests : IDisposable
 		BridgeCommands commands = safeFixture.CreateCommands();
 		string[] networkCommands =
 		[
-			"llm_fetch_models", "llm_test_connection", "embedding_test_connection", "chat_start",
+			"llm_fetch_models", "llm_test_connection", "embedding_test_connection", "settings_test_ai", "settings_test_embedding", "ai_test_connection", "chat_start",
 			"memory_search_hybrid", "memory_reembed_all", "memory_recall_debug", "memory_knowledge_reindex",
 			"skills_install_url", "mcp_get_servers", "mcp_connect_server", "mcp_test_server",
 			"mcp_call_tool", "mcp_import_url", "tts_test", "stt_start", "stt_stop", "open_url",
@@ -294,6 +295,61 @@ public class BridgeCommandsTests : IDisposable
 		// 显式空串清除密钥
 		await commands.InvokeAsync(new FakeBridgeSource("main"), "settings_update_ai", Args(new {apiKey = ""}));
 		Assert.False(_config.Exists("llm_api_key"));
+	}
+
+	[Fact]
+	public async Task 统一AI设置更新保持聊天与Embedding独立()
+	{
+		BridgeCommands commands = CreateCommands();
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "settings_update_ai", Args(new
+		{
+			baseUrl = "https://chat.example/v1",
+			apiKey = "chat-secret",
+			model = "chat-model",
+			embedding = new
+			{
+				baseUrl = "http://localhost:11434/v1",
+				model = "local-embedding",
+				apiKey = "",
+			},
+		}));
+
+		AiProviderSettings settings = _services.AiSettings.Read();
+		Assert.Equal("https://chat.example/v1", settings.Chat.BaseUrl);
+		Assert.Equal("chat-secret", settings.Chat.ApiKey);
+		Assert.Equal("http://localhost:11434/v1", settings.Embedding.BaseUrl);
+		Assert.Equal("local-embedding", settings.Embedding.Model);
+		Assert.Empty(settings.Embedding.ApiKey);
+		Assert.True(settings.Embedding.IsConfigured);
+	}
+
+	[Fact]
+	public async Task 新统一AI命令接受嵌套聊天与Embedding补丁()
+	{
+		BridgeCommands commands = CreateCommands();
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "settings_update_ai_providers", Args(new
+		{
+			chat = new
+			{
+				baseUrl = "https://chat.example/v1",
+				model = "chat-model",
+			},
+			persona = "保持简洁",
+			embedding = new
+			{
+				baseUrl = "http://127.0.0.1:11434/v1",
+				model = "nomic-embed-text",
+				dimensions = "768",
+			},
+		}));
+
+		AiProviderSettings settings = _services.AiSettings.Read();
+		Assert.Equal("https://chat.example/v1", settings.Chat.BaseUrl);
+		Assert.Equal("chat-model", settings.Chat.Model);
+		Assert.Equal("保持简洁", settings.Chat.Persona);
+		Assert.Equal("http://127.0.0.1:11434/v1", settings.Embedding.BaseUrl);
+		Assert.Equal("nomic-embed-text", settings.Embedding.Model);
+		Assert.Equal(768, settings.Embedding.Dimensions);
 	}
 
 	[Fact]

@@ -131,6 +131,22 @@ public sealed class ProviderConnectionTests
 	}
 
 	[Fact]
+	public async Task Embedding探测允许无密钥的OpenAI兼容服务()
+	{
+		using MockHandler handler = new(_ =>
+			JsonResponse("{\"data\":[{\"embedding\":[0.1,0.2],\"index\":0}]}"));
+		using HttpClient http = new(handler);
+		OpenAiEmbeddingAdapter embedding = new(http);
+		ProviderConnectionTester tester = new(http, embedding);
+
+		ProviderConnectionTestResult result = await tester.TestEmbeddingAsync(
+			"https://example.test/v1", "", "test-embedding");
+
+		Assert.True(result.Success, $"{result.Category}: {result.Message}");
+		Assert.Equal("ok", result.Category);
+	}
+
+	[Fact]
 	public async Task Embedding探测要求返回非空向量且不写入配置()
 	{
 		using MockHandler handler = new(request =>

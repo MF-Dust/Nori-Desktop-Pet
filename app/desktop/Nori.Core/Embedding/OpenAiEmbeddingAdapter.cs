@@ -2,6 +2,7 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
@@ -48,6 +49,12 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 		if (inputs.Count == 0) return [];
 		string normalizedBase = NormalizeBaseUrl(baseUrl);
 		string normalizedModel = string.IsNullOrWhiteSpace(model) ? "BAAI/bge-m3" : model.Trim();
+		// System.ClientModel 的 ApiKeyCredential 不接受空值; 本地/匿名服务走同样的
+		// OpenAI /embeddings 协议, 但不伪造 Authorization 头。
+		if (string.IsNullOrEmpty(apiKey))
+		{
+			return await GetEmbeddingsWithoutApiKeyAsync(normalizedBase, normalizedModel, inputs, dimensions, cancellationToken).ConfigureAwait(false);
+		}
 		string fingerprint = Fingerprint(normalizedBase, apiKey, normalizedModel, dimensions);
 		IEmbeddingGenerator<string, Embedding<float>> generator = GetGenerator(
 			normalizedBase, apiKey, normalizedModel, dimensions, fingerprint);
@@ -98,6 +105,45 @@ public sealed class OpenAiEmbeddingAdapter(HttpClient httpClient) : IEmbeddingAd
 			_state = new GeneratorState(fingerprint, cached);
 			return cached;
 		}
+	}
+
+	private async Task<IReadOnlyList<float[]>> GetEmbeddingsWithoutApiKeyAsync(
+		string baseUrl,
+		string model,
+		IReadOnlyList<string> inputs,
+		int? dimensions,
+		CancellationToken cancellationToken)
+	{
+		object payload = dimensions is { } value
+			? new {model, input = inputs, dimensions = value}
+			: new {model, input = inputs};
+		using HttpRequestMessage request = new(HttpMethod.Post, $"{baseUrl}/embeddings")
+		{
+			Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+		};
+		using HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+		string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+		if (!response.IsSuccessStatusCode)
+		{
+			throw new HttpRequestException($"Embedding HTTP {(int)response.StatusCode}");
+		}
+		using JsonDocument document = JsonDocument.Parse(body);
+		if (!document.RootElement.TryGetProperty("data", out JsonElement data) || data.ValueKind != JsonValueKind.Array)
+		{
+			throw new InvalidOperationException("Embedding 响应缺少 data");
+		}
+		List<(int Index, float[] Vector)> vectors = [];
+		foreach (JsonElement item in data.EnumerateArray())
+		{
+			if (!item.TryGetProperty("embedding", out JsonElement values) || values.ValueKind != JsonValueKind.Array)
+				throw new InvalidOperationException("Embedding 响应缺少向量");
+			float[] vector = values.EnumerateArray().Select(value => value.GetSingle()).ToArray();
+			int index = item.TryGetProperty("index", out JsonElement indexElement) && indexElement.TryGetInt32(out int parsed)
+				? parsed
+				: vectors.Count;
+			vectors.Add((index, vector));
+		}
+		return vectors.OrderBy(item => item.Index).Select(item => item.Vector).ToList();
 	}
 
 	private static string NormalizeBaseUrl(string baseUrl)

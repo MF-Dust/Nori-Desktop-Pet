@@ -58,10 +58,11 @@ public sealed class ReflectionService
 
 	private async Task<ReflectionResult> RequestReflectionAsync(IReadOnlyList<ChatMessage> window, CancellationToken cancellationToken)
 	{
-		string provider = _config.GetStringOr("llm_provider", "openai");
-		string baseUrl = _config.GetStringOr("llm_api_base", "").Trim();
-		string apiKey = _config.GetStringOr("llm_api_key", "");
-		string model = _config.GetStringOr("llm_model", "").Trim();
+		AiChatSettings chatSettings = new AiSettingsStore(_config).Read().Chat;
+		string provider = chatSettings.Provider.AsString();
+		string baseUrl = chatSettings.BaseUrl;
+		string apiKey = chatSettings.ApiKey;
+		string model = chatSettings.Model;
 		if (baseUrl.Length == 0 || model.Length == 0) throw new InvalidOperationException("Reflection 缺少 LLM 配置");
 		ILlmAdapter adapter = LlmClient.CreateAdapter(LlmProviderExtensions.ParseProvider(provider), _http);
 		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

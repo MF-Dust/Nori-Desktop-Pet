@@ -122,18 +122,27 @@ public sealed class BridgeCommands
 		"llm_fetch_models" => await FetchModelsWithSourceCheckAsync(source, args),
 		// invoke("llm_test_connection", {provider?, baseUrl?, apiKey?, model?})
 		"llm_test_connection" => await TestLlmConnectionAsync(source, args, cancellationToken),
+		/// invoke("ai_test_connection", {target: "chat" | "embedding", provider?, baseUrl?, apiKey?, model?, dimensions?})
+		"ai_test_connection" => await TestAiConnectionAsync(source, args, cancellationToken),
 
-		// invoke("settings_update_ai", {provider?, baseUrl?, apiKey?, model?, persona?})
+		/// invoke("settings_update_ai_providers", {chat?: {...}, embedding?: {...}, persona?})
+		"settings_update_ai_providers" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
+			Run(() =>
+			{
+				UpdateUnifiedAiSettings(args);
+				Runtime.InvalidateSnapshot("ai", "embedding");
+			})),
+
+		// invoke("settings_update_ai", {provider?, baseUrl?, apiKey?, model?, persona?, embedding?: {...}})
 		"settings_update_ai" => RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () =>
 			Run(() =>
 			{
-				UpdateOptionalConfig(args, "provider", "llm_provider");
-				UpdateOptionalConfig(args, "baseUrl", "llm_api_base");
-				UpdateSecretConfig(args, "apiKey", "llm_api_key");
-				UpdateOptionalConfig(args, "model", "llm_model");
-				UpdateOptionalConfig(args, "persona", "nori_user_persona");
-				Runtime.InvalidateSnapshot("ai");
+				UpdateUnifiedAiSettings(args);
+				Runtime.InvalidateSnapshot("ai", "embedding");
 			})),
+
+		// invoke("settings_test_ai", {provider?, baseUrl?, apiKey?, model?, embedding?: {...}})
+		"settings_test_ai" => await TestAiConnectionsAsync(source, args, cancellationToken),
 
 		// invoke("settings_update_voice", {...})
 		"settings_update_voice" => RequireMain(source, () =>
@@ -187,16 +196,16 @@ public sealed class BridgeCommands
 				Runtime.InvalidateSnapshot("proactive");
 			})),
 
-		// invoke("settings_update_embedding", {model?, baseUrl?, apiKey?, dimensions?})
+		// invoke("settings_update_embedding", {model?, baseUrl?, apiKey?, dimensions?}) 兼容命令
 		"settings_update_embedding" => RequireMain(source, () =>
 			Run(() =>
 			{
-				UpdateOptionalConfig(args, "model", "embedding_model");
-				UpdateOptionalConfig(args, "baseUrl", "embedding_api_base");
-				UpdateSecretConfig(args, "apiKey", "embedding_api_key");
-				UpdateOptionalConfig(args, "dimensions", "embedding_dimensions");
-				Runtime.QueueEmbeddingRebuild();
+				UpdateEmbeddingSettings(args);
+				Runtime.InvalidateSnapshot("embedding");
 			})),
+
+		// invoke("settings_test_embedding", {baseUrl?, apiKey?, model?, dimensions?}) 兼容命令
+		"settings_test_embedding" => await TestEmbeddingConnectionAsync(source, args, cancellationToken),
 		// invoke("embedding_test_connection", {baseUrl?, apiKey?, model?, dimensions?})
 		"embedding_test_connection" => await TestEmbeddingConnectionAsync(source, args, cancellationToken),
 
@@ -527,6 +536,9 @@ public sealed class BridgeCommands
 			"llm_fetch_models"
 			or "llm_test_connection"
 			or "embedding_test_connection"
+			or "settings_test_ai"
+			or "settings_test_embedding"
+			or "ai_test_connection"
 			or "chat_start"
 			or "memory_search_hybrid"
 			or "memory_reembed_all"
@@ -1149,6 +1161,72 @@ public sealed class BridgeCommands
 	private void UpdateConfigDirect(string key, string value) =>
 		_services.Config.Set(key, new ConfigValue.Text(value));
 
+	/// <summary>统一更新聊天与 Embedding 配置; 旧分领域命令仍通过此领域服务兼容。</summary>
+	private void UpdateUnifiedAiSettings(JsonElement args)
+	{
+		JsonElement chat = args;
+		bool hasNestedChat = TryGetObject(args, "chat", out JsonElement nestedChat);
+		if (hasNestedChat) chat = nestedChat;
+		string? persona = OptionalStr(args, "persona") ?? OptionalStr(chat, "persona");
+		bool hasChatPatch = hasNestedChat
+			|| HasAnyString(args, "provider", "baseUrl", "apiKey", "model", "persona")
+			|| persona is not null;
+		if (hasChatPatch)
+		{
+			_services.AiSettings.UpdateChat(new AiChatSettingsPatch(
+				Provider: OptionalStr(chat, "provider"),
+				BaseUrl: OptionalStr(chat, "baseUrl"),
+				ApiKey: OptionalStr(chat, "apiKey"),
+				Model: OptionalStr(chat, "model"),
+				Persona: persona,
+				ApiKeySpecified: HasString(chat, "apiKey")));
+		}
+
+		JsonElement embedding = args;
+		bool hasNestedEmbedding = TryGetObject(args, "embedding", out JsonElement nestedEmbedding);
+		if (hasNestedEmbedding) embedding = nestedEmbedding;
+		bool hasFlatEmbedding = HasAnyString(args, "embeddingBaseUrl", "embeddingApiKey", "embeddingModel", "embeddingDimensions");
+		if (hasNestedEmbedding || hasFlatEmbedding)
+		{
+			_services.AiSettings.UpdateEmbedding(BuildEmbeddingPatch(
+				hasNestedEmbedding ? embedding : args,
+				hasNestedEmbedding ? null : "embedding"));
+			Runtime.QueueEmbeddingRebuild();
+		}
+	}
+
+	private static bool TryGetObject(JsonElement args, string name, out JsonElement value)
+	{
+		value = default;
+		return args.ValueKind == JsonValueKind.Object
+			&& args.TryGetProperty(name, out value)
+			&& value.ValueKind == JsonValueKind.Object;
+	}
+
+	private void UpdateEmbeddingSettings(JsonElement args)
+	{
+		_services.AiSettings.UpdateEmbedding(BuildEmbeddingPatch(args, null));
+		Runtime.QueueEmbeddingRebuild();
+	}
+
+	private static AiEmbeddingSettingsPatch BuildEmbeddingPatch(JsonElement args, string? prefix)
+	{
+		string Name(string name) => prefix is null ? name : prefix + char.ToUpperInvariant(name[0]) + name[1..];
+		return new AiEmbeddingSettingsPatch(
+			BaseUrl: OptionalStr(args, prefix is null ? "baseUrl" : Name("baseUrl")),
+			ApiKey: OptionalStr(args, prefix is null ? "apiKey" : Name("apiKey")),
+			Model: OptionalStr(args, prefix is null ? "model" : Name("model")),
+			Dimensions: OptionalStr(args, prefix is null ? "dimensions" : Name("dimensions")),
+			ApiKeySpecified: HasString(args, prefix is null ? "apiKey" : Name("apiKey")));
+	}
+
+	private static bool HasString(JsonElement args, string name) =>
+		args.ValueKind == JsonValueKind.Object
+		&& args.TryGetProperty(name, out JsonElement value)
+		&& value.ValueKind == JsonValueKind.String;
+
+	private static bool HasAnyString(JsonElement args, params string[] names) => names.Any(name => HasString(args, name));
+
 	/// <summary>可选字段更新: 参数缺失时不动配置</summary>
 	private void UpdateOptionalConfig(JsonElement args, string argName, string configKey)
 	{
@@ -1271,38 +1349,59 @@ public sealed class BridgeCommands
 	private async Task<object?> FetchModelsWithSourceCheckAsync(IBridgeSource source, JsonElement args)
 	{
 		RequireLabel(source, WindowLabels.FirstRun, WindowLabels.Main, () => (object?)true);
-		string apiKey = OptionalStr(args, "apiKey") ?? "";
-		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
+		AiChatSettings chat = _services.AiSettings.Read().Chat;
+		string apiKey = OptionalStr(args, "apiKey") ?? chat.ApiKey;
 		return await _services.Llm.FetchModelsAsync(
-			OptionalStr(args, "provider"), Str(args, "baseUrl"), apiKey);
+			OptionalStr(args, "provider") ?? chat.Provider.AsString(), Str(args, "baseUrl"), apiKey);
 	}
 
-	private async Task<object?> TestLlmConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	private async Task<object?> TestAiConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	{
+		string target = OptionalStr(args, "target") ?? "chat";
+		if (string.Equals(target, "embedding", StringComparison.OrdinalIgnoreCase))
+		{
+			return await TestEmbeddingConnectionAsync(source, args, cancellationToken);
+		}
+		return await TestLlmConnectionAsync(source, args, cancellationToken);
+	}
+
+	private async Task<ProviderConnectionTestResult> TestLlmConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
 	{
 		RequireMainVoid(source);
-		string provider = OptionalStr(args, "provider") ?? _services.Config.GetStringOr("llm_provider", "openai");
-		string baseUrl = OptionalStr(args, "baseUrl") ?? _services.Config.GetStringOr("llm_api_base", "");
-		string apiKey = OptionalStr(args, "apiKey") ?? "";
-		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
-		string model = OptionalStr(args, "model") ?? _services.Config.GetStringOr("llm_model", "");
+		AiChatSettings chat = _services.AiSettings.Read().Chat;
+		string provider = OptionalStr(args, "provider") ?? chat.Provider.AsString();
+		string baseUrl = OptionalStr(args, "baseUrl") ?? chat.BaseUrl;
+		string apiKey = OptionalStr(args, "apiKey") ?? chat.ApiKey;
+		string model = OptionalStr(args, "model") ?? chat.Model;
 		ProviderConnectionTester tester = new(_services.Http, _services.Embedding);
 		return await tester.TestLlmAsync(provider, baseUrl, apiKey, model, cancellationToken);
 	}
 
-	private async Task<object?> TestEmbeddingConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	private async Task<object?> TestAiConnectionsAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
 	{
 		RequireMainVoid(source);
-		string baseUrl = OptionalStr(args, "baseUrl") ?? _services.Config.GetStringOr("embedding_api_base", "");
-		if (baseUrl.Length == 0) baseUrl = _services.Config.GetStringOr("llm_api_base", "");
-		string apiKey = OptionalStr(args, "apiKey") ?? "";
-		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("embedding_api_key", "");
-		if (apiKey.Length == 0) apiKey = _services.Config.GetStringOr("llm_api_key", "");
-		string model = OptionalStr(args, "model") ?? _services.Config.GetStringOr("embedding_model", "BAAI/bge-m3");
-		int? dimensions = OptionalInt(args, "dimensions");
+		ProviderConnectionTestResult llm = await TestLlmConnectionAsync(source, args, cancellationToken);
+		JsonElement embeddingArgs = args;
+		if (args.ValueKind == JsonValueKind.Object
+			&& args.TryGetProperty("embedding", out JsonElement nested)
+			&& nested.ValueKind == JsonValueKind.Object)
+		{
+			embeddingArgs = nested;
+		}
+		ProviderConnectionTestResult embedding = await TestEmbeddingConnectionAsync(source, embeddingArgs, cancellationToken);
+		return new {llm, embedding};
+	}
+
+	private async Task<ProviderConnectionTestResult> TestEmbeddingConnectionAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	{
+		RequireMainVoid(source);
+		AiEmbeddingSettings embedding = _services.AiSettings.Read().Embedding;
+		string baseUrl = OptionalStr(args, "baseUrl") ?? embedding.BaseUrl;
+		string apiKey = OptionalStr(args, "apiKey") ?? embedding.ApiKey;
+		string model = OptionalStr(args, "model") ?? embedding.Model;
+		int? dimensions = OptionalInt(args, "dimensions") ?? embedding.Dimensions;
 		if (dimensions is null && int.TryParse(OptionalStr(args, "dimensions"), out int supplied))
 			dimensions = supplied > 0 ? supplied : null;
-		if (dimensions is null && int.TryParse(_services.Config.GetStringOr("embedding_dimensions", ""), out int configured))
-			dimensions = configured > 0 ? configured : null;
 		ProviderConnectionTester tester = new(_services.Http, _services.Embedding);
 		return await tester.TestEmbeddingAsync(baseUrl, apiKey, model, dimensions, cancellationToken);
 	}

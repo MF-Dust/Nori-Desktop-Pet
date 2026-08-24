@@ -47,7 +47,7 @@ public sealed record ChatMessage
 public sealed class ChatService(HttpClient httpClient, NoriDatabase database, ConfigStore config)
 {
 	/// <summary>配置键: LLM 协议类型</summary>
-	public const string KeyLlmProvider = "llm_provider";
+	public const string KeyLlmProvider = AiSettingsStore.KeyLlmProvider;
 
 	/// <summary>
 	/// 聊天请求超时 (秒): 防止接口挂起导致后台任务永久阻塞。
@@ -63,6 +63,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 	private readonly HttpClient _httpClient = httpClient;
 	private readonly NoriDatabase _database = database;
 	private readonly ConfigStore _config = config;
+	private readonly AiSettingsStore _aiSettings = new(config);
 
 	/// <summary>
 	/// 获取完整聊天历史 (按时间正序, 永不清除)
@@ -144,7 +145,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		// 若未指定 providerStr，优先读配置
 		if (string.IsNullOrWhiteSpace(providerStr))
 		{
-			providerStr = _config.GetStringOr(KeyLlmProvider, "openai");
+			providerStr = _aiSettings.Read().Chat.Provider.AsString();
 		}
 
 		LlmProvider provider = LlmProviderExtensions.ParseProvider(providerStr);
@@ -200,7 +201,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 
 		if (string.IsNullOrWhiteSpace(providerStr))
 		{
-			providerStr = _config.GetStringOr(KeyLlmProvider, "openai");
+			providerStr = _aiSettings.Read().Chat.Provider.AsString();
 		}
 
 		LlmProvider provider = LlmProviderExtensions.ParseProvider(providerStr);

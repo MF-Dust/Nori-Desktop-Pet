@@ -25,6 +25,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>配置读写</summary>
 	public required ConfigStore Config { get; init; }
 
+	/// <summary>统一 AI Provider 配置领域服务</summary>
+	public AiSettingsStore AiSettings { get; init; } = null!;
+
 	/// <summary>日志</summary>
 	public required FileLogger Logger { get; init; }
 
