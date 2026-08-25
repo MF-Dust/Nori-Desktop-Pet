@@ -867,7 +867,7 @@ public class BridgeCommandsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task 到期提醒由TakeDue取走并删除()
+	public async Task 到期提醒由TakeDue领取并等待确认()
 	{
 		Nori.Core.Proactive.ReminderStore store = new(_database);
 		store.Add("过期提醒", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1000);
@@ -875,6 +875,78 @@ public class BridgeCommandsTests : IDisposable
 		var due = store.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 		Assert.Single(due);
 		Assert.Empty(store.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+	}
+
+	[Fact]
+	public async Task reminder_update_snooze_complete更新快照并停止调度()
+	{
+		BridgeCommands commands = CreateCommands();
+		FakeBridgeSource main = new(WindowLabels.Main);
+		Nori.Core.Proactive.ReminderItem added = Assert.IsType<Nori.Core.Proactive.ReminderItem>(await commands.InvokeAsync(
+			main, "reminder_add", Args(new {content = "原始提醒", delayMinutes = 30})));
+
+		int before = _runtime.SnapshotVersion;
+		long triggerTime = DateTimeOffset.UtcNow.AddMinutes(20).ToUnixTimeMilliseconds();
+		Nori.Core.Proactive.ReminderItem updated = Assert.IsType<Nori.Core.Proactive.ReminderItem>(await commands.InvokeAsync(
+			main, "reminder_update", Args(new
+			{
+				id = added.Id,
+				content = "更新提醒",
+				triggerTime,
+				repeatDaily = true,
+				timezone = "UTC",
+				recurrenceJson = "{\"type\":\"daily\"}",
+			})));
+		Assert.True(_runtime.SnapshotVersion > before);
+		Assert.Equal("更新提醒", updated.Content);
+		Assert.True(updated.RepeatDaily);
+		Assert.Equal("UTC", updated.Timezone);
+		Assert.Equal("{\"type\":\"daily\"}", updated.RecurrenceJson);
+
+		Nori.Core.Proactive.ReminderItem snoozed = Assert.IsType<Nori.Core.Proactive.ReminderItem>(await commands.InvokeAsync(
+			main, "reminder_snooze", Args(new {id = added.Id, delayMinutes = 15})));
+		Assert.NotNull(snoozed.SnoozedUntil);
+		Assert.Equal(true, await commands.InvokeAsync(main, "reminder_complete", Args(new {id = added.Id})));
+		Assert.Empty(new Nori.Core.Proactive.ReminderStore(_database).TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 86_400_000));
+		object? listed = await commands.InvokeAsync(main, "reminder_list", Args(new { }));
+		Assert.NotNull(listed);
+		Assert.Empty((IReadOnlyList<Nori.Core.Proactive.ReminderItem>)listed!);
+	}
+
+	[Fact]
+	public async Task reminder_cancel保持旧返回值并写入取消终态()
+	{
+		BridgeCommands commands = CreateCommands();
+		FakeBridgeSource main = new(WindowLabels.Main);
+		Nori.Core.Proactive.ReminderItem added = Assert.IsType<Nori.Core.Proactive.ReminderItem>(await commands.InvokeAsync(
+			main, "reminder_add", Args(new {content = "待取消提醒", delayMinutes = 15})));
+		Assert.Equal(true, await commands.InvokeAsync(main, "reminder_cancel", Args(new {id = added.Id})));
+		Assert.Equal("cancelled", new Nori.Core.Proactive.ReminderStore(_database).Get(added.Id)!.Status);
+		Assert.Equal(false, await commands.InvokeAsync(main, "reminder_cancel", Args(new {id = added.Id})));
+	}
+
+	[Fact]
+	public async Task reminder命令拒绝非main和越界参数()
+	{
+		BridgeCommands commands = CreateCommands();
+		FakeBridgeSource pet = new(WindowLabels.Pet);
+		string[] commandsToCheck = ["reminder_update", "reminder_snooze", "reminder_complete", "reminder_list"];
+		foreach (string command in commandsToCheck)
+		{
+			await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(pet, command, Args(new {id = "missing"})));
+		}
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "reminder_add", Args(new {content = new string('x', 201), delayMinutes = 15})));
+		Nori.Core.Proactive.ReminderItem added = Assert.IsType<Nori.Core.Proactive.ReminderItem>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "reminder_add", Args(new {content = "边界提醒", delayMinutes = 15})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "reminder_snooze", Args(new {id = added.Id, delayMinutes = 0})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "reminder_update", Args(new {id = added.Id, timezone = "Not/AZone"})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "reminder_update", Args(new {id = added.Id})));
+		Assert.DoesNotContain("边界提醒", string.Join("\n", _services.Logger.RecentLogs().Select(entry => entry.Message)), StringComparison.Ordinal);
 	}
 
 	// ---- 工具手动测试边界 ----

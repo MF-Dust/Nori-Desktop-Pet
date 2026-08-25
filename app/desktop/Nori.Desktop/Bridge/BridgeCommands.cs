@@ -469,22 +469,49 @@ public sealed class BridgeCommands
 		"tools_execute_manual" => await ToolsExecuteManualAsync(source, args),
 
 		// ---- 定时提醒 ----
-		// invoke("reminder_add", {content, delayMinutes})
+		/// invoke("reminder_add", {content, delayMinutes}) 添加倒计时提醒
 		"reminder_add" => RequireMain(source, () =>
 		{
-			Nori.Core.Proactive.ReminderItem item = Runtime.Proactive.AddReminder(
-				Str(args, "content"), OptionalDouble(args, "delayMinutes") ?? 15);
+			double delayMinutes = ReadReminderNumber(args, "delayMinutes", allowMissing: true) ?? 15;
+			Nori.Core.Proactive.ReminderItem item = Runtime.Proactive.AddReminder(Str(args, "content"), delayMinutes);
 			Runtime.InvalidateSnapshot("proactive");
 			return item;
 		}),
 
-		// invoke("reminder_cancel", {id})
+		/// invoke("reminder_cancel", {id}) 取消提醒
 		"reminder_cancel" => RequireMain(source, () =>
 		{
 			bool cancelled = Runtime.Proactive.CancelReminder(Str(args, "id"));
-			Runtime.InvalidateSnapshot("proactive");
+			if (cancelled) Runtime.InvalidateSnapshot("proactive");
 			return cancelled;
 		}),
+
+		/// invoke("reminder_update", {id, content?, triggerTime?, delayMinutes?, repeatDaily?, timezone?, recurrenceJson?}) 更新提醒
+		"reminder_update" => RequireMain(source, () =>
+		{
+			object result = UpdateReminder(args);
+			Runtime.InvalidateSnapshot("proactive");
+			return result;
+		}),
+
+		/// invoke("reminder_snooze", {id, delayMinutes? or snoozedUntil?}) 推迟提醒
+		"reminder_snooze" => RequireMain(source, () =>
+		{
+			object result = SnoozeReminder(args);
+			Runtime.InvalidateSnapshot("proactive");
+			return result;
+		}),
+
+		/// invoke("reminder_complete", {id}) 完成提醒
+		"reminder_complete" => RequireMain(source, () =>
+		{
+			bool completed = Runtime.Proactive.CompleteReminder(Str(args, "id"));
+			if (completed) Runtime.InvalidateSnapshot("proactive");
+			return completed;
+		}),
+
+		/// invoke("reminder_list") 查询提醒状态
+		"reminder_list" => RequireMain(source, () => Runtime.Proactive.ListReminders()),
 
 		// ---- 语音 ----
 		// invoke("tts_test", {text?})
@@ -939,6 +966,93 @@ public sealed class BridgeCommands
 		if (result.Error is not null) throw new InvalidOperationException(result.Error);
 		return result.Result;
 	}
+
+	private object UpdateReminder(JsonElement args)
+	{
+		string id = Str(args, "id");
+		string? content = OptionalReminderPatchString(args, "content", allowNull: false);
+		bool? repeatDaily = OptionalReminderBool(args, "repeatDaily");
+		string? timezone = OptionalReminderPatchString(args, "timezone", allowNull: false);
+		string? recurrenceJson = OptionalReminderPatchString(args, "recurrenceJson", allowNull: true);
+		(long? TriggerAt, double? DelayMinutes) time = ReadReminderUpdateTime(args);
+		if (content is null && repeatDaily is null && timezone is null && recurrenceJson is null
+			&& time.TriggerAt is null && time.DelayMinutes is null)
+			throw new InvalidOperationException("提醒更新至少需要一个字段");
+		if (time.DelayMinutes is { } delay)
+			return Runtime.Proactive.UpdateReminderAfter(id, content, delay, repeatDaily, timezone, recurrenceJson);
+		return Runtime.Proactive.UpdateReminder(id, content, time.TriggerAt, repeatDaily, timezone, recurrenceJson);
+	}
+
+	private object SnoozeReminder(JsonElement args)
+	{
+		string id = Str(args, "id");
+		bool hasDelay = HasProperty(args, "delayMinutes");
+		string? absoluteName = HasProperty(args, "snoozedUntil") ? "snoozedUntil"
+			: HasProperty(args, "snoozeUntil") ? "snoozeUntil" : null;
+		if (hasDelay && absoluteName is not null) throw new InvalidOperationException("只能指定一种推迟时间");
+		if (hasDelay)
+			return Runtime.Proactive.SnoozeReminder(id, ReadReminderNumber(args, "delayMinutes")!.Value);
+		if (absoluteName is not null)
+			return Runtime.Proactive.SnoozeReminderUntil(id, ReadReminderTimestamp(args, absoluteName));
+		throw new InvalidOperationException("缺少参数: delayMinutes");
+	}
+
+	private static (long? TriggerAt, double? DelayMinutes) ReadReminderUpdateTime(JsonElement args)
+	{
+		bool hasDelay = HasProperty(args, "delayMinutes");
+		bool hasTriggerTime = HasProperty(args, "triggerTime");
+		bool hasTriggerAt = HasProperty(args, "triggerAt");
+		if (hasDelay && (hasTriggerTime || hasTriggerAt))
+			throw new InvalidOperationException("只能指定一种提醒时间");
+		if (hasTriggerTime && hasTriggerAt)
+			throw new InvalidOperationException("只能指定一种提醒时间");
+		if (hasDelay) return (null, ReadReminderNumber(args, "delayMinutes")!.Value);
+		if (hasTriggerTime) return (ReadReminderTimestamp(args, "triggerTime"), null);
+		if (hasTriggerAt) return (ReadReminderTimestamp(args, "triggerAt"), null);
+		return (null, null);
+	}
+
+	private static string? OptionalReminderPatchString(JsonElement args, string name, bool allowNull)
+	{
+		if (!HasProperty(args, name)) return null;
+		JsonElement value = args.GetProperty(name);
+		if (value.ValueKind == JsonValueKind.Null && allowNull) return "";
+		if (value.ValueKind != JsonValueKind.String) throw new InvalidOperationException($"参数 {name} 无效");
+		return value.GetString() ?? "";
+	}
+
+	private static bool? OptionalReminderBool(JsonElement args, string name)
+	{
+		if (!HasProperty(args, name)) return null;
+		JsonElement value = args.GetProperty(name);
+		if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+		throw new InvalidOperationException($"参数 {name} 必须是布尔值");
+	}
+
+	private static double? ReadReminderNumber(JsonElement args, string name, bool allowMissing = false)
+	{
+		if (!HasProperty(args, name))
+		{
+			if (allowMissing) return null;
+			throw new InvalidOperationException($"缺少参数: {name}");
+		}
+		JsonElement value = args.GetProperty(name);
+		if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out double number) || !double.IsFinite(number))
+			throw new InvalidOperationException($"参数 {name} 必须是有限数字");
+		return number;
+	}
+
+	private static long ReadReminderTimestamp(JsonElement args, string name)
+	{
+		if (!HasProperty(args, name)) throw new InvalidOperationException($"缺少参数: {name}");
+		JsonElement value = args.GetProperty(name);
+		if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt64(out long timestamp))
+			throw new InvalidOperationException($"参数 {name} 必须是整数时间");
+		return timestamp;
+	}
+
+	private static bool HasProperty(JsonElement args, string name) =>
+		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out _);
 
 	private async Task<object?> TtsTestAsync(IBridgeSource source, JsonElement args)
 	{

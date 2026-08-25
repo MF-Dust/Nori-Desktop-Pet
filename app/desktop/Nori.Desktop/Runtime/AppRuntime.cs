@@ -1137,7 +1137,14 @@ public sealed class AppRuntime : IAsyncDisposable
 				dailyGreeting = !Services.SafeMode && (ParseBoolFlag(config.GetStringOr("proactive_daily_greeting", "true")) ?? true),
 				reminders = Proactive.ListReminders().Select(item => new
 				{
-					id = item.Id, content = item.Content, triggerTime = item.TriggerAt,
+					id = item.Id,
+					content = item.Content,
+					triggerTime = item.TriggerAt,
+					repeatDaily = item.RepeatDaily,
+					status = item.Status,
+					timezone = item.Timezone,
+					recurrenceJson = item.RecurrenceJson,
+					snoozedUntil = item.SnoozedUntil,
 				}).ToArray(),
 			},
 			skills = Skills.GetInstalled().Select(skill => new

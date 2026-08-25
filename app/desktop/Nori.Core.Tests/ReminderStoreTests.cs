@@ -106,6 +106,86 @@ public sealed class ReminderStoreTests
 		finally { DeleteDatabase(path); }
 	}
 
+	[Fact]
+	public void 更新推迟后重启仍可领取并兼容每日重复()
+	{
+		string path = NewPath();
+		try
+		{
+			long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+			ReminderItem added;
+			long snoozedUntil = now + 60_000;
+			using (NoriDatabase database = NoriDatabase.Open(path))
+			{
+				ReminderStore store = new(database);
+				added = store.Add("旧版每日提醒", now - 1);
+				Assert.True(store.Update(added.Id, "更新后的每日提醒", now - 1, true, "UTC", "{\"type\":\"daily\"}"));
+				Assert.True(store.Snooze(added.Id, snoozedUntil));
+				Assert.Empty(store.TakeDue(now + 30_000));
+			}
+
+			using (NoriDatabase reopened = NoriDatabase.Open(path))
+			{
+				ReminderStore store = new(reopened);
+				ReminderItem saved = Assert.Single(store.List());
+				Assert.Equal("更新后的每日提醒", saved.Content);
+				Assert.True(saved.RepeatDaily);
+				Assert.Equal(snoozedUntil, saved.SnoozedUntil);
+				ReminderItem claimed = Assert.Single(store.TakeDue(snoozedUntil + 1));
+				Assert.Equal("claimed", claimed.Status);
+				Assert.Null(claimed.SnoozedUntil);
+				Assert.True(store.MarkFired(added.Id));
+				ReminderItem? repeated = store.Get(added.Id);
+				Assert.NotNull(repeated);
+				Assert.Equal("pending", repeated!.Status);
+				Assert.Equal(now - 1 + 86_400_000, repeated.TriggerAt);
+			}
+		}
+		finally { DeleteDatabase(path); }
+	}
+
+	[Fact]
+	public void 完成或取消后不会再次进入到期领取()
+	{
+		string path = NewPath();
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			ReminderStore store = new(database);
+			long due = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1;
+			ReminderItem completed = store.Add("完成后不再提醒", due);
+			Assert.True(store.Complete(completed.Id));
+			Assert.Equal("completed", store.Get(completed.Id)!.Status);
+			Assert.Empty(store.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+			Assert.Empty(store.List());
+
+			ReminderItem cancelled = store.Add("取消后不再提醒", due);
+			Assert.True(store.Cancel(cancelled.Id));
+			Assert.Equal("cancelled", store.Get(cancelled.Id)!.Status);
+			Assert.False(store.MarkFired(cancelled.Id));
+			Assert.Empty(store.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+		}
+		finally { DeleteDatabase(path); }
+	}
+
+	[Fact]
+	public void 领取中完成不会被旧投递确认复活()
+	{
+		string path = NewPath();
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			ReminderStore store = new(database);
+			ReminderItem item = store.Add("领取中完成", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1);
+			Assert.Single(store.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+			Assert.True(store.Complete(item.Id));
+			Assert.False(store.MarkFired(item.Id));
+			Assert.Equal("completed", store.Get(item.Id)!.Status);
+			Assert.Empty(store.TakeDue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+		}
+		finally { DeleteDatabase(path); }
+	}
+
 	private static long ReadVersion(SqliteConnection connection)
 	{
 		using SqliteCommand command = connection.CreateCommand();
