@@ -200,7 +200,7 @@ const finish = async () => {
 		</TitleBar>
 
 		<!-- 舞台: 720×480 固定窗口下内容自适应 stage 居中, 极端情况提供平滑滚动 -->
-		<div class="relative flex-1 w-full min-h-0 scroll-area flex flex-col justify-center">
+		<div class="relative flex-1 w-full min-h-0 scroll-area flex flex-col">
 			<Transition :name="direction > 0 ? 'page-next' : 'page-prev'" mode="out-in">
 				<Welcome v-if="currentStep === 0"/>
 				<LanguageSelect v-else-if="currentStep === 1"/>

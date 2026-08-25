@@ -101,7 +101,7 @@ const handleLink = async (link: Link) => {
 </script>
 
 <template>
-	<section key="welcome" data-first-run-step="welcome" class="w-full min-h-full flex flex-row items-center gap-7 px-7 py-2.5">
+	<section key="welcome" data-first-run-step="welcome" class="w-full flex flex-row items-center gap-7 px-7 py-2.5 my-auto">
 		<div class="flex-1 min-w-0 flex flex-col items-start gap-2">
 			<div class="flex items-center gap-1.5">
 				<span class="chip-teal">

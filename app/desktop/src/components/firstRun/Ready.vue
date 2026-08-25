@@ -55,7 +55,7 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 </script>
 
 <template>
-	<section key="ready" data-first-run-step="ready" class="w-full min-h-full flex flex-col items-center justify-center gap-2 px-7 py-1.5 text-center">
+	<section key="ready" data-first-run-step="ready" class="w-full flex flex-col items-center gap-2 px-7 py-1.5 my-auto text-center">
 		<div class="relative w-[6.5rem] h-[6.5rem] flex items-center justify-center">
 			<span class="absolute -inset-2 rounded-full bg-[radial-gradient(circle,var(--glow-teal-strong)_0%,var(--glow-teal-soft)_55%,transparent_70%)] animate-glow-pulse pointer-events-none"/>
 			<img class="relative w-[5.5rem] h-[5.5rem] object-contain animate-breathe" :src="logo" alt="Nori"/>

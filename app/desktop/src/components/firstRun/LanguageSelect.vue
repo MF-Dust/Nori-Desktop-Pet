@@ -70,7 +70,7 @@ const select = async (code: string) => {
 </script>
 
 <template>
-	<section key="language-select" data-first-run-step="language" class="w-full min-h-full flex flex-col items-center justify-center gap-4 px-7 py-2.5">
+	<section key="language-select" data-first-run-step="language" class="w-full flex flex-col items-center gap-4 px-7 py-2.5 my-auto">
 		<div class="flex flex-col items-center gap-1 text-center">
 			<span class="chip-teal">
 				<Icon name="noriOS" :size="12"/>

@@ -100,27 +100,28 @@ const skip = () => {
 </script>
 
 <template>
-	<section key="ai-setup" data-first-run-step="ai" class="w-full min-h-full flex flex-col items-center justify-center gap-2 px-7 py-1.5">
+	<section key="ai-setup" data-first-run-step="ai" class="w-full flex flex-col items-center gap-2 px-7 py-1.5 my-auto">
 		<div class="flex flex-col items-center gap-1 text-center">
-			<span class="chip-teal">
-				<Icon name="cpu" :size="12"/>
+			<span class="chip-teal text-xs">
+				<Icon name="cpu" :size="11"/>
 				<span>{{ I18N.badge }}</span>
 			</span>
-			<h2 class="text-2xl font-700 glow-teal">{{ I18N.title }}</h2>
-			<p class="text-xs text-sub">{{ I18N.hint }}</p>
+			<h2 class="text-xl font-700 glow-teal">{{ I18N.title }}</h2>
+			<p class="text-xs text-sub max-w-[42rem]">{{ I18N.hint }}</p>
 		</div>
 
-		<div class="w-full max-w-[46rem] flex flex-col gap-2 p-3.5 surface-card">
-			<div class="flex items-start gap-2.5">
-				<div class="field flex-1 min-w-0">
-					<span class="field-label font-500">{{ AI_I18N.provider }}</span>
+		<div class="w-full max-w-[48rem] flex flex-col gap-2.5 p-3.5 surface-card">
+			<!-- 第一行: 服务商 + API 地址 -->
+			<div class="grid grid-cols-2 gap-3">
+				<div class="field min-w-0">
+					<span class="field-label font-500 text-xs">{{ AI_I18N.provider }}</span>
 					<n-select
 						:value="draft.provider"
 						:options="PROVIDER_OPTIONS"
 						@update:value="onProviderChange"
 					/>
 				</div>
-				<AppField class="flex-1 min-w-0" :label="AI_I18N.apiBaseUrl" :hint="I18N.baseUrlHint">
+				<AppField class="min-w-0" :label="AI_I18N.apiBaseUrl" :hint="I18N.baseUrlHint">
 					<input
 						v-model="draft.baseUrl"
 						class="input-base"
@@ -132,53 +133,59 @@ const skip = () => {
 				</AppField>
 			</div>
 
-			<AppField :label="AI_I18N.apiKey" :hint="I18N.apiKeyHint">
-				<input
-					v-model="draft.apiKey"
-					class="input-base"
-					type="password"
-					spellcheck="false"
-					autocomplete="off"
-					:placeholder="API_KEY_PLACEHOLDER"
-					@input="push"
-				/>
-			</AppField>
-
-			<div class="field">
-				<span class="field-label font-500">{{ AI_I18N.model }}</span>
-				<div class="flex items-center gap-2">
-					<n-select
-						:value="draft.model"
-						:options="MODEL_OPTIONS"
-						:disabled="MODEL_OPTIONS.length === 0"
-						:placeholder="MODEL_OPTIONS.length === 0 ? AI_I18N.modelEmpty : AI_I18N.modelPlaceholder"
-						class="flex-1"
-						@update:value="onSelectModel"
+			<!-- 第二行: API 密钥 + 模型选择与拉取 -->
+			<div class="grid grid-cols-2 gap-3">
+				<AppField class="min-w-0" :label="AI_I18N.apiKey" :hint="I18N.apiKeyHint">
+					<input
+						v-model="draft.apiKey"
+						class="input-base"
+						type="password"
+						spellcheck="false"
+						autocomplete="off"
+						:placeholder="API_KEY_PLACEHOLDER"
+						@input="push"
 					/>
-					<AppButton
-						variant="primary"
-						size="sm"
-						:loading="fetching"
-						:disabled="!canFetch"
-						@click="fetchModels"
-					>{{ fetching ? AI_I18N.getting : AI_I18N.getModel }}</AppButton>
+				</AppField>
+
+				<div class="field min-w-0">
+					<div class="flex items-center justify-between">
+						<span class="field-label font-500 text-xs">{{ AI_I18N.model }}</span>
+						<span
+							v-if="fetchResult"
+							class="inline-flex items-center gap-1 text-xs"
+							:class="fetchSuccess ? 'text-success' : 'text-danger-text'"
+							aria-live="polite"
+						>
+							<Icon :name="fetchSuccess ? 'check' : 'alert'" :size="11"/>
+							<span>{{ fetchResult }}</span>
+						</span>
+					</div>
+					<div class="flex items-center gap-2">
+						<n-select
+							:value="draft.model"
+							:options="MODEL_OPTIONS"
+							:disabled="MODEL_OPTIONS.length === 0"
+							:placeholder="MODEL_OPTIONS.length === 0 ? AI_I18N.modelEmpty : AI_I18N.modelPlaceholder"
+							class="flex-1 min-w-0"
+							@update:value="onSelectModel"
+						/>
+						<AppButton
+							variant="primary"
+							size="sm"
+							:loading="fetching"
+							:disabled="!canFetch"
+							class="shrink-0 whitespace-nowrap"
+							@click="fetchModels"
+						>{{ fetching ? AI_I18N.getting : AI_I18N.getModel }}</AppButton>
+					</div>
 				</div>
-				<span
-					v-if="fetchResult"
-					class="inline-flex items-center gap-1 text-xs mt-0.5"
-					:class="fetchSuccess ? 'text-success' : 'text-danger-text'"
-					aria-live="polite"
-				>
-					<Icon :name="fetchSuccess ? 'check' : 'alert'" :size="11"/>
-					<span>{{ fetchResult }}</span>
-				</span>
-				<span v-else class="text-hint text-xs">{{ I18N.verifyHint }}</span>
 			</div>
 		</div>
 
-		<div class="flex items-center gap-2 mt-0.5">
+		<!-- 底部跳过引导 -->
+		<div class="flex items-center justify-center gap-2 text-xs text-text-faint">
 			<span class="chip text-xs">{{ I18N.optional }}</span>
-			<p class="m-0 text-xs text-text-faint">{{ I18N.later }}</p>
+			<span>{{ I18N.later }}</span>
 			<AppButton variant="ghost" size="sm" icon="arrow-right" @click="skip">{{ I18N.skip }}</AppButton>
 		</div>
 	</section>

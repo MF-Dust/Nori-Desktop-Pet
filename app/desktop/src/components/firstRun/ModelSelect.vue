@@ -74,7 +74,7 @@ const importModel = async (sourceKind: "zip" | "folder"): Promise<void> => {
 </script>
 
 <template>
-	<section key="model-select" data-first-run-step="model" class="w-full min-h-full flex flex-col items-center justify-center gap-2.5 px-7 py-2 text-center">
+	<section key="model-select" data-first-run-step="model" class="w-full flex flex-col items-center gap-2.5 px-7 py-2 my-auto text-center">
 		<div class="flex flex-col items-center gap-1">
 			<span class="chip-teal">
 				<Icon name="package" :size="12"/>
