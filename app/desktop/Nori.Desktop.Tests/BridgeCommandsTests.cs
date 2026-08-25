@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Nori.Core.Automation;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
@@ -7,6 +8,7 @@ using Nori.Core.Logging;
 using Nori.Core.Live2D;
 using Nori.Core.Mcp;
 using Nori.Core.Resources;
+using Nori.Core.Tools;
 using Nori.Desktop.Automation;
 using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Automation.Windows;
@@ -252,6 +254,16 @@ public class BridgeCommandsTests : IDisposable
 
 	private static JsonElement Args(object payload) =>
 		JsonSerializer.SerializeToElement(payload, new JsonSerializerOptions {PropertyNamingPolicy = JsonNamingPolicy.CamelCase});
+
+	private static RegisteredTool MakeMcpTool(string name) => new()
+	{
+		Name = name,
+		Description = name,
+		Parameters = new JsonObject {["type"] = "object"},
+		PermissionLevel = "confirm",
+		Category = "mcp",
+		Execute = (_, _) => Task.FromResult<object?>(null),
+	};
 
 	private void ConfigureDesktop()
 	{
@@ -818,6 +830,33 @@ public class BridgeCommandsTests : IDisposable
 		Assert.Contains("安全模式", autoConnectException.Message, StringComparison.Ordinal);
 	}
 
+
+	[Fact]
+	public async Task 安全模式运行时不刷新MCP工具()
+	{
+		using BridgeCommandsTests safeFixture = new(true);
+		RegisteredTool previous = MakeMcpTool("mcp__previous__tool");
+		safeFixture._runtime.Tools.Register(previous);
+
+		await safeFixture._runtime.RefreshMcpToolsAsync();
+
+		Assert.Same(previous, safeFixture._runtime.Tools.Get(previous.Name));
+	}
+
+	[Fact]
+	public async Task MCP刷新取消时保留上一版工具()
+	{
+		RegisteredTool previous = MakeMcpTool("mcp__previous__tool");
+		_runtime.Tools.Register(previous);
+		using CancellationTokenSource cancellation = new();
+		cancellation.Cancel();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _runtime.RefreshMcpToolsAsync(cancellation.Token));
+
+		Assert.Same(previous, _runtime.Tools.Get(previous.Name));
+		LogEntry log = Assert.Single(_services.Logger.RecentLogs(), entry => entry.Message.Contains("category=cancelled", StringComparison.Ordinal));
+		Assert.True(log.Message.Length <= 192);
+	}
 
 	[Fact]
 	public async Task 窗口命令只能操作自身且主界面召唤桌宠要求有效模型()

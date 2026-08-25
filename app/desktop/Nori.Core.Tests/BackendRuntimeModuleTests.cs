@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nori.Core.Agent;
@@ -49,12 +50,17 @@ public class BackendRuntimeModuleTests : IDisposable
 
 	// ---- 工具注册表: 逐调用授权 fail-closed ----
 
-	private static RegisteredTool MakeTool(string name, string permission, Func<Task<object?>> execute) => new()
+	private static RegisteredTool MakeTool(
+		string name,
+		string permission,
+		Func<Task<object?>> execute,
+		string category = "builtin") => new()
 	{
 		Name = name,
 		Description = name,
 		Parameters = new JsonObject {["type"] = "object"},
 		PermissionLevel = permission,
+		Category = category,
 		Execute = (_, _) => execute(),
 	};
 
@@ -197,6 +203,81 @@ public class BackendRuntimeModuleTests : IDisposable
 		Assert.DoesNotContain(registry.ListEnabled(), tool => tool.Name == "known-tool");
 		Assert.Contains("unknown-tool", registry.DisabledNames());
 		Assert.Contains("known-tool", registry.DisabledNames());
+	}
+
+	[Fact]
+	public void 动态工具候选集合失败时保留旧集合()
+	{
+		ToolRegistry registry = new();
+		RegisteredTool builtin = MakeTool("builtin-tool", "safe", () => Task.FromResult<object?>(null));
+		RegisteredTool previous = MakeTool("mcp__old__tool", "confirm", () => Task.FromResult<object?>(null), "mcp");
+		registry.Register(builtin);
+		registry.Register(previous);
+
+		RegisteredTool replacement = MakeTool("mcp__new__tool", "confirm", () => Task.FromResult<object?>(null), "mcp");
+		RegisteredTool conflict = MakeTool("builtin-tool", "confirm", () => Task.FromResult<object?>(null), "mcp");
+
+		Assert.Throws<InvalidOperationException>(() => registry.ReplaceCategory("mcp", [replacement, conflict]));
+		Assert.Same(builtin, registry.Get("builtin-tool"));
+		Assert.Same(previous, registry.Get("mcp__old__tool"));
+		Assert.Null(registry.Get("mcp__new__tool"));
+	}
+
+	[Fact]
+	public void 动态工具替换继续应用待恢复禁用清单()
+	{
+		ToolRegistry registry = new();
+		registry.Register(MakeTool("builtin-tool", "safe", () => Task.FromResult<object?>(null)));
+		registry.RestoreDisabled(["mcp__new__tool"]);
+
+		registry.ReplaceCategory("mcp",
+		[
+			MakeTool("mcp__new__tool", "confirm", () => Task.FromResult<object?>(null), "mcp"),
+		]);
+
+		RegisteredTool? dynamicTool = registry.Get("mcp__new__tool");
+		Assert.NotNull(dynamicTool);
+		Assert.False(dynamicTool!.Enabled);
+		Assert.DoesNotContain(registry.ListEnabled(), tool => tool.Name == "mcp__new__tool");
+		Assert.Contains("mcp__new__tool", registry.DisabledNames());
+		Assert.NotNull(registry.Get("builtin-tool"));
+	}
+
+	[Fact]
+	public async Task 动态工具替换并发读写不会暴露半成品()
+	{
+		ToolRegistry registry = new();
+		registry.Register(MakeTool("builtin-tool", "safe", () => Task.FromResult<object?>(null)));
+		registry.ReplaceCategory("mcp",
+		[
+			MakeTool("mcp__seed__tool", "confirm", () => Task.FromResult<object?>(null), "mcp"),
+		]);
+
+		ConcurrentBag<IReadOnlyList<RegisteredTool>> snapshots = [];
+		Task reader = Task.Run(() =>
+		{
+			for (int index = 0; index < 5_000; index++) snapshots.Add(registry.List());
+		});
+		Task[] writers = Enumerable.Range(0, 8).Select(writer => Task.Run(() =>
+		{
+			for (int index = 0; index < 100; index++)
+			{
+				registry.ReplaceCategory("mcp",
+				[
+					MakeTool($"mcp__server_{writer}_{index}__tool", "confirm", () => Task.FromResult<object?>(null), "mcp"),
+				]);
+			}
+		})).ToArray();
+
+		await Task.WhenAll(writers.Append(reader));
+
+		Assert.NotEmpty(snapshots);
+		Assert.All(snapshots, snapshot =>
+		{
+			Assert.Equal(2, snapshot.Count);
+			Assert.Contains(snapshot, tool => tool.Name == "builtin-tool");
+			Assert.Single(snapshot, tool => tool.Category == "mcp");
+		});
 	}
 
 	[Fact]
