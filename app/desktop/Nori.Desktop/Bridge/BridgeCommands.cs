@@ -72,6 +72,10 @@ public sealed class BridgeCommands
 		CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		if (_services.SafeMode && cmd.StartsWith("automation_desktop_", StringComparison.Ordinal))
+		{
+			throw new InvalidOperationException("安全模式已禁用桌面视觉自动化，请退出安全模式后重试");
+		}
 		if (_services.SafeMode && IsNetworkCommand(cmd, args))
 		{
 			throw new InvalidOperationException("安全模式已禁用联网和外部服务，请退出安全模式后重试");
@@ -144,6 +148,15 @@ public sealed class BridgeCommands
 
 		/// invoke("automation_probe_vision")
 		"automation_probe_vision" => RequireVisibleMain(source, () => Automation.ProbeVision()),
+
+		/// invoke("automation_desktop_list_windows") → [{token, width, height, isForeground}]
+		"automation_desktop_list_windows" => AutomationDesktopListWindows(source),
+
+		/// invoke("automation_desktop_start", {task: "...", targetToken: "..."})
+		"automation_desktop_start" => AutomationDesktopStart(source, args),
+
+		/// invoke("automation_desktop_stop", {taskId: "..."})
+		"automation_desktop_stop" => AutomationDesktopStop(source, args),
 
 		/// invoke("automation_stop_task", {taskId: "..."})
 		"automation_stop_task" => RequireVisibleMain(source, () => Automation.StopTask(ParseGuid(args, "taskId"))),
@@ -617,6 +630,28 @@ public sealed class BridgeCommands
 	{
 		RequireMainVoid(source);
 		if (!source.IsVisible) throw new InvalidOperationException("main 窗口不可见");
+	}
+
+	private object AutomationDesktopListWindows(IBridgeSource source)
+	{
+		RequireVisibleMainVoid(source);
+		return Automation.ListDesktopWindows();
+	}
+
+	private object AutomationDesktopStart(IBridgeSource source, JsonElement args)
+	{
+		RequireVisibleMainVoid(source);
+		string task = OptionalStr(args, "task") ?? OptionalStr(args, "goal")
+			?? throw new InvalidOperationException("缺少参数: task");
+		string targetToken = OptionalStr(args, "targetToken") ?? OptionalStr(args, "windowToken")
+			?? throw new InvalidOperationException("缺少参数: targetToken");
+		return Automation.StartDesktopTask(task, targetToken);
+	}
+
+	private object AutomationDesktopStop(IBridgeSource source, JsonElement args)
+	{
+		RequireVisibleMainVoid(source);
+		return Automation.StopDesktopTask(ParseGuid(args, "taskId"));
 	}
 
 	private async Task<object?> AutomationBrowserStartAsync(IBridgeSource source, CancellationToken cancellationToken)

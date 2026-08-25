@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Avalonia.Threading;
 using Nori.Core;
 using Nori.Core.Agent;
+using Nori.Core.Automation;
 using Nori.Core.Configuration;
 using Nori.Core.Emotion;
 using Nori.Core.Logging;
@@ -45,6 +46,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	private readonly ConcurrentDictionary<string, AgentSessionState> _sessions = new();
 	private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new();
+	private readonly ConcurrentDictionary<string, PendingDesktopApproval> _desktopApprovals = new();
 	private readonly ConcurrentDictionary<Task, byte> _backgroundTasks = new();
 	private readonly CancellationTokenSource _lifetimeCts = new();
 	private readonly WebViewAudioPlayback _playback;
@@ -124,8 +126,19 @@ public sealed class AppRuntime : IAsyncDisposable
 			config,
 			services.SafeMode,
 			OperatingSystem.IsWindows(),
-			visionAvailable: false,
-			browserRunnerFactory: services.AutomationBrowserRunnerFactory);
+			visionAvailable: !services.SafeMode,
+			browserRunnerFactory: services.AutomationBrowserRunnerFactory,
+			chatService: services.SafeMode ? null : services.Chat,
+			desktopVisionRunnerFactory: services.SafeMode ? null : services.AutomationDesktopVisionRunnerFactory,
+			desktopVisionPlannerFactory: services.SafeMode ? null : services.AutomationDesktopVisionPlannerFactory,
+			desktopVisionActionFactory: services.SafeMode ? null : services.AutomationDesktopVisionActionFactory,
+			desktopVisionScreenshotFactory: services.SafeMode ? null : services.AutomationDesktopVisionScreenshotFactory,
+			desktopVisionWindowCatalogFactory: services.SafeMode ? null : services.AutomationDesktopVisionWindowCatalogFactory,
+			desktopVisionApprovalCallback: services.SafeMode ? null : services.AutomationDesktopVisionApprovalCallback);
+		if (!services.SafeMode && services.Automation.DesktopVisionApprovalCallback is null)
+		{
+			services.Automation.DesktopVisionApprovalCallback = RequestDesktopVisionApprovalAsync;
+		}
 		services.Automation.Changed += OnAutomationChanged;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config, startBackgroundWorker: !services.SafeMode);
@@ -811,26 +824,96 @@ public sealed class AppRuntime : IAsyncDisposable
 		return await tcs.Task;
 	}
 
+	/// <summary>等待桌面视觉高风险动作的用户决定；未装配或取消时一律不自动放行。</summary>
+	private async Task<AutomationApprovalDecision> RequestDesktopVisionApprovalAsync(
+		AutomationApprovalRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (Services.SafeMode) return AutomationApprovalDecision.Create(request, AutomationApprovalOutcome.Denied, DateTimeOffset.UtcNow);
+		TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		PendingDesktopApproval approval = new(request, tcs);
+		if (!_desktopApprovals.TryAdd(request.RequestId.ToString("D"), approval))
+			return AutomationApprovalDecision.Create(request, AutomationApprovalOutcome.Denied, DateTimeOffset.UtcNow);
+
+		Services.Automation?.SetDesktopApproval(request);
+		approval.ArmTimeout(ApprovalTimeoutSeconds, () =>
+		{
+			if (_desktopApprovals.TryRemove(request.RequestId.ToString("D"), out PendingDesktopApproval? expired))
+			{
+				expired.Tcs.TrySetResult(false);
+				expired.Dispose();
+				Services.Automation?.ClearDesktopApproval(request.RequestId);
+				PostAgentEvent(WindowLabels.Main, new
+				{
+					type = "approval-result",
+					requestId = request.RequestId,
+					approved = false,
+					reason = "timeout",
+				});
+			}
+		});
+		PostAgentEvent(WindowLabels.Main, new
+		{
+			type = "approval-request",
+			requestId = request.RequestId,
+			taskId = request.TaskId,
+			actionKinds = request.ActionKinds,
+			permissionLevel = "confirm",
+			category = "automation",
+		});
+
+		try
+		{
+			bool approved = await tcs.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+			return AutomationApprovalDecision.Create(
+				request,
+				approved ? AutomationApprovalOutcome.Approved : AutomationApprovalOutcome.Denied,
+				DateTimeOffset.UtcNow);
+		}
+		finally
+		{
+			if (_desktopApprovals.TryRemove(request.RequestId.ToString("D"), out PendingDesktopApproval? removed))
+			{
+				removed.Dispose();
+				Services.Automation?.ClearDesktopApproval(request.RequestId);
+			}
+		}
+	}
+
 	/// <summary>
 	/// 回传授权决定; 只允许原始窗口响应, 未匹配的请求 fail-closed 忽略
 	/// </summary>
 	public bool RespondApproval(string sourceLabel, string requestId, bool approved)
 	{
-		if (!_approvals.TryGetValue(requestId, out PendingApproval? approval) || approval.SourceLabel != sourceLabel)
+		if (_approvals.TryGetValue(requestId, out PendingApproval? approval) && approval.SourceLabel == sourceLabel)
 		{
-			return false;
+			if (!_approvals.TryRemove(new KeyValuePair<string, PendingApproval>(requestId, approval))) return false;
+			approval.Dispose(); // 停掉超时定时器
+			PostAgentEvent(approval.SourceLabel, new
+			{
+				type = "approval-result",
+				sessionId = approval.SessionId,
+				requestId,
+				approved,
+				reason = approved ? "approved" : "denied",
+			});
+			return approval.Tcs.TrySetResult(approved);
 		}
-		if (!_approvals.TryRemove(new KeyValuePair<string, PendingApproval>(requestId, approval))) return false;
-		approval.Dispose(); // 停掉超时定时器
-		PostAgentEvent(approval.SourceLabel, new
+
+		if (sourceLabel != WindowLabels.Main
+			|| !_desktopApprovals.TryGetValue(requestId, out PendingDesktopApproval? desktopApproval)) return false;
+		if (!_desktopApprovals.TryRemove(new KeyValuePair<string, PendingDesktopApproval>(requestId, desktopApproval))) return false;
+		desktopApproval.Dispose();
+		Services.Automation?.ClearDesktopApproval(desktopApproval.Request.RequestId);
+		PostAgentEvent(WindowLabels.Main, new
 		{
 			type = "approval-result",
-			sessionId = approval.SessionId,
 			requestId,
+			taskId = desktopApproval.Request.TaskId,
 			approved,
 			reason = approved ? "approved" : "denied",
 		});
-		return approval.Tcs.TrySetResult(approved);
+		return desktopApproval.Tcs.TrySetResult(approved);
 	}
 
 	// ===================================================================
@@ -1234,7 +1317,13 @@ public sealed class AppRuntime : IAsyncDisposable
 			approval.Tcs.TrySetResult(false);
 			approval.Dispose();
 		}
-		_approvals.Clear();
+		foreach ((string _, PendingDesktopApproval approval) in _desktopApprovals)
+		{
+			approval.Tcs.TrySetResult(false);
+			approval.Dispose();
+			Services.Automation?.ClearDesktopApproval(approval.Request.RequestId);
+		}
+		_desktopApprovals.Clear();
 
 		Task[] workers = _sessions.Values.Select(session => session.Worker).OfType<Task>().ToArray();
 		await WaitBoundedAsync(workers, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
@@ -1332,6 +1421,26 @@ public sealed class AppRuntime : IAsyncDisposable
 		public void Dispose()
 		{
 			Cts.Dispose();
+		}
+	}
+
+	/// <summary>待决桌面视觉授权请求；只保存动作种类和任务标识。</summary>
+	private sealed class PendingDesktopApproval(AutomationApprovalRequest request, TaskCompletionSource<bool> tcs) : IDisposable
+	{
+		public AutomationApprovalRequest Request { get; } = request;
+		public TaskCompletionSource<bool> Tcs { get; } = tcs;
+
+		private System.Threading.Timer? _timeout;
+
+		public void ArmTimeout(int seconds, Action onExpired)
+		{
+			_timeout = new System.Threading.Timer(_ => onExpired(), null, seconds * 1000, Timeout.Infinite);
+		}
+
+		public void Dispose()
+		{
+			_timeout?.Dispose();
+			_timeout = null;
 		}
 	}
 

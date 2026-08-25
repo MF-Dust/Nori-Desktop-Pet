@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Nori.Core.Automation;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
@@ -7,6 +8,8 @@ using Nori.Core.Live2D;
 using Nori.Core.Mcp;
 using Nori.Core.Resources;
 using Nori.Desktop.Automation;
+using Nori.Desktop.Automation.Desktop;
+using Nori.Desktop.Automation.Windows;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Runtime;
 using Nori.Desktop.Windows;
@@ -50,6 +53,54 @@ public class BridgeCommandsTests : IDisposable
 		{
 			DisposeCount++;
 			return ValueTask.CompletedTask;
+		}
+	}
+
+	private sealed class FakeDesktopWindowCatalog : IDesktopVisionWindowCatalog
+	{
+		public IReadOnlyList<WindowsTopLevelWindow> Enumerate() =>
+		[
+			new(new nint(0x1234), "窗口标题-secret", 4321, new AutomationBounds(10, 20, 800, 600), 96, true),
+		];
+	}
+
+	private sealed class FakeDesktopRunner(Action<DesktopVisionProgress>? progress, bool waitForRelease = false) : IAutomationTaskRunner
+	{
+		public TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource<bool> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public async Task RunAsync(AutomationTaskContext context, CancellationToken cancellationToken)
+		{
+			Started.TrySetResult(true);
+			if (waitForRelease) await Release.Task.WaitAsync(cancellationToken);
+			progress?.Invoke(new DesktopVisionProgress(1, DesktopVisionAutomationCategory.Completed));
+		}
+	}
+
+	private sealed class FakeDesktopPlanner(string response) : IDesktopVisionPlanner
+	{
+		public Task<string> PlanAsync(IReadOnlyList<ChatMessageInput> messages, CancellationToken cancellationToken = default) =>
+			Task.FromResult(response);
+	}
+
+	private sealed class FakeDesktopScreenshot : IDesktopVisionScreenshotSource
+	{
+		public Task<DesktopVisionScreenshotResult> CaptureAsync(nint targetWindow, CancellationToken cancellationToken = default) =>
+			Task.FromResult(DesktopVisionScreenshotResult.Succeeded(new DesktopVisionScreenshot([1, 2, 3], "image/png")));
+	}
+
+	private sealed class FakeDesktopAction : IDesktopVisionActionExecutor
+	{
+		public int Count { get; private set; }
+
+		public Task<DesktopVisionActionResult> ExecuteAsync(
+			nint targetWindow,
+			AutomationAction action,
+			AutomationPolicy policy,
+			CancellationToken cancellationToken = default)
+		{
+			Count++;
+			return Task.FromResult(DesktopVisionActionResult.Succeeded);
 		}
 	}
 
@@ -116,7 +167,17 @@ public class BridgeCommandsTests : IDisposable
 	{
 	}
 
-	private BridgeCommandsTests(bool safeMode, bool? automationWindows, Func<IAutomationBrowserRunner>? browserRunnerFactory = null)
+	private BridgeCommandsTests(
+		bool safeMode,
+		bool? automationWindows,
+		Func<IAutomationBrowserRunner>? browserRunnerFactory = null,
+		bool automationVision = false,
+		Func<DesktopVisionRunnerRequest, IAutomationTaskRunner>? desktopVisionRunnerFactory = null,
+		Func<IDesktopVisionPlanner>? desktopVisionPlannerFactory = null,
+		Func<IDesktopVisionActionExecutor>? desktopVisionActionFactory = null,
+		Func<IDesktopVisionScreenshotSource>? desktopVisionScreenshotFactory = null,
+		Func<IDesktopVisionWindowCatalog>? desktopVisionWindowCatalogFactory = null,
+		DesktopVisionApprovalCallback? desktopVisionApprovalCallback = null)
 	{
 		Directory.CreateDirectory(_tempDir);
 		_dbPath = Path.Combine(_tempDir, "nori.db");
@@ -124,6 +185,7 @@ public class BridgeCommandsTests : IDisposable
 		_config = new ConfigStore(_database);
 		_config.InitDefaults("0.1.0");
 		_http = new HttpClient();
+		ChatService chat = new(_http, _database, _config);
 		_services = new AppServices
 		{
 			Database = _database,
@@ -131,7 +193,7 @@ public class BridgeCommandsTests : IDisposable
 			AiSettings = new AiSettingsStore(_config),
 			Logger = new FileLogger(Path.Combine(_tempDir, "logs")),
 			Resources = new Nori.Core.Resources.ResourceManager(_tempDir),
-			Chat = new ChatService(_http, _database, _config),
+			Chat = chat,
 			Memory = new Nori.Core.Memory.MemoryStore(_database),
 			Embedding = new Nori.Core.Embedding.OpenAiEmbeddingAdapter(_http),
 			Llm = new LlmClient(_http),
@@ -143,14 +205,28 @@ public class BridgeCommandsTests : IDisposable
 					_config,
 					safeMode,
 					isWindows,
-					visionAvailable: false,
-					browserRunnerFactory: browserRunnerFactory)
+					visionAvailable: automationVision,
+					browserRunnerFactory: browserRunnerFactory,
+					chatService: chat,
+					desktopVisionRunnerFactory: desktopVisionRunnerFactory,
+					desktopVisionPlannerFactory: desktopVisionPlannerFactory,
+					desktopVisionActionFactory: desktopVisionActionFactory,
+					desktopVisionScreenshotFactory: desktopVisionScreenshotFactory,
+					desktopVisionWindowCatalogFactory: desktopVisionWindowCatalogFactory,
+					desktopVisionApprovalCallback: desktopVisionApprovalCallback)
 				: new Nori.Desktop.Automation.AutomationRuntime(
 					_config,
 					safeMode,
 					OperatingSystem.IsWindows(),
-					visionAvailable: false,
-					browserRunnerFactory: browserRunnerFactory),
+					visionAvailable: automationVision,
+					browserRunnerFactory: browserRunnerFactory,
+					chatService: chat,
+					desktopVisionRunnerFactory: desktopVisionRunnerFactory,
+					desktopVisionPlannerFactory: desktopVisionPlannerFactory,
+					desktopVisionActionFactory: desktopVisionActionFactory,
+					desktopVisionScreenshotFactory: desktopVisionScreenshotFactory,
+					desktopVisionWindowCatalogFactory: desktopVisionWindowCatalogFactory,
+					desktopVisionApprovalCallback: desktopVisionApprovalCallback),
 			Windows = _windows,
 			SafeMode = safeMode,
 		};
@@ -176,6 +252,24 @@ public class BridgeCommandsTests : IDisposable
 
 	private static JsonElement Args(object payload) =>
 		JsonSerializer.SerializeToElement(payload, new JsonSerializerOptions {PropertyNamingPolicy = JsonNamingPolicy.CamelCase});
+
+	private void ConfigureDesktop()
+	{
+		_config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		_config.Set(ConfigStore.KeyAutomationAllowPointer, new ConfigValue.Boolean(true));
+		_config.Set(AiSettingsStore.KeyLlmBaseUrl, new ConfigValue.Text("http://127.0.0.1:18080/v1"));
+		_config.Set(AiSettingsStore.KeyLlmApiKey, new ConfigValue.Text("planner-secret"));
+		_config.Set(AiSettingsStore.KeyLlmModel, new ConfigValue.Text("vision-model"));
+	}
+
+	private static async Task WaitUntilAsync(Func<bool> condition)
+	{
+		for (int attempt = 0; attempt < 100 && !condition(); attempt++) await Task.Delay(10);
+		Assert.True(condition());
+	}
+
+	private static AutomationDesktopWindowSnapshot SingleWindow(object? result) =>
+		Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<AutomationDesktopWindowSnapshot>>(result));
 
 	// ---- 快照与秘密 ----
 
@@ -302,6 +396,187 @@ public class BridgeCommandsTests : IDisposable
 		using BridgeCommandsTests safeFixture = new(true, true);
 		await Assert.ThrowsAsync<InvalidOperationException>(() =>
 			safeFixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_update_settings", Args(new {enabled = true})));
+	}
+
+	[Fact]
+	public async Task 桌面视觉命令在默认关闭安全模式非Windows和错误调用方时拒绝()
+	{
+		using BridgeCommandsTests defaultFixture = new(false, true, automationVision: true);
+		BridgeCommands defaultCommands = defaultFixture.CreateCommands();
+		InvalidOperationException defaultError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			defaultCommands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+		Assert.Contains("默认关闭", defaultError.Message, StringComparison.Ordinal);
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			defaultCommands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "automation_desktop_list_windows", Args(new { })));
+
+		using BridgeCommandsTests safeFixture = new(true, true, automationVision: true);
+		safeFixture.ConfigureDesktop();
+		InvalidOperationException safeError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			safeFixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+		Assert.Contains("安全模式", safeError.Message, StringComparison.Ordinal);
+
+		using BridgeCommandsTests linuxFixture = new(false, false, automationVision: true);
+		linuxFixture.ConfigureDesktop();
+		InvalidOperationException linuxError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			linuxFixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+		Assert.Contains("Windows", linuxError.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 桌面窗口列表只返回脱敏token和尺寸()
+	{
+		using BridgeCommandsTests fixture = new(
+			false,
+			true,
+			automationVision: true,
+			desktopVisionRunnerFactory: request => new FakeDesktopRunner(request.Progress),
+			desktopVisionPlannerFactory: () => new FakeDesktopPlanner("{\"status\":\"completed\"}"),
+			desktopVisionActionFactory: () => new FakeDesktopAction(),
+			desktopVisionScreenshotFactory: () => new FakeDesktopScreenshot(),
+			desktopVisionWindowCatalogFactory: () => new FakeDesktopWindowCatalog());
+		fixture.ConfigureDesktop();
+
+		object result = await fixture.CreateCommands().InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })) ?? throw new InvalidOperationException();
+		string json = JsonSerializer.Serialize(result, BridgeJson.Options);
+
+		Assert.Contains("\"width\":800", json, StringComparison.Ordinal);
+		Assert.Contains("\"height\":600", json, StringComparison.Ordinal);
+		Assert.Contains("\"isForeground\":true", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("窗口标题-secret", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("4321", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("4660", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("handle", json, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public async Task 桌面视觉成功任务进入任务管理器且公开状态不含输入()
+	{
+		FakeDesktopRunner? runner = null;
+		using BridgeCommandsTests fixture = new(
+			false,
+			true,
+			automationVision: true,
+			desktopVisionRunnerFactory: request =>
+			{
+				runner = new FakeDesktopRunner(request.Progress);
+				return runner;
+			},
+			desktopVisionPlannerFactory: () => new FakeDesktopPlanner("{\"status\":\"completed\"}"),
+			desktopVisionActionFactory: () => new FakeDesktopAction(),
+			desktopVisionScreenshotFactory: () => new FakeDesktopScreenshot(),
+			desktopVisionWindowCatalogFactory: () => new FakeDesktopWindowCatalog());
+		fixture.ConfigureDesktop();
+		BridgeCommands commands = fixture.CreateCommands();
+		AutomationDesktopWindowSnapshot window = SingleWindow(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+
+		const string secretTask = "把窗口中的 secret-input 发送出去";
+		AutomationDesktopTaskStartSnapshot start = Assert.IsType<AutomationDesktopTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_start",
+			Args(new {task = secretTask, targetToken = window.Token})));
+		await runner!.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(item => item.Id == start.TaskId && item.State == AutomationTaskState.Completed));
+
+		string json = JsonSerializer.Serialize(new
+		{
+			start,
+			snapshot = fixture._services.Automation!.GetSnapshot(),
+		}, BridgeJson.Options);
+		Assert.DoesNotContain(secretTask, json, StringComparison.Ordinal);
+		Assert.DoesNotContain("secret-input", json, StringComparison.Ordinal);
+		Assert.Contains(start.TaskId.ToString(), json, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 桌面视觉任务可取消且公开状态稳定()
+	{
+		FakeDesktopRunner? runner = null;
+		using BridgeCommandsTests fixture = new(
+			false,
+			true,
+			automationVision: true,
+			desktopVisionRunnerFactory: request =>
+			{
+				runner = new FakeDesktopRunner(request.Progress, waitForRelease: true);
+				return runner;
+			},
+			desktopVisionPlannerFactory: () => new FakeDesktopPlanner("{\"status\":\"completed\"}"),
+			desktopVisionActionFactory: () => new FakeDesktopAction(),
+			desktopVisionScreenshotFactory: () => new FakeDesktopScreenshot(),
+			desktopVisionWindowCatalogFactory: () => new FakeDesktopWindowCatalog());
+		fixture.ConfigureDesktop();
+		BridgeCommands commands = fixture.CreateCommands();
+		AutomationDesktopWindowSnapshot window = SingleWindow(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+		AutomationDesktopTaskStartSnapshot start = Assert.IsType<AutomationDesktopTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_start",
+			Args(new {task = "可取消任务", targetToken = window.Token})));
+		await runner!.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.Equal(true, await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_desktop_stop", Args(new {taskId = start.TaskId})));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(item => item.Id == start.TaskId && item.State == AutomationTaskState.Cancelled));
+	}
+
+	[Fact]
+	public async Task 高风险输入没有审批或审批拒绝时不会自动放行()
+	{
+		FakeDesktopAction action = new();
+		using BridgeCommandsTests fixture = new(
+			false,
+			true,
+			automationVision: true,
+			desktopVisionRunnerFactory: request => new DesktopVisionAutomationRunner(
+				request.TaskTitle, request.Goal, request.TargetWindow, request.ScreenshotSource, action,
+				request.Planner, request.ApprovalCallback, request.Policy, progress: request.Progress),
+			desktopVisionPlannerFactory: () => new FakeDesktopPlanner("{\"type\":\"type_text\",\"text\":\"do-not-send\"}"),
+			desktopVisionActionFactory: () => action,
+			desktopVisionScreenshotFactory: () => new FakeDesktopScreenshot(),
+			desktopVisionWindowCatalogFactory: () => new FakeDesktopWindowCatalog(),
+			desktopVisionApprovalCallback: (request, _) => Task.FromResult(
+			AutomationApprovalDecision.Create(request, AutomationApprovalOutcome.Denied, DateTimeOffset.UtcNow)));
+		fixture.ConfigureDesktop();
+		fixture._config.Set(ConfigStore.KeyAutomationAllowKeyboard, new ConfigValue.Boolean(true));
+		BridgeCommands commands = fixture.CreateCommands();
+		AutomationDesktopWindowSnapshot window = SingleWindow(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+		AutomationDesktopTaskStartSnapshot start = Assert.IsType<AutomationDesktopTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_start",
+			Args(new {task = "高风险输入", targetToken = window.Token})));
+
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(item => item.Id == start.TaskId && item.ErrorCategory == "approval_denied"));
+		Assert.Equal(0, action.Count);
+	}
+
+	[Fact]
+	public async Task 非法规划和敏感执行上下文不会进入公开状态()
+	{
+		FakeDesktopAction action = new();
+		using BridgeCommandsTests fixture = new(
+			false,
+			true,
+			automationVision: true,
+			desktopVisionRunnerFactory: request => new DesktopVisionAutomationRunner(
+				request.TaskTitle, request.Goal, request.TargetWindow, request.ScreenshotSource, action,
+				request.Planner, approvalCallback: null, request.Policy, progress: request.Progress),
+			desktopVisionPlannerFactory: () => new FakeDesktopPlanner("{\"type\":\"click\",\"x\":10,\"y\":20,\"extra\":\"model-secret\"}"),
+			desktopVisionActionFactory: () => action,
+			desktopVisionScreenshotFactory: () => new FakeDesktopScreenshot(),
+			desktopVisionWindowCatalogFactory: () => new FakeDesktopWindowCatalog());
+		fixture.ConfigureDesktop();
+		BridgeCommands commands = fixture.CreateCommands();
+		AutomationDesktopWindowSnapshot window = SingleWindow(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_list_windows", Args(new { })));
+		AutomationDesktopTaskStartSnapshot start = Assert.IsType<AutomationDesktopTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_desktop_start",
+			Args(new {task = "正文 secret-task", targetToken = window.Token})));
+
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(item => item.Id == start.TaskId && item.ErrorCategory == "invalid_action"));
+		string json = JsonSerializer.Serialize(fixture._services.Automation!.GetSnapshot(), BridgeJson.Options);
+		Assert.DoesNotContain("secret-task", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("model-secret", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("type_text", json, StringComparison.Ordinal);
+		Assert.Equal(0, action.Count);
 	}
 
 	[Fact]

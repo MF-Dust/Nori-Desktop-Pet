@@ -12,6 +12,7 @@ using Nori.Core.Logging;
 using Nori.Core.Network;
 using Nori.Core.Resources;
 using Nori.Core.Telemetry;
+using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Telemetry;
@@ -183,6 +184,7 @@ public sealed class App : Application
 		Nori.Core.Mcp.McpManager mcp = new(http, config);
 		_startupMcp = mcp;
 
+		ChatService chat = new(http, database, config);
 		AppServices services = new()
 		{
 			Database = database,
@@ -191,7 +193,7 @@ public sealed class App : Application
 			Logger = logger,
 			Telemetry = telemetry,
 			Resources = new ResourceManager(),
-			Chat = new ChatService(http, database, config),
+			Chat = chat,
 			Memory = new Nori.Core.Memory.MemoryStore(database),
 			Embedding = new Nori.Core.Embedding.OpenAiEmbeddingAdapter(http),
 			Llm = new LlmClient(http),
@@ -200,7 +202,15 @@ public sealed class App : Application
 			Http = http,
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
-			Automation = new Automation.AutomationRuntime(config, safeMode),
+			Automation = new Automation.AutomationRuntime(
+				config,
+				safeMode,
+				OperatingSystem.IsWindows(),
+				visionAvailable: !safeMode,
+				chatService: safeMode ? null : chat,
+				desktopVisionPlannerFactory: safeMode
+					? null
+					: () => new ChatServiceDesktopVisionPlanner(chat, new AiSettingsStore(config))),
 			ShutdownToken = _shutdownCts.Token,
 			SafeMode = safeMode,
 		};

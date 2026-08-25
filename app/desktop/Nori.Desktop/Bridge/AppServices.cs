@@ -1,5 +1,6 @@
 using Nori.Core.Assets;
 using Nori.Core.Agent;
+using Nori.Core.Automation;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
@@ -7,6 +8,7 @@ using Nori.Core.Logging;
 using Nori.Core.Resources;
 using Nori.Core.Telemetry;
 using Nori.Desktop.Automation;
+using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Live2D;
 using Nori.Desktop.Windows;
 
@@ -76,6 +78,24 @@ public sealed class AppServices : IAsyncDisposable
 
 	/// <summary>浏览器运行器工厂；生产默认使用隔离 Edge，测试可注入 fake。</summary>
 	public Func<IAutomationBrowserRunner>? AutomationBrowserRunnerFactory { get; set; }
+
+	/// <summary>桌面视觉运行器工厂；安全模式装配时必须保持为空。</summary>
+	public Func<DesktopVisionRunnerRequest, IAutomationTaskRunner>? AutomationDesktopVisionRunnerFactory { get; set; }
+
+	/// <summary>当前聊天 Provider 的桌面视觉规划器工厂；不得复制另一套 AI adapter。</summary>
+	public Func<IDesktopVisionPlanner>? AutomationDesktopVisionPlannerFactory { get; set; }
+
+	/// <summary>桌面输入动作工厂；测试可注入 fake。</summary>
+	public Func<IDesktopVisionActionExecutor>? AutomationDesktopVisionActionFactory { get; set; }
+
+	/// <summary>桌面截图工厂；测试可注入内存 fake。</summary>
+	public Func<IDesktopVisionScreenshotSource>? AutomationDesktopVisionScreenshotFactory { get; set; }
+
+	/// <summary>桌面窗口枚举工厂；测试可注入脱敏窗口 fake。</summary>
+	public Func<IDesktopVisionWindowCatalog>? AutomationDesktopVisionWindowCatalogFactory { get; set; }
+
+	/// <summary>桌面视觉审批回调；未装配时高风险动作必须拒绝。</summary>
+	public DesktopVisionApprovalCallback? AutomationDesktopVisionApprovalCallback { get; set; }
 
 	/// <summary>有界的 Agent 性能 Trace；只保存阶段/用量元数据，不保存正文。</summary>
 	public AgentTraceCollector AgentTrace { get; } = new();
