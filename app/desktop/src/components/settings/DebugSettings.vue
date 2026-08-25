@@ -7,6 +7,8 @@ import Icon from "../Icon.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppCard from "../ui/AppCard.vue"
 import AppButton from "../ui/AppButton.vue"
+import AppActionButton from "../ui/AppActionButton.vue"
+import AppDangerZone from "../ui/AppDangerZone.vue"
 
 /**
  * 调试与诊断页 (参考 ClassIsland 的 DebugPage 与 AppLogsWindow)
@@ -15,6 +17,7 @@ import AppButton from "../ui/AppButton.vue"
  */
 
 const I18N = computed(() => useLanguages().views.main.debug)
+const UI_I18N = computed(() => useLanguages().components.ui.state)
 
 /** 日志条目, 与宿主 get_recent_logs 返回结构一致 */
 type LogItem = {
@@ -40,7 +43,6 @@ const diagnostic = ref<Record<string, string>>({})
 const gcReleased = ref("")
 const gcFailed = ref(false)
 const busy = ref(false)
-const exporting = ref(false)
 const DEBUG_CRASH_TESTS_AVAILABLE = computed(() => RUNTIME.snapshot.value?.app.debugCrashTestsAvailable ?? false)
 
 const FILTERED_LOGS = computed(() => {
@@ -84,16 +86,14 @@ const clearLogs = async () => {
 	}
 }
 
+// 失败一律 rethrow: 详情走 feedback toast, 按钮自身只负责状态回落
 const exportDiagnostics = async () => {
-	if (exporting.value) return
-	exporting.value = true
 	try {
 		const RESULT = await RUNTIME.exportDiagnostics()
 		if (RESULT) feedback.success(`${I18N.value.diagnostic.exportSuccess}: ${RESULT.fileName}`)
 	} catch (error) {
 		feedback.error(I18N.value.diagnostic.exportFailed, error)
-	} finally {
-		exporting.value = false
+		throw error
 	}
 }
 
@@ -118,6 +118,7 @@ const writeTextSafely = async (text: string, failureText: string) => {
 		await RUNTIME.copyText(text)
 	} catch (error) {
 		feedback.error(failureText, error)
+		throw error
 	}
 }
 
@@ -198,7 +199,7 @@ const formatBytes = (bytes: number): string => {
 
 		<!-- 警告横幅 (对应 ClassIsland InfoBar Severity=Error) -->
 		<div
-			class="shrink-0 flex items-center gap-2.5 px-3.5 py-2.5 rounded-md bg-white/4 border border-danger/35
+			class="shrink-0 flex items-center gap-2.5 px-3.5 py-2.5 rounded-md bg-overlay-4 border border-danger/35
 				text-xs text-danger-text leading-relaxed"
 			role="alert"
 		>
@@ -211,10 +212,18 @@ const formatBytes = (bytes: number): string => {
 			<AppCard :title="I18N.diagnostic.title" icon="tool">
 				<template #actions>
 					<AppButton size="sm" @click="refreshDiagnostic">{{ I18N.actions.refresh }}</AppButton>
-					<AppButton size="sm" @click="copyDiagnostic">{{ I18N.diagnostic.copy }}</AppButton>
-					<AppButton size="sm" :loading="exporting" @click="exportDiagnostics">
-						{{ exporting ? I18N.diagnostic.exporting : I18N.diagnostic.export }}
-					</AppButton>
+					<AppActionButton
+						size="sm"
+						:label="I18N.diagnostic.copy"
+						:done-label="UI_I18N.copied"
+						:action="copyDiagnostic"
+					/>
+					<AppActionButton
+						size="sm"
+						:label="I18N.diagnostic.export"
+						:running-label="I18N.diagnostic.exporting"
+						:action="exportDiagnostics"
+					/>
 					<AppButton size="sm" @click="openLogFolder">{{ I18N.actions.openFolder }}</AppButton>
 				</template>
 
@@ -241,20 +250,23 @@ const formatBytes = (bytes: number): string => {
 						<label
 							v-for="FILTER in LEVEL_FILTERS"
 							:key="FILTER"
-							class="inline-flex items-center px-3.5 py-1 rounded-pill border text-xs cursor-pointer
-								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-							:class="levelFilter === FILTER
-								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+							class="pill-choice focus-ring-within px-3.5 py-1 text-xs"
+							:class="levelFilter === FILTER ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="levelFilter" type="radio" :value="FILTER" class="sr-only"/>
 							{{ FILTER_LABELS[FILTER] }}
 						</label>
 					</div>
-					<span class="inline-flex gap-1.5">
+					<span class="inline-flex items-center gap-1.5">
 						<AppButton size="sm" @click="refreshLogs">{{ I18N.actions.refresh }}</AppButton>
 						<AppButton size="sm" @click="clearLogs">{{ I18N.actions.clear }}</AppButton>
-						<AppButton size="sm" @click="copyLogs">{{ I18N.logs.copy }}</AppButton>
+						<AppActionButton
+							size="sm"
+							:label="I18N.logs.copy"
+							:done-label="UI_I18N.copied"
+							:disabled="FILTERED_LOGS.length === 0"
+							:action="copyLogs"
+						/>
 					</span>
 				</div>
 
@@ -267,11 +279,11 @@ const formatBytes = (bytes: number): string => {
 					<div
 						v-for="(ITEM, INDEX) in FILTERED_LOGS"
 						:key="INDEX"
-						class="flex items-baseline gap-2 px-1 py-0.5 rounded-xs hover:bg-white/6"
+						class="flex items-baseline gap-2 px-1 py-0.5 rounded-xs hover:bg-overlay-6"
 					>
 						<span class="shrink-0 text-text-faint">{{ ITEM.time }}</span>
 						<span
-							class="shrink-0 w-[4.2rem] text-center rounded-xs font-600 bg-white/6"
+							class="shrink-0 w-[4.2rem] text-center rounded-xs font-600 bg-overlay-6"
 							:class="ITEM.level === 'error'
 								? 'text-danger-text'
 								: ITEM.level === 'warn' ? 'text-warning' : ITEM.level === 'info' ? 'text-nori-teal-bright' : 'text-text-muted'"
@@ -294,18 +306,13 @@ const formatBytes = (bytes: number): string => {
 				</div>
 			</AppCard>
 
-			<!-- 4. 危险操作 (危险语义边框, 不复用 AppCard 的青绿头部) -->
-			<section
+			<!-- 4. 危险操作 (默认折叠: 崩溃测试不该离误触只有一步) -->
+			<AppDangerZone
 				v-if="DEBUG_CRASH_TESTS_AVAILABLE"
-				class="surface-card border-danger/30 flex flex-col gap-3 p-4
-					transition-colors duration-200 hover:border-danger/60"
+				:title="I18N.danger.title"
+				:desc="I18N.danger.hint"
+				:toggle-label="I18N.danger.toggle"
 			>
-				<header class="flex items-center gap-2">
-					<Icon name="alert" :size="17" class="shrink-0 text-danger-text"/>
-					<span class="title-sm">{{ I18N.danger.title }}</span>
-					<span class="ml-auto text-hint">{{ I18N.danger.hint }}</span>
-				</header>
-
 				<div class="flex items-center gap-3 flex-wrap">
 					<AppButton variant="danger" size="sm" @click="crashUiThread">{{ I18N.danger.crashUi }}</AppButton>
 					<span class="text-xs text-text-faint">{{ I18N.danger.crashUiDesc }}</span>
@@ -322,7 +329,7 @@ const formatBytes = (bytes: number): string => {
 					<AppButton variant="danger" size="sm" @click="throwFrontendError">{{ I18N.danger.frontendError }}</AppButton>
 					<span class="text-xs text-text-faint">{{ I18N.danger.frontendErrorDesc }}</span>
 				</div>
-			</section>
+			</AppDangerZone>
 		</div>
 	</div>
 </template>

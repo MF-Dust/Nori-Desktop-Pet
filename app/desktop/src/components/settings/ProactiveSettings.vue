@@ -114,12 +114,12 @@ const cancelReminder = async (id: string) => {
 		<div class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 挂机主动关怀 -->
 			<AppCard :title="TEXT.idle.title" icon="sparkles">
-				<AppSwitchRow :title="TEXT.idle.enabled" :desc="TEXT.idle.enabledDesc">
-					<n-switch
-						:value="idleEnabled"
-						@update:value="onIdleEnabledChange"
-					/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="TEXT.idle.enabled"
+					:desc="TEXT.idle.enabledDesc"
+					:model-value="idleEnabled"
+					@update:model-value="onIdleEnabledChange"
+				/>
 
 				<div v-if="idleEnabled" class="field">
 					<span class="field-label">{{ TEXT.idle.interval }}</span>
@@ -128,12 +128,8 @@ const cancelReminder = async (id: string) => {
 						<label
 							v-for="min in [5, 15, 30, 60]"
 							:key="min"
-							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
-								transition-all duration-200
-								focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-							:class="idleMinutes === min
-								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="idleMinutes === min ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input
 								v-model="idleMinutes"
@@ -150,12 +146,12 @@ const cancelReminder = async (id: string) => {
 
 			<!-- 2. 日常早晚安日程 -->
 			<AppCard :title="TEXT.daily.title" icon="noriOS">
-				<AppSwitchRow :title="TEXT.daily.enabled" :desc="TEXT.daily.enabledDesc">
-					<n-switch
-						:value="dailyGreeting"
-						@update:value="onDailyGreetingChange"
-					/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="TEXT.daily.enabled"
+					:desc="TEXT.daily.enabledDesc"
+					:model-value="dailyGreeting"
+					@update:model-value="onDailyGreetingChange"
+				/>
 			</AppCard>
 
 			<!-- 3. 定时提醒管理 (持久化于后端 SQLite, 重启自动恢复) -->
@@ -184,7 +180,7 @@ const cancelReminder = async (id: string) => {
 					<div
 						v-for="item in reminders"
 						:key="item.id"
-						class="flex items-center justify-between gap-3 px-3.5 py-2 rounded-sm bg-white/3
+						class="flex items-center justify-between gap-3 px-3.5 py-2 rounded-sm bg-overlay-4
 							border border-line-subtle transition-all duration-200
 							hover:(bg-nori-teal-bright/4 border-line-strong)"
 					>
@@ -196,7 +192,7 @@ const cancelReminder = async (id: string) => {
 						</div>
 						<button
 							type="button"
-							class="btn-base w-7 h-7 shrink-0 rounded-sm bg-white/5 text-text-muted
+							class="btn-base w-7 h-7 shrink-0 rounded-sm bg-overlay-6 text-text-muted
 								hover:(bg-danger/18 text-danger-text)"
 							:title="TEXT.reminders.cancel"
 							:aria-label="TEXT.reminders.cancel"

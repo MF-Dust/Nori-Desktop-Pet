@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import {computed, onMounted, ref, watch} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {feedback} from "../../services/feedback"
 import {RUNTIME, type MemoryAtom, type MemoryItem, type MemoryRecallDebug, type MemorySource} from "../../services/runtime"
 import Icon from "../Icon.vue"
 import AppCard from "../ui/AppCard.vue"
+import AppConfirm from "../ui/AppConfirm.vue"
+import AppSearchField from "../ui/AppSearchField.vue"
 import AppChip from "../ui/AppChip.vue"
 import AppField from "../ui/AppField.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppButton from "../ui/AppButton.vue"
 import AppModal from "../ui/AppModal.vue"
+import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
+import AppStatTile from "../ui/AppStatTile.vue"
 
 const I18N = computed(() => useLanguages().views.main.memory)
+const UI_I18N = computed(() => useLanguages().components.ui.state)
 const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
 
 type MemorySection = "overview" | "memories" | "atoms" | "knowledge" | "archive" | "debugger" | "advanced"
@@ -32,6 +37,9 @@ const searchKeyword = ref("")
 const kindFilter = ref("")
 const statusFilter = ref("")
 const loading = ref(false)
+// 破坏性操作确认 (气泡确认会被记忆列表的滚动容器裁切, 统一走模态)
+const clearAllOpen = ref(false)
+const pendingDelete = ref<MemoryItem | null>(null)
 const selectedMemory = ref<MemoryItem | null>(null)
 const selectedAtoms = ref<MemoryAtom[]>([])
 const selectedSources = ref<MemorySource[]>([])
@@ -66,14 +74,14 @@ const STATUS_FILTER_OPTIONS = computed(() => [
 	{label: I18N.value.list.expired, value: "expired"},
 ])
 
-const SECTIONS = computed(() => [
-	{key: "overview" as MemorySection, label: I18N.value.tabs.overview},
-	{key: "memories" as MemorySection, label: I18N.value.tabs.memories},
-	{key: "atoms" as MemorySection, label: I18N.value.tabs.atoms},
-	{key: "knowledge" as MemorySection, label: I18N.value.tabs.knowledge},
-	{key: "archive" as MemorySection, label: I18N.value.tabs.archive},
-	{key: "debugger" as MemorySection, label: I18N.value.tabs.debugger},
-	{key: "advanced" as MemorySection, label: I18N.value.tabs.advanced},
+const SECTIONS = computed<SegmentItem<MemorySection>[]>(() => [
+	{key: "overview", label: I18N.value.tabs.overview},
+	{key: "memories", label: I18N.value.tabs.memories},
+	{key: "atoms", label: I18N.value.tabs.atoms},
+	{key: "knowledge", label: I18N.value.tabs.knowledge},
+	{key: "archive", label: I18N.value.tabs.archive},
+	{key: "debugger", label: I18N.value.tabs.debugger},
+	{key: "advanced", label: I18N.value.tabs.advanced},
 ])
 
 // 记忆设置防抖与状态管理
@@ -278,6 +286,20 @@ const resetMemoryPage = async () => {
 	await loadMemories()
 }
 
+// 搜索防抖: 原先每敲一个字符就打一次后端查询, 输入长关键词会连发十几次
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchKeyword, () => {
+	if (searchTimer) clearTimeout(searchTimer)
+	searchTimer = setTimeout(() => {
+		searchTimer = null
+		void resetMemoryPage()
+	}, 300)
+})
+
+onBeforeUnmount(() => {
+	if (searchTimer) clearTimeout(searchTimer)
+})
+
 const changeSection = (section: MemorySection) => {
 	CURRENT_SECTION.value = section
 	memoryPage.value = 0
@@ -397,6 +419,7 @@ const addMemory = async () => {
 const deleteMemory = async (id: number) => {
 	try {
 		await RUNTIME.memoryDelete(id)
+		pendingDelete.value = null
 		closeMemory()
 		await loadMemories()
 		await RUNTIME.refresh()
@@ -420,6 +443,7 @@ const restoreMemory = async (id: number) => {
 const clearAll = async () => {
 	try {
 		await RUNTIME.memoryClear()
+		clearAllOpen.value = false
 		await loadMemories()
 	} catch (error) {
 		feedback.error(I18N.value.toast.clearFailed, error)
@@ -435,40 +459,23 @@ const clearAll = async () => {
 		/>
 
 		<!-- 导航分段 -->
-		<div class="flex flex-wrap gap-2">
-			<button
-				v-for="s in SECTIONS"
-				:key="s.key"
-				type="button"
-				class="px-3.5 py-1.5 rounded-pill text-sm font-500 transition-all duration-200"
-				:class="CURRENT_SECTION === s.key ? 'bg-nori-teal-bright/18 text-nori-teal-bright border border-nori-teal-bright/40 shadow-[0_0.2rem_1rem_var(--glow-teal-soft)]' : 'bg-white/4 text-text-muted hover:(bg-white/8 text-text-primary)'"
-				@click="changeSection(s.key)"
-			>
-				{{ s.label }}
-			</button>
-		</div>
+		<AppSegmented
+			class="self-start"
+			:model-value="CURRENT_SECTION"
+			:items="SECTIONS"
+			:label="I18N.header.title"
+			@update:model-value="changeSection"
+		/>
 
 		<!-- 各分段视图 -->
 		<div v-if="CURRENT_SECTION === 'overview'" class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 记忆资产概览 -->
-			<AppCard :title="I18N.overview.active" icon="sparkles">
+			<AppCard :title="I18N.overview.title" icon="sparkles">
 				<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
-						<span class="text-xs text-text-muted font-500">{{ I18N.overview.active }}</span>
-						<span class="text-2xl font-700 text-nori-teal-bright mono">{{ SNAPSHOT?.memory?.active ?? 0 }}</span>
-					</div>
-					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
-						<span class="text-xs text-text-muted font-500">{{ I18N.overview.atoms }}</span>
-						<span class="text-2xl font-700 text-nori-teal-bright mono">{{ SNAPSHOT?.memory?.atoms ?? 0 }}</span>
-					</div>
-					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
-						<span class="text-xs text-text-muted font-500">{{ I18N.overview.archived }}</span>
-						<span class="text-2xl font-700 text-text-body mono">{{ SNAPSHOT?.memory?.archived ?? 0 }}</span>
-					</div>
-					<div class="surface-card flex flex-col gap-1 p-3.5 rounded-md border border-line-subtle bg-white/3">
-						<span class="text-xs text-text-muted font-500">{{ I18N.overview.knowledge }}</span>
-						<span class="text-2xl font-700 text-nori-teal-soft mono">{{ SNAPSHOT?.memory?.knowledgeChunks ?? 0 }}</span>
-					</div>
+					<AppStatTile :label="I18N.overview.active" :value="String(SNAPSHOT?.memory?.active ?? 0)" tone="teal"/>
+					<AppStatTile :label="I18N.overview.atoms" :value="String(SNAPSHOT?.memory?.atoms ?? 0)" tone="teal"/>
+					<AppStatTile :label="I18N.overview.archived" :value="String(SNAPSHOT?.memory?.archived ?? 0)"/>
+					<AppStatTile :label="I18N.overview.knowledge" :value="String(SNAPSHOT?.memory?.knowledgeChunks ?? 0)" tone="teal"/>
 				</div>
 
 				<div class="flex items-center gap-2 pt-2 border-t border-line-subtle text-xs text-text-muted">
@@ -479,21 +486,33 @@ const clearAll = async () => {
 
 			<!-- 2. 核心记忆机制开关 -->
 			<AppCard :title="I18N.header.title" icon="settings">
-				<AppSwitchRow :title="I18N.header.title" :desc="SNAPSHOT?.memory?.enabled ? I18N.overview.enabled : I18N.overview.disabled">
-					<n-switch :value="Boolean(SNAPSHOT?.memory?.enabled)" @update:value="() => toggleMemorySetting('enabled')"/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="I18N.header.title"
+					:desc="SNAPSHOT?.memory?.enabled ? I18N.overview.enabled : I18N.overview.disabled"
+					:model-value="Boolean(SNAPSHOT?.memory?.enabled)"
+					@update:model-value="() => toggleMemorySetting('enabled')"
+				/>
 
-				<AppSwitchRow :title="I18N.overview.reflection" :desc="SNAPSHOT?.memory?.reflectionEnabled ? I18N.overview.enabled : I18N.overview.disabled">
-					<n-switch :value="Boolean(SNAPSHOT?.memory?.reflectionEnabled)" @update:value="() => toggleMemorySetting('reflectionEnabled')"/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="I18N.overview.reflection"
+					:desc="SNAPSHOT?.memory?.reflectionEnabled ? I18N.overview.enabled : I18N.overview.disabled"
+					:model-value="Boolean(SNAPSHOT?.memory?.reflectionEnabled)"
+					@update:model-value="() => toggleMemorySetting('reflectionEnabled')"
+				/>
 
-				<AppSwitchRow :title="I18N.overview.decay" :desc="SNAPSHOT?.memory?.decayEnabled ? I18N.overview.enabled : I18N.overview.disabled">
-					<n-switch :value="Boolean(SNAPSHOT?.memory?.decayEnabled)" @update:value="() => toggleMemorySetting('decayEnabled')"/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="I18N.overview.decay"
+					:desc="SNAPSHOT?.memory?.decayEnabled ? I18N.overview.enabled : I18N.overview.disabled"
+					:model-value="Boolean(SNAPSHOT?.memory?.decayEnabled)"
+					@update:model-value="() => toggleMemorySetting('decayEnabled')"
+				/>
 
-				<AppSwitchRow :title="I18N.overview.archive" :desc="SNAPSHOT?.memory?.archiveEnabled ? I18N.overview.enabled : I18N.overview.disabled">
-					<n-switch :value="Boolean(SNAPSHOT?.memory?.archiveEnabled)" @update:value="() => toggleMemorySetting('archiveEnabled')"/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="I18N.overview.archive"
+					:desc="SNAPSHOT?.memory?.archiveEnabled ? I18N.overview.enabled : I18N.overview.disabled"
+					:model-value="Boolean(SNAPSHOT?.memory?.archiveEnabled)"
+					@update:model-value="() => toggleMemorySetting('archiveEnabled')"
+				/>
 			</AppCard>
 		</div>
 
@@ -639,32 +658,23 @@ const clearAll = async () => {
 			<!-- 4. 记忆库列表与搜索 -->
 			<AppCard v-if="CURRENT_SECTION === 'memories' || CURRENT_SECTION === 'archive'" :title="`${I18N.list.title} (${memoryTotal})`" icon="package">
 				<template #actions>
-					<n-popconfirm
+					<AppButton
 						v-if="memories.length > 0 && CURRENT_SECTION === 'memories'"
-						:positive-text="I18N.list.clearConfirm"
-						:negative-text="I18N.common.cancel"
-						@positive-click="clearAll"
-					>
-						<template #trigger>
-							<button
-								type="button"
-								class="btn-base px-1 bg-transparent text-sm text-danger-text opacity-85
-									hover:(opacity-100 underline)"
-							>
-								{{ I18N.list.clearAll }}
-							</button>
-						</template>
-						{{ I18N.list.clearQuestion }}
-					</n-popconfirm>
+						variant="danger"
+						size="sm"
+						icon="trash"
+						@click="clearAllOpen = true"
+					>{{ I18N.list.clearAll }}</AppButton>
 				</template>
 
 				<div class="flex flex-wrap gap-2">
-					<input
-						v-model="searchKeyword"
-						class="input-base min-w-[12rem] flex-1"
-						:placeholder="I18N.list.searchPlaceholder"
-						@input="resetMemoryPage"
-					/>
+					<div class="min-w-[12rem] flex-1">
+						<AppSearchField
+							v-model="searchKeyword"
+							:placeholder="I18N.list.searchPlaceholder"
+							:clear-label="UI_I18N.clearSearch"
+						/>
+					</div>
 					<n-select v-model:value="kindFilter" :options="KIND_FILTER_OPTIONS" class="w-[12rem] shrink-0" @update:value="resetMemoryPage"/>
 					<n-select v-if="CURRENT_SECTION === 'memories'" v-model:value="statusFilter" :options="STATUS_FILTER_OPTIONS" class="w-[12rem] shrink-0" @update:value="resetMemoryPage"/>
 				</div>
@@ -677,7 +687,7 @@ const clearAll = async () => {
 					<div
 						v-for="item in memories"
 						:key="item.id"
-						class="flex items-start justify-between gap-3 px-3.5 py-2.5 rounded-sm bg-white/3 cursor-pointer
+						class="flex items-start justify-between gap-3 px-3.5 py-2.5 rounded-sm bg-overlay-4 cursor-pointer
 							border border-line-subtle transition-all duration-200
 							hover:(bg-nori-teal-bright/4 border-line-strong)"
 						@click="openMemory(item.id)"
@@ -693,50 +703,38 @@ const clearAll = async () => {
 							<p class="text-base text-text-primary leading-normal">{{ item.content }}</p>
 							<span class="text-xs text-text-faint">{{ new Date(item.createdAt).toLocaleString() }}</span>
 						</div>
-						<button
+						<AppButton
 							v-if="CURRENT_SECTION === 'memories' && item.status === 'active'"
-							type="button"
-							class="btn-base w-7 h-7 shrink-0 rounded-sm bg-white/6 text-text-muted hover:(bg-nori-teal-bright/12 text-nori-teal-bright)"
-							:title="I18N.list.archiveThis"
-							:aria-label="I18N.list.archiveThis"
+							variant="icon"
+							size="sm"
+							icon="package"
+							:label="I18N.list.archiveThis"
+							class="shrink-0"
 							@click.stop="archiveMemory(item.id)"
-						>
-							<Icon name="package" :size="14"/>
-						</button>
-						<button
+						/>
+						<AppButton
 							v-if="CURRENT_SECTION === 'archive'"
-							type="button"
-							class="btn-base w-7 h-7 shrink-0 rounded-sm bg-white/6 text-text-muted hover:(bg-nori-teal-bright/12 text-nori-teal-bright)"
-							:title="I18N.archive.restore"
-							:aria-label="I18N.archive.restore"
+							variant="icon"
+							size="sm"
+							icon="refresh"
+							:label="I18N.archive.restore"
+							class="shrink-0"
 							@click.stop="restoreMemory(item.id)"
-						>
-							<Icon name="refresh" :size="14"/>
-						</button>
-						<n-popconfirm
-							:positive-text="I18N.list.delete"
-							:negative-text="I18N.common.cancel"
-							@positive-click="deleteMemory(item.id)"
-						>
-							<template #trigger>
-								<button
-									type="button"
-									class="btn-base w-7 h-7 shrink-0 rounded-sm bg-white/6 text-text-muted
-										hover:(bg-danger/18 text-danger-text)"
-									:title="I18N.list.deleteThis"
-									:aria-label="I18N.list.deleteThis"
-								>
-									<Icon name="close" :size="14"/>
-								</button>
-							</template>
-							{{ I18N.list.deleteQuestion }}
-						</n-popconfirm>
+						/>
+						<AppButton
+							variant="icon"
+							size="sm"
+							icon="close"
+							:label="I18N.list.deleteThis"
+							class="shrink-0 hover:(bg-danger/18 text-danger-text)"
+							@click.stop="pendingDelete = item"
+						/>
 					</div>
 				</div>
 				<div v-if="memoryTotal > MEMORY_PAGE_SIZE" class="flex items-center justify-between pt-2 text-sm text-text-muted">
-					<button type="button" class="btn-base" :disabled="memoryPage === 0" @click="memoryPage--; loadMemories()">{{ I18N.list.previous }}</button>
-					<span>{{ memoryPage + 1 }} / {{ Math.ceil(memoryTotal / MEMORY_PAGE_SIZE) }}</span>
-					<button type="button" class="btn-base" :disabled="(memoryPage + 1) * MEMORY_PAGE_SIZE >= memoryTotal" @click="memoryPage++; loadMemories()">{{ I18N.list.next }}</button>
+					<AppButton variant="ghost" size="sm" icon="arrow-left" :disabled="memoryPage === 0" @click="memoryPage--; loadMemories()">{{ I18N.list.previous }}</AppButton>
+					<span class="mono">{{ memoryPage + 1 }} / {{ Math.ceil(memoryTotal / MEMORY_PAGE_SIZE) }}</span>
+					<AppButton variant="ghost" size="sm" icon="arrow-right" :disabled="(memoryPage + 1) * MEMORY_PAGE_SIZE >= memoryTotal" @click="memoryPage++; loadMemories()">{{ I18N.list.next }}</AppButton>
 				</div>
 			</AppCard>
 		</div>
@@ -773,5 +771,31 @@ const clearAll = async () => {
 				<AppButton variant="primary" :loading="savingDetail" @click="saveMemory">{{ I18N.detail.save }}</AppButton>
 			</template>
 		</AppModal>
+
+		<!-- 清空全部记忆确认 -->
+		<AppConfirm
+			:show="clearAllOpen"
+			:title="I18N.list.clearAll"
+			:desc="I18N.list.clearQuestion"
+			:confirm-label="I18N.list.clearConfirm"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="danger"
+			@update:show="clearAllOpen = false"
+			@confirm="clearAll"
+		/>
+
+		<!-- 删除单条记忆确认 -->
+		<AppConfirm
+			:show="pendingDelete !== null"
+			:title="I18N.list.deleteThis"
+			:desc="I18N.list.deleteQuestion"
+			:confirm-label="I18N.list.delete"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="danger"
+			@update:show="pendingDelete = null"
+			@confirm="pendingDelete && deleteMemory(pendingDelete.id)"
+		/>
 	</div>
 </template>

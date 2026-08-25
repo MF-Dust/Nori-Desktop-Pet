@@ -119,11 +119,8 @@ onMounted(() => {
 			<div v-if="expressionEnabled" class="w-full flex flex-wrap gap-2">
 				<button
 					type="button"
-					class="px-3.5 py-[0.55rem] rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring
-						hover:(text-nori-teal-bright border-nori-teal-soft bg-nori-teal-bright/8 -translate-y-[0.1rem])"
-					:class="selected.length === 0
-						? 'font-600 border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright shadow-[0_0.2rem_1rem_var(--glow-teal-soft)]'
-						: 'text-text-muted border-line-subtle bg-white/4 hover:text-text-primary'"
+					class="pill-choice focus-ring px-3.5 py-[0.55rem] text-xs hover:-translate-y-[0.1rem]"
+					:class="selected.length === 0 ? 'pill-choice-on' : 'pill-choice-off'"
 					:aria-pressed="selected.length === 0"
 					@click="clearExpressions"
 				>
@@ -133,11 +130,8 @@ onMounted(() => {
 					v-for="item in expressions"
 					:key="item.name"
 					type="button"
-					class="px-3.5 py-[0.55rem] rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring
-						hover:(text-nori-teal-bright border-nori-teal-soft bg-nori-teal-bright/8 -translate-y-[0.1rem])"
-					:class="selected.includes(item.name)
-						? 'font-600 border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright shadow-[0_0.2rem_1rem_var(--glow-teal-soft)]'
-						: 'text-text-muted border-line-subtle bg-white/4 hover:text-text-primary'"
+					class="pill-choice focus-ring px-3.5 py-[0.55rem] text-xs hover:-translate-y-[0.1rem]"
+					:class="selected.includes(item.name) ? 'pill-choice-on' : 'pill-choice-off'"
 					:aria-pressed="selected.includes(item.name)"
 					@click="toggleExpression(item.name)"
 				>

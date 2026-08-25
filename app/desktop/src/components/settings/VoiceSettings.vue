@@ -218,7 +218,7 @@ const testVoice = async () => {
 		<!-- 旧浏览器语音配置一次性提示 -->
 		<div
 			v-if="VOICE?.noticePending"
-			class="shrink-0 flex items-start gap-2.5 px-4 py-3 rounded-md bg-white/4 border border-warning/35"
+			class="shrink-0 flex items-start gap-2.5 px-4 py-3 rounded-md bg-overlay-4 border border-warning/35"
 			role="status"
 		>
 			<Icon name="alert" :size="16" class="shrink-0 mt-0.5 text-warning"/>
@@ -255,33 +255,24 @@ const testVoice = async () => {
 					<span class="field-label font-500">{{ I18N.tts.provider }}</span>
 					<div class="flex flex-wrap gap-2">
 						<label
-							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
-								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-							:class="ttsProvider === 'openai'
-								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="ttsProvider === 'openai' ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="ttsProvider" type="radio" value="openai" class="sr-only"
 								@change="onTtsProviderChange('openai')"/>
 							{{ I18N.tts.providerOpenai }}
 						</label>
 						<label
-							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
-								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-							:class="ttsProvider === 'custom'
-								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="ttsProvider === 'custom' ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="ttsProvider" type="radio" value="custom" class="sr-only"
 								@change="onTtsProviderChange('custom')"/>
 							{{ I18N.tts.providerCustom }}
 						</label>
 						<label
-							class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border text-xs cursor-pointer
-								transition-all duration-200 focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-							:class="ttsProvider === 'gpt_sovits'
-								? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="ttsProvider === 'gpt_sovits' ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="ttsProvider" type="radio" value="gpt_sovits" class="sr-only"
 								@change="onTtsProviderChange('gpt_sovits')"/>
@@ -393,12 +384,12 @@ const testVoice = async () => {
 				</div>
 
 				<div class="pt-2 border-t border-line-subtle">
-					<AppSwitchRow :title="I18N.tts.autoPlay" :desc="I18N.tts.autoPlayDesc">
-						<n-switch
-							:value="ttsAutoPlay"
-							@update:value="onTtsAutoPlayChange"
-						/>
-					</AppSwitchRow>
+					<AppSwitchRow
+						:title="I18N.tts.autoPlay"
+						:desc="I18N.tts.autoPlayDesc"
+						:model-value="ttsAutoPlay"
+						@update:model-value="onTtsAutoPlayChange"
+					/>
 				</div>
 
 				<div class="flex gap-2 pt-1">

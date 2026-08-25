@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed} from "vue"
+import {computed, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages"
 import {validateRegionBindings} from "../../services/live2d/interactions"
 import {RUNTIME} from "../../services/runtime"
@@ -12,8 +12,10 @@ import type {
 import Icon from "../Icon.vue"
 import AppButton from "../ui/AppButton.vue"
 import AppChip from "../ui/AppChip.vue"
+import AppConfirm from "../ui/AppConfirm.vue"
 import AppEmpty from "../ui/AppEmpty.vue"
 import AppField from "../ui/AppField.vue"
+import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
 
 const props = withDefaults(defineProps<{
 	modelId: string
@@ -43,7 +45,37 @@ const emit = defineEmits<{
 
 const I18N = computed(() => useLanguages().views.main.model.interactions)
 const MODEL_I18N = computed(() => useLanguages().views.main.model)
+const UI_I18N = computed(() => useLanguages().components.ui.state)
 const AI_CONFIGURED = computed(() => Boolean(RUNTIME.snapshot.value?.ai.configured))
+
+// 清空全部确认 (气泡确认会被外层设置页的滚动容器裁切, 统一走模态)
+const clearOpen = ref(false)
+
+// 清空真正的落盘在父级完成, 这里只负责关掉模态
+const confirmClear = () => {
+	clearOpen.value = false
+	emit("clearRegions")
+}
+
+// 编辑 / 测试模式分段 (原先是手抄的两颗按钮, 收敛到 AppSegmented 以拿到 tablist 语义与方向键)
+type EditMode = "edit" | "preview"
+const EDIT_MODE = computed<EditMode>(() => props.editing ? "edit" : "preview")
+const EDIT_MODE_ITEMS = computed<SegmentItem<EditMode>[]>(() => [
+	{key: "edit", label: I18N.value.editMode, icon: "edit"},
+	{key: "preview", label: I18N.value.previewMode, icon: "play"},
+])
+
+// 动作 / 表情各自的三选一分段
+const MOTION_MODE_ITEMS = computed<SegmentItem<InteractionActionMode>[]>(() => [
+	{key: "none", label: I18N.value.motionModeNone},
+	{key: "random", label: I18N.value.motionModeRandom},
+	{key: "selected", label: I18N.value.motionModeSelected},
+])
+const EXPRESSION_MODE_ITEMS = computed<SegmentItem<InteractionActionMode>[]>(() => [
+	{key: "none", label: I18N.value.expressionModeNone},
+	{key: "random", label: I18N.value.expressionModeRandom},
+	{key: "selected", label: I18N.value.expressionModeSelected},
+])
 
 // 当前选中的区域对象
 const selectedRegion = computed(() =>
@@ -192,52 +224,29 @@ const onExpressionNameChange = (name: string) => {
 
 			<div class="flex items-center gap-2">
 				<!-- 编辑模式 / 预览测试模式 切换 -->
-				<div class="flex items-center p-0.5 rounded-sm bg-white/5 border border-line-subtle">
-					<button
-						type="button"
-						class="px-2.5 py-1 rounded-sm text-xs font-600 transition-all duration-150 focus-ring flex items-center gap-1.5"
-						:class="editing ? 'bg-nori-teal-bright text-on-teal shadow-[0_0_0.8rem_var(--glow-teal)]' : 'text-text-muted hover:text-text-body'"
-						@click="emit('update:editing', true)"
-					>
-						<Icon name="edit" :size="13"/>
-						<span>{{ I18N.editMode }}</span>
-					</button>
-					<button
-						type="button"
-						class="px-2.5 py-1 rounded-sm text-xs font-600 transition-all duration-150 focus-ring flex items-center gap-1.5"
-						:class="!editing ? 'bg-nori-teal-bright text-on-teal shadow-[0_0_0.8rem_var(--glow-teal)]' : 'text-text-muted hover:text-text-body'"
-						@click="emit('update:editing', false)"
-					>
-						<Icon name="play" :size="13"/>
-						<span>{{ I18N.previewMode }}</span>
-					</button>
-				</div>
+				<AppSegmented
+					:model-value="EDIT_MODE"
+					:items="EDIT_MODE_ITEMS"
+					:label="I18N.title"
+					size="sm"
+					@update:model-value="emit('update:editing', $event === 'edit')"
+				/>
 
 				<!-- 新建区域按钮 -->
-				<AppButton
-					icon="plus"
-					class="btn-primary py-1 text-xs font-600"
-					@click="emit('addRegion')"
-				>
+				<AppButton variant="primary" size="sm" icon="plus" @click="emit('addRegion')">
 					{{ I18N.add }}
 				</AppButton>
 
 				<!-- 清空全部按钮 (二次确认) -->
-				<n-popconfirm
+				<AppButton
 					v-if="regions.length > 0"
-					@positive-click="emit('clearRegions')"
+					variant="danger"
+					size="sm"
+					icon="trash"
+					@click="clearOpen = true"
 				>
-					<template #trigger>
-						<AppButton
-							icon="trash"
-							class="btn-danger py-1 text-xs"
-							:aria-label="I18N.clearAll"
-						>
-							{{ I18N.clearAll }}
-						</AppButton>
-					</template>
-					<span>{{ I18N.clearConfirm }}</span>
-				</n-popconfirm>
+					{{ I18N.clearAll }}
+				</AppButton>
 			</div>
 		</div>
 
@@ -255,7 +264,7 @@ const onExpressionNameChange = (name: string) => {
 				class="shrink-0 px-3 py-1.5 rounded-sm border text-xs font-600 transition-all duration-200 focus-ring flex items-center gap-1.5 cursor-pointer"
 				:class="r.id === selectedId
 					? 'border-nori-teal-bright bg-nori-teal-bright/20 text-text-primary shadow-[0_0_1rem_var(--glow-teal-soft)]'
-					: 'border-line-subtle bg-white/4 text-text-muted hover:(border-nori-teal-soft bg-nori-teal-bright/10 text-text-body)'"
+					: 'border-line-subtle bg-overlay-4 text-text-muted hover:(border-nori-teal-soft bg-nori-teal-bright/10 text-text-body)'"
 				@click="emit('update:selectedId', r.id)"
 			>
 				<span class="w-4 text-center text-xs opacity-75 font-600">{{ idx + 1 }}</span>
@@ -272,14 +281,14 @@ const onExpressionNameChange = (name: string) => {
 		<!-- 空区域状态 -->
 		<AppEmpty
 			v-if="regions.length === 0"
-			class="my-4 py-8 rounded-md border border-line-subtle bg-white/2"
+			class="my-4 py-8 rounded-md border border-line-subtle bg-overlay-2"
 			:title="I18N.empty"
 		/>
 
 		<!-- 未选中区域时的提示 -->
 		<div
 			v-else-if="!selectedRegion"
-			class="w-full p-4 rounded-md border border-line-subtle bg-white/2 text-center text-text-muted text-sm"
+			class="w-full p-4 rounded-md border border-line-subtle bg-overlay-2 text-center text-text-muted text-sm"
 		>
 			{{ I18N.selectHint }}
 		</div>
@@ -299,8 +308,9 @@ const onExpressionNameChange = (name: string) => {
 				</div>
 
 				<AppButton
+					variant="danger"
+					size="sm"
 					icon="trash"
-					class="btn-danger py-0.8 text-xs font-500"
 					@click="emit('deleteRegion', selectedRegion.id)"
 				>
 					{{ I18N.deleteRegion }}
@@ -309,12 +319,12 @@ const onExpressionNameChange = (name: string) => {
 
 			<!-- 区域名称输入 -->
 			<AppField :label="I18N.regionName">
-				<n-input
+				<input
 					:value="selectedRegion.name"
+					class="input-base text-sm"
 					:placeholder="I18N.regionNamePlaceholder"
 					maxlength="24"
-					clearable
-					@update:value="updateSelectedField('name', $event)"
+					@input="updateSelectedField('name', ($event.target as HTMLInputElement).value)"
 				/>
 			</AppField>
 
@@ -327,7 +337,7 @@ const onExpressionNameChange = (name: string) => {
 						class="p-3 rounded-sm border text-left transition-all duration-200 focus-ring cursor-pointer flex flex-col gap-1"
 						:class="selectedRegion.reactionMode === 'local'
 							? 'border-nori-teal bg-nori-teal-bright/14 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-							: 'border-line-subtle bg-white/3 hover:bg-white/6'"
+							: 'border-line-subtle bg-overlay-4 hover:bg-overlay-6'"
 						@click="onReactionModeChange('local')"
 					>
 						<div class="flex items-center justify-between">
@@ -341,10 +351,10 @@ const onExpressionNameChange = (name: string) => {
 						type="button"
 						class="p-3 rounded-sm border text-left transition-all duration-200 focus-ring cursor-pointer flex flex-col gap-1"
 						:class="!AI_CONFIGURED
-							? 'border-line-subtle bg-white/2 opacity-55 cursor-not-allowed'
+							? 'border-line-subtle bg-overlay-2 opacity-55 cursor-not-allowed'
 							: selectedRegion.reactionMode === 'ai'
 								? 'border-warning bg-warning/12 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-								: 'border-line-subtle bg-white/3 hover:bg-white/6'"
+								: 'border-line-subtle bg-overlay-4 hover:bg-overlay-6'"
 						:disabled="!AI_CONFIGURED"
 						@click="onReactionModeChange('ai')"
 					>
@@ -377,38 +387,13 @@ const onExpressionNameChange = (name: string) => {
 				</div>
 
 				<!-- 动作模式三选一 -->
-				<div class="w-full grid grid-cols-3 gap-2">
-					<button
-						type="button"
-						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
-						:class="selectedRegion.motion.mode === 'none'
-							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
-							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
-						@click="onMotionModeChange('none')"
-					>
-						{{ I18N.motionModeNone }}
-					</button>
-					<button
-						type="button"
-						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
-						:class="selectedRegion.motion.mode === 'random'
-							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
-							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
-						@click="onMotionModeChange('random')"
-					>
-						{{ I18N.motionModeRandom }}
-					</button>
-					<button
-						type="button"
-						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
-						:class="selectedRegion.motion.mode === 'selected'
-							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
-							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
-						@click="onMotionModeChange('selected')"
-					>
-						{{ I18N.motionModeSelected }}
-					</button>
-				</div>
+				<AppSegmented
+					:model-value="selectedRegion.motion.mode"
+					:items="MOTION_MODE_ITEMS"
+					:label="I18N.motion"
+					size="sm"
+					@update:model-value="onMotionModeChange"
+				/>
 
 				<!-- 指定动作时的分组与名称选择 -->
 				<div v-if="selectedRegion.motion.mode === 'selected'" class="w-full grid grid-cols-2 gap-2 mt-1">
@@ -443,38 +428,13 @@ const onExpressionNameChange = (name: string) => {
 				</div>
 
 				<!-- 表情模式三选一 -->
-				<div class="w-full grid grid-cols-3 gap-2">
-					<button
-						type="button"
-						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
-						:class="selectedRegion.expression.mode === 'none'
-							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
-							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
-						@click="onExpressionModeChange('none')"
-					>
-						{{ I18N.expressionModeNone }}
-					</button>
-					<button
-						type="button"
-						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
-						:class="selectedRegion.expression.mode === 'random'
-							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
-							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
-						@click="onExpressionModeChange('random')"
-					>
-						{{ I18N.expressionModeRandom }}
-					</button>
-					<button
-						type="button"
-						class="py-1.5 px-2 rounded-sm border text-xs font-600 transition-all focus-ring text-center"
-						:class="selectedRegion.expression.mode === 'selected'
-							? 'border-nori-teal-bright bg-nori-teal-bright/18 text-text-primary'
-							: 'border-line-subtle bg-white/3 text-text-muted hover:text-text-body'"
-						@click="onExpressionModeChange('selected')"
-					>
-						{{ I18N.expressionModeSelected }}
-					</button>
-				</div>
+				<AppSegmented
+					:model-value="selectedRegion.expression.mode"
+					:items="EXPRESSION_MODE_ITEMS"
+					:label="I18N.expression"
+					size="sm"
+					@update:model-value="onExpressionModeChange"
+				/>
 
 				<!-- 指定表情时的下拉选择 -->
 				<div v-if="selectedRegion.expression.mode === 'selected'" class="w-full mt-1">
@@ -494,5 +454,18 @@ const onExpressionNameChange = (name: string) => {
 				{{ I18N.keyboardHint }}
 			</p>
 		</div>
+
+		<!-- 清空全部区域确认 -->
+		<AppConfirm
+			:show="clearOpen"
+			:title="I18N.clearAll"
+			:desc="I18N.clearConfirm"
+			:confirm-label="I18N.clearAll"
+			:cancel-label="UI_I18N.cancel"
+			:close-label="UI_I18N.close"
+			tone="danger"
+			@update:show="clearOpen = false"
+			@confirm="confirmClear"
+		/>
 	</div>
 </template>

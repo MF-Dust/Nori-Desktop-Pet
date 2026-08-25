@@ -6,7 +6,6 @@ import {useSnapshotField} from "../../composables/useSnapshotField"
 import useLanguage from "../../services/i18n"
 import useLanguages from "../../services/i18n/useLanguages"
 import {feedback} from "../../services/feedback"
-import {APP_VERSION} from "../../services/version"
 import AppCard from "../ui/AppCard.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
@@ -40,19 +39,8 @@ const telemetryEnabledField = defineField(
 )
 const telemetryEnabled = telemetryEnabledField.value
 
-const appVersion = computed(() => RUNTIME.snapshot.value?.app.productVersion ?? RUNTIME.snapshot.value?.app.appVersion ?? APP_VERSION)
 const telemetryAvailable = computed(() => RUNTIME.snapshot.value?.telemetry.available ?? false)
 const telemetryConsent = computed(() => RUNTIME.snapshot.value?.telemetry.consent ?? "unset")
-const SAFE_MODE = computed(() => RUNTIME.snapshot.value?.app.safeMode ?? false)
-
-const ENGINE_TEXT = computed(() => {
-	switch (RUNTIME.snapshot.value?.platform.os) {
-		case "windows": return TEXT.value.about.engineWindows
-		case "macos": return TEXT.value.about.engineMacos
-		case "linux": return TEXT.value.about.engineLinux
-		default: return TEXT.value.about.engineUnknown
-	}
-})
 const TELEMETRY_DESC = computed(() => {
 	if (!telemetryAvailable.value) return TEXT.value.telemetry.unavailable
 	if (telemetryConsent.value === "unset") return TEXT.value.telemetry.pending
@@ -106,12 +94,8 @@ onMounted(() => {
 				<div class="flex flex-wrap gap-2.5">
 					<!-- 单选按钮本体用 sr-only 隐藏而非 display:none, 保留键盘可达与读屏语义 -->
 					<label
-						class="inline-flex items-center gap-2 px-4 py-2 rounded-pill border text-sm cursor-pointer
-							transition-all duration-200
-							focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-						:class="currentLang === 'zh-CN'
-							? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.4rem_rgba(125,227,255,0.18)]'
-							: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+						class="pill-choice focus-ring-within gap-2 px-4 py-2 text-sm"
+						:class="currentLang === 'zh-CN' ? 'pill-choice-on' : 'pill-choice-off'"
 					>
 						<input
 							v-model="currentLang"
@@ -120,19 +104,15 @@ onMounted(() => {
 							class="sr-only"
 							@change="onLanguageChange('zh-CN')"
 						/>
-						<span class="w-[2rem] h-[1.4rem] shrink-0 rounded-[0.2rem] overflow-hidden border border-white/15">
+						<span class="w-[2rem] h-[1.4rem] shrink-0 rounded-[0.2rem] overflow-hidden border border-overlay-12">
 							<img :src="zhCn" alt="CN" class="w-full h-full object-cover block"/>
 						</span>
 						<span>{{ TEXT.language.chinese }}</span>
 						<Icon v-if="currentLang === 'zh-CN'" name="check" :size="13" class="text-nori-teal-bright ml-0.5"/>
 					</label>
 					<label
-						class="inline-flex items-center gap-2 px-4 py-2 rounded-pill border text-sm cursor-pointer
-							transition-all duration-200
-							focus-within:(outline outline-2 outline-offset-[0.2rem] outline-nori-teal-bright)"
-						:class="currentLang === 'en-US'
-							? 'border-nori-teal-bright bg-nori-teal-bright/14 text-nori-teal-bright font-600 shadow-[0_0.2rem_1.4rem_rgba(125,227,255,0.18)]'
-							: 'border-line-subtle bg-white/4 text-text-muted hover:(text-text-primary bg-white/8 border-nori-teal-soft/60)'"
+						class="pill-choice focus-ring-within gap-2 px-4 py-2 text-sm"
+						:class="currentLang === 'en-US' ? 'pill-choice-on' : 'pill-choice-off'"
 					>
 						<input
 							v-model="currentLang"
@@ -141,7 +121,7 @@ onMounted(() => {
 							class="sr-only"
 							@change="onLanguageChange('en-US')"
 						/>
-						<span class="w-[2rem] h-[1.4rem] shrink-0 rounded-[0.2rem] overflow-hidden border border-white/15">
+						<span class="w-[2rem] h-[1.4rem] shrink-0 rounded-[0.2rem] overflow-hidden border border-overlay-12">
 							<img :src="enUs" alt="US" class="w-full h-full object-cover block"/>
 						</span>
 						<span>{{ TEXT.language.english }}</span>
@@ -152,47 +132,23 @@ onMounted(() => {
 
 			<!-- 2. 启动与窗口行为 -->
 			<AppCard :title="TEXT.startup.title" icon="settings">
-				<AppSwitchRow :title="TEXT.startup.autoSummon" :desc="TEXT.startup.autoSummonDesc">
-					<n-switch
-						:value="autoSummon"
-						@update:value="(val: boolean) => onAutoSummonChange(val)"
-					/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="TEXT.startup.autoSummon"
+					:desc="TEXT.startup.autoSummonDesc"
+					:model-value="autoSummon"
+					@update:model-value="onAutoSummonChange"
+				/>
 			</AppCard>
 
 			<!-- 3. 错误遥测与隐私 -->
 			<AppCard :title="TEXT.telemetry.title" icon="info">
-				<AppSwitchRow :title="TEXT.telemetry.enabled" :desc="TELEMETRY_DESC">
-					<n-switch
-						:value="telemetryEnabled"
-						@update:value="(val: boolean) => onTelemetryChange(val)"
-					/>
-				</AppSwitchRow>
+				<AppSwitchRow
+					:title="TEXT.telemetry.enabled"
+					:desc="TELEMETRY_DESC"
+					:model-value="telemetryEnabled"
+					@update:model-value="onTelemetryChange"
+				/>
 				<span class="text-hint">{{ TELEMETRY_STATUS }}</span>
-			</AppCard>
-
-			<!-- 4. 应用关于信息 -->
-			<AppCard :title="TEXT.about.title" icon="info">
-				<div class="flex flex-col">
-					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
-						<span class="text-sm text-text-muted">{{ TEXT.about.version }}</span>
-						<span class="text-sm text-text-primary mono">{{ appVersion }}</span>
-					</div>
-					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
-						<span class="text-sm text-text-muted">{{ TEXT.about.license }}</span>
-						<span class="text-sm text-text-primary mono">{{ TEXT.about.licenseValue }}</span>
-					</div>
-					<div class="flex items-center justify-between gap-3 py-2 border-b border-line-subtle">
-						<span class="text-sm text-text-muted">{{ TEXT.about.safeMode }}</span>
-						<span class="text-sm mono" :class="SAFE_MODE ? 'text-warning' : 'text-text-primary'">
-							{{ SAFE_MODE ? TEXT.about.safeModeEnabled : TEXT.about.safeModeDisabled }}
-						</span>
-					</div>
-					<div class="flex items-center justify-between gap-3 py-2">
-						<span class="text-sm text-text-muted">{{ TEXT.about.renderer }}</span>
-						<span class="text-sm text-text-primary mono">{{ ENGINE_TEXT }}</span>
-					</div>
-				</div>
 			</AppCard>
 		</div>
 	</div>

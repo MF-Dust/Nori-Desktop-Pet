@@ -4,16 +4,23 @@ import useLanguages from "../../services/i18n/useLanguages.ts"
 import Icon from "../Icon.vue"
 import AppButton from "../ui/AppButton.vue"
 import AppChip from "../ui/AppChip.vue"
+import AppConfirm from "../ui/AppConfirm.vue"
 import AppEmpty from "../ui/AppEmpty.vue"
 import AppField from "../ui/AppField.vue"
 import AppModal from "../ui/AppModal.vue"
+import AppSearchField from "../ui/AppSearchField.vue"
+import AppSectionHeader from "../ui/AppSectionHeader.vue"
+import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
+import AppSwitch from "../ui/AppSwitch.vue"
 import {feedback} from "../../services/feedback"
 import {RUNTIME, type SkillDto} from "../../services/runtime"
 
 const I18N = computed(() => useLanguages().views.main.skills)
+const UI_I18N = computed(() => useLanguages().components.ui.state)
 
 // 当前子标签: "installed" | "market"
-const activeTab = ref<"installed" | "market">("installed")
+type SkillsTab = "installed" | "market"
+const activeTab = ref<SkillsTab>("installed")
 
 // 列表数据与加载状态
 const installedSkills = ref<SkillDto[]>([])
@@ -91,13 +98,18 @@ const filteredInstalled = computed<SkillDto[]>(() => installedSkills.value.filte
 const filteredMarket = computed<SkillDto[]>(() => marketplaceSkills.value.filter(matchesFilter))
 
 // 分类列表
-const CATEGORIES = computed<{key: string; label: string}[]>(() => [
+const CATEGORIES = computed<SegmentItem[]>(() => [
 	{key: "all", label: I18N.value.category.all},
 	{key: "productivity", label: I18N.value.category.productivity},
 	{key: "coding", label: I18N.value.category.coding},
 	{key: "life", label: I18N.value.category.life},
 	{key: "roleplay", label: I18N.value.category.roleplay},
 	{key: "entertainment", label: I18N.value.category.entertainment},
+])
+
+const TABS = computed<SegmentItem<SkillsTab>[]>(() => [
+	{key: "installed", label: I18N.value.tab.installed, icon: "sparkles", count: installedSkills.value.length},
+	{key: "market", label: I18N.value.tab.market, icon: "package"},
 ])
 
 // 切换技能启用
@@ -236,11 +248,16 @@ const saveSkill = async () => {
 	}
 }
 
-// 卸载技能
-const deleteSkill = async (id: string) => {
+// 卸载技能 (气泡确认会被卡片网格的滚动容器裁切, 统一走模态)
+const pendingUninstall = ref<SkillDto | null>(null)
+
+const confirmUninstall = async () => {
+	const TARGET = pendingUninstall.value
+	if (!TARGET) return
 	loading.value = true
 	try {
-		await RUNTIME.skillsUninstall(id)
+		await RUNTIME.skillsUninstall(TARGET.id)
+		pendingUninstall.value = null
 		await refresh()
 		feedback.success(I18N.value.toast.uninstalled)
 	} catch (error) {
@@ -265,69 +282,40 @@ const viewSkillDetail = async (skill: SkillDto) => {
 </script>
 
 <template>
-	<div class="w-full h-full flex flex-col gap-3 px-5 py-3.5 scroll-area">
-		<!-- 头部导航与操作 -->
-		<div class="flex items-center justify-between gap-2.5">
-			<nav class="inline-flex items-center gap-1 p-1 rounded-pill bg-bg-abyss/80 border border-line-subtle shadow-inner" role="tablist">
-				<button
-					type="button"
-					role="tab"
-					class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-pill text-xs font-500 cursor-pointer transition-all duration-200 focus-ring"
-					:class="activeTab === 'installed'
-						? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-						: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
-					:aria-selected="activeTab === 'installed'"
-					@click="activeTab = 'installed'"
-				>
-					<Icon name="sparkles" :size="13"/>
-					<span>{{ I18N.tab.installed }} ({{ installedSkills.length }})</span>
-				</button>
-				<button
-					type="button"
-					role="tab"
-					class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-pill text-xs font-500 cursor-pointer transition-all duration-200 focus-ring"
-					:class="activeTab === 'market'
-						? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-						: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
-					:aria-selected="activeTab === 'market'"
-					@click="activeTab = 'market'"
-				>
-					<Icon name="package" :size="13"/>
-					<span>{{ I18N.tab.market }}</span>
-				</button>
-			</nav>
-
-			<div class="flex gap-1.5">
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
+		<!-- 页头与页级操作 -->
+		<AppSectionHeader :title="I18N.title" :subtitle="I18N.subtitle">
+			<template #actions>
 				<AppButton variant="ghost" size="sm" icon="external-link" @click="openUrlModal">{{ I18N.action.installFromUrl }}</AppButton>
 				<AppButton variant="primary" size="sm" icon="plus" @click="openNewSkillModal">{{ I18N.action.newSkill }}</AppButton>
-			</div>
-		</div>
+			</template>
+		</AppSectionHeader>
+
+		<!-- 子标签导航 -->
+		<AppSegmented
+			v-model="activeTab"
+			class="self-start shrink-0"
+			:items="TABS"
+			:label="I18N.title"
+			size="sm"
+		/>
 
 		<!-- 搜索与分类过滤条 -->
-		<div class="flex items-center gap-2.5 flex-wrap">
+		<div class="flex items-center gap-2.5 flex-wrap shrink-0">
 			<div class="flex-1 min-w-[14rem]">
-				<input
+				<AppSearchField
 					v-model="searchQuery"
-					class="input-base text-sm"
 					:placeholder="I18N.search.placeholder"
+					:clear-label="UI_I18N.clearSearch"
 				/>
 			</div>
 
-			<div class="flex gap-1.5 flex-wrap">
-				<button
-					v-for="cat in CATEGORIES"
-					:key="cat.key"
-					type="button"
-					class="px-3 py-1 rounded-pill border text-xs font-inherit cursor-pointer transition-all duration-200 focus-ring"
-					:class="selectedCategory === cat.key
-						? 'text-nori-teal-bright border-nori-teal-bright/35 bg-nori-teal-bright/10 font-500 shadow-[0_0_1rem_var(--glow-teal-soft)]'
-						: 'text-text-faint border-line-subtle bg-transparent hover:(text-text-body border-nori-teal-soft)'"
-					:aria-pressed="selectedCategory === cat.key"
-					@click="selectedCategory = cat.key"
-				>
-					{{ cat.label }}
-				</button>
-			</div>
+			<AppSegmented
+				v-model="selectedCategory"
+				:items="CATEGORIES"
+				:label="I18N.category.all"
+				size="sm"
+			/>
 		</div>
 
 		<!-- 主内容区 -->
@@ -369,9 +357,9 @@ const viewSkillDetail = async (skill: SkillDto) => {
 							</div>
 
 							<div class="shrink-0">
-								<n-switch
-									:value="skill.enabled"
-									@update:value="() => toggleSkill(skill)"
+								<AppSwitch
+									:model-value="skill.enabled"
+									@update:model-value="() => toggleSkill(skill)"
 								/>
 							</div>
 						</div>
@@ -385,20 +373,13 @@ const viewSkillDetail = async (skill: SkillDto) => {
 						<div class="flex gap-1.5 flex-wrap">
 							<AppButton variant="ghost" size="sm" icon="info" @click="viewSkillDetail(skill)">{{ I18N.action.viewInstructions }}</AppButton>
 							<AppButton variant="ghost" size="sm" icon="edit" @click="openEditSkillModal(skill)">{{ I18N.action.edit }}</AppButton>
-							<n-popconfirm
+							<AppButton
 								v-if="skill.source !== 'builtin'"
-								:positive-text="I18N.uninstall.confirm"
-								:negative-text="I18N.common.cancel"
-								@positive-click="deleteSkill(skill.id)"
-							>
-								<template #trigger>
-									<button type="button" class="btn-danger px-3 py-1.5 text-sm">
-										<Icon name="trash" :size="13"/>
-										<span>{{ I18N.action.uninstall }}</span>
-									</button>
-								</template>
-								{{ I18N.uninstall.questionPrefix }}{{ skill.name }}{{ I18N.uninstall.questionSuffix }}
-							</n-popconfirm>
+								variant="danger"
+								size="sm"
+								icon="trash"
+								@click="pendingUninstall = skill"
+							>{{ I18N.action.uninstall }}</AppButton>
 						</div>
 					</div>
 				</div>
@@ -559,11 +540,24 @@ const viewSkillDetail = async (skill: SkillDto) => {
 		>
 			<template v-if="activeSkill">
 				<p class="m-0 text-xs text-text-muted leading-relaxed">{{ activeSkill.description }}</p>
-				<pre class="m-0 p-2.5 rounded-sm bg-white/4 border border-line-subtle text-sm text-text-body leading-relaxed whitespace-pre-wrap font-inherit">{{ activeSkill.instructions || I18N.detail.emptyInstructions }}</pre>
+				<pre class="m-0 p-2.5 rounded-sm bg-overlay-4 border border-line-subtle text-sm text-text-body leading-relaxed whitespace-pre-wrap font-inherit">{{ activeSkill.instructions || I18N.detail.emptyInstructions }}</pre>
 			</template>
 			<template #footer>
 				<AppButton @click="isDetailModalOpen = false">{{ I18N.common.close }}</AppButton>
 			</template>
 		</AppModal>
+		<!-- 卸载确认 -->
+		<AppConfirm
+			:show="pendingUninstall !== null"
+			:title="I18N.action.uninstall"
+			:desc="`${I18N.uninstall.questionPrefix}${pendingUninstall?.name ?? ''}${I18N.uninstall.questionSuffix}`"
+			:confirm-label="I18N.uninstall.confirm"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="danger"
+			:loading="loading"
+			@update:show="pendingUninstall = null"
+			@confirm="confirmUninstall"
+		/>
 	</div>
 </template>

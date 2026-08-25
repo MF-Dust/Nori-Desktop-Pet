@@ -7,14 +7,20 @@ import Icon from "../Icon.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppButton from "../ui/AppButton.vue"
 import AppChip from "../ui/AppChip.vue"
+import AppConfirm from "../ui/AppConfirm.vue"
 import AppModal from "../ui/AppModal.vue"
+import AppSearchField from "../ui/AppSearchField.vue"
+import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
+import AppSwitch from "../ui/AppSwitch.vue"
 
 const I18N = computed(() => useLanguages().views.main.mcp)
+const UI_I18N = computed(() => useLanguages().components.ui.state)
 const TRANSPORT_OPTIONS = [
 	{label: "Stdio", value: "stdio"},
 	{label: "SSE", value: "sse"},
 ]
-const SUB_TAB = ref<"servers" | "builtin">("servers")
+type McpSubTab = "servers" | "builtin"
+const SUB_TAB = ref<McpSubTab>("servers")
 const SERVERS = ref<McpServerStatusInfo[]>([])
 const LOADING = ref(false)
 const TESTING = ref(false)
@@ -42,6 +48,9 @@ const IMPORT_URL = ref("")
 const IMPORTING = ref(false)
 const IMPORT_ERROR = ref("")
 
+// 删除确认: 待删除的服务器 (气泡确认会被列表滚动容器裁切, 统一走模态)
+const PENDING_DELETE = ref<McpServerStatusInfo | null>(null)
+
 const TOOL_MODAL_OPEN = ref(false)
 const ACTIVE_TOOL = ref<{serverId?: string; name: string; description: string; inputSchema?: Record<string, unknown>} | null>(null)
 const TOOL_ARGS = ref("{}")
@@ -57,6 +66,11 @@ const FILTERED_TOOLS = computed(() => {
 		tool.name.toLowerCase().includes(QUERY) || tool.description.toLowerCase().includes(QUERY)
 	)
 })
+
+const SUB_TABS = computed<SegmentItem<McpSubTab>[]>(() => [
+	{key: "servers", label: I18N.value.tabs.servers, icon: "server", count: SERVERS.value.length},
+	{key: "builtin", label: I18N.value.tabs.builtin, icon: "tool", count: BUILTIN_TOOLS.value.length},
+])
 
 const refresh = async () => {
 	LOADING.value = true
@@ -190,6 +204,7 @@ const remove = async (id: string) => {
 	LOADING.value = true
 	try {
 		await RUNTIME.mcpDeleteServer(id)
+		PENDING_DELETE.value = null
 		await refresh()
 		feedback.success(I18N.value.server.deleted)
 	} catch (error) {
@@ -259,7 +274,7 @@ const importConfig = async () => {
 </script>
 
 <template>
-	<div class="w-full h-full flex flex-col gap-3 px-6 pt-4 pb-5 scroll-area">
+	<div class="w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area">
 		<AppSectionHeader :title="I18N.title" :subtitle="I18N.subtitle">
 			<template #actions>
 				<AppButton variant="ghost" size="sm" icon="refresh" :loading="LOADING" :disabled="LOADING" @click="refresh">{{ I18N.refresh }}</AppButton>
@@ -268,34 +283,13 @@ const importConfig = async () => {
 			</template>
 		</AppSectionHeader>
 
-		<nav class="inline-flex self-start items-center gap-1 p-1 rounded-pill bg-bg-abyss/80 border border-line-subtle shadow-inner shrink-0" role="tablist">
-			<button
-				type="button"
-				role="tab"
-				class="px-4 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 cursor-pointer focus-ring flex items-center gap-1.5"
-				:class="SUB_TAB === 'servers'
-					? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-					: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
-				:aria-selected="SUB_TAB === 'servers'"
-				@click="SUB_TAB = 'servers'"
-			>
-				<Icon name="server" :size="13"/>
-				<span>{{ I18N.tabs.servers }} ({{ SERVERS.length }})</span>
-			</button>
-			<button
-				type="button"
-				role="tab"
-				class="px-4 py-1.5 rounded-pill text-xs font-500 transition-all duration-200 cursor-pointer focus-ring flex items-center gap-1.5"
-				:class="SUB_TAB === 'builtin'
-					? 'bg-nori-teal-bright/15 text-nori-teal-bright font-600 border border-nori-teal-bright/35 shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
-					: 'text-text-muted border border-transparent hover:(text-text-primary bg-white/5)'"
-				:aria-selected="SUB_TAB === 'builtin'"
-				@click="SUB_TAB = 'builtin'"
-			>
-				<Icon name="tool" :size="13"/>
-				<span>{{ I18N.tabs.builtin }} ({{ BUILTIN_TOOLS.length }})</span>
-			</button>
-		</nav>
+		<AppSegmented
+			v-model="SUB_TAB"
+			class="self-start shrink-0"
+			:items="SUB_TABS"
+			:label="I18N.title"
+			size="sm"
+		/>
 
 		<section v-if="SUB_TAB === 'servers'" class="flex-1 min-h-0 flex flex-col gap-2 scroll-area">
 			<p v-if="SERVERS.length === 0" class="m-0 text-hint">{{ I18N.server.empty }}</p>
@@ -331,26 +325,18 @@ const importConfig = async () => {
 				<div class="flex items-center gap-1.5 shrink-0">
 					<AppButton v-if="server.status !== 'connected'" variant="ghost" size="sm" @click="connect(server.serverId)">{{ I18N.server.connect }}</AppButton>
 					<AppButton v-else variant="ghost" size="sm" @click="disconnect(server.serverId)">{{ I18N.server.disconnect }}</AppButton>
-					<n-popconfirm
-						:positive-text="I18N.common.delete"
-						:negative-text="I18N.common.cancel"
-						@positive-click="remove(server.serverId)"
-					>
-						<template #trigger>
-							<AppButton variant="danger" size="sm">{{ I18N.common.delete }}</AppButton>
-						</template>
-						<span class="flex flex-col gap-1">
-							<span>{{ I18N.server.deleteConfirm }}</span>
-							<strong>{{ server.name }}</strong>
-						</span>
-					</n-popconfirm>
+					<AppButton variant="danger" size="sm" @click="PENDING_DELETE = server">{{ I18N.common.delete }}</AppButton>
 				</div>
 			</div>
 		</section>
 
 		<section v-else class="flex-1 min-h-0 flex flex-col">
 			<div class="mb-2 shrink-0">
-				<input v-model="SEARCH" class="input-base text-sm" :placeholder="I18N.tool.searchPlaceholder"/>
+				<AppSearchField
+					v-model="SEARCH"
+					:placeholder="I18N.tool.searchPlaceholder"
+					:clear-label="UI_I18N.clearSearch"
+				/>
 			</div>
 			<div class="grid grid-cols-[repeat(auto-fill,minmax(25rem,1fr))] gap-2 scroll-area flex-1">
 				<div
@@ -373,7 +359,7 @@ const importConfig = async () => {
 						>
 							{{ I18N.tool.test }}
 						</AppButton>
-						<n-switch :value="tool.enabled" @update:value="toggleTool(tool)"/>
+						<AppSwitch :model-value="tool.enabled" @update:model-value="toggleTool(tool)"/>
 					</div>
 				</div>
 			</div>
@@ -456,5 +442,19 @@ const importConfig = async () => {
 				<AppButton variant="primary" size="sm" :loading="TOOL_RUNNING" :disabled="TOOL_RUNNING" @click="executeTool">{{ TOOL_RUNNING ? I18N.tool.running : I18N.tool.execute }}</AppButton>
 			</template>
 		</AppModal>
+
+		<!-- 删除服务器确认 -->
+		<AppConfirm
+			:show="PENDING_DELETE !== null"
+			:title="I18N.common.delete"
+			:desc="`${I18N.server.deleteConfirm} ${PENDING_DELETE?.name ?? ''}`"
+			:confirm-label="I18N.common.delete"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="danger"
+			:loading="LOADING"
+			@update:show="PENDING_DELETE = null"
+			@confirm="PENDING_DELETE && remove(PENDING_DELETE.serverId)"
+		/>
 	</div>
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import {useDebouncedSave} from "../../composables/useDebouncedSave"
+import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {feedback} from "../../services/feedback"
 import {RUNTIME} from "../../services/runtime"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
@@ -32,8 +32,8 @@ const modelScale = ref(1)
 // 是否已配置 AI (未配置时禁用 AI 互动开关)
 const aiConfigured = computed(() => Boolean(RUNTIME.snapshot.value?.ai.configured))
 
-// 保存辅助: 每个字段独立防抖 timer + 卸载 flush (规范要求)
-const SAVE = useDebouncedSave({
+// 保存辅助: 每个字段独立防抖 timer + 卸载 flush (规范要求); 设置页统一走 useSnapshotSave
+const SAVE = useSnapshotSave({
 	onError: (key, error) => feedback.error(key === "modelScale" ? I18N.value.scaleSaveFailed : I18N.value.saveFailed, error),
 })
 
@@ -139,98 +139,78 @@ const fpsOptions = computed(() => [
 
 		<div class="flex flex-col gap-1.5">
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.clickInteraction"
 				:desc="I18N.clickInteractionDesc"
-			>
-				<n-switch v-model:value="clickInteractionToggle"/>
-			</AppSwitchRow>
+				v-model="clickInteractionToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.aiInteraction"
 				:desc="aiConfigured ? I18N.aiInteractionDesc : I18N.aiInteractionDisabledDesc"
 				:disabled="!aiConfigured"
-			>
-				<n-switch v-model:value="aiInteractionToggle" :disabled="!aiConfigured"/>
-			</AppSwitchRow>
+				v-model="aiInteractionToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.autoBlink"
 				:desc="I18N.autoBlinkDesc"
-			>
-				<n-switch v-model:value="autoBlinkToggle"/>
-			</AppSwitchRow>
+				v-model="autoBlinkToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.eyeTracking"
 				:desc="I18N.eyeTrackingDesc"
-			>
-				<n-switch v-model:value="eyeTrackingToggle"/>
-			</AppSwitchRow>
+				v-model="eyeTrackingToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.idleEyeAnimation"
 				:desc="I18N.idleEyeAnimationDesc"
-			>
-				<n-switch v-model:value="idleEyeToggle"/>
-			</AppSwitchRow>
+				v-model="idleEyeToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.idleAnimation"
 				:desc="I18N.idleAnimationDesc"
-			>
-				<n-switch v-model:value="idleAnimToggle"/>
-			</AppSwitchRow>
+				v-model="idleAnimToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.expressionEnabled"
 				:desc="I18N.expressionEnabledDesc"
-			>
-				<n-switch v-model:value="expressionEnabledToggle"/>
-			</AppSwitchRow>
+				v-model="expressionEnabledToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.lipSync"
 				:desc="I18N.lipSyncDesc"
-			>
-				<n-switch v-model:value="lipSyncToggle"/>
-			</AppSwitchRow>
+				v-model="lipSyncToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.shadow"
 				:desc="I18N.shadowDesc"
-			>
-				<n-switch v-model:value="shadowToggle"/>
-			</AppSwitchRow>
+				v-model="shadowToggle"
+			/>
 
 			<AppSwitchRow
-				class="px-3 py-[0.9rem] rounded-sm border border-line-subtle bg-white/3 transition-all duration-200
-					hover:(bg-nori-teal-bright/6 border-nori-teal-soft)"
+				boxed
 				:title="I18N.beatSync"
 				:desc="I18N.beatSyncDesc"
-			>
-				<n-switch v-model:value="beatSyncToggle"/>
-			</AppSwitchRow>
+				v-model="beatSyncToggle"
+			/>
 		</div>
 
-		<div class="flex flex-col gap-1.5 px-[1.1rem] py-2 rounded-sm border border-line-subtle bg-white/3">
+		<div class="surface-inset flex flex-col gap-1.5 px-[1.1rem] py-2">
 			<span class="text-base font-500 text-text-primary">{{ I18N.modelScale }}</span>
 			<span class="text-hint">{{ I18N.modelScaleDesc }}</span>
 			<div class="flex items-center gap-2.5">
@@ -247,7 +227,7 @@ const fpsOptions = computed(() => [
 			</div>
 		</div>
 
-		<div class="flex flex-col gap-1.5 px-[1.1rem] py-2 rounded-sm border border-line-subtle bg-white/3">
+		<div class="surface-inset flex flex-col gap-1.5 px-[1.1rem] py-2">
 			<span class="text-base font-500 text-text-primary">{{ I18N.renderScale }}</span>
 			<span class="text-hint">{{ I18N.renderScaleDesc }}</span>
 			<div class="flex items-center gap-2.5">
@@ -264,7 +244,7 @@ const fpsOptions = computed(() => [
 			</div>
 		</div>
 
-		<div class="flex flex-col gap-1.5 px-[1.1rem] py-2 rounded-sm border border-line-subtle bg-white/3">
+		<div class="surface-inset flex flex-col gap-1.5 px-[1.1rem] py-2">
 			<span class="text-base font-500 text-text-primary">{{ I18N.maxFps }}</span>
 			<div class="w-[14rem]">
 				<n-select
