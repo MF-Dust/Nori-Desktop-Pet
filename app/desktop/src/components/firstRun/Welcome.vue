@@ -101,8 +101,8 @@ const handleLink = async (link: Link) => {
 </script>
 
 <template>
-	<section key="welcome" data-first-run-step="welcome" class="w-full min-h-full flex flex-row items-center gap-9 px-12 pt-3 pb-2.5">
-		<div class="flex-1 min-w-0 flex flex-col items-start gap-2.5">
+	<section key="welcome" data-first-run-step="welcome" class="w-full min-h-full flex flex-row items-center gap-7 px-7 py-2.5">
+		<div class="flex-1 min-w-0 flex flex-col items-start gap-2">
 			<div class="flex items-center gap-1.5">
 				<span class="chip-teal">
 					<Icon name="sparkles" :size="12"/>
@@ -111,51 +111,51 @@ const handleLink = async (link: Link) => {
 				<span class="chip mono">{{ VERSION }}</span>
 			</div>
 
-			<h1 class="text-3xl font-800 glow-teal">{{ I18N.title }}</h1>
-			<p class="text-base text-text-body leading-relaxed max-w-[42rem]">{{ I18N.subtitle }}</p>
+			<h1 class="text-2xl font-800 glow-teal">{{ I18N.title }}</h1>
+			<p class="text-sm text-text-body leading-relaxed max-w-[38rem] line-clamp-2">{{ I18N.subtitle }}</p>
 
-			<div class="flex flex-wrap items-center gap-2">
-				<span v-for="item in FEATURES" :key="item.text" class="chip">
+			<div class="flex flex-wrap items-center gap-1.5">
+				<span v-for="item in FEATURES" :key="item.text" class="chip text-xs">
 					<Icon :name="item.icon" :size="11"/>
 					<span>{{ item.text }}</span>
 				</span>
 			</div>
 
-			<div class="grid grid-cols-2 gap-2.5 w-full mt-1">
+			<div class="grid grid-cols-2 gap-2 w-full mt-0.5">
 				<button
 					v-for="link in links"
 					:key="link.key"
 					type="button"
-					class="group flex items-center gap-2.5 px-3 py-2.5 rounded-md text-left cursor-pointer
+					class="group flex items-center gap-2 px-2.5 py-2 rounded-md text-left cursor-pointer
 						bg-overlay-4 border border-line-subtle transition-all duration-250 focus-ring
 						hover:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.15rem] shadow-[0_0.4rem_1.6rem_var(--glow-teal-soft)])"
 					:class="link.key === 'qq' && copiedQq ? 'bg-success/12 border-success/40' : ''"
 					@click="handleLink(link)"
 				>
 					<span
-						class="w-8 h-8 shrink-0 rounded-sm flex items-center justify-center
+						class="w-7 h-7 shrink-0 rounded-sm flex items-center justify-center
 							bg-nori-teal-bright/8 border border-line-subtle text-nori-teal-bright transition-transform duration-200
 							group-hover:scale-110"
 						:class="link.key === 'qq' && copiedQq ? 'text-success' : ''"
 					>
-						<Icon :name="link.icon" :mode="link.mode" :size="16"/>
+						<Icon :name="link.icon" :mode="link.mode" :size="15"/>
 					</span>
-					<span class="flex flex-col gap-0.5 min-w-0 flex-1">
-						<span class="text-sm text-text-primary font-500 truncate">{{ link.label }}</span>
+					<span class="flex flex-col gap-0.2 min-w-0 flex-1">
+						<span class="text-xs text-text-primary font-500 truncate">{{ link.label }}</span>
 						<span class="text-xs text-text-faint truncate">{{ link.sub }}</span>
 					</span>
-					<span class="shrink-0 text-text-faint transition-transform duration-200 group-hover:translate-x-1">
-						<Icon :name="link.key === 'qq' && copiedQq ? 'check' : 'arrow-right'" :size="13"/>
+					<span class="shrink-0 text-text-faint transition-transform duration-200 group-hover:translate-x-0.5">
+						<Icon :name="link.key === 'qq' && copiedQq ? 'check' : 'arrow-right'" :size="12"/>
 					</span>
 				</button>
 			</div>
 		</div>
 
-		<div class="relative shrink-0 w-[22rem] h-[26rem] flex flex-col items-center justify-center">
-			<span class="absolute w-[20rem] h-[20rem] rounded-full border border-dashed border-nori-teal-bright/25 [animation:rotate_18s_linear_infinite]"/>
-			<span class="absolute w-[15rem] h-[15rem] rounded-full bg-[radial-gradient(circle,var(--glow-teal)_0%,transparent_70%)] animate-glow-pulse"/>
-			<img class="relative w-[15rem] h-[15rem] object-contain animate-breathe" :src="logo" alt="Nori"/>
-			<span class="relative mt-2 text-sm tracking-[0.6rem] text-nori-teal-soft">- N O R I -</span>
+		<div class="relative shrink-0 w-[18rem] h-[22rem] flex flex-col items-center justify-center">
+			<span class="absolute w-[17rem] h-[17rem] rounded-full border border-dashed border-nori-teal-bright/25 [animation:rotate_18s_linear_infinite]"/>
+			<span class="absolute w-[13rem] h-[13rem] rounded-full bg-[radial-gradient(circle,var(--glow-teal)_0%,transparent_70%)] animate-glow-pulse"/>
+			<img class="relative w-[12rem] h-[12rem] object-contain animate-breathe" :src="logo" alt="Nori"/>
+			<span class="relative mt-1.5 text-xs tracking-[0.5rem] text-nori-teal-soft">- N O R I -</span>
 		</div>
 	</section>
 </template>

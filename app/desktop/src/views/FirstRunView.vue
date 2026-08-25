@@ -159,35 +159,35 @@ const finish = async () => {
 	>
 		<TitleBar>
 			<div class="flex items-center justify-center">
-				<div class="flex items-center gap-3.5 px-4 py-1.5 rounded-pill bg-bg-abyss/70 border border-line-strong backdrop-blur-[1.2rem] shadow-[0_0.4rem_1.6rem_rgba(0,0,0,0.4)]">
+				<div class="flex items-center gap-2 px-3 py-1 rounded-pill bg-bg-abyss/80 border border-line-strong backdrop-blur-[1.2rem] shadow-[0_0.4rem_1.6rem_rgba(0,0,0,0.4)]">
 					<div
 						v-for="(label, idx) in STEP_LABELS"
 						:key="idx"
 						class="flex items-center gap-1.5 text-xs transition-all duration-300"
 						:class="idx === currentStep
 							? 'text-nori-teal-bright font-600 [text-shadow:0_0_0.8rem_var(--glow-teal-soft)]'
-							: (idx < currentStep ? 'text-nori-teal-soft' : 'text-text-faint')"
+							: (idx < currentStep ? 'text-nori-teal-soft' : 'text-text-faint/60')"
 					>
 						<span
 							class="rounded-full transition-all duration-300"
 							:class="idx === currentStep
-								? 'w-[0.75rem] h-[0.75rem] bg-nori-teal-bright shadow-[0_0_1rem_var(--glow-teal)]'
+								? 'w-2 h-2 bg-nori-teal-bright shadow-[0_0_0.8rem_var(--glow-teal)]'
 								: (idx < currentStep ? 'w-1.5 h-1.5 bg-nori-teal' : 'w-1.5 h-1.5 bg-overlay-20')"
 						/>
-						<span>{{ label }}</span>
+						<span v-if="idx === currentStep" class="whitespace-nowrap">{{ label }}</span>
 					</div>
 				</div>
 			</div>
 
-			<div class="flex items-center gap-3">
-				<div class="flex items-center gap-2 px-2.5 py-1 rounded-sm bg-overlay-4 border border-line-subtle backdrop-blur-[0.8rem]">
-					<div class="flex gap-1.2">
+			<div class="flex items-center gap-2.5">
+				<div class="flex items-center gap-2 px-2 py-0.8 rounded-sm bg-overlay-4 border border-line-subtle backdrop-blur-[0.8rem]">
+					<div class="flex gap-1">
 						<span
 							v-for="i in STEPS_COUNT"
 							:key="i"
-							class="w-[2rem] h-[0.4rem] rounded-pill transition-all duration-300"
+							class="w-[1.2rem] h-[0.35rem] rounded-pill transition-all duration-300"
 							:class="i <= currentStep + 1
-								? 'bg-gradient-to-r from-nori-teal-bright to-nori-teal shadow-[0_0_0.8rem_var(--glow-teal-soft)]'
+								? 'bg-gradient-to-r from-nori-teal-bright to-nori-teal shadow-[0_0_0.6rem_var(--glow-teal-soft)]'
 								: 'bg-overlay-12'"
 						/>
 					</div>
@@ -199,8 +199,8 @@ const finish = async () => {
 			</div>
 		</TitleBar>
 
-		<!-- 舞台: 720×480 固定窗口下内容可能超高, 让舞台自己滚动而不是被窗口裁掉 -->
-		<div class="relative flex-1 w-full scroll-area">
+		<!-- 舞台: 720×480 固定窗口下内容自适应 stage 居中, 极端情况提供平滑滚动 -->
+		<div class="relative flex-1 w-full min-h-0 scroll-area flex flex-col justify-center">
 			<Transition :name="direction > 0 ? 'page-next' : 'page-prev'" mode="out-in">
 				<Welcome v-if="currentStep === 0"/>
 				<LanguageSelect v-else-if="currentStep === 1"/>
@@ -219,7 +219,7 @@ const finish = async () => {
 		</div>
 
 		<!-- 底部导航 -->
-		<div class="relative z-2 h-16 shrink-0 flex items-center justify-between gap-3 px-8 bg-bg-abyss/75 border-t border-line-subtle backdrop-blur-[1.4rem]">
+		<div class="relative z-2 h-14 shrink-0 flex items-center justify-between gap-3 px-6 bg-bg-abyss/85 border-t border-line-subtle backdrop-blur-[1.4rem]">
 			<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/22 to-transparent pointer-events-none"/>
 
 			<AppButton v-if="!isFirst" icon="arrow-left" :disabled="submitting" @click="prev">

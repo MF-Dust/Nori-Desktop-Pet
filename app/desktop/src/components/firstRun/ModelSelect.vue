@@ -74,31 +74,31 @@ const importModel = async (sourceKind: "zip" | "folder"): Promise<void> => {
 </script>
 
 <template>
-	<section key="model-select" data-first-run-step="model" class="w-full min-h-full flex flex-col items-center justify-center gap-3.5 px-12 py-3 text-center">
-		<div class="flex flex-col items-center gap-1.5">
+	<section key="model-select" data-first-run-step="model" class="w-full min-h-full flex flex-col items-center justify-center gap-2.5 px-7 py-2 text-center">
+		<div class="flex flex-col items-center gap-1">
 			<span class="chip-teal">
 				<Icon name="package" :size="12"/>
 				<span>{{ I18N.badge }}</span>
 			</span>
 			<h2 class="text-2xl font-700 glow-teal">{{ I18N.title }}</h2>
-			<p class="text-sub">{{ I18N.hint }}</p>
+			<p class="text-xs text-sub">{{ I18N.hint }}</p>
 		</div>
 
-		<div class="flex flex-row justify-center gap-5">
+		<div class="flex flex-row justify-center gap-4">
 			<button
 				v-for="model in models"
 				:key="model.id"
 				type="button"
-				class="group relative w-[17rem] flex flex-col items-center gap-2 p-2.5 pb-3 rounded-md overflow-hidden
+				class="group relative w-[14.5rem] flex flex-col items-center gap-1.5 p-2 pb-2 rounded-md overflow-hidden
 					border-2 border-line-subtle bg-overlay-4 transition-all duration-250 focus-ring
-					hover:not-disabled:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.3rem] shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.35)])
+					hover:not-disabled:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.2rem] shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.35)])
 					disabled:(opacity-45 cursor-not-allowed)"
 				:class="selected === model.id ? 'border-nori-teal bg-nori-teal-bright/12 shadow-[0_0.8rem_2.4rem_rgba(0,0,0,0.4),0_0_2rem_var(--glow-teal)]' : ''"
 				:disabled="!installedMap[model.id] || Boolean(importing)"
 				:aria-pressed="selected === model.id"
 				@click="selectModel(model.id)"
 			>
-				<span class="relative w-full aspect-[3/4] max-h-[16rem] rounded-sm overflow-hidden border border-line-subtle bg-black/30">
+				<span class="relative w-full aspect-[3/4] max-h-[12.5rem] rounded-sm overflow-hidden border border-line-subtle bg-black/30">
 					<img
 						class="w-full h-full object-cover object-top transition-transform duration-300 group-hover:scale-103"
 						:src="model.thumb"
@@ -107,30 +107,30 @@ const importModel = async (sourceKind: "zip" | "folder"): Promise<void> => {
 					<span class="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-bg-abyss/80 pointer-events-none"/>
 					<span
 						v-if="!installedMap[model.id]"
-						class="absolute inset-x-2 bottom-2 rounded-pill bg-bg-abyss/90 px-2 py-1 text-xs text-text-muted"
+						class="absolute inset-x-2 bottom-2 rounded-pill bg-bg-abyss/90 px-2 py-0.8 text-xs text-text-muted"
 					>{{ I18N.notInstalled }}</span>
 					<span
 						v-else
-						class="absolute top-2 right-2 w-[2.2rem] h-[2.2rem] rounded-full flex items-center justify-center
+						class="absolute top-2 right-2 w-[2rem] h-[2rem] rounded-full flex items-center justify-center
 							bg-nori-teal text-on-teal shadow-[0_0.2rem_0.8rem_rgba(0,0,0,0.4)] transition-all duration-200"
 						:class="selected === model.id ? 'opacity-100 scale-100' : 'opacity-0 scale-60'"
 					>
-						<Icon name="check" :size="12"/>
+						<Icon name="check" :size="11"/>
 					</span>
 				</span>
 
 				<span
-					class="text-md font-500"
+					class="text-base font-500"
 					:class="selected === model.id ? 'text-nori-teal-bright font-600' : 'text-text-primary'"
 				>{{ model.name }}</span>
 			</button>
 		</div>
 
-		<div class="flex items-center justify-center gap-2">
-			<AppButton icon="package" :loading="importing === 'zip'" :disabled="Boolean(importing)" @click="importModel('zip')">
+		<div class="flex items-center justify-center gap-2 mt-0.5">
+			<AppButton size="sm" icon="package" :loading="importing === 'zip'" :disabled="Boolean(importing)" @click="importModel('zip')">
 				{{ I18N.importZip }}
 			</AppButton>
-			<AppButton icon="package" :loading="importing === 'folder'" :disabled="Boolean(importing)" @click="importModel('folder')">
+			<AppButton size="sm" icon="package" :loading="importing === 'folder'" :disabled="Boolean(importing)" @click="importModel('folder')">
 				{{ I18N.importFolder }}
 			</AppButton>
 		</div>

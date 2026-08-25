@@ -55,29 +55,29 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 </script>
 
 <template>
-	<section key="ready" data-first-run-step="ready" class="w-full min-h-full flex flex-col items-center justify-center gap-3.5 px-14 pt-4 pb-2.5 text-center">
-		<div class="relative w-[11rem] h-[11rem] flex items-center justify-center">
-			<span class="absolute -inset-3 rounded-full bg-[radial-gradient(circle,var(--glow-teal-strong)_0%,var(--glow-teal-soft)_55%,transparent_70%)] animate-glow-pulse pointer-events-none"/>
-			<img class="relative w-[9.6rem] h-[9.6rem] object-contain animate-breathe" :src="logo" alt="Nori"/>
+	<section key="ready" data-first-run-step="ready" class="w-full min-h-full flex flex-col items-center justify-center gap-2 px-7 py-1.5 text-center">
+		<div class="relative w-[6.5rem] h-[6.5rem] flex items-center justify-center">
+			<span class="absolute -inset-2 rounded-full bg-[radial-gradient(circle,var(--glow-teal-strong)_0%,var(--glow-teal-soft)_55%,transparent_70%)] animate-glow-pulse pointer-events-none"/>
+			<img class="relative w-[5.5rem] h-[5.5rem] object-contain animate-breathe" :src="logo" alt="Nori"/>
 		</div>
 
-		<div class="flex flex-col items-center gap-1.5">
-			<span class="chip-teal">
-				<Icon name="sparkles" :size="12"/>
+		<div class="flex flex-col items-center gap-0.5">
+			<span class="chip-teal text-xs">
+				<Icon name="sparkles" :size="11"/>
 				<span>All Set &amp; Ready</span>
 			</span>
-			<h2 class="text-3xl font-700 glow-teal">{{ I18N.title }}</h2>
-			<p class="text-base text-text-body leading-relaxed max-w-[38rem]">{{ I18N.desc }}</p>
+			<h2 class="text-2xl font-700 glow-teal">{{ I18N.title }}</h2>
+			<p class="text-xs text-text-body leading-relaxed max-w-[36rem]">{{ I18N.desc }}</p>
 		</div>
 
-		<div class="w-full max-w-[44rem] flex items-center justify-around gap-3 px-4 py-2.5 surface-card backdrop-blur-[0.8rem]">
+		<div class="w-full max-w-[42rem] flex items-center justify-around gap-2 px-3 py-1.5 surface-card backdrop-blur-[0.8rem]">
 			<template v-for="(item, index) in SUMMARY" :key="item.label">
-				<span v-if="index > 0" class="w-[0.1rem] h-6 bg-line-subtle shrink-0"/>
+				<span v-if="index > 0" class="w-[0.1rem] h-5 bg-line-subtle shrink-0"/>
 				<div class="flex items-center gap-2 text-left">
-					<span class="w-7 h-7 shrink-0 rounded-sm flex items-center justify-center bg-nori-teal-bright/8 border border-line-subtle text-nori-teal-bright">
-						<Icon :name="item.icon" :size="14"/>
+					<span class="w-6 h-6 shrink-0 rounded-sm flex items-center justify-center bg-nori-teal-bright/8 border border-line-subtle text-nori-teal-bright">
+						<Icon :name="item.icon" :size="13"/>
 					</span>
-					<span class="flex flex-col gap-0.5">
+					<span class="flex flex-col gap-0.2">
 						<span class="text-xs text-text-faint">{{ item.label }}</span>
 						<span class="text-xs text-text-primary font-500">{{ item.value }}</span>
 					</span>
@@ -85,7 +85,7 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 			</template>
 		</div>
 
-		<div class="w-full max-w-[44rem] px-4 py-3 surface-card text-left">
+		<div class="w-full max-w-[42rem] px-3.5 py-1.5 surface-card text-left">
 			<AppSwitchRow
 				:title="I18N.telemetry.title"
 				:desc="TELEMETRY_DESC"
@@ -94,8 +94,8 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 			/>
 		</div>
 
-		<span class="chip">
-			<Icon name="info" :size="13" class="text-nori-teal-soft"/>
+		<span class="chip text-xs py-0.8">
+			<Icon name="info" :size="12" class="text-nori-teal-soft"/>
 			<span>{{ I18N.initDesc }}</span>
 		</span>
 	</section>

@@ -100,18 +100,18 @@ const skip = () => {
 </script>
 
 <template>
-	<section key="ai-setup" data-first-run-step="ai" class="w-full min-h-full flex flex-col items-center justify-center gap-3 px-12 py-3">
-		<div class="flex flex-col items-center gap-1.5 text-center">
+	<section key="ai-setup" data-first-run-step="ai" class="w-full min-h-full flex flex-col items-center justify-center gap-2 px-7 py-1.5">
+		<div class="flex flex-col items-center gap-1 text-center">
 			<span class="chip-teal">
 				<Icon name="cpu" :size="12"/>
 				<span>{{ I18N.badge }}</span>
 			</span>
 			<h2 class="text-2xl font-700 glow-teal">{{ I18N.title }}</h2>
-			<p class="text-sub">{{ I18N.hint }}</p>
+			<p class="text-xs text-sub">{{ I18N.hint }}</p>
 		</div>
 
-		<div class="w-full max-w-[48rem] flex flex-col gap-2.5 p-4 surface-card">
-			<div class="flex items-start gap-3">
+		<div class="w-full max-w-[46rem] flex flex-col gap-2 p-3.5 surface-card">
+			<div class="flex items-start gap-2.5">
 				<div class="field flex-1 min-w-0">
 					<span class="field-label font-500">{{ AI_I18N.provider }}</span>
 					<n-select
@@ -146,7 +146,7 @@ const skip = () => {
 
 			<div class="field">
 				<span class="field-label font-500">{{ AI_I18N.model }}</span>
-				<div class="flex items-center gap-2.5">
+				<div class="flex items-center gap-2">
 					<n-select
 						:value="draft.model"
 						:options="MODEL_OPTIONS"
@@ -165,19 +165,19 @@ const skip = () => {
 				</div>
 				<span
 					v-if="fetchResult"
-					class="inline-flex items-center gap-1 text-xs"
+					class="inline-flex items-center gap-1 text-xs mt-0.5"
 					:class="fetchSuccess ? 'text-success' : 'text-danger-text'"
 					aria-live="polite"
 				>
 					<Icon :name="fetchSuccess ? 'check' : 'alert'" :size="11"/>
 					<span>{{ fetchResult }}</span>
 				</span>
-				<span v-else class="text-hint">{{ I18N.verifyHint }}</span>
+				<span v-else class="text-hint text-xs">{{ I18N.verifyHint }}</span>
 			</div>
 		</div>
 
-		<div class="flex items-center gap-2.5">
-			<span class="chip">{{ I18N.optional }}</span>
+		<div class="flex items-center gap-2 mt-0.5">
+			<span class="chip text-xs">{{ I18N.optional }}</span>
 			<p class="m-0 text-xs text-text-faint">{{ I18N.later }}</p>
 			<AppButton variant="ghost" size="sm" icon="arrow-right" @click="skip">{{ I18N.skip }}</AppButton>
 		</div>
