@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Reflection;
 using Microsoft.Data.Sqlite;
@@ -7,16 +8,112 @@ using Nori.Core.Data;
 namespace Nori.Core.Chat;
 
 /// <summary>
+/// 聊天消息中的图片部分。
+/// 图片只在请求生命周期内由调用方和适配器持有, 不参与聊天历史持久化。
+/// </summary>
+public sealed record ChatImagePart
+{
+	/// <summary>单张图片大小上限 (4 MiB)</summary>
+	public const int MaxBytes = 4 * 1024 * 1024;
+
+	/// <summary>不可变图片字节</summary>
+	public ImmutableArray<byte> Bytes { get; }
+
+	/// <summary>规范化后的 MIME 类型</summary>
+	public string MimeType { get; }
+
+	/// <summary>
+	/// 创建图片部分。构造时复制字节, 因此调用方之后修改原数组不会影响请求内容。
+	/// </summary>
+	public ChatImagePart(byte[] bytes, string mimeType)
+	{
+		if (bytes is null || bytes.Length == 0) throw new ChatException("图片不能为空");
+		if (bytes.Length > MaxBytes) throw new ChatException("单张图片不能超过 4 MiB");
+
+		Bytes = ImmutableArray.CreateRange(bytes);
+		MimeType = NormalizeMimeType(mimeType);
+	}
+
+	private static string NormalizeMimeType(string mimeType)
+	{
+		if (string.IsNullOrWhiteSpace(mimeType)) throw new ChatException("图片 MIME 类型不能为空");
+		return mimeType.Trim().ToLowerInvariant() switch
+		{
+			"image/png" => "image/png",
+			"image/jpeg" => "image/jpeg",
+			"image/webp" => "image/webp",
+			_ => throw new ChatException("不支持的图片 MIME 类型"),
+		};
+	}
+}
+
+/// <summary>
 /// 聊天消息 (输入)
 /// 前端: {role: "user" | "assistant", content: "..."}
 /// </summary>
 public sealed record ChatMessageInput
 {
+	/// <summary>消息图片总大小上限 (8 MiB)</summary>
+	public const int MaxTotalImageBytes = 8 * 1024 * 1024;
+
+	private IReadOnlyList<ChatImagePart> _imageParts = ImmutableArray<ChatImagePart>.Empty;
+
+	/// <summary>无参构造, 保持现有对象初始化调用兼容</summary>
+	public ChatMessageInput()
+	{
+	}
+
+	/// <summary>保留旧的角色与文本构造方式, 并可选附加图片部分</summary>
+	[System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
+	public ChatMessageInput(string role, string content, IReadOnlyList<ChatImagePart>? imageParts = null)
+	{
+		Role = role;
+		Content = content;
+		ImageParts = imageParts ?? ImmutableArray<ChatImagePart>.Empty;
+	}
+
 	/// <summary>角色: user / assistant</summary>
 	public required string Role { get; init; }
 
 	/// <summary>消息内容</summary>
 	public required string Content { get; init; }
+
+	/// <summary>可选的不可变图片部分</summary>
+	public IReadOnlyList<ChatImagePart> ImageParts
+	{
+		get => _imageParts;
+		init => _imageParts = NormalizeImageParts(value);
+	}
+
+	private static IReadOnlyList<ChatImagePart> NormalizeImageParts(IReadOnlyList<ChatImagePart>? imageParts)
+	{
+		if (imageParts is null || imageParts.Count == 0) return ImmutableArray<ChatImagePart>.Empty;
+
+		ImmutableArray<ChatImagePart>.Builder normalized = ImmutableArray.CreateBuilder<ChatImagePart>(imageParts.Count);
+		long totalBytes = 0;
+		foreach (ChatImagePart? imagePart in imageParts)
+		{
+			if (imagePart is null) throw new ChatException("图片不能为空");
+			totalBytes += imagePart.Bytes.Length;
+			if (totalBytes > MaxTotalImageBytes) throw new ChatException("图片总大小不能超过 8 MiB");
+			normalized.Add(imagePart);
+		}
+		return normalized.MoveToImmutable();
+	}
+
+	/// <summary>校验一次请求中的图片总大小, 防止多条消息绕过总上限。</summary>
+	internal static void ValidateImageLimits(IReadOnlyList<ChatMessageInput> messages)
+	{
+		long totalBytes = 0;
+		foreach (ChatMessageInput message in messages)
+		{
+			foreach (ChatImagePart imagePart in message.ImageParts)
+			{
+				totalBytes += imagePart.Bytes.Length;
+				if (totalBytes > MaxTotalImageBytes) throw new ChatException("图片总大小不能超过 8 MiB");
+			}
+		}
+	}
 }
 
 /// <summary>
@@ -141,6 +238,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		if (apiKey.Length == 0) throw new ChatException("API Key 不能为空");
 		if (model.Length == 0) throw new ChatException("模型不能为空");
 		if (messages.Count == 0) throw new ChatException("消息不能为空");
+		ChatMessageInput.ValidateImageLimits(messages);
 
 		// 若未指定 providerStr，优先读配置
 		if (string.IsNullOrWhiteSpace(providerStr))
@@ -198,6 +296,7 @@ public sealed class ChatService(HttpClient httpClient, NoriDatabase database, Co
 		if (apiKey.Length == 0) throw new ChatException("API Key 不能为空");
 		if (model.Length == 0) throw new ChatException("模型不能为空");
 		if (messages.Count == 0) throw new ChatException("消息不能为空");
+		ChatMessageInput.ValidateImageLimits(messages);
 
 		if (string.IsNullOrWhiteSpace(providerStr))
 		{

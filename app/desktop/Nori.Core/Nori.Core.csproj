@@ -12,6 +12,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="Nori.Core.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11"/>
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0"/>
 		<PackageReference Include="ModelContextProtocol.Core" Version="2.2.0"/>

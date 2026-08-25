@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.AI;
 using Nori.Core.Chat;
 using Nori.Core.Chat.Adapters;
 
@@ -379,6 +380,60 @@ public class LlmAdapterTests
 
 		Assert.Equal("收到啦主人", full);
 		Assert.Equal(["收到啦", "主人"], chunks);
+	}
+
+	[Fact]
+	public void ChatMessageInput保留纯文本构造与对象初始化兼容()
+	{
+		ChatMessageInput constructed = new("user", "hello");
+		ChatMessageInput initialized = new() {Role = "assistant", Content = "hi"};
+
+		Assert.Equal("hello", constructed.Content);
+		Assert.Equal("assistant", initialized.Role);
+		Assert.Empty(constructed.ImageParts);
+		IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> mapped = ChatClientLlmAdapter.BuildMessages("system", [constructed]);
+		Assert.Equal("hello", mapped[1].Text);
+	}
+
+	[Fact]
+	public void 图片限制拒绝空单张超大与总大小超限()
+	{
+		Assert.Throws<ChatException>(() => new ChatImagePart(Array.Empty<byte>(), "image/png"));
+		Assert.Throws<ChatException>(() => new ChatImagePart(new byte[ChatImagePart.MaxBytes + 1], "image/png"));
+
+		ChatImagePart first = new(new byte[ChatImagePart.MaxBytes], "image/png");
+		ChatImagePart second = new(new byte[ChatImagePart.MaxBytes], "image/jpeg");
+		Assert.Throws<ChatException>(() => new ChatMessageInput("user", "图片")
+		{
+			ImageParts = [first, second, new ChatImagePart([1], "image/webp")],
+		});
+	}
+
+	[Theory]
+	[InlineData("")]
+	[InlineData("image/gif")]
+	[InlineData("application/octet-stream")]
+	public void 图片MIME白名单拒绝其他类型(string mimeType) =>
+		Assert.Throws<ChatException>(() => new ChatImagePart([1], mimeType));
+
+	[Fact]
+	public void ChatClient映射图片为文本与数据内容()
+	{
+		byte[] source = [1, 2, 3];
+		ChatMessageInput input = new("user", "请看看")
+		{
+			ImageParts = [new ChatImagePart(source, "IMAGE/PNG")],
+		};
+		source[0] = 9;
+		IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> messages = ChatClientLlmAdapter.BuildMessages("系统提示", [input]);
+
+		Assert.Equal("系统提示", messages[0].Text);
+		Assert.Equal(ChatRole.User, messages[1].Role);
+		Assert.Equal(2, messages[1].Contents.Count);
+		Assert.Equal("请看看", Assert.IsType<TextContent>(messages[1].Contents[0]).Text);
+		DataContent data = Assert.IsType<DataContent>(messages[1].Contents[1]);
+		Assert.Equal("image/png", data.MediaType);
+		Assert.Equal([1, 2, 3], data.Data.ToArray());
 	}
 
 	[Fact]

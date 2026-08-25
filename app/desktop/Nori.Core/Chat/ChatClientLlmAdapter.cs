@@ -209,15 +209,27 @@ public sealed class ChatClientLlmAdapter(LlmProvider provider, HttpClient httpCl
 		CancellationToken cancellationToken = default) =>
 		ProviderModelCatalog.FetchAsync(_provider, _httpClient, baseUrl, apiKey, cancellationToken);
 
-	private static IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> BuildMessages(string systemPrompt, IReadOnlyList<ChatMessageInput> messages)
+	internal static IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> BuildMessages(string systemPrompt, IReadOnlyList<ChatMessageInput> messages)
 	{
+		ChatMessageInput.ValidateImageLimits(messages);
 		List<Microsoft.Extensions.AI.ChatMessage> result = [new(ChatRole.System, systemPrompt)];
 		foreach (ChatMessageInput message in messages)
 		{
 			ChatRole role = message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase)
 				? ChatRole.Assistant
 				: ChatRole.User;
-			result.Add(new Microsoft.Extensions.AI.ChatMessage(role, message.Content));
+			if (message.ImageParts.Count == 0)
+			{
+				result.Add(new Microsoft.Extensions.AI.ChatMessage(role, message.Content));
+				continue;
+			}
+
+			List<AIContent> contents = [new TextContent(message.Content)];
+			foreach (ChatImagePart imagePart in message.ImageParts)
+			{
+				contents.Add(new DataContent(imagePart.Bytes.ToArray(), imagePart.MimeType));
+			}
+			result.Add(new Microsoft.Extensions.AI.ChatMessage(role, contents));
 		}
 		return result;
 	}
