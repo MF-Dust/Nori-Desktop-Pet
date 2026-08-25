@@ -16,6 +16,7 @@ import AppModal from "../ui/AppModal.vue"
 import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
 import AppSwitchRow from "../ui/AppSwitchRow.vue"
 import AppStatTile from "../ui/AppStatTile.vue"
+import AppEmpty from "../ui/AppEmpty.vue"
 
 const I18N = computed(() => useLanguages().views.main.memory)
 const UI_I18N = computed(() => useLanguages().components.ui.state)
@@ -28,6 +29,8 @@ const memoryTotal = ref(0)
 const memoryPage = ref(0)
 const MEMORY_PAGE_SIZE = 20
 const atoms = ref<MemoryAtom[]>([])
+const atomsLoading = ref(false)
+const atomsError = ref("")
 const knowledgeStatus = ref<{state?: string; processed?: number; total?: number; lastError?: string}>({})
 const debugQuery = ref("")
 const debugResult = ref<MemoryRecallDebug | null>(null)
@@ -37,9 +40,17 @@ const searchKeyword = ref("")
 const kindFilter = ref("")
 const statusFilter = ref("")
 const loading = ref(false)
-// 破坏性操作确认 (气泡确认会被记忆列表的滚动容器裁切, 统一走模态)
+const loadError = ref("")
+
+// 破坏性操作确认与模态状态
 const clearAllOpen = ref(false)
 const pendingDelete = ref<MemoryItem | null>(null)
+const pendingArchive = ref<MemoryItem | null>(null)
+const pendingRestore = ref<MemoryItem | null>(null)
+const unsavedConfirmOpen = ref(false)
+const showAdvancedTrace = ref(false)
+
+// 详情弹窗与编辑状态
 const selectedMemory = ref<MemoryItem | null>(null)
 const selectedAtoms = ref<MemoryAtom[]>([])
 const selectedSources = ref<MemorySource[]>([])
@@ -201,15 +212,104 @@ const newTags = ref("")
 const newKind = ref("general")
 const adding = ref(false)
 
+const formatTimestamp = (dateStr?: string | null): string => {
+	if (!dateStr) return ""
+	try {
+		const parsed = new Date(dateStr)
+		if (isNaN(parsed.getTime())) return dateStr
+		return parsed.toLocaleString()
+	} catch {
+		return dateStr
+	}
+}
+
+const closeArchiveConfirm = (show: boolean) => {
+	if (!show) pendingArchive.value = null
+}
+
+const closeRestoreConfirm = (show: boolean) => {
+	if (!show) pendingRestore.value = null
+}
+
+const closeDeleteConfirm = (show: boolean) => {
+	if (!show) pendingDelete.value = null
+}
+
+const isItemExpired = (item: MemoryItem): boolean => {
+	if (item.status === "expired") return true
+	if (item.expiresAt) {
+		const expTime = new Date(item.expiresAt).getTime()
+		if (!isNaN(expTime) && expTime < Date.now()) return true
+	}
+	return false
+}
+
+const getKindLabel = (kind?: string): string => {
+	const MATCH = KIND_OPTIONS.value.find(opt => opt.value === (kind || "general"))
+	return MATCH ? MATCH.label : (kind || "general")
+}
+
+const getStatusTone = (status?: string): "teal" | "neutral" | "warning" | "danger" => {
+	if (status === "active") return "teal"
+	if (status === "dormant") return "warning"
+	if (status === "expired") return "danger"
+	if (status === "archived") return "neutral"
+	return "teal"
+}
+
+const getStatusLabel = (status?: string): string => {
+	if (status === "active") return I18N.value.list.active
+	if (status === "dormant") return I18N.value.list.dormant
+	if (status === "expired") return I18N.value.list.expired
+	if (status === "archived") return I18N.value.list.archived
+	return status || I18N.value.list.active
+}
+
+const getSourceLabel = (source?: string): string => {
+	if (source === "agent") return I18N.value.list.sourceAgent
+	if (source === "manual") return I18N.value.list.sourceManual
+	return source || I18N.value.list.sourceManual
+}
+
+// 检测未保存编辑
+const hasUnsavedChanges = computed(() => {
+	if (!selectedMemory.value) return false
+	const INIT_CONTENT = selectedMemory.value.content || ""
+	const INIT_CANONICAL = selectedMemory.value.canonicalSummary || selectedMemory.value.content || ""
+	const INIT_PERSONA = selectedMemory.value.personaSummary || selectedMemory.value.content || ""
+	const INIT_TAGS = selectedMemory.value.tags || ""
+	const INIT_KIND = selectedMemory.value.kind || "general"
+	const INIT_IMPORTANCE = selectedMemory.value.importance ?? 0.8
+	const INIT_CONFIDENCE = selectedMemory.value.confidence ?? 0.8
+
+	return (
+		editContent.value.trim() !== INIT_CONTENT.trim() ||
+		editCanonical.value.trim() !== INIT_CANONICAL.trim() ||
+		editPersona.value.trim() !== INIT_PERSONA.trim() ||
+		editTags.value.trim() !== INIT_TAGS.trim() ||
+		editKind.value !== INIT_KIND ||
+		Math.abs(editImportance.value - INIT_IMPORTANCE) > 0.01 ||
+		Math.abs(editConfidence.value - INIT_CONFIDENCE) > 0.01
+	)
+})
+
 // 加载记忆列表
 const loadMemories = async () => {
 	loading.value = true
+	loadError.value = ""
 	try {
 		const STATUS = CURRENT_SECTION.value === "archive" ? "archived" : statusFilter.value || undefined
-		const PAGE = await RUNTIME.memoryListPage(searchKeyword.value.trim() || undefined, kindFilter.value || undefined, STATUS, MEMORY_PAGE_SIZE, memoryPage.value * MEMORY_PAGE_SIZE)
+		const PAGE = await RUNTIME.memoryListPage(
+			searchKeyword.value.trim() || undefined,
+			kindFilter.value || undefined,
+			STATUS,
+			MEMORY_PAGE_SIZE,
+			memoryPage.value * MEMORY_PAGE_SIZE
+		)
 		memories.value = PAGE.items
 		memoryTotal.value = PAGE.total
 	} catch (error) {
+		loadError.value = I18N.value.list.loadError
 		feedback.error(I18N.value.toast.loadFailed, error)
 	} finally {
 		loading.value = false
@@ -217,26 +317,32 @@ const loadMemories = async () => {
 }
 
 const loadAtoms = async () => {
+	atomsLoading.value = true
+	atomsError.value = ""
 	try {
 		atoms.value = await RUNTIME.memoryAtoms(undefined, "active", 100, 0)
 	} catch (error) {
+		atomsError.value = I18N.value.toast.loadFailed
 		feedback.error(I18N.value.toast.loadFailed, error)
+	} finally {
+		atomsLoading.value = false
 	}
 }
 
 const openMemory = async (id: number) => {
 	detailLoading.value = true
+	showAdvancedTrace.value = false
 	try {
 		const DETAIL = await RUNTIME.memoryGet(id)
 		selectedMemory.value = DETAIL.item
-		selectedAtoms.value = DETAIL.atoms
-		selectedSources.value = DETAIL.sources
-		editContent.value = DETAIL.item.content
-		editCanonical.value = DETAIL.item.canonicalSummary || DETAIL.item.content
-		editPersona.value = DETAIL.item.personaSummary || DETAIL.item.content
+		selectedAtoms.value = DETAIL.atoms ?? []
+		selectedSources.value = DETAIL.sources ?? []
+		editContent.value = DETAIL.item.content || ""
+		editCanonical.value = DETAIL.item.canonicalSummary || DETAIL.item.content || ""
+		editPersona.value = DETAIL.item.personaSummary || DETAIL.item.content || ""
 		editTags.value = DETAIL.item.tags || ""
 		editKind.value = DETAIL.item.kind || "general"
-		editImportance.value = DETAIL.item.importance
+		editImportance.value = DETAIL.item.importance ?? 0.8
 		editConfidence.value = DETAIL.item.confidence ?? 0.8
 	} catch (error) {
 		feedback.error(I18N.value.toast.loadFailed, error)
@@ -245,10 +351,20 @@ const openMemory = async (id: number) => {
 	}
 }
 
-const closeMemory = () => {
+const requestCloseMemory = () => {
+	if (hasUnsavedChanges.value) {
+		unsavedConfirmOpen.value = true
+	} else {
+		forceCloseMemory()
+	}
+}
+
+const forceCloseMemory = () => {
+	unsavedConfirmOpen.value = false
 	selectedMemory.value = null
 	selectedAtoms.value = []
 	selectedSources.value = []
+	showAdvancedTrace.value = false
 }
 
 const saveMemory = async () => {
@@ -270,14 +386,63 @@ const saveMemory = async () => {
 	}
 }
 
-const archiveMemory = async (id: number) => {
+const confirmArchive = async () => {
+	if (!pendingArchive.value) return
+	const ID = pendingArchive.value.id
+	pendingArchive.value = null
 	try {
-		await RUNTIME.memoryArchive(id)
-		closeMemory()
+		await RUNTIME.memoryArchive(ID)
+		if (selectedMemory.value?.id === ID) {
+			forceCloseMemory()
+		}
 		await loadMemories()
 		await RUNTIME.refresh()
 	} catch (error) {
 		feedback.error(I18N.value.toast.archiveFailed, error)
+	}
+}
+
+const confirmRestore = async () => {
+	if (!pendingRestore.value) return
+	const ID = pendingRestore.value.id
+	pendingRestore.value = null
+	try {
+		await RUNTIME.memoryRestore(ID)
+		if (selectedMemory.value?.id === ID) {
+			forceCloseMemory()
+		}
+		await loadMemories()
+		await RUNTIME.refresh()
+	} catch (error) {
+		feedback.error(I18N.value.toast.restoreFailed, error)
+	}
+}
+
+const confirmDelete = async () => {
+	if (!pendingDelete.value) return
+	const ID = pendingDelete.value.id
+	pendingDelete.value = null
+	try {
+		await RUNTIME.memoryDelete(ID)
+		if (selectedMemory.value?.id === ID) {
+			forceCloseMemory()
+		}
+		await loadMemories()
+		await RUNTIME.refresh()
+	} catch (error) {
+		feedback.error(I18N.value.toast.deleteFailed, error)
+	}
+}
+
+const confirmClearAll = async () => {
+	clearAllOpen.value = false
+	try {
+		await RUNTIME.memoryClear()
+		forceCloseMemory()
+		await loadMemories()
+		await RUNTIME.refresh()
+	} catch (error) {
+		feedback.error(I18N.value.toast.clearFailed, error)
 	}
 }
 
@@ -286,7 +451,7 @@ const resetMemoryPage = async () => {
 	await loadMemories()
 }
 
-// 搜索防抖: 原先每敲一个字符就打一次后端查询, 输入长关键词会连发十几次
+// 搜索防抖
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch(searchKeyword, () => {
 	if (searchTimer) clearTimeout(searchTimer)
@@ -301,6 +466,10 @@ onBeforeUnmount(() => {
 })
 
 const changeSection = (section: MemorySection) => {
+	if (selectedMemory.value && hasUnsavedChanges.value) {
+		unsavedConfirmOpen.value = true
+		return
+	}
 	CURRENT_SECTION.value = section
 	memoryPage.value = 0
 	if (section === "memories") statusFilter.value = ""
@@ -414,41 +583,6 @@ const addMemory = async () => {
 		adding.value = false
 	}
 }
-
-// 删除记忆
-const deleteMemory = async (id: number) => {
-	try {
-		await RUNTIME.memoryDelete(id)
-		pendingDelete.value = null
-		closeMemory()
-		await loadMemories()
-		await RUNTIME.refresh()
-	} catch (error) {
-		feedback.error(I18N.value.toast.deleteFailed, error)
-	}
-}
-
-const restoreMemory = async (id: number) => {
-	try {
-		await RUNTIME.memoryRestore(id)
-		closeMemory()
-		await loadMemories()
-		await RUNTIME.refresh()
-	} catch (error) {
-		feedback.error(I18N.value.toast.deleteFailed, error)
-	}
-}
-
-// 清空记忆
-const clearAll = async () => {
-	try {
-		await RUNTIME.memoryClear()
-		clearAllOpen.value = false
-		await loadMemories()
-	} catch (error) {
-		feedback.error(I18N.value.toast.clearFailed, error)
-	}
-}
 </script>
 
 <template>
@@ -467,7 +601,7 @@ const clearAll = async () => {
 			@update:model-value="changeSection"
 		/>
 
-		<!-- 各分段视图 -->
+		<!-- 概览视图 -->
 		<div v-if="CURRENT_SECTION === 'overview'" class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 记忆资产概览 -->
 			<AppCard :title="I18N.overview.title" icon="sparkles">
@@ -516,17 +650,40 @@ const clearAll = async () => {
 			</AppCard>
 		</div>
 
+		<!-- 记忆原子视图 -->
 		<div v-if="CURRENT_SECTION === 'atoms'" class="flex flex-col gap-3.5 pb-5">
 			<AppCard :title="I18N.atoms.title" icon="package">
-				<div v-if="atoms.length === 0" class="py-4 text-center text-sm text-text-faint">{{ I18N.atoms.empty }}</div>
-				<div v-for="atom in atoms" :key="atom.id" class="surface-card flex flex-col gap-1.5 p-3">
-					<div class="flex flex-wrap gap-1.5"><AppChip tone="teal">{{ atom.atomType }}</AppChip><AppChip tone="warning">{{ Math.round(atom.importance * 100) }}%</AppChip></div>
-					<p class="text-base text-text-primary">{{ atom.content }}</p>
-					<span class="text-xs text-text-faint">{{ I18N.atoms.parent }} #{{ atom.parentMemoryId }}</span>
+				<template #actions>
+					<AppButton size="sm" icon="refresh" :loading="atomsLoading" @click="loadAtoms">{{ I18N.detail.retry }}</AppButton>
+				</template>
+				<div v-if="atomsError" class="surface-card flex items-center justify-between p-3 text-sm text-danger-text border border-danger/24">
+					<span>{{ atomsError }}</span>
+					<AppButton size="sm" variant="ghost" @click="loadAtoms">{{ I18N.detail.retry }}</AppButton>
+				</div>
+				<div v-else-if="atomsLoading" class="py-6 text-center text-sm text-text-faint flex items-center justify-center gap-2">
+					<Icon name="loading" :size="16" class="animate-spin"/>
+					<span>{{ I18N.detail.loading }}</span>
+				</div>
+				<AppEmpty v-else-if="atoms.length === 0" icon="package" :title="I18N.atoms.empty"/>
+				<div v-else class="flex flex-col gap-2 max-h-[32rem] scroll-area">
+					<div v-for="atom in atoms" :key="atom.id" class="surface-card flex flex-col gap-1.5 p-3">
+						<div class="flex flex-wrap items-center gap-1.5">
+							<AppChip tone="teal">{{ atom.atomType }}</AppChip>
+							<AppChip tone="warning">{{ I18N.add.importance }} {{ Math.round(atom.importance * 100) }}%</AppChip>
+							<AppChip tone="neutral">{{ I18N.detail.confidence }} {{ Math.round(atom.confidence * 100) }}%</AppChip>
+							<AppChip :tone="getStatusTone(atom.status)">{{ getStatusLabel(atom.status) }}</AppChip>
+						</div>
+						<p class="text-base text-text-primary leading-relaxed">{{ atom.content }}</p>
+						<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-text-faint pt-1 border-t border-line-subtle">
+							<span>{{ I18N.atoms.parent }} #{{ atom.parentMemoryId }}</span>
+							<span>{{ formatTimestamp(atom.createdAt) }}</span>
+						</div>
+					</div>
 				</div>
 			</AppCard>
 		</div>
 
+		<!-- 知识库视图 -->
 		<div v-if="CURRENT_SECTION === 'knowledge'" class="flex flex-col gap-3.5 pb-5">
 			<AppCard :title="I18N.knowledge.title" icon="package">
 				<template #actions>
@@ -535,34 +692,114 @@ const clearAll = async () => {
 						<AppButton variant="primary" size="sm" :loading="knowledgeLoading" @click="reindexKnowledge">{{ I18N.knowledge.reindex }}</AppButton>
 					</div>
 				</template>
-				<div class="flex flex-col gap-2 text-sm text-text-muted"><div class="flex justify-between gap-3"><span>{{ I18N.knowledge.path }}</span><span class="mono break-all text-right">{{ SNAPSHOT?.memory?.knowledgePath }}</span></div><div class="flex justify-between"><span>{{ I18N.knowledge.chunks }}</span><span>{{ knowledgeStatus.total ?? SNAPSHOT?.memory?.knowledgeChunks ?? 0 }}</span></div><div class="flex justify-between"><span>{{ I18N.knowledge.status }}</span><span>{{ knowledgeStatus.state ?? SNAPSHOT?.memory?.indexState }}</span></div></div>
+				<div class="flex flex-col gap-2 text-sm text-text-muted">
+					<div class="flex justify-between gap-3">
+						<span>{{ I18N.knowledge.path }}</span>
+						<span class="mono break-all text-right">{{ SNAPSHOT?.memory?.knowledgePath || I18N.detail.empty }}</span>
+					</div>
+					<div class="flex justify-between">
+						<span>{{ I18N.knowledge.chunks }}</span>
+						<span>{{ knowledgeStatus.total ?? SNAPSHOT?.memory?.knowledgeChunks ?? 0 }}</span>
+					</div>
+					<div class="flex justify-between">
+						<span>{{ I18N.knowledge.status }}</span>
+						<span>{{ knowledgeStatus.state ?? SNAPSHOT?.memory?.indexState }}</span>
+					</div>
+				</div>
 				<p v-if="knowledgeStatus.lastError" class="text-sm text-danger-text">{{ knowledgeStatus.lastError }}</p>
 			</AppCard>
 		</div>
 
+		<!-- 检索调试视图 -->
 		<div v-if="CURRENT_SECTION === 'debugger'" class="flex flex-col gap-3.5 pb-5">
 			<AppCard :title="I18N.debugger.title" icon="terminal">
 				<div class="flex gap-2">
 					<input v-model="debugQuery" class="input-base flex-1" :placeholder="I18N.debugger.placeholder" @keyup.enter="runDebugger"/>
 					<AppButton variant="primary" size="sm" :loading="debugLoading" @click="runDebugger">{{ I18N.debugger.run }}</AppButton>
 				</div>
-				<div v-if="debugResult" class="flex flex-col gap-2 text-sm">
-					<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.query }}</p><p class="mono whitespace-pre-wrap text-text-muted">{{ debugResult.trace?.expandedQuery }}</p></div>
-					<div class="grid grid-cols-2 gap-2">
-						<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.keyword }}</p><p v-for="hit in (debugResult.trace?.keywordHits ?? [])" :key="`k-${hit.memoryId}`">#{{ hit.memoryId }} · {{ hit.score.toFixed(4) }} · {{ hit.rank }}</p></div>
-						<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.vector }}</p><p v-for="hit in (debugResult.trace?.vectorHits ?? [])" :key="`v-${hit.memoryId}`">#{{ hit.memoryId }} · {{ hit.score.toFixed(4) }} · {{ hit.rank }}</p></div>
-						<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.atoms }}</p><p v-for="hit in (debugResult.trace?.atomHits ?? [])" :key="`a-${hit.memoryId}`">#{{ hit.memoryId }} · {{ hit.score.toFixed(4) }} · {{ hit.rank }}</p></div>
-						<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.rrf }}</p><p v-for="hit in (debugResult.trace?.rrfHits ?? [])" :key="`r-${hit.memoryId}`">#{{ hit.memoryId }} · {{ hit.score.toFixed(4) }} · {{ hit.rank }}</p></div>
+				<div v-if="debugResult" class="flex flex-col gap-3 text-sm">
+					<div class="surface-card p-3">
+						<p class="field-label">{{ I18N.debugger.query }}</p>
+						<p class="mono whitespace-pre-wrap text-text-muted">{{ debugResult.trace?.expandedQuery || debugQuery }}</p>
 					</div>
-					<div class="surface-card p-3"><p class="field-label">{{ I18N.debugger.injected }}</p><p v-for="item in debugResult.personal" :key="item.id" class="text-text-primary">#{{ item.id }} · {{ item.personaSummary || item.content }}</p></div>
-					<div v-if="debugResult.trace?.filteredIds?.length" class="surface-card p-3"><p class="field-label">{{ I18N.debugger.filtered }}</p><p class="text-text-muted">{{ debugResult.trace.filteredIds.join(", ") }}</p></div>
-					<div v-if="debugResult.knowledge?.length" class="surface-card p-3"><p class="field-label">{{ I18N.debugger.knowledge }}</p><p v-for="item in debugResult.knowledge" :key="item.id">{{ item.heading }} · {{ item.awareness }} · {{ item.score.toFixed(4) }}</p></div>
-					<div v-if="debugResult.echoes?.length" class="surface-card p-3"><p class="field-label">{{ I18N.debugger.echoes }}</p><p v-for="item in debugResult.echoes" :key="item.content">{{ item.content }}</p></div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+						<div class="surface-card p-3">
+							<p class="field-label mb-1.5">{{ I18N.debugger.keyword }}</p>
+							<div v-if="debugResult.trace?.keywordHits?.length" class="flex flex-col gap-1">
+								<div v-for="hit in debugResult.trace.keywordHits" :key="`k-${hit.memoryId}`" class="flex items-center justify-between text-xs mono">
+									<span>#{{ hit.memoryId }}</span>
+									<span class="text-text-muted">{{ hit.score.toFixed(4) }} (rank: {{ hit.rank }})</span>
+								</div>
+							</div>
+							<p v-else class="text-xs text-text-faint">{{ I18N.detail.empty }}</p>
+						</div>
+						<div class="surface-card p-3">
+							<p class="field-label mb-1.5">{{ I18N.debugger.vector }}</p>
+							<div v-if="debugResult.trace?.vectorHits?.length" class="flex flex-col gap-1">
+								<div v-for="hit in debugResult.trace.vectorHits" :key="`v-${hit.memoryId}`" class="flex items-center justify-between text-xs mono">
+									<span>#{{ hit.memoryId }}</span>
+									<span class="text-text-muted">{{ hit.score.toFixed(4) }} (rank: {{ hit.rank }})</span>
+								</div>
+							</div>
+							<p v-else class="text-xs text-text-faint">{{ I18N.detail.empty }}</p>
+						</div>
+						<div class="surface-card p-3">
+							<p class="field-label mb-1.5">{{ I18N.debugger.atoms }}</p>
+							<div v-if="debugResult.trace?.atomHits?.length" class="flex flex-col gap-1">
+								<div v-for="hit in debugResult.trace.atomHits" :key="`a-${hit.memoryId}`" class="flex items-center justify-between text-xs mono">
+									<span>#{{ hit.memoryId }}</span>
+									<span class="text-text-muted">{{ hit.score.toFixed(4) }} (rank: {{ hit.rank }})</span>
+								</div>
+							</div>
+							<p v-else class="text-xs text-text-faint">{{ I18N.detail.empty }}</p>
+						</div>
+						<div class="surface-card p-3">
+							<p class="field-label mb-1.5">{{ I18N.debugger.rrf }}</p>
+							<div v-if="debugResult.trace?.rrfHits?.length" class="flex flex-col gap-1">
+								<div v-for="hit in debugResult.trace.rrfHits" :key="`r-${hit.memoryId}`" class="flex items-center justify-between text-xs mono">
+									<span>#{{ hit.memoryId }}</span>
+									<span class="text-text-muted">{{ hit.score.toFixed(4) }} (rank: {{ hit.rank }})</span>
+								</div>
+							</div>
+							<p v-else class="text-xs text-text-faint">{{ I18N.detail.empty }}</p>
+						</div>
+					</div>
+					<div class="surface-card p-3">
+						<p class="field-label mb-1.5">{{ I18N.debugger.injected }}</p>
+						<div v-if="debugResult.personal?.length" class="flex flex-col gap-1.5">
+							<div v-for="item in debugResult.personal" :key="item.id" class="text-text-primary text-sm flex items-start gap-2">
+								<AppChip tone="teal">#{{ item.id }}</AppChip>
+								<span>{{ item.personaSummary || item.content }}</span>
+							</div>
+						</div>
+						<p v-else class="text-xs text-text-faint">{{ I18N.detail.empty }}</p>
+					</div>
+					<div v-if="debugResult.trace?.filteredIds?.length" class="surface-card p-3">
+						<p class="field-label">{{ I18N.debugger.filtered }}</p>
+						<p class="text-text-muted mono">{{ debugResult.trace.filteredIds.join(", ") }}</p>
+					</div>
+					<div v-if="debugResult.knowledge?.length" class="surface-card p-3">
+						<p class="field-label mb-1.5">{{ I18N.debugger.knowledge }}</p>
+						<div class="flex flex-col gap-1">
+							<p v-for="item in debugResult.knowledge" :key="item.id" class="text-xs">
+								{{ item.heading }} · {{ item.awareness }} · {{ item.score.toFixed(4) }}
+							</p>
+						</div>
+					</div>
+					<div v-if="debugResult.echoes?.length" class="surface-card p-3">
+						<p class="field-label mb-1.5">{{ I18N.debugger.echoes }}</p>
+						<div class="flex flex-col gap-1">
+							<p v-for="item in debugResult.echoes" :key="item.content" class="text-xs text-text-muted">
+								{{ item.content }}
+							</p>
+						</div>
+					</div>
 				</div>
-				<div v-else class="py-4 text-center text-sm text-text-faint">{{ I18N.debugger.empty }}</div>
+				<AppEmpty v-else icon="terminal" :title="I18N.debugger.empty"/>
 			</AppCard>
 		</div>
 
+		<!-- 记忆列表 / 归档 / 高级设置视图 -->
 		<div v-if="CURRENT_SECTION === 'memories' || CURRENT_SECTION === 'archive' || CURRENT_SECTION === 'advanced'" class="flex flex-col gap-3.5 pb-5">
 			<!-- 1. 向量索引重建 -->
 			<AppCard v-if="CURRENT_SECTION === 'advanced'" :title="I18N.embedding.vectorRebuild" icon="sparkles">
@@ -658,13 +895,21 @@ const clearAll = async () => {
 			<!-- 4. 记忆库列表与搜索 -->
 			<AppCard v-if="CURRENT_SECTION === 'memories' || CURRENT_SECTION === 'archive'" :title="`${I18N.list.title} (${memoryTotal})`" icon="package">
 				<template #actions>
-					<AppButton
-						v-if="memories.length > 0 && CURRENT_SECTION === 'memories'"
-						variant="danger"
-						size="sm"
-						icon="trash"
-						@click="clearAllOpen = true"
-					>{{ I18N.list.clearAll }}</AppButton>
+					<div class="flex items-center gap-2">
+						<AppButton
+							size="sm"
+							icon="refresh"
+							:loading="loading"
+							@click="loadMemories"
+						>{{ I18N.detail.retry }}</AppButton>
+						<AppButton
+							v-if="memories.length > 0 && CURRENT_SECTION === 'memories'"
+							variant="danger"
+							size="sm"
+							icon="trash"
+							@click="clearAllOpen = true"
+						>{{ I18N.list.clearAll }}</AppButton>
+					</div>
 				</template>
 
 				<div class="flex flex-wrap gap-2">
@@ -679,11 +924,27 @@ const clearAll = async () => {
 					<n-select v-if="CURRENT_SECTION === 'memories'" v-model:value="statusFilter" :options="STATUS_FILTER_OPTIONS" class="w-[12rem] shrink-0" @update:value="resetMemoryPage"/>
 				</div>
 
-				<div class="flex flex-col gap-2 max-h-[28rem] scroll-area">
-					<div v-if="memories.length === 0" class="py-4 text-center text-sm text-text-faint">
-						{{ searchKeyword ? I18N.list.emptySearch : I18N.list.empty }}
-					</div>
+				<!-- 错误重试条 -->
+				<div v-if="loadError" class="surface-card flex items-center justify-between p-3 text-sm text-danger-text border border-danger/24">
+					<span>{{ loadError }}</span>
+					<AppButton size="sm" variant="primary" @click="loadMemories">{{ I18N.list.retryLoad }}</AppButton>
+				</div>
 
+				<!-- 加载中 -->
+				<div v-else-if="loading" class="py-8 text-center text-sm text-text-faint flex items-center justify-center gap-2">
+					<Icon name="loading" :size="16" class="animate-spin"/>
+					<span>{{ I18N.detail.loading }}</span>
+				</div>
+
+				<!-- 空态 -->
+				<AppEmpty
+					v-else-if="memories.length === 0"
+					icon="package"
+					:title="searchKeyword ? I18N.list.emptySearch : (CURRENT_SECTION === 'archive' ? I18N.list.emptyArchive : I18N.list.empty)"
+				/>
+
+				<!-- 列表条目 -->
+				<div v-else class="flex flex-col gap-2 max-h-[28rem] scroll-area">
 					<div
 						v-for="item in memories"
 						:key="item.id"
@@ -693,42 +954,46 @@ const clearAll = async () => {
 						@click="openMemory(item.id)"
 					>
 						<div class="flex flex-1 flex-col gap-1.5 min-w-0">
-							<div class="flex flex-wrap gap-1.5">
+							<div class="flex flex-wrap items-center gap-1.5">
 								<AppChip v-if="item.tags" tone="teal">{{ item.tags }}</AppChip>
-								<AppChip>{{ item.source === "agent" ? I18N.list.sourceAgent : I18N.list.sourceManual }}</AppChip>
-								<AppChip>{{ item.kind || "general" }}</AppChip>
+								<AppChip>{{ getSourceLabel(item.source) }}</AppChip>
+								<AppChip>{{ getKindLabel(item.kind) }}</AppChip>
 								<AppChip tone="warning">{{ I18N.add.importance }} {{ Math.round(item.importance * 100) }}%</AppChip>
-								<AppChip tone="teal">{{ item.status || "active" }}</AppChip>
+								<AppChip :tone="getStatusTone(item.status)" :dot="true">{{ getStatusLabel(item.status) }}</AppChip>
+								<AppChip v-if="isItemExpired(item)" tone="danger">{{ I18N.detail.isExpired }}</AppChip>
 							</div>
 							<p class="text-base text-text-primary leading-normal">{{ item.content }}</p>
-							<span class="text-xs text-text-faint">{{ new Date(item.createdAt).toLocaleString() }}</span>
+							<div class="flex items-center gap-3 text-xs text-text-faint">
+								<span>{{ formatTimestamp(item.createdAt) }}</span>
+								<span v-if="item.lastAccessedAt">{{ I18N.detail.lastAccessedAt }}: {{ formatTimestamp(item.lastAccessedAt) }}</span>
+							</div>
 						</div>
-						<AppButton
-							v-if="CURRENT_SECTION === 'memories' && item.status === 'active'"
-							variant="icon"
-							size="sm"
-							icon="package"
-							:label="I18N.list.archiveThis"
-							class="shrink-0"
-							@click.stop="archiveMemory(item.id)"
-						/>
-						<AppButton
-							v-if="CURRENT_SECTION === 'archive'"
-							variant="icon"
-							size="sm"
-							icon="refresh"
-							:label="I18N.archive.restore"
-							class="shrink-0"
-							@click.stop="restoreMemory(item.id)"
-						/>
-						<AppButton
-							variant="icon"
-							size="sm"
-							icon="close"
-							:label="I18N.list.deleteThis"
-							class="shrink-0 hover:(bg-danger/18 text-danger-text)"
-							@click.stop="pendingDelete = item"
-						/>
+						<div class="flex items-center gap-1 shrink-0">
+							<AppButton
+								v-if="CURRENT_SECTION === 'memories' && item.status !== 'archived'"
+								variant="icon"
+								size="sm"
+								icon="package"
+								:label="I18N.list.archiveThis"
+								@click.stop="pendingArchive = item"
+							/>
+							<AppButton
+								v-if="CURRENT_SECTION === 'archive' || item.status === 'archived'"
+								variant="icon"
+								size="sm"
+								icon="refresh"
+								:label="I18N.archive.restore"
+								@click.stop="pendingRestore = item"
+							/>
+							<AppButton
+								variant="icon"
+								size="sm"
+								icon="trash"
+								:label="I18N.list.deleteThis"
+								class="hover:(bg-danger/18 text-danger-text)"
+								@click.stop="pendingDelete = item"
+							/>
+						</div>
 					</div>
 				</div>
 				<div v-if="memoryTotal > MEMORY_PAGE_SIZE" class="flex items-center justify-between pt-2 text-sm text-text-muted">
@@ -739,38 +1004,254 @@ const clearAll = async () => {
 			</AppCard>
 		</div>
 
+		<!-- 记忆详情与编辑模态框 (可解释、可控) -->
 		<AppModal
 			:show="selectedMemory !== null"
 			:title="selectedMemory ? `${I18N.detail.title} #${selectedMemory.id}` : ''"
-			:close-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
 			:mask-closable="false"
-			panel-class="w-[min(56rem,94vw)] max-h-[86vh]"
-			@close="closeMemory"
+			panel-class="w-[min(56rem,94vw)] max-h-[88vh]"
+			@close="requestCloseMemory"
 		>
-			<div v-if="detailLoading" class="py-4 text-center text-text-faint">{{ I18N.detail.loading }}</div>
-			<div v-else-if="selectedMemory" class="flex flex-col gap-3">
-				<AppField :label="I18N.detail.content"><textarea v-model="editContent" class="input-base resize-y" rows="3"/></AppField>
-				<div class="grid grid-cols-2 gap-3">
-					<AppField :label="I18N.detail.canonical"><textarea v-model="editCanonical" class="input-base resize-y" rows="2"/></AppField>
-					<AppField :label="I18N.detail.persona"><textarea v-model="editPersona" class="input-base resize-y" rows="2"/></AppField>
+			<div v-if="detailLoading" class="py-8 text-center text-text-faint flex items-center justify-center gap-2">
+				<Icon name="loading" :size="16" class="animate-spin"/>
+				<span>{{ I18N.detail.loading }}</span>
+			</div>
+			<div v-else-if="selectedMemory" class="flex flex-col gap-3.5">
+				<!-- 顶部状态指示行 -->
+				<div class="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-md bg-overlay-4 border border-line-subtle">
+					<div class="flex flex-wrap items-center gap-2">
+						<AppChip :tone="getStatusTone(selectedMemory.status)" :dot="true">{{ getStatusLabel(selectedMemory.status) }}</AppChip>
+						<AppChip tone="teal">{{ getKindLabel(selectedMemory.kind) }}</AppChip>
+						<AppChip>{{ getSourceLabel(selectedMemory.source) }}</AppChip>
+					</div>
+					<div class="flex items-center gap-2 text-xs">
+						<AppChip :tone="isItemExpired(selectedMemory) ? 'danger' : 'success'">
+							{{ isItemExpired(selectedMemory) ? I18N.detail.isExpired : (selectedMemory.expiresAt ? `${I18N.detail.expiresAt}: ${formatTimestamp(selectedMemory.expiresAt)}` : I18N.detail.neverExpires) }}
+						</AppChip>
+					</div>
 				</div>
-				<div class="grid grid-cols-2 gap-3">
+
+				<!-- 记忆正文编辑 -->
+				<AppField :label="I18N.detail.content">
+					<textarea v-model="editContent" class="input-base resize-y" rows="3"/>
+				</AppField>
+
+				<!-- 摘要字段 (规范摘要 / Nori 视角摘要) -->
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<AppField :label="I18N.detail.canonical">
+						<textarea v-model="editCanonical" class="input-base resize-y" rows="2"/>
+					</AppField>
+					<AppField :label="I18N.detail.persona">
+						<textarea v-model="editPersona" class="input-base resize-y" rows="2"/>
+					</AppField>
+				</div>
+
+				<!-- 核心属性微调 -->
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 					<AppField :label="I18N.detail.kind">
 						<n-select v-model:value="editKind" :options="KIND_OPTIONS"/>
 					</AppField>
-					<AppField :label="I18N.detail.tags"><input v-model="editTags" class="input-base"/></AppField>
-					<AppField :label="I18N.detail.confidence"><input v-model.number="editConfidence" type="number" min="0" max="1" step="0.05" class="input-base"/></AppField>
-					<AppField :label="I18N.add.importance"><input v-model.number="editImportance" type="number" min="0" max="1" step="0.05" class="input-base"/></AppField>
+					<AppField :label="I18N.detail.tags">
+						<input v-model="editTags" class="input-base"/>
+					</AppField>
 				</div>
-				<div class="surface-card p-3"><p class="field-label">{{ I18N.detail.atoms }}</p><p v-for="atom in selectedAtoms" :key="atom.id" class="text-sm">#{{ atom.id }} · {{ atom.content }}</p><p v-if="selectedAtoms.length === 0" class="text-hint">{{ I18N.detail.empty }}</p></div>
-				<div class="surface-card p-3"><p class="field-label">{{ I18N.detail.sources }}</p><p v-for="source in selectedSources" :key="source.id" class="text-sm">{{ source.role }} · {{ source.content }}</p><p v-if="selectedSources.length === 0" class="text-hint">{{ I18N.detail.empty }}</p></div>
+
+				<!-- 置信度与重要度 -->
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<AppField :label="`${I18N.detail.confidence}: ${Math.round(editConfidence * 100)}%`">
+						<div class="flex items-center gap-3">
+							<n-slider v-model:value="editConfidence" :min="0" :max="1" :step="0.05" class="flex-1"/>
+							<input v-model.number="editConfidence" type="number" min="0" max="1" step="0.05" class="input-base w-[6rem] text-center shrink-0"/>
+						</div>
+					</AppField>
+					<AppField :label="`${I18N.detail.importance}: ${Math.round(editImportance * 100)}%`">
+						<div class="flex items-center gap-3">
+							<n-slider v-model:value="editImportance" :min="0" :max="1" :step="0.05" class="flex-1"/>
+							<input v-model.number="editImportance" type="number" min="0" max="1" step="0.05" class="input-base w-[6rem] text-center shrink-0"/>
+						</div>
+					</AppField>
+				</div>
+
+				<!-- 来源对话上下文 -->
+				<div class="surface-card p-3 flex flex-col gap-2">
+					<div class="flex items-center justify-between">
+						<span class="field-label">{{ I18N.detail.sourceMessages }}</span>
+						<span class="text-xs text-text-faint">{{ selectedSources.length }}</span>
+					</div>
+					<div v-if="selectedSources.length > 0" class="flex flex-col gap-2 max-h-[12rem] scroll-area">
+						<div
+							v-for="source in selectedSources"
+							:key="source.id"
+							class="p-2.5 rounded bg-overlay-2 border border-line-subtle flex flex-col gap-1 text-sm"
+						>
+							<div class="flex items-center justify-between text-xs text-text-muted">
+								<div class="flex items-center gap-1.5">
+									<AppChip tone="teal">{{ source.role }}</AppChip>
+									<span class="mono text-text-faint">#{{ source.sequence }}</span>
+								</div>
+								<span v-if="source.messageTime" class="text-text-faint">{{ formatTimestamp(source.messageTime) }}</span>
+							</div>
+							<p class="text-text-primary whitespace-pre-wrap leading-relaxed">{{ source.content }}</p>
+						</div>
+					</div>
+					<p v-else class="text-xs text-text-faint py-1">{{ I18N.detail.noSources }}</p>
+				</div>
+
+				<!-- 生命周期与时间戳 -->
+				<div class="surface-card p-3 flex flex-col gap-2">
+					<span class="field-label">{{ I18N.detail.timestamps }}</span>
+					<div class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+						<div class="flex flex-col gap-0.5">
+							<span class="text-text-muted">{{ I18N.detail.createdAt }}</span>
+							<span class="text-text-primary mono">{{ formatTimestamp(selectedMemory.createdAt) }}</span>
+						</div>
+						<div class="flex flex-col gap-0.5">
+							<span class="text-text-muted">{{ I18N.detail.updatedAt }}</span>
+							<span class="text-text-primary mono">{{ formatTimestamp(selectedMemory.updatedAt) }}</span>
+						</div>
+						<div class="flex flex-col gap-0.5">
+							<span class="text-text-muted">{{ I18N.detail.lastAccessedAt }}</span>
+							<span class="text-text-primary mono">{{ selectedMemory.lastAccessedAt ? formatTimestamp(selectedMemory.lastAccessedAt) : I18N.detail.neverAccessed }}</span>
+						</div>
+						<div class="flex flex-col gap-0.5">
+							<span class="text-text-muted">{{ I18N.detail.lastReinforcedAt }}</span>
+							<span class="text-text-primary mono">{{ selectedMemory.lastReinforcedAt ? formatTimestamp(selectedMemory.lastReinforcedAt) : I18N.detail.neverReinforced }}</span>
+						</div>
+						<div class="flex flex-col gap-0.5">
+							<span class="text-text-muted">{{ I18N.detail.accessCount }} / {{ I18N.detail.reinforcementCount }}</span>
+							<span class="text-text-primary mono">{{ selectedMemory.accessCount ?? 0 }} / {{ selectedMemory.reinforcementCount ?? 0 }}</span>
+						</div>
+						<div class="flex flex-col gap-0.5">
+							<span class="text-text-muted">{{ I18N.detail.ttlDays }}</span>
+							<span class="text-text-primary mono">{{ selectedMemory.ttlDays ? `${selectedMemory.ttlDays}d` : '-' }}</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- 高级溯源与事实原子折叠区 -->
+				<div class="surface-card p-3 flex flex-col gap-2">
+					<button
+						type="button"
+						class="flex items-center justify-between w-full text-left cursor-pointer focus-ring"
+						@click="showAdvancedTrace = !showAdvancedTrace"
+					>
+						<span class="field-label flex items-center gap-2">
+							<Icon :name="showAdvancedTrace ? 'arrow-up' : 'arrow-down'" :size="14" class="text-nori-teal-bright"/>
+							{{ I18N.detail.advancedSection }}
+						</span>
+						<span class="text-xs text-text-faint">{{ selectedAtoms.length }} {{ I18N.detail.atoms }}</span>
+					</button>
+
+					<div v-if="showAdvancedTrace" class="flex flex-col gap-2 pt-2 border-t border-line-subtle">
+						<div v-if="selectedMemory.supersededBy" class="text-xs text-warning flex items-center gap-1.5">
+							<Icon name="alert" :size="13"/>
+							<span>{{ I18N.detail.supersededBy }}: #{{ selectedMemory.supersededBy }}</span>
+						</div>
+
+						<div v-if="selectedAtoms.length > 0" class="flex flex-col gap-2 max-h-[14rem] scroll-area">
+							<div
+								v-for="atom in selectedAtoms"
+								:key="atom.id"
+								class="p-2.5 rounded bg-overlay-2 border border-line-subtle flex flex-col gap-1 text-sm"
+							>
+								<div class="flex flex-wrap items-center gap-1.5">
+									<AppChip tone="teal">{{ atom.atomType }}</AppChip>
+									<AppChip tone="warning">{{ I18N.add.importance }} {{ Math.round(atom.importance * 100) }}%</AppChip>
+									<AppChip tone="neutral">{{ I18N.detail.confidence }} {{ Math.round(atom.confidence * 100) }}%</AppChip>
+									<AppChip :tone="getStatusTone(atom.status)">{{ getStatusLabel(atom.status) }}</AppChip>
+									<span class="text-xs text-text-faint mono">#{{ atom.id }}</span>
+								</div>
+								<p class="text-text-primary leading-relaxed">{{ atom.content }}</p>
+								<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-text-faint pt-1">
+									<span v-if="atom.decayType">{{ I18N.detail.decayType }}: {{ atom.decayType }}</span>
+									<span v-if="atom.entities">{{ atom.entities }}</span>
+								</div>
+							</div>
+						</div>
+						<p v-else class="text-xs text-text-faint py-1">{{ I18N.detail.noAtoms }}</p>
+					</div>
+				</div>
 			</div>
+
 			<template #footer>
-				<AppButton @click="closeMemory">{{ I18N.common.cancel }}</AppButton>
-				<AppButton v-if="selectedMemory?.status === 'active'" variant="danger" @click="selectedMemory && archiveMemory(selectedMemory.id)">{{ I18N.list.archiveThis }}</AppButton>
-				<AppButton variant="primary" :loading="savingDetail" @click="saveMemory">{{ I18N.detail.save }}</AppButton>
+				<div class="flex items-center justify-between w-full">
+					<div class="flex items-center gap-2">
+						<AppButton
+							v-if="selectedMemory?.status !== 'archived'"
+							variant="danger"
+							size="sm"
+							icon="package"
+							@click="selectedMemory && (pendingArchive = selectedMemory)"
+						>{{ I18N.list.archiveThis }}</AppButton>
+						<AppButton
+							v-else
+							variant="primary"
+							size="sm"
+							icon="refresh"
+							@click="selectedMemory && (pendingRestore = selectedMemory)"
+						>{{ I18N.archive.restore }}</AppButton>
+						<AppButton
+							variant="danger"
+							size="sm"
+							icon="trash"
+							@click="selectedMemory && (pendingDelete = selectedMemory)"
+						>{{ I18N.list.delete }}</AppButton>
+					</div>
+
+					<div class="flex items-center gap-2">
+						<AppButton size="sm" @click="requestCloseMemory">{{ I18N.common.cancel }}</AppButton>
+						<AppButton
+							variant="primary"
+							size="sm"
+							icon="check"
+							:loading="savingDetail"
+							:disabled="!hasUnsavedChanges || !editContent.trim()"
+							@click="saveMemory"
+						>{{ I18N.detail.save }}</AppButton>
+					</div>
+				</div>
 			</template>
 		</AppModal>
+
+		<!-- 放弃未保存修改确认 -->
+		<AppConfirm
+			:show="unsavedConfirmOpen"
+			:title="I18N.detail.unsavedTitle"
+			:desc="I18N.detail.unsavedDesc"
+			:confirm-label="I18N.detail.discardChanges"
+			:cancel-label="I18N.detail.keepEditing"
+			:close-label="I18N.common.close"
+			tone="primary"
+			@update:show="unsavedConfirmOpen = $event"
+			@confirm="forceCloseMemory"
+		/>
+
+		<!-- 归档记忆确认 -->
+		<AppConfirm
+			:show="pendingArchive !== null"
+			:title="I18N.detail.archiveConfirmTitle"
+			:desc="I18N.detail.archiveConfirmDesc"
+			:confirm-label="I18N.list.archiveThis"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="primary"
+			@update:show="closeArchiveConfirm"
+			@confirm="confirmArchive"
+		/>
+
+		<!-- 恢复记忆确认 -->
+		<AppConfirm
+			:show="pendingRestore !== null"
+			:title="I18N.detail.restoreConfirmTitle"
+			:desc="I18N.detail.restoreConfirmDesc"
+			:confirm-label="I18N.archive.restore"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="primary"
+			@update:show="closeRestoreConfirm"
+			@confirm="confirmRestore"
+		/>
 
 		<!-- 清空全部记忆确认 -->
 		<AppConfirm
@@ -781,8 +1262,8 @@ const clearAll = async () => {
 			:cancel-label="I18N.common.cancel"
 			:close-label="I18N.common.close"
 			tone="danger"
-			@update:show="clearAllOpen = false"
-			@confirm="clearAll"
+			@update:show="clearAllOpen = $event"
+			@confirm="confirmClearAll"
 		/>
 
 		<!-- 删除单条记忆确认 -->
@@ -794,8 +1275,8 @@ const clearAll = async () => {
 			:cancel-label="I18N.common.cancel"
 			:close-label="I18N.common.close"
 			tone="danger"
-			@update:show="pendingDelete = null"
-			@confirm="pendingDelete && deleteMemory(pendingDelete.id)"
+			@update:show="closeDeleteConfirm"
+			@confirm="confirmDelete"
 		/>
 	</div>
 </template>
