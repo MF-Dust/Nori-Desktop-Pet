@@ -26,6 +26,7 @@ import type {
 	PlatformState,
 	ProviderConnectionTestResult,
 	UiSnapshot,
+	VisionProbeResult,
 } from "./types"
 
 export type {
@@ -33,6 +34,8 @@ export type {
 	AgentState,
 	ApprovalRequestDto,
 	AppInfo,
+	AutomationCapabilityDto,
+	AutomationState,
 	BehaviorsState,
 	EmbeddingState,
 	EmotionDto,
@@ -67,6 +70,7 @@ export type {
 	SkillDto,
 	ToolDto,
 	UsageMetrics,
+	VisionProbeResult,
 	VoiceState,
 	UiSnapshot,
 } from "./types"
@@ -316,6 +320,12 @@ export const RUNTIME = {
 	},
 	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {
 		return invoke("settings_update_proactive", patch)
+	},
+	updateAutomation(patch: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>): Promise<void> {
+		return invoke("settings_update_automation", patch)
+	},
+	probeVisionCapability(): Promise<VisionProbeResult> {
+		return invoke("automation_probe_vision")
 	},
 	ackVoiceNotice(): Promise<void> {
 		return invoke("settings_ack_voice_notice")

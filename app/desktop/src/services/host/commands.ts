@@ -13,6 +13,7 @@ import type {
 	ProviderConnectionTestResult,
 	SkillDto,
 	UiSnapshot,
+	VisionProbeResult,
 } from "../runtime/types"
 
 export type CommandArgs = Record<string, unknown>
@@ -48,6 +49,8 @@ export interface BridgeCommandMap {
 	settings_update_voice: {args: CommandArgs; result: void}
 	settings_update_general: {args: CommandArgs; result: void}
 	settings_update_proactive: {args: CommandArgs; result: void}
+	settings_update_automation: {args: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>; result: void}
+	automation_probe_vision: {args: EmptyCommandArgs; result: VisionProbeResult}
 	settings_ack_voice_notice: {args: EmptyCommandArgs; result: void}
 
 	chat_start: {args: {text: string}; result: string}

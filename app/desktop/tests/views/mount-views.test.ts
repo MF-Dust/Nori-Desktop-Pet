@@ -13,6 +13,7 @@ import VoiceSettings from "../../src/components/settings/VoiceSettings.vue"
 import ProactiveSettings from "../../src/components/settings/ProactiveSettings.vue"
 import SkillsSettings from "../../src/components/settings/SkillsSettings.vue"
 import McpSettings from "../../src/components/settings/McpSettings.vue"
+import AutomationSettings from "../../src/components/settings/AutomationSettings.vue"
 import GeneralSettings from "../../src/components/settings/GeneralSettings.vue"
 import DebugSettings from "../../src/components/settings/DebugSettings.vue"
 import AboutSettings from "../../src/components/settings/AboutSettings.vue"
@@ -224,8 +225,8 @@ describe("Views and Panels Mounting", () => {
 
 	it("switches all SettingsPanel tabs without leaving a blank panel", async () => {
 		const MOUNT = mountComponent(SettingsPanel)
-		// 「长期记忆」不在设置里了 (已升为主窗一级页), 这里只剩 8 个子页
-		const SETTINGS_TABS = ["ai", "voice", "proactive", "skills", "mcp", "general", "debug", "about"]
+		// 设置面板包含 9 个子页
+		const SETTINGS_TABS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "general", "debug", "about"]
 		try {
 			await settleView()
 			const NAV_BUTTONS = Array.from(MOUNT.container.querySelectorAll("nav button"))
@@ -265,6 +266,7 @@ describe("Views and Panels Mounting", () => {
 			ProactiveSettings,
 			SkillsSettings,
 			McpSettings,
+			AutomationSettings,
 			GeneralSettings,
 			DebugSettings,
 			AboutSettings,

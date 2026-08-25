@@ -31,6 +31,7 @@ declare module 'vue' {
     AppStatTile: typeof import('./src/components/ui/AppStatTile.vue')['default']
     AppSwitch: typeof import('./src/components/ui/AppSwitch.vue')['default']
     AppSwitchRow: typeof import('./src/components/ui/AppSwitchRow.vue')['default']
+    AutomationSettings: typeof import('./src/components/settings/AutomationSettings.vue')['default']
     ChatMessageBubble: typeof import('./src/components/chat/ChatMessageBubble.vue')['default']
     ChatView: typeof import('./src/components/ChatView.vue')['default']
     DebugSettings: typeof import('./src/components/settings/DebugSettings.vue')['default']

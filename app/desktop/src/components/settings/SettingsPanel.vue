@@ -18,12 +18,13 @@ import VoiceSettings from "./VoiceSettings.vue"
 import ProactiveSettings from "./ProactiveSettings.vue"
 import SkillsSettings from "./SkillsSettings.vue"
 import McpSettings from "./McpSettings.vue"
+import AutomationSettings from "./AutomationSettings.vue"
 import GeneralSettings from "./GeneralSettings.vue"
 import DebugSettings from "./DebugSettings.vue"
 import AboutSettings from "./AboutSettings.vue"
 
 /** 二级页 key, 同时是它在语言包 `views.main` 下的子树名 (搜索索引靠这个对应) */
-type SettingsTabKey = "ai" | "voice" | "proactive" | "skills" | "mcp" | "general" | "debug" | "about"
+type SettingsTabKey = "ai" | "voice" | "proactive" | "skills" | "mcp" | "automation" | "general" | "debug" | "about"
 
 const props = withDefaults(defineProps<{
 	/** 打开时直达的子页 (主页磁贴跳转用) */
@@ -79,6 +80,7 @@ const TAB_GROUPS = computed<TabGroup[]>(() => [
 		tabs: [
 			{key: "skills", label: I18N.value.skills, icon: "sparkles"},
 			{key: "mcp", label: I18N.value.mcp, icon: "plug"},
+			{key: "automation", label: I18N.value.automation, icon: "bot"},
 		],
 	},
 	{
@@ -232,6 +234,7 @@ const onListKeydown = (event: KeyboardEvent) => {
 					<ProactiveSettings v-else-if="currentTab === 'proactive'"/>
 					<SkillsSettings v-else-if="currentTab === 'skills'"/>
 					<McpSettings v-else-if="currentTab === 'mcp'"/>
+					<AutomationSettings v-else-if="currentTab === 'automation'"/>
 					<GeneralSettings v-else-if="currentTab === 'general'"/>
 					<DebugSettings v-else-if="currentTab === 'debug'"/>
 					<AboutSettings v-else/>

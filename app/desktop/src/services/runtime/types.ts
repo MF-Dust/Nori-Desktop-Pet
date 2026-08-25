@@ -290,6 +290,41 @@ export interface ToolDto {
 	enabled: boolean
 }
 
+/** 自动化单项能力状态 */
+export interface AutomationCapabilityDto {
+	/** 能力标识 (如 desktop / browser / vision) */
+	id: string
+	/** 能力名称 */
+	name: string
+	/** 是否可用 */
+	available: boolean
+	/** 不可用原因 (未接入/缺失依赖/权限未开启) */
+	unavailableReason?: string | null
+}
+
+/** 视觉能力检测结果 */
+export interface VisionProbeResult {
+	available: boolean
+	latencyMs?: number
+	message: string
+}
+
+/** 自动化状态快照 */
+export interface AutomationState {
+	/** 自动化总开关 */
+	enabled: boolean
+	/** 桌面自动化操作 (鼠标/键盘/窗口交互) */
+	desktopEnabled: boolean
+	/** 浏览器自动化操作 (DOM/页面交互) */
+	browserEnabled: boolean
+	/** 视觉能力是否就绪 */
+	visionReady: boolean
+	/** 各项能力就绪状态列表 */
+	capabilities?: AutomationCapabilityDto[]
+	/** 不可用原因 (若整个自动化不可用) */
+	unavailableReason?: string | null
+}
+
 /** 情绪状态 */
 export interface EmotionDto {
 	type: string
@@ -316,6 +351,8 @@ export interface UiSnapshot {
 	tools: ToolDto[]
 	mcpServersCount?: number
 	emotion: EmotionDto
+	/** 自动化能力快照 (可选, 后端未就绪时为 undefined) */
+	automation?: AutomationState
 }
 
 // ===================================================================

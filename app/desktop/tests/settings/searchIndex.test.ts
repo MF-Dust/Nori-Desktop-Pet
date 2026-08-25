@@ -6,7 +6,7 @@ import type {MessageTree} from "../../src/services/settings/searchIndex"
 const MAIN = (ZH as unknown as {views: {main: MessageTree}}).views.main
 
 /** 与 SettingsPanel 一致的二级页列表 (key 即语言包子树名) */
-const TAB_KEYS = ["ai", "voice", "proactive", "skills", "mcp", "general", "debug", "about"] as const
+const TAB_KEYS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "general", "debug", "about"] as const
 
 const REAL_INDEX = buildSettingsSearchIndex(TAB_KEYS.map(key => ({key, label: key, page: MAIN[key]})))
 
@@ -70,6 +70,8 @@ describe("设置搜索索引", () => {
 		expect(hits("提醒")).toContain("proactive")
 		expect(hits("skill")).toContain("skills")
 		expect(hits("mcp")).toContain("mcp")
+		expect(hits("automation")).toContain("automation")
+		expect(hits("视觉")).toContain("automation")
 		expect(hits("telemetry")).toContain("general")
 		expect(hits("language")).toContain("general")
 		expect(hits("log")).toContain("debug")
