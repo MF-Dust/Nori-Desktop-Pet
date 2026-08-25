@@ -1,6 +1,6 @@
 import {describe, expect, it, beforeEach, vi} from "vitest"
 import {createApp, h, nextTick} from "vue"
-import {i18n} from "../../src/services/i18n"
+import useLanguage, {i18n} from "../../src/services/i18n"
 import {RUNTIME} from "../../src/services/runtime"
 import {feedback} from "../../src/services/feedback"
 import OperationDrawer from "../../src/components/automation/OperationDrawer.vue"
@@ -19,17 +19,24 @@ describe("OperationDrawer & AutomationTaskCard", () => {
 	}
 
 	const settleView = async (): Promise<void> => {
-		for (let index = 0; index < 4; index += 1) await nextTick()
-		await new Promise<void>(resolve => setTimeout(resolve, 0))
+		for (let index = 0; index < 6; index += 1) {
+			await nextTick()
+			await new Promise<void>(resolve => setTimeout(resolve, 20))
+		}
 		await nextTick()
 	}
 
-	beforeEach(() => {
+	beforeEach(async () => {
+		document.body.innerHTML = ""
+		await useLanguage.setLanguage("zh-CN")
 		vi.restoreAllMocks()
 		;(window as any).__nori = {
 			assetBase: "/nori-assets/",
 			label: "main",
-			invoke: async (_cmd: string, _args: any) => null,
+			invoke: async (cmd: string, _args: any) => {
+				if (cmd === "ui_get_snapshot") return RUNTIME.snapshot.value
+				return null
+			},
 			emit: () => {},
 			listen: () => () => {},
 			dispatch: () => {},
@@ -186,6 +193,10 @@ describe("OperationDrawer & AutomationTaskCard", () => {
 				stoppedAll = true
 				return
 			}
+			if (cmd === "ui_get_snapshot") {
+				return RUNTIME.snapshot.value
+			}
+			return null
 		}
 
 		if (RUNTIME.snapshot.value?.automation) {

@@ -3,7 +3,6 @@ import {computed, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
 import AppButton from "../ui/AppButton.vue"
-import AppChip from "../ui/AppChip.vue"
 import AppEmpty from "../ui/AppEmpty.vue"
 import AutomationTaskCard from "./AutomationTaskCard.vue"
 import {RUNTIME} from "../../services/runtime"
@@ -228,7 +227,7 @@ onBeforeUnmount(() => {
 					class="w-[32rem] max-w-[90vw] h-full flex flex-col bg-bg-card/95 border-l border-line-subtle shadow-elev-3 backdrop-blur-[1.6rem] transition-transform duration-250 focus-ring"
 					role="dialog"
 					aria-modal="true"
-					:aria-label="TEXT.drawer.title"
+					:aria-label="TEXT.title"
 					tabindex="-1"
 				>
 					<!-- 抽屉顶部栏 -->
@@ -239,10 +238,10 @@ onBeforeUnmount(() => {
 							</span>
 							<div class="flex flex-col min-w-0">
 								<h2 class="text-sm font-600 text-text-primary truncate m-0">
-									{{ TEXT.drawer.title }}
+									{{ TEXT.title }}
 								</h2>
 								<span class="text-xs text-text-faint truncate">
-									{{ TEXT.drawer.subtitle }}
+									{{ TEXT.subtitle }}
 								</span>
 							</div>
 						</div>
@@ -256,14 +255,14 @@ onBeforeUnmount(() => {
 								:loading="stoppingAll"
 								@click="handleStopAll"
 							>
-								{{ TEXT.drawer.stopAll }}
+								{{ TEXT.stopAll }}
 							</AppButton>
 
 							<button
 								type="button"
 								class="btn-close"
-								:title="TEXT.drawer.close"
-								:aria-label="TEXT.drawer.close"
+								:title="TEXT.close"
+								:aria-label="TEXT.close"
 								@click="closeDrawer"
 							>
 								<Icon name="close" class="close-icon"/>
@@ -290,8 +289,8 @@ onBeforeUnmount(() => {
 						<AppEmpty
 							v-else
 							icon="bot"
-							:title="TEXT.drawer.emptyTitle"
-							:desc="TEXT.drawer.emptyDesc"
+							:title="TEXT.emptyTitle"
+							:desc="TEXT.emptyDesc"
 						/>
 					</div>
 				</aside>

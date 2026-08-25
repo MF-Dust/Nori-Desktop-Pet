@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, ref} from "vue"
+import {computed} from "vue"
 import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
 import AppChip from "../ui/AppChip.vue"
