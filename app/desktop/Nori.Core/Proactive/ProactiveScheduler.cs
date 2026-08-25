@@ -124,7 +124,16 @@ public sealed class ProactiveScheduler : IDisposable
 			string text = IsEnglish()
 				? $"Reminder time: {reminder.Content}"
 				: $"主人！提醒时间到了：{reminder.Content}";
-			Message?.Invoke(new ProactiveMessage(text, "wave", "Surprised"));
+			try
+			{
+				Message?.Invoke(new ProactiveMessage(text, "wave", "Surprised"));
+				_store.MarkFired(reminder.Id);
+			}
+			catch
+			{
+				_store.ReleaseClaim(reminder.Id);
+				throw;
+			}
 			try
 			{
 				_logger.Write(LogSource.Backend, "info", "定时提醒触发");

@@ -12,7 +12,7 @@ namespace Nori.Core.Data;
 public sealed class NoriDatabase : IDisposable
 {
 	/// <summary>当前数据库结构版本</summary>
-	public const long DatabaseSchemaVersion = 5;
+	public const long DatabaseSchemaVersion = 6;
 
 	/// <summary>单个迁移备份的最大大小，避免损坏的旧库拖垮磁盘。</summary>
 	private const long MigrationBackupMaxBytes = 64L * 1024 * 1024;
@@ -142,6 +142,7 @@ public sealed class NoriDatabase : IDisposable
 		if (current == DatabaseSchemaVersion)
 		{
 			MigrateEmbeddingStorageV5(connection, null);
+			MigrateRemindersV6(connection, null);
 			EnsureOperationalIndexes(connection, null);
 			return;
 		}
@@ -168,6 +169,9 @@ public sealed class NoriDatabase : IDisposable
 						break;
 					case 4:
 						MigrateEmbeddingStorageV5(connection, transaction);
+						break;
+					case 5:
+						MigrateRemindersV6(connection, transaction);
 						break;
 					default:
 						throw new InvalidOperationException($"不支持的记忆数据库版本: {version}");
@@ -257,6 +261,8 @@ public sealed class NoriDatabase : IDisposable
 			CREATE INDEX IF NOT EXISTS idx_memories_expiry ON memories(status, expires_at);
 			CREATE INDEX IF NOT EXISTS idx_memory_sources_memory_sequence ON memory_sources(memory_id, sequence);
 			CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding_work ON knowledge_chunks(document_id, embedding_fingerprint, id);
+			CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, trigger_at ASC, snoozed_until ASC);
+			CREATE INDEX IF NOT EXISTS idx_reminders_claimed ON reminders(status, claimed_at ASC);
 			""";
 		command.ExecuteNonQuery();
 	}
@@ -405,7 +411,7 @@ public sealed class NoriDatabase : IDisposable
 	/// v3: 新增可恢复的定时提醒表.
 	/// 幂等: 建表语句带 IF NOT EXISTS, 重复执行安全。
 	/// </summary>
-	private static void CreateRemindersTable(SqliteConnection connection, SqliteTransaction transaction)
+	private static void CreateRemindersTable(SqliteConnection connection, SqliteTransaction? transaction)
 	{
 		using SqliteCommand command = connection.CreateCommand();
 		command.Transaction = transaction;
@@ -420,6 +426,56 @@ public sealed class NoriDatabase : IDisposable
 			CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON reminders(trigger_at ASC);
 			""";
 		command.ExecuteNonQuery();
+	}
+
+	/// <summary>
+	/// v6: 为提醒增加可恢复领取状态.
+	/// 旧列和 repeat_daily 原值保留; 每日重复同时回填为明确的 recurrence JSON.
+	/// </summary>
+	private static void MigrateRemindersV6(SqliteConnection connection, SqliteTransaction? transaction)
+	{
+		CreateRemindersTable(connection, transaction);
+		(string Name, string Definition)[] columns =
+		[
+			("status", "TEXT NOT NULL DEFAULT 'pending'"),
+			("timezone", "TEXT NOT NULL DEFAULT 'UTC'"),
+			("recurrence_json", "TEXT"),
+			("snoozed_until", "INTEGER"),
+			("claimed_at", "TEXT"),
+			("fired_at", "TEXT"),
+			("updated_at", "TEXT NOT NULL DEFAULT ''"),
+		];
+		foreach ((string name, string definition) in columns)
+		{
+			if (HasColumn(connection, transaction, "reminders", name)) continue;
+			using SqliteCommand alter = connection.CreateCommand();
+			alter.Transaction = transaction;
+			alter.CommandText = $"ALTER TABLE reminders ADD COLUMN {name} {definition};";
+			alter.ExecuteNonQuery();
+		}
+
+		using SqliteCommand backfill = connection.CreateCommand();
+		backfill.Transaction = transaction;
+		backfill.CommandText = """
+			UPDATE reminders
+			SET status = CASE
+					WHEN status IS NULL OR trim(status) = '' THEN 'pending'
+					ELSE status
+				END,
+				timezone = CASE
+					WHEN timezone IS NULL OR trim(timezone) = '' THEN 'UTC'
+					ELSE timezone
+				END,
+				recurrence_json = CASE
+					WHEN recurrence_json IS NULL AND repeat_daily <> 0 THEN '{"type":"daily"}'
+					ELSE recurrence_json
+				END,
+				updated_at = CASE
+					WHEN updated_at IS NULL OR trim(updated_at) = '' THEN created_at
+					ELSE updated_at
+				END;
+			""";
+		backfill.ExecuteNonQuery();
 	}
 
 	/// <summary>
