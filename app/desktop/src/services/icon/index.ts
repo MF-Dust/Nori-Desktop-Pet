@@ -151,6 +151,25 @@ export const icon = {
 			"M6 3v18l14-9-14-9Z"
 		]
 	},
+	// 暂停
+	pause: {
+		stroke: [
+			"M10 4H6v16h4V4z",
+			"M18 4h-4v16h4V4z"
+		]
+	},
+	// 停止
+	stop: {
+		stroke: [
+			"M5 5h14v14H5z"
+		]
+	},
+	// 动态 / 脉搏
+	activity: {
+		stroke: [
+			"M22 12h-4l-3 9L9 3l-3 9H2"
+		]
+	},
 	// 刷新
 	refresh: {
 		stroke: [

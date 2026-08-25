@@ -34,8 +34,11 @@ export type {
 	AgentState,
 	ApprovalRequestDto,
 	AppInfo,
+	AutomationApprovalDto,
 	AutomationCapabilityDto,
 	AutomationState,
+	AutomationTaskDto,
+	AutomationTaskStatus,
 	BehaviorsState,
 	EmbeddingState,
 	EmotionDto,
@@ -323,6 +326,18 @@ export const RUNTIME = {
 	},
 	updateAutomation(patch: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>): Promise<void> {
 		return invoke("settings_update_automation", patch)
+	},
+	stopAutomationTask(taskId: string): Promise<void> {
+		return invoke("automation_stop_task", {taskId})
+	},
+	stopAllAutomation(): Promise<void> {
+		return invoke("automation_stop_all")
+	},
+	respondAutomationApproval(requestId: string, approved: boolean): Promise<boolean> {
+		return invoke("approval_respond", {requestId, approved})
+	},
+	getAutomationSnapshot(): Promise<UiSnapshot["automation"]> {
+		return invoke("automation_get_snapshot")
 	},
 	probeVisionCapability(): Promise<VisionProbeResult> {
 		return invoke("automation_probe_vision")

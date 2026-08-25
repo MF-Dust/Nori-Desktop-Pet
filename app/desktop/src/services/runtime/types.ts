@@ -302,6 +302,57 @@ export interface AutomationCapabilityDto {
 	unavailableReason?: string | null
 }
 
+/** 自动化任务生命周期状态 */
+export type AutomationTaskStatus =
+	| "queued"
+	| "running"
+	| "awaiting_approval"
+	| "paused"
+	| "succeeded"
+	| "completed"
+	| "failed"
+	| "cancelled"
+
+/** 自动化任务只读状态快照 (脱敏，不含截图、提示词、URL、窗口名或输入参数) */
+export interface AutomationTaskDto {
+	/** 任务标识 */
+	id: string
+	/** 脱敏短标题 */
+	title?: string
+	/** 生命周期状态 */
+	state: AutomationTaskStatus | string
+	/** 创建时间 (ISO 字符串或格式化时间) */
+	createdAt?: string
+	/** 开始执行时间 */
+	startedAt?: string | null
+	/** 结束时间 */
+	finishedAt?: string | null
+	/** 稳定错误分类标识 (如 timeout / permission_denied) */
+	failureCode?: string | null
+	/** 当前步骤序号 (从 1 起) */
+	currentStep?: number
+	/** 总步骤数 */
+	totalSteps?: number
+	/** 进度百分比 (0-100 或 0-1) */
+	progress?: number
+	/** 待审批动作类型列表 */
+	actionKinds?: string[]
+	/** 关联的审批请求标识 (若处于待审批) */
+	approvalRequestId?: string
+}
+
+/** 脱敏审批请求 */
+export interface AutomationApprovalDto {
+	/** 审批请求标识 */
+	requestId: string
+	/** 关联任务标识 */
+	taskId: string
+	/** 涉及的动作分类列表 */
+	actionKinds: string[]
+	/** 请求时间 */
+	requestedAt: string
+}
+
 /** 视觉能力检测结果 */
 export interface VisionProbeResult {
 	available: boolean
@@ -323,6 +374,18 @@ export interface AutomationState {
 	capabilities?: AutomationCapabilityDto[]
 	/** 不可用原因 (若整个自动化不可用) */
 	unavailableReason?: string | null
+	/** 当前正在执行或处于活动态的任务 */
+	activeTask?: AutomationTaskDto | null
+	/** 任务列表 (可选，包含历史或活动任务) */
+	tasks?: AutomationTaskDto[]
+	/** 排队中任务数量 */
+	queuedCount?: number
+	/** 待处理的审批请求 (可选) */
+	pendingApproval?: AutomationApprovalDto | null
+	/** 待处理的审批请求列表 (可选) */
+	pendingApprovals?: AutomationApprovalDto[]
+	/** 整体执行能力是否就绪 */
+	available?: boolean
 }
 
 /** 情绪状态 */

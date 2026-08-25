@@ -50,7 +50,11 @@ export interface BridgeCommandMap {
 	settings_update_general: {args: CommandArgs; result: void}
 	settings_update_proactive: {args: CommandArgs; result: void}
 	settings_update_automation: {args: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>; result: void}
+	automation_get_snapshot: {args: EmptyCommandArgs; result: UiSnapshot["automation"]}
+	automation_update_settings: {args: Partial<{enabled: boolean; allowPointer: boolean; allowKeyboard: boolean; allowScroll: boolean}>; result: void}
 	automation_probe_vision: {args: EmptyCommandArgs; result: VisionProbeResult}
+	automation_stop_task: {args: {taskId: string}; result: void}
+	automation_stop_all: {args: EmptyCommandArgs; result: void}
 	settings_ack_voice_notice: {args: EmptyCommandArgs; result: void}
 
 	chat_start: {args: {text: string}; result: string}

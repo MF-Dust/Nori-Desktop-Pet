@@ -4,6 +4,7 @@ import useLanguages from "../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../services/runtime"
 import TitleBar from "../components/TitleBar.vue"
 import Icon from "../components/Icon.vue"
+import OperationDrawer from "../components/automation/OperationDrawer.vue"
 import AppChip from "../components/ui/AppChip.vue"
 import AppButton from "../components/ui/AppButton.vue"
 import AppSkeleton from "../components/ui/AppSkeleton.vue"
@@ -173,13 +174,17 @@ onBeforeUnmount(() => {
 				<span class="text-text-muted">{{ currentNav?.label }}</span>
 			</div>
 
-			<div class="flex items-center gap-1.5">
-				<button type="button" class="btn-icon" :title="I18N.footer.minimize" :aria-label="I18N.footer.minimize" @click="minimizeMain">
-					<Icon name="minus" :size="13"/>
-				</button>
-				<button type="button" class="btn-close" :title="I18N.footer.exit" :aria-label="I18N.footer.exit" @click="exitApp">
-					<Icon name="close" class="close-icon"/>
-				</button>
+			<div class="flex items-center gap-2">
+				<OperationDrawer/>
+
+				<div class="flex items-center gap-1.5">
+					<button type="button" class="btn-icon" :title="I18N.footer.minimize" :aria-label="I18N.footer.minimize" @click="minimizeMain">
+						<Icon name="minus" :size="13"/>
+					</button>
+					<button type="button" class="btn-close" :title="I18N.footer.exit" :aria-label="I18N.footer.exit" @click="exitApp">
+						<Icon name="close" class="close-icon"/>
+					</button>
+				</div>
 			</div>
 		</TitleBar>
 
