@@ -256,6 +256,16 @@ export interface ReminderDto {
 	id: string
 	content: string
 	triggerTime: number
+	/** 是否每日重复 (后端旧兼容字段/只读) */
+	repeatDaily?: boolean
+	/** 领取状态: pending、claimed 或 fired */
+	status?: "pending" | "claimed" | "fired" | string
+	/** 重复规则使用的时区 */
+	timezone?: string
+	/** JSON 格式的重复规则 */
+	recurrenceJson?: string | null
+	/** 推迟到期时间 (Unix 毫秒) */
+	snoozedUntil?: number | null
 }
 
 /** 主动交互状态 */
