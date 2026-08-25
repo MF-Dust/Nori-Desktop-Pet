@@ -125,12 +125,22 @@ public sealed class BridgeCommands
 		/// invoke("automation_get_snapshot")
 		"automation_get_snapshot" => RequireWebViewSource(source, () => Automation.GetSnapshot()),
 
-		/// invoke("automation_update_settings", {enabled?, allowPointer?, allowKeyboard?, allowScroll?})
+		/// 更新自动化设置: invoke("automation_update_settings", {enabled?, allowPointer?, allowKeyboard?, allowScroll?, browserEnabled?})
 		"automation_update_settings" => RequireVisibleMain(source, () => Automation.UpdateSettings(
 			OptionalBool(args, "enabled"),
 			OptionalBool(args, "allowPointer"),
 			OptionalBool(args, "allowKeyboard"),
-			OptionalBool(args, "allowScroll"))),
+			OptionalBool(args, "allowScroll"),
+			OptionalBool(args, "browserEnabled"))),
+
+		/// 启动浏览器自动化: invoke("automation_browser_start")
+		"automation_browser_start" => await AutomationBrowserStartAsync(source, cancellationToken),
+
+		/// 停止浏览器自动化: invoke("automation_browser_stop")
+		"automation_browser_stop" => await AutomationBrowserStopAsync(source, cancellationToken),
+
+		/// 查询浏览器自动化状态: invoke("automation_browser_status")
+		"automation_browser_status" => RequireVisibleMain(source, () => Automation.GetBrowserStatus()),
 
 		/// invoke("automation_probe_vision")
 		"automation_probe_vision" => RequireVisibleMain(source, () => Automation.ProbeVision()),
@@ -139,7 +149,7 @@ public sealed class BridgeCommands
 		"automation_stop_task" => RequireVisibleMain(source, () => Automation.StopTask(ParseGuid(args, "taskId"))),
 
 		/// invoke("automation_stop_all")
-		"automation_stop_all" => RequireVisibleMain(source, () => Automation.StopAll()),
+		"automation_stop_all" => await AutomationStopAllAsync(source, cancellationToken),
 
 		// ---- AI 设置 ----
 		// invoke("llm_fetch_models", {provider, baseUrl, apiKey})
@@ -601,6 +611,30 @@ public sealed class BridgeCommands
 		{
 			throw new InvalidOperationException($"命令只能由 {WindowLabels.Main} 窗口调用");
 		}
+	}
+
+	private static void RequireVisibleMainVoid(IBridgeSource source)
+	{
+		RequireMainVoid(source);
+		if (!source.IsVisible) throw new InvalidOperationException("main 窗口不可见");
+	}
+
+	private async Task<object?> AutomationBrowserStartAsync(IBridgeSource source, CancellationToken cancellationToken)
+	{
+		RequireVisibleMainVoid(source);
+		return await Automation.StartBrowserAsync(cancellationToken).ConfigureAwait(false);
+	}
+
+	private async Task<object?> AutomationBrowserStopAsync(IBridgeSource source, CancellationToken cancellationToken)
+	{
+		RequireVisibleMainVoid(source);
+		return await Automation.StopBrowserAsync(cancellationToken).ConfigureAwait(false);
+	}
+
+	private async Task<object?> AutomationStopAllAsync(IBridgeSource source, CancellationToken cancellationToken)
+	{
+		RequireVisibleMainVoid(source);
+		return await Automation.StopAllAsync(cancellationToken).ConfigureAwait(false);
 	}
 
 	private async Task<object?> MemoryAddAsync(IBridgeSource source, JsonElement args)

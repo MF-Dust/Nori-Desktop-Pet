@@ -74,6 +74,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>自动化宿主运行时；安全模式下仍装配但所有执行入口 fail-closed。</summary>
 	public AutomationRuntime? Automation { get; set; }
 
+	/// <summary>浏览器运行器工厂；生产默认使用隔离 Edge，测试可注入 fake。</summary>
+	public Func<IAutomationBrowserRunner>? AutomationBrowserRunnerFactory { get; set; }
+
 	/// <summary>有界的 Agent 性能 Trace；只保存阶段/用量元数据，不保存正文。</summary>
 	public AgentTraceCollector AgentTrace { get; } = new();
 

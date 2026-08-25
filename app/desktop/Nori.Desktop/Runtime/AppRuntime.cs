@@ -120,7 +120,12 @@ public sealed class AppRuntime : IAsyncDisposable
 	{
 		Services = services;
 		ConfigStore config = services.Config;
-		services.Automation ??= new AutomationRuntime(config, services.SafeMode);
+		services.Automation ??= new AutomationRuntime(
+			config,
+			services.SafeMode,
+			OperatingSystem.IsWindows(),
+			visionAvailable: false,
+			browserRunnerFactory: services.AutomationBrowserRunnerFactory);
 		services.Automation.Changed += OnAutomationChanged;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config, startBackgroundWorker: !services.SafeMode);

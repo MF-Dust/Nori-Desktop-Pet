@@ -6,6 +6,7 @@ using Nori.Core.Logging;
 using Nori.Core.Live2D;
 using Nori.Core.Mcp;
 using Nori.Core.Resources;
+using Nori.Desktop.Automation;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Runtime;
 using Nori.Desktop.Windows;
@@ -29,6 +30,26 @@ public class BridgeCommandsTests : IDisposable
 
 		public void PostResult(long id, object? value, string? error)
 		{
+		}
+	}
+
+	private sealed class FakeBrowserRunner : IAutomationBrowserRunner
+	{
+		public int StartCount { get; private set; }
+		public int DisposeCount { get; private set; }
+		public bool FailOnStart { get; init; }
+
+		public Task StartAsync(CancellationToken cancellationToken = default)
+		{
+			StartCount++;
+			if (FailOnStart) throw new InvalidOperationException("模拟 Edge 启动失败: https://example.test/?token=secret");
+			return Task.CompletedTask;
+		}
+
+		public ValueTask DisposeAsync()
+		{
+			DisposeCount++;
+			return ValueTask.CompletedTask;
 		}
 	}
 
@@ -95,7 +116,7 @@ public class BridgeCommandsTests : IDisposable
 	{
 	}
 
-	private BridgeCommandsTests(bool safeMode, bool? automationWindows)
+	private BridgeCommandsTests(bool safeMode, bool? automationWindows, Func<IAutomationBrowserRunner>? browserRunnerFactory = null)
 	{
 		Directory.CreateDirectory(_tempDir);
 		_dbPath = Path.Combine(_tempDir, "nori.db");
@@ -118,8 +139,18 @@ public class BridgeCommandsTests : IDisposable
 			Http = _http,
 			AgentOperations = new AgentOperationRegistry(),
 			Automation = automationWindows is { } isWindows
-				? new Nori.Desktop.Automation.AutomationRuntime(_config, safeMode, isWindows, visionAvailable: false)
-				: new Nori.Desktop.Automation.AutomationRuntime(_config, safeMode),
+				? new Nori.Desktop.Automation.AutomationRuntime(
+					_config,
+					safeMode,
+					isWindows,
+					visionAvailable: false,
+					browserRunnerFactory: browserRunnerFactory)
+				: new Nori.Desktop.Automation.AutomationRuntime(
+					_config,
+					safeMode,
+					OperatingSystem.IsWindows(),
+					visionAvailable: false,
+					browserRunnerFactory: browserRunnerFactory),
 			Windows = _windows,
 			SafeMode = safeMode,
 		};
@@ -298,6 +329,107 @@ public class BridgeCommandsTests : IDisposable
 		Assert.Equal(0, all);
 		await Assert.ThrowsAsync<InvalidOperationException>(() =>
 			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "automation_stop_all", Args(new { })));
+	}
+
+	[Fact]
+	public async Task 浏览器生命周期只使用fake且停止幂等并纳入快照()
+	{
+		FakeBrowserRunner fake = new();
+		using BridgeCommandsTests fixture = new(false, true, () => fake);
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		BridgeCommands commands = fixture.CreateCommands();
+		FakeBridgeSource main = new(WindowLabels.Main);
+
+		object? started = await commands.InvokeAsync(main, "automation_browser_start", Args(new { }));
+		string startedJson = JsonSerializer.Serialize(started, BridgeJson.Options);
+		Assert.Contains("\"running\":true", startedJson, StringComparison.Ordinal);
+		Assert.Equal(1, fake.StartCount);
+
+		string snapshotJson = JsonSerializer.Serialize(
+			await commands.InvokeAsync(main, "automation_get_snapshot", Args(new { })), BridgeJson.Options);
+		Assert.Contains("\"browser\":", snapshotJson, StringComparison.Ordinal);
+		Assert.Contains("\"running\":true", snapshotJson, StringComparison.Ordinal);
+		Assert.DoesNotContain("https://example.test", snapshotJson, StringComparison.Ordinal);
+		Assert.DoesNotContain("token=secret", snapshotJson, StringComparison.Ordinal);
+		Assert.DoesNotContain("cookie", snapshotJson, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("screenshot", snapshotJson, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("prompt", snapshotJson, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("tool", snapshotJson, StringComparison.OrdinalIgnoreCase);
+
+		await commands.InvokeAsync(main, "automation_update_settings", Args(new {browserEnabled = false}));
+		Assert.Equal(1, fake.DisposeCount);
+		await commands.InvokeAsync(main, "automation_browser_stop", Args(new { }));
+		await commands.InvokeAsync(main, "automation_browser_stop", Args(new { }));
+		Assert.Equal(1, fake.DisposeCount);
+		string stoppedJson = JsonSerializer.Serialize(
+			await commands.InvokeAsync(main, "automation_browser_status", Args(new { })), BridgeJson.Options);
+		Assert.Contains("\"running\":false", stoppedJson, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 浏览器命令只允许可见main且未启用时failClosed()
+	{
+		FakeBrowserRunner fake = new();
+		using BridgeCommandsTests fixture = new(false, true, () => fake);
+		BridgeCommands commands = fixture.CreateCommands();
+
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "automation_browser_status", Args(new { })));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main, false), "automation_browser_start", Args(new { })));
+		InvalidOperationException notEnabled = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_browser_start", Args(new { })));
+		Assert.Contains("默认关闭", notEnabled.Message, StringComparison.Ordinal);
+		Assert.Equal(0, fake.StartCount);
+
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_browser_start", Args(new { }));
+		int stopped = Assert.IsType<int>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_stop_all", Args(new { })));
+		Assert.Equal(0, stopped);
+		Assert.Equal(1, fake.DisposeCount);
+	}
+
+	[Fact]
+	public async Task 浏览器在安全模式和非Windows上不启动()
+	{
+		FakeBrowserRunner safeFake = new();
+		using BridgeCommandsTests safeFixture = new(true, true, () => safeFake);
+		safeFixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		safeFixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		InvalidOperationException safeError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			safeFixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_browser_start", Args(new { })));
+		Assert.Contains("安全模式", safeError.Message, StringComparison.Ordinal);
+		Assert.Equal(0, safeFake.StartCount);
+
+		FakeBrowserRunner linuxFake = new();
+		using BridgeCommandsTests linuxFixture = new(false, false, () => linuxFake);
+		linuxFixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		linuxFixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		InvalidOperationException linuxError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			linuxFixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_browser_start", Args(new { })));
+		Assert.Contains("Windows", linuxError.Message, StringComparison.Ordinal);
+		Assert.Equal(0, linuxFake.StartCount);
+	}
+
+	[Fact]
+	public async Task 浏览器启动异常会清理fake且不泄露异常正文()
+	{
+		FakeBrowserRunner fake = new() {FailOnStart = true};
+		using BridgeCommandsTests fixture = new(false, true, () => fake);
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+
+		InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			fixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_browser_start", Args(new { })));
+		Assert.Equal("浏览器启动失败", error.Message);
+		Assert.Equal(1, fake.DisposeCount);
+		string status = JsonSerializer.Serialize(fixture._services.Automation!.GetBrowserStatus(), BridgeJson.Options);
+		Assert.Contains("\"running\":false", status, StringComparison.Ordinal);
+		Assert.DoesNotContain("example.test", status, StringComparison.Ordinal);
+		Assert.DoesNotContain("token=secret", status, StringComparison.Ordinal);
 	}
 
 	[Fact]
