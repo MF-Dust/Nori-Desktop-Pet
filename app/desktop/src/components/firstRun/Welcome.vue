@@ -101,7 +101,7 @@ const handleLink = async (link: Link) => {
 </script>
 
 <template>
-	<section key="welcome" class="w-full min-h-full flex flex-row items-center gap-9 px-12 pt-3 pb-2.5">
+	<section key="welcome" data-first-run-step="welcome" class="w-full min-h-full flex flex-row items-center gap-9 px-12 pt-3 pb-2.5">
 		<div class="flex-1 min-w-0 flex flex-col items-start gap-2.5">
 			<div class="flex items-center gap-1.5">
 				<span class="chip-teal">
@@ -127,7 +127,7 @@ const handleLink = async (link: Link) => {
 					:key="link.key"
 					type="button"
 					class="group flex items-center gap-2.5 px-3 py-2.5 rounded-md text-left cursor-pointer
-						bg-white/3 border border-line-subtle transition-all duration-250 focus-ring
+						bg-overlay-4 border border-line-subtle transition-all duration-250 focus-ring
 						hover:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.15rem] shadow-[0_0.4rem_1.6rem_var(--glow-teal-soft)])"
 					:class="link.key === 'qq' && copiedQq ? 'bg-success/12 border-success/40' : ''"
 					@click="handleLink(link)"

@@ -10,6 +10,9 @@ import type {IconName} from "../../services/icon"
 
 const I18N = computed(() => useLanguages().components.firstRun.ready)
 
+// 向导的 AI 步可跳过, 摘要照实说 (填过 = 已接入, 跳过 = 之后再补)
+const props = withDefaults(defineProps<{aiConfigured?: boolean}>(), {aiConfigured: false})
+
 const emit = defineEmits<{
 	telemetryChanged: [enabled: boolean]
 }>()
@@ -47,12 +50,12 @@ const onTelemetryChange = (value: boolean) => {
 const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() => [
 	{icon: "noriOS", label: I18N.value.summary.language, value: I18N.value.summary.languageValue},
 	{icon: "package", label: I18N.value.summary.model, value: I18N.value.summary.modelValue},
-	{icon: "cpu", label: I18N.value.summary.ai, value: I18N.value.summary.aiValue},
+	{icon: "cpu", label: I18N.value.summary.ai, value: props.aiConfigured ? I18N.value.summary.aiReady : I18N.value.summary.aiValue},
 ])
 </script>
 
 <template>
-	<section key="ready" class="w-full min-h-full flex flex-col items-center justify-center gap-3.5 px-14 pt-4 pb-2.5 text-center">
+	<section key="ready" data-first-run-step="ready" class="w-full min-h-full flex flex-col items-center justify-center gap-3.5 px-14 pt-4 pb-2.5 text-center">
 		<div class="relative w-[11rem] h-[11rem] flex items-center justify-center">
 			<span class="absolute -inset-3 rounded-full bg-[radial-gradient(circle,var(--glow-teal-strong)_0%,var(--glow-teal-soft)_55%,transparent_70%)] animate-glow-pulse pointer-events-none"/>
 			<img class="relative w-[9.6rem] h-[9.6rem] object-contain animate-breathe" :src="logo" alt="Nori"/>
@@ -83,12 +86,12 @@ const SUMMARY = computed<{icon: IconName; label: string; value: string}[]>(() =>
 		</div>
 
 		<div class="w-full max-w-[44rem] px-4 py-3 surface-card text-left">
-			<AppSwitchRow :title="I18N.telemetry.title" :desc="TELEMETRY_DESC">
-				<n-switch
-					:value="telemetryEnabled"
-					@update:value="(value: boolean) => onTelemetryChange(value)"
-				/>
-			</AppSwitchRow>
+			<AppSwitchRow
+				:title="I18N.telemetry.title"
+				:desc="TELEMETRY_DESC"
+				:model-value="telemetryEnabled"
+				@update:model-value="onTelemetryChange"
+			/>
 		</div>
 
 		<span class="chip">

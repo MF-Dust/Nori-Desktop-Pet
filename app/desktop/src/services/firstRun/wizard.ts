@@ -8,10 +8,14 @@
  */
 
 /** 向导步骤标识 */
-export type WizardStepKey = "welcome" | "language" | "model" | "ready"
+export type WizardStepKey = "welcome" | "language" | "model" | "ai" | "ready"
 
-/** 向导步骤顺序 (与 FirstRunView 的渲染分支一致) */
-export const WIZARD_STEPS: WizardStepKey[] = ["welcome", "language", "model", "ready"]
+/**
+ * 向导步骤顺序 (与 FirstRunView 的渲染分支一致)
+ *
+ * `ai` 是可跳过的一步: 不填也能继续, 只有填了内容才在离开时落盘。
+ */
+export const WIZARD_STEPS: WizardStepKey[] = ["welcome", "language", "model", "ai", "ready"]
 
 /** 提交阶段状态 */
 export type WizardFinishState = "idle" | "submitting" | "failed"

@@ -70,7 +70,7 @@ const select = async (code: string) => {
 </script>
 
 <template>
-	<div class="w-full min-h-full flex flex-col items-center justify-center gap-6 px-14 py-4">
+	<section key="language-select" data-first-run-step="language" class="w-full min-h-full flex flex-col items-center justify-center gap-6 px-14 py-4">
 		<div class="flex flex-col items-center gap-1.5 text-center">
 			<span class="chip-teal">
 				<Icon name="noriOS" :size="12"/>
@@ -86,15 +86,15 @@ const select = async (code: string) => {
 				:key="code"
 				type="button"
 				class="group relative flex items-center gap-3 px-4 py-3.5 rounded-md text-left cursor-pointer overflow-hidden
-					border-2 border-line-subtle bg-white/3 text-text-primary transition-all duration-250 focus-ring
+					border-2 border-line-subtle bg-overlay-4 text-text-primary transition-all duration-250 focus-ring
 					hover:(bg-nori-teal-bright/8 border-nori-teal-soft -translate-y-[0.2rem] shadow-[0_0.6rem_2rem_rgba(0,0,0,0.3)])"
 				:class="current === code ? 'border-nori-teal bg-nori-teal-bright/12 shadow-[0_0.6rem_2rem_rgba(0,0,0,0.4),0_0_1.6rem_var(--glow-teal)]' : ''"
 				:aria-pressed="current === code"
 				@click="select(code)"
 			>
-				<span class="w-[3.8rem] h-[2.6rem] shrink-0 rounded-xs overflow-hidden border border-white/10 shadow-[0_0.2rem_0.8rem_rgba(0,0,0,0.4)]">
+				<span class="w-[3.8rem] h-[2.6rem] shrink-0 rounded-xs overflow-hidden border border-overlay-12 shadow-[0_0.2rem_0.8rem_rgba(0,0,0,0.4)]">
 					<img v-if="flagOf(code)" class="w-full h-full object-cover block" :src="flagOf(code)" :alt="nameInfoOf(code).name"/>
-					<span v-else class="block w-full h-full bg-white/10"/>
+					<span v-else class="block w-full h-full bg-overlay-12"/>
 				</span>
 
 				<span class="flex-1 min-w-0 flex flex-col gap-0.5">
@@ -115,5 +115,5 @@ const select = async (code: string) => {
 
 			<p v-if="languages.length === 0" class="col-span-full text-center text-sub py-5">{{ I18N.langEmpty }}</p>
 		</div>
-	</div>
+	</section>
 </template>

@@ -1,7 +1,26 @@
 import {describe, expect, it} from "vitest"
 import {createWizard, WIZARD_STEPS} from "../../src/services/firstRun/wizard"
 
+/** 一路推到末步 (步骤数会随向导增减, 测试不写死次数) */
+const toLastStep = (wizard: ReturnType<typeof createWizard>): void => {
+	while (wizard.next()) { /* 直到末步 */ }
+}
+
 describe("首次运行向导状态机", () => {
+	it("AI 配置步位于形象与就绪之间, 且不阻断前进", () => {
+		expect(WIZARD_STEPS).toEqual(["welcome", "language", "model", "ai", "ready"])
+
+		const wizard = createWizard(async () => {})
+		wizard.next()
+		wizard.next()
+		wizard.next()
+		expect(wizard.snapshot().step).toBe("ai")
+		// 可跳过: 什么都不填也能继续
+		expect(wizard.snapshot().canNext).toBe(true)
+		expect(wizard.next()).toBe(true)
+		expect(wizard.snapshot().step).toBe("ready")
+	})
+
 	it("按步骤顺序前进与后退, 边界不越界", () => {
 		const wizard = createWizard(async () => {})
 
@@ -12,7 +31,7 @@ describe("首次运行向导状态机", () => {
 		expect(wizard.next()).toBe(true)
 		expect(wizard.snapshot().step).toBe("model")
 
-		expect(wizard.next()).toBe(true)
+		toLastStep(wizard)
 		expect(wizard.snapshot().isLast).toBe(true)
 		// 末步不再有下一步 (原实现在这里静默 no-op, 观感像卡死)
 		expect(wizard.next()).toBe(false)
@@ -43,9 +62,7 @@ describe("首次运行向导状态机", () => {
 			attempt += 1
 			if (attempt === 1) throw new Error("宿主不可用")
 		})
-		wizard.next()
-		wizard.next()
-		wizard.next()
+		toLastStep(wizard)
 
 		expect(await wizard.finish()).toBe(false)
 		expect(wizard.snapshot().finishState).toBe("failed")
@@ -62,9 +79,7 @@ describe("首次运行向导状态机", () => {
 		const wizard = createWizard(() => new Promise<void>(resolve => {
 			release = resolve
 		}))
-		wizard.next()
-		wizard.next()
-		wizard.next()
+		toLastStep(wizard)
 
 		const pending = wizard.finish()
 		expect(wizard.snapshot().finishState).toBe("submitting")

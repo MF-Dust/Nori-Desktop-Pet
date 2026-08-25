@@ -8,8 +8,12 @@ import AppButton from "../components/ui/AppButton.vue"
 import Welcome from "../components/firstRun/Welcome.vue"
 import LanguageSelect from "../components/firstRun/LanguageSelect.vue"
 import ModelSelect from "../components/firstRun/ModelSelect.vue"
+import AiSetup from "../components/firstRun/AiSetup.vue"
 import Ready from "../components/firstRun/Ready.vue"
 import {createWizard, WIZARD_STEPS} from "../services/firstRun/wizard"
+import {buildAiChatPatch, emptyAiDraft} from "../services/firstRun/aiDraft"
+import type {AiDraft} from "../services/firstRun/aiDraft"
+import {feedback} from "../services/feedback"
 import {APP_VERSION} from "../services/version"
 
 const I18N = computed(() => useLanguages().views.firstRun)
@@ -18,12 +22,18 @@ const I18N = computed(() => useLanguages().views.firstRun)
 const appVersion = ref(APP_VERSION)
 const selectedModel = ref("")
 const telemetryEnabled = ref(true)
+// AI 步草稿: 这一步可跳过, 所以只在离开它时落盘一次
+const aiDraft = ref<AiDraft>(emptyAiDraft())
+const savingAi = ref(false)
+// 就绪页要据此换掉「可在主界面扩展」那句摘要
+const aiSaved = ref(false)
 
 // 步骤名称 (i18n)
 const STEP_LABELS = computed(() => [
 	I18N.value.steps.welcome,
 	I18N.value.steps.language,
 	I18N.value.steps.model,
+	I18N.value.steps.ai,
 	I18N.value.steps.ready,
 ])
 const STEPS_COUNT = WIZARD_STEPS.length
@@ -62,11 +72,32 @@ const STEP_GLOW = [
 	"bg-[radial-gradient(64rem_40rem_at_85%_30%,var(--glow-teal-soft),transparent_65%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
 	"bg-[radial-gradient(62rem_42rem_at_50%_115%,var(--glow-teal-soft),transparent_60%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
 	"bg-[radial-gradient(52rem_38rem_at_50%_48%,var(--glow-teal-soft),transparent_70%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
+	"bg-[radial-gradient(58rem_40rem_at_15%_35%,var(--glow-teal-soft),transparent_66%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
 	"bg-[radial-gradient(56rem_40rem_at_50%_50%,var(--glow-teal),transparent_68%),linear-gradient(160deg,var(--bg-panel)_0%,var(--bg-deep)_55%,var(--bg-abyss)_100%)]",
 ]
 
 // 下一步 / 上一步
-const next = () => {
+const next = async () => {
+	// 离开 AI 步: 填了内容就先落盘再前进, 失败停在原地并把错误摆到底部
+	if (state.value.step === "ai") {
+		const PATCH = buildAiChatPatch(aiDraft.value)
+		// 每次离开都重算: 用户可能回头把填过的内容清空
+		aiSaved.value = false
+		if (PATCH) {
+			savingAi.value = true
+			try {
+				await RUNTIME.updateAiProviders({chat: PATCH})
+				aiSaved.value = true
+			} catch (error) {
+				feedback.error(I18N.value.error.saveAi, error)
+				WIZARD.blockStep(I18N.value.error.saveAi)
+				sync()
+				return
+			} finally {
+				savingAi.value = false
+			}
+		}
+	}
 	WIZARD.next()
 	sync()
 }
@@ -87,6 +118,24 @@ const onModelSelected = (modelId: string) => {
 	selectedModel.value = modelId
 }
 
+// AI 步: 草稿变化即解除上一次保存失败造成的阻断, 免得用户被卡住
+const onAiDraft = (draft: AiDraft) => {
+	aiDraft.value = draft
+	if (state.value.stepError) {
+		WIZARD.clearStep()
+		sync()
+	}
+}
+
+// AI 步: 显式跳过 (草稿已被子组件清空, 这里直接前进)
+const onAiSkip = () => {
+	aiDraft.value = emptyAiDraft()
+	aiSaved.value = false
+	WIZARD.clearStep()
+	WIZARD.next()
+	sync()
+}
+
 const onTelemetryChanged = (enabled: boolean) => {
 	telemetryEnabled.value = enabled
 }
@@ -105,8 +154,7 @@ const finish = async () => {
 
 <template>
 	<div
-		class="w-full h-full flex flex-col overflow-hidden select-none rounded-lg text-text-body
-			shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.65),inset_0_0_0_0.1rem_var(--line-subtle)] transition-[background] duration-600"
+		class="w-full h-full window-chrome transition-[background] duration-600"
 		:class="STEP_GLOW[currentStep]"
 	>
 		<TitleBar>
@@ -124,7 +172,7 @@ const finish = async () => {
 							class="rounded-full transition-all duration-300"
 							:class="idx === currentStep
 								? 'w-[0.75rem] h-[0.75rem] bg-nori-teal-bright shadow-[0_0_1rem_var(--glow-teal)]'
-								: (idx < currentStep ? 'w-1.5 h-1.5 bg-nori-teal' : 'w-1.5 h-1.5 bg-white/20')"
+								: (idx < currentStep ? 'w-1.5 h-1.5 bg-nori-teal' : 'w-1.5 h-1.5 bg-overlay-20')"
 						/>
 						<span>{{ label }}</span>
 					</div>
@@ -132,7 +180,7 @@ const finish = async () => {
 			</div>
 
 			<div class="flex items-center gap-3">
-				<div class="flex items-center gap-2 px-2.5 py-1 rounded-sm bg-white/4 border border-line-subtle backdrop-blur-[0.8rem]">
+				<div class="flex items-center gap-2 px-2.5 py-1 rounded-sm bg-overlay-4 border border-line-subtle backdrop-blur-[0.8rem]">
 					<div class="flex gap-1.2">
 						<span
 							v-for="i in STEPS_COUNT"
@@ -140,12 +188,12 @@ const finish = async () => {
 							class="w-[2rem] h-[0.4rem] rounded-pill transition-all duration-300"
 							:class="i <= currentStep + 1
 								? 'bg-gradient-to-r from-nori-teal-bright to-nori-teal shadow-[0_0_0.8rem_var(--glow-teal-soft)]'
-								: 'bg-white/12'"
+								: 'bg-overlay-12'"
 						/>
 					</div>
 					<span class="text-xs text-text-faint mono font-500">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
 				</div>
-				<button type="button" class="close-btn focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
+				<button type="button" class="btn-close focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
 					<Icon name="close" class="close-icon"/>
 				</button>
 			</div>
@@ -161,7 +209,12 @@ const finish = async () => {
 					@error="onModelError"
 					@selected="onModelSelected"
 				/>
-				<Ready v-else @telemetry-changed="onTelemetryChanged"/>
+				<AiSetup
+					v-else-if="currentStep === 3"
+					@draft="onAiDraft"
+					@skip="onAiSkip"
+				/>
+				<Ready v-else :ai-configured="aiSaved" @telemetry-changed="onTelemetryChanged"/>
 			</Transition>
 		</div>
 
@@ -179,7 +232,7 @@ const finish = async () => {
 				<span>{{ stepError || finishError }}</span>
 			</p>
 
-			<AppButton v-if="!isLast" variant="primary" :disabled="!state.canNext" @click="next">
+			<AppButton v-if="!isLast" variant="primary" :loading="savingAi" :disabled="!state.canNext || savingAi" @click="next">
 				<span class="inline-flex items-center gap-2">
 					<span>{{ I18N.next }}</span>
 					<Icon name="arrow-right" :size="15"/>
