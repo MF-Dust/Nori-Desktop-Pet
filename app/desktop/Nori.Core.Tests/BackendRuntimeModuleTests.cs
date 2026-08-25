@@ -160,6 +160,46 @@ public class BackendRuntimeModuleTests : IDisposable
 	}
 
 	[Fact]
+	public void 先恢复禁用清单再注册工具仍立即禁用且重复注册继续生效()
+	{
+		ToolRegistry registry = new();
+		registry.RestoreDisabled(["future-tool"]);
+
+		registry.Register(MakeTool("future-tool", "safe", () => Task.FromResult<object?>(null)));
+		Assert.False(registry.Get("future-tool")!.Enabled);
+		Assert.DoesNotContain(registry.ListEnabled(), tool => tool.Name == "future-tool");
+
+		registry.Register(MakeTool("future-tool", "safe", () => Task.FromResult<object?>(null)));
+		Assert.False(registry.Get("future-tool")!.Enabled);
+	}
+
+	[Fact]
+	public void 启用未注册工具会清除待恢复禁用状态()
+	{
+		ToolRegistry registry = new();
+		registry.RestoreDisabled(["future-tool"]);
+
+		Assert.False(registry.SetEnabled("future-tool", true));
+		Assert.DoesNotContain("future-tool", registry.DisabledNames());
+
+		registry.Register(MakeTool("future-tool", "safe", () => Task.FromResult<object?>(null)));
+		Assert.Contains(registry.ListEnabled(), tool => tool.Name == "future-tool");
+	}
+
+	[Fact]
+	public void 恢复未知工具名不会影响已注册工具()
+	{
+		ToolRegistry registry = new();
+		registry.Register(MakeTool("known-tool", "safe", () => Task.FromResult<object?>(null)));
+
+		registry.RestoreDisabled(["unknown-tool", "known-tool"]);
+
+		Assert.DoesNotContain(registry.ListEnabled(), tool => tool.Name == "known-tool");
+		Assert.Contains("unknown-tool", registry.DisabledNames());
+		Assert.Contains("known-tool", registry.DisabledNames());
+	}
+
+	[Fact]
 	public void 内置工具全部注册且别名生效()
 	{
 		ToolRegistry registry = new();

@@ -89,18 +89,23 @@ public sealed class ToolRegistry
 	}
 
 	/// <summary>获取所有当前启用的工具列表</summary>
-	public IReadOnlyList<RegisteredTool> ListEnabled() =>
-		List().Where(tool => tool.Enabled && !_disabled.Contains(tool.Name)).ToList();
+	public IReadOnlyList<RegisteredTool> ListEnabled()
+	{
+		lock (_gate)
+		{
+			return _tools.Values.Where(tool => tool.Enabled && !_disabled.Contains(tool.Name)).ToList();
+		}
+	}
 
 	/// <summary>设置工具启用状态</summary>
 	public bool SetEnabled(string name, bool enabled)
 	{
 		lock (_gate)
 		{
-			if (!_tools.ContainsKey(name)) return false;
 			if (enabled) _disabled.Remove(name);
-			else _disabled.Add(name);
-			_tools[name].Enabled = enabled;
+			if (!_tools.TryGetValue(name, out RegisteredTool? tool)) return false;
+			if (!enabled) _disabled.Add(name);
+			tool.Enabled = enabled;
 			return true;
 		}
 	}
@@ -114,9 +119,14 @@ public sealed class ToolRegistry
 	/// <summary>恢复禁用清单 (启动时从配置回放)</summary>
 	public void RestoreDisabled(IEnumerable<string> names)
 	{
-		foreach (string name in names)
+		ArgumentNullException.ThrowIfNull(names);
+		lock (_gate)
 		{
-			SetEnabled(name, false);
+			foreach (string name in names)
+			{
+				_disabled.Add(name);
+				if (_tools.TryGetValue(name, out RegisteredTool? tool)) tool.Enabled = false;
+			}
 		}
 	}
 
