@@ -5,6 +5,8 @@
  * 正文 ≥ 4.5:1, 大字/加粗 ≥ 3:1。这里只做纯计算, 不依赖 DOM。
  */
 
+import {COLORS} from "../../assets/style/tokens"
+
 /** RGB 颜色 (0-255) */
 export interface Rgb {
 	r: number
@@ -74,7 +76,7 @@ export const relativeLuminance = (color: Rgb): number =>
  *
  * 前景/背景中的透明色会先合成到 base 上 (缺省用最深的窗口底色)。
  */
-export const contrastRatio = (foreground: string, background: string, base = "#050e1a"): number => {
+export const contrastRatio = (foreground: string, background: string, base = COLORS["bg-abyss"]): number => {
 	const BASE = parseColor(base)
 	const BG = composite(parseColor(background), BASE)
 	const FG = composite(parseColor(foreground), BG)

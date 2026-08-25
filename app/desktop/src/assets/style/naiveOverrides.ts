@@ -1,11 +1,16 @@
 import type {GlobalThemeOverrides} from "naive-ui"
-import {COLORS, FONT_SIZES, RADIUS} from "./tokens"
+import {COLORS, FONT_SIZES, RADIUS, SHADOWS} from "./tokens"
 
 /**
  * Naive UI 深海微光暗黑主题覆盖表 (纯令牌派生)
  *
- * 纪律: naive 组件的外观只在这里调, 组件里不要用原子类去覆盖 naive 的内部 DOM
- * (naive 的样式是运行时注入的 CSS-in-JS, 注入顺序不受我们控制)。
+ * 纪律:
+ * - naive 组件的外观只在这里调, 组件里不要用原子类去覆盖 naive 的内部 DOM
+ *   (naive 的样式是运行时注入的 CSS-in-JS, 注入顺序不受我们控制)。
+ * - 本表里不允许出现颜色字面量, 一律引 tokens.ts; 圆角一律引 RADIUS 刻度。
+ *   由 tests/theme/tokens-sync.test.ts 看守。
+ * - 只覆盖真正在用的组件: Select / Slider / Switch / Input 与 Dialog / Message
+ *   两个服务式组件。其余 naive 组件项目里一处都没用, 覆盖它们是死配置。
  * 本文件不引入 naive 运行时, 因此可在 node 环境直接单测。
  */
 
@@ -16,11 +21,11 @@ export const naiveThemeOverrides: GlobalThemeOverrides = {
 	common: {
 		primaryColor: C["nori-teal"],
 		primaryColorHover: C["nori-teal-bright"],
-		primaryColorPressed: "#2dd4bf",
-		primaryColorSuppl: "rgba(94, 234, 212, 0.15)",
+		primaryColorPressed: C["nori-teal-pressed"],
+		primaryColorSuppl: C["glow-teal-soft"],
 		infoColor: C["nori-teal-bright"],
-		infoColorHover: "#a5f3fc",
-		infoColorPressed: "#38bdf8",
+		infoColorHover: C["info-hover"],
+		infoColorPressed: C["info-pressed"],
 		successColor: C.success,
 		warningColor: C.warning,
 		errorColor: C["danger-text"],
@@ -28,17 +33,16 @@ export const naiveThemeOverrides: GlobalThemeOverrides = {
 		textColor1: C["text-primary"],
 		textColor2: C["text-body"],
 		textColor3: C["text-muted"],
-		// 禁用态只需 ≥3:1, 但旧值 #4a677d 只有 2.3:1
-		textColorDisabled: "#6a8496",
-		placeholderColor: "rgba(157, 178, 192, 0.75)",
+		textColorDisabled: C["text-disabled"],
+		placeholderColor: C["text-placeholder"],
 		bodyColor: C["bg-abyss"],
 		cardColor: C["bg-glass"],
 		modalColor: C["bg-glass-modal"],
-		popoverColor: "rgba(10, 28, 44, 0.96)",
+		popoverColor: C["bg-popover"],
 		borderColor: C["line-subtle"],
 		dividerColor: C["line-subtle"],
 		borderRadius: RADIUS.sm,
-		borderRadiusSmall: "0.6rem",
+		borderRadiusSmall: RADIUS.xs,
 		fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
 		fontSize: FONT_SIZES.base[0],
 		fontSizeSmall: FONT_SIZES.sm[0],
@@ -49,121 +53,64 @@ export const naiveThemeOverrides: GlobalThemeOverrides = {
 		dotColor: C["nori-teal"],
 		dotBorder: `0.2rem solid ${C["bg-abyss"]}`,
 		handleSize: "1.4rem",
-		railColor: "rgba(255, 255, 255, 0.12)",
-		railColorHover: "rgba(255, 255, 255, 0.2)",
+		railColor: C["overlay-12"],
+		railColorHover: C["overlay-20"],
 		railHeight: "0.5rem",
 	},
 	Switch: {
 		railColorActive: C["nori-teal"],
 		buttonColor: C["bg-abyss"],
-		boxShadowFocus: "0 0 1.2rem rgba(94, 234, 212, 0.4)",
+		boxShadowFocus: `0 0 1.2rem ${C["glow-teal-strong"]}`,
 	},
 	Select: {
 		peers: {
 			InternalSelection: {
-				color: "rgba(255, 255, 255, 0.04)",
-				colorActive: "rgba(125, 227, 255, 0.08)",
+				color: C["overlay-4"],
+				colorActive: C["glow-teal-soft"],
 				border: `0.1rem solid ${C["line-subtle"]}`,
-				borderHover: "0.1rem solid rgba(125, 227, 255, 0.4)",
+				borderHover: `0.1rem solid ${C["glow-teal"]}`,
 				borderFocus: `0.1rem solid ${C["nori-teal"]}`,
-				boxShadowFocus: "0 0 1rem rgba(94, 234, 212, 0.25)",
+				boxShadowFocus: `0 0 1rem ${C["glow-teal-soft"]}`,
 				borderRadius: RADIUS.sm,
 				textColor: C["text-primary"],
-				placeholderColor: "rgba(157, 178, 192, 0.75)",
+				placeholderColor: C["text-placeholder"],
 			},
 			InternalSelectMenu: {
-				color: "rgba(8, 24, 40, 0.96)",
+				color: C["bg-menu"],
 				optionTextColor: C["text-body"],
 				optionTextColorActive: C["nori-teal-bright"],
-				optionColorPending: "rgba(125, 227, 255, 0.12)",
-				optionColorActive: "rgba(125, 227, 255, 0.2)",
+				optionColorPending: C["line-subtle"],
+				optionColorActive: C["line-strong"],
 				borderRadius: RADIUS.sm,
 			},
 		},
 	},
 	Input: {
-		color: "rgba(255, 255, 255, 0.04)",
-		colorFocus: "rgba(125, 227, 255, 0.06)",
-		colorDisabled: "rgba(255, 255, 255, 0.02)",
+		color: C["overlay-4"],
+		colorFocus: C["glow-teal-soft"],
+		colorDisabled: C["overlay-2"],
 		border: `0.1rem solid ${C["line-subtle"]}`,
-		borderHover: "0.1rem solid rgba(125, 227, 255, 0.4)",
+		borderHover: `0.1rem solid ${C["glow-teal"]}`,
 		borderFocus: `0.1rem solid ${C["nori-teal"]}`,
-		borderDisabled: "0.1rem solid rgba(125, 227, 255, 0.06)",
-		boxShadowFocus: "0 0 1.2rem rgba(94, 234, 212, 0.25)",
+		borderDisabled: `0.1rem solid ${C["line-subtle"]}`,
+		boxShadowFocus: `0 0 1.2rem ${C["glow-teal-soft"]}`,
 		borderRadius: RADIUS.sm,
 		textColor: C["text-primary"],
-		textColorDisabled: "#6a8496",
-		placeholderColor: "rgba(157, 178, 192, 0.75)",
-	},
-	Button: {
-		borderRadiusMedium: RADIUS.sm,
-		borderRadiusSmall: "0.6rem",
-		borderRadiusLarge: RADIUS.md,
-		// Primary 变体 (亮青绿按钮 + 深色高对比文字)
-		textColorPrimary: "#03101c",
-		textColorHoverPrimary: "#03101c",
-		textColorPressedPrimary: "#03101c",
-		textColorFocusPrimary: "#03101c",
-		textColorDisabledPrimary: "rgba(3, 16, 28, 0.6)",
-		colorPrimary: C["nori-teal"],
-		colorHoverPrimary: C["nori-teal-bright"],
-		colorPressedPrimary: "#2dd4bf",
-		colorFocusPrimary: C["nori-teal"],
-		colorDisabledPrimary: "rgba(94, 234, 212, 0.35)",
-		// Default 变体 (深色玻璃背景 + 浅色高对比文字)
-		textColor: C["text-body"],
-		textColorHover: C["text-primary"],
-		textColorPressed: C["nori-teal-bright"],
-		textColorFocus: C["text-primary"],
-		textColorDisabled: "#6a8496",
-		color: "rgba(255, 255, 255, 0.04)",
-		colorHover: "rgba(255, 255, 255, 0.08)",
-		colorPressed: "rgba(255, 255, 255, 0.12)",
-		colorFocus: "rgba(255, 255, 255, 0.06)",
-		colorDisabled: "rgba(255, 255, 255, 0.02)",
-		border: `0.1rem solid ${C["line-subtle"]}`,
-		borderHover: `0.1rem solid ${C["nori-teal-soft"]}`,
-		borderPressed: `0.1rem solid ${C["nori-teal-bright"]}`,
-		borderFocus: `0.1rem solid ${C["nori-teal"]}`,
-		borderDisabled: "0.1rem solid rgba(125, 227, 255, 0.06)",
-	},
-	Modal: {
-		boxShadow: "0 1.6rem 4rem rgba(0, 0, 0, 0.7), 0 0 2.4rem rgba(94, 234, 212, 0.12)",
-		borderRadius: RADIUS.md,
-	},
-	Card: {
-		borderRadius: "1rem",
-		borderColor: C["line-subtle"],
-	},
-	Popconfirm: {
-		borderRadius: RADIUS.sm,
+		textColorDisabled: C["text-disabled"],
+		placeholderColor: C["text-placeholder"],
 	},
 	Dialog: {
-		borderRadius: "1rem",
-		color: "rgba(8, 24, 40, 0.96)",
+		borderRadius: RADIUS.md,
+		color: C["bg-menu"],
 		titleTextColor: C["text-primary"],
 		contentTextColor: C["text-body"],
-		boxShadow: "0 1.6rem 4rem rgba(0, 0, 0, 0.75), 0 0 2.4rem rgba(94, 234, 212, 0.15)",
-	},
-	Tabs: {
-		tabTextColorLine: C["text-muted"],
-		tabTextColorActiveLine: C["nori-teal"],
-		tabTextColorHoverLine: C["nori-teal-bright"],
-		barColor: C["nori-teal"],
-	},
-	Tag: {
-		borderRadius: RADIUS.pill,
-	},
-	Tooltip: {
-		borderRadius: "0.6rem",
-		color: "rgba(6, 20, 32, 0.95)",
-		textColor: C["text-primary"],
-		boxShadow: "0 0.4rem 1.6rem rgba(0, 0, 0, 0.5), 0 0 1rem rgba(94, 234, 212, 0.15)",
+		boxShadow: SHADOWS["elev-3"],
 	},
 	Message: {
 		borderRadius: RADIUS.sm,
-		boxShadowInfo: "0 0.8rem 2.4rem rgba(0, 0, 0, 0.6), 0 0 1.4rem rgba(125, 227, 255, 0.25)",
-		boxShadowSuccess: "0 0.8rem 2.4rem rgba(0, 0, 0, 0.6), 0 0 1.4rem rgba(94, 234, 212, 0.25)",
-		boxShadowError: "0 0.8rem 2.4rem rgba(0, 0, 0, 0.6), 0 0 1.4rem rgba(255, 107, 114, 0.25)",
+		// 消息类型已由图标与文字颜色表达, 阴影不再按类型染色 (统一层级刻度)
+		boxShadowInfo: SHADOWS["elev-2"],
+		boxShadowSuccess: SHADOWS["elev-2"],
+		boxShadowError: SHADOWS["elev-2"],
 	},
 }

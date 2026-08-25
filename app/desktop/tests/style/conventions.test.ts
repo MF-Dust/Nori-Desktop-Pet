@@ -13,6 +13,9 @@ const SRC = join(ROOT, "src")
  */
 const LEGACY_FILES: string[] = []
 
+/** 裸 hex 的唯一豁免: 设计令牌单一色源 */
+const COLOR_SOURCE = "assets/style/tokens.ts"
+
 const listFiles = (dir: string, extension: string): string[] => {
 	const OUT: string[] = []
 	for (const entry of readdirSync(dir)) {
@@ -27,6 +30,10 @@ const relativeSrc = (file: string): string => relative(SRC, file).replace(/\\/g,
 
 const migratedVueFiles = (): string[] =>
 	listFiles(SRC, ".vue").filter(file => !LEGACY_FILES.includes(relativeSrc(file)))
+
+/** 参与裸 hex 检查的 .ts 文件: src 下全覆盖, 只放过单一色源 */
+const scannedTsFiles = (): string[] =>
+	listFiles(SRC, ".ts").filter(file => relativeSrc(file) !== COLOR_SOURCE)
 
 describe("样式规范静态检查", () => {
 	it("迁移完成的组件不再带 scoped 样式块", () => {
@@ -43,12 +50,30 @@ describe("样式规范静态检查", () => {
 		expect(OFFENDERS).toEqual([])
 	})
 
-	it("迁移完成的组件不写裸 hex 色值 (统一走令牌)", () => {
+	it("组件与 src 下的 ts 都不写裸 hex 色值 (统一走令牌)", () => {
 		const OFFENDERS: string[] = []
-		for (const file of migratedVueFiles()) {
-			// 后面不能再跟十六进制字符 (Uno 任意值里的 #xxx_0% 也要能抳到)
+		for (const file of [...migratedVueFiles(), ...scannedTsFiles()]) {
+			// 后面不能再跟十六进制字符 (Uno 任意值里的 #xxx_0% 也要能抓到)
 			const MATCH = readFileSync(file, "utf8").match(/#[0-9a-fA-F]{3,8}(?![0-9a-fA-F])/g)
-			if (MATCH) OFFENDERS.push(`${relativeSrc(file)}: ${MATCH.join(", ")}`)
+			if (MATCH) OFFENDERS.push(`${relativeSrc(file)}: ${MATCH.join(", ")} —— 请改用 tokens.ts 的令牌`)
+		}
+		expect(OFFENDERS).toEqual([])
+	})
+
+	it("裸 hex 的唯一豁免就是单一色源 tokens.ts", () => {
+		const ALL = new Set(listFiles(SRC, ".ts").map(relativeSrc))
+		expect(ALL.has(COLOR_SOURCE), `${COLOR_SOURCE} 不存在, 裸 hex 的豁免路径已失效`).toBe(true)
+		expect(readFileSync(join(SRC, COLOR_SOURCE), "utf8")).toMatch(/#[0-9a-fA-F]{6}/)
+	})
+
+	it("白色叠加统一走 overlay 令牌 (不写 bg-white/N)", () => {
+		// tokens.ts 的 overlay-2/4/6/8/12/20 就是这套白色蒙版刻度。写 bg-white/3 等于
+		// 在刻度外另开一档, 同一种"浮起一层"的底纹于是按文件各差一个百分点。
+		// 不带透明度的 bg-white 不在管辖范围: 区域编辑器的手柄要压在任意像素上, 那是实心白。
+		const OFFENDERS: string[] = []
+		for (const file of [...migratedVueFiles(), ...listFiles(SRC, ".ts")]) {
+			const MATCH = readFileSync(file, "utf8").match(/\b(?:bg|border|text|from|to|via|shadow|outline)-white\/\d+/g)
+			if (MATCH) OFFENDERS.push(`${relativeSrc(file)}: ${MATCH.join(", ")} —— 请改用 overlay-2/4/6/8/12/20`)
 		}
 		expect(OFFENDERS).toEqual([])
 	})
@@ -62,6 +87,19 @@ describe("样式规范静态检查", () => {
 				if (SIZE < 1.15) OFFENDERS.push(`${relativeSrc(file)}: ${SIZE}rem`)
 			}
 		}
+		expect(OFFENDERS).toEqual([])
+	})
+
+	it("设置二级页共用同一套外壳 (内边距与滚动容器)", () => {
+		// 侧栏切页时外壳必须逐像素对齐, 不然每次切换都能看到标题与内容轻微跳动。
+		// 判定口径: 带 AppSectionHeader 的才是二级页, 其余是被嵌进去的控件块。
+		const SHELL = "w-full h-full flex flex-col gap-4 px-6 py-4 scroll-area"
+		const PAGES = listFiles(join(SRC, "components/settings"), ".vue")
+			.filter(file => readFileSync(file, "utf8").includes("<AppSectionHeader"))
+		expect(PAGES.length, "一个二级页都没扫到, 判定口径已失效").toBeGreaterThanOrEqual(8)
+		const OFFENDERS = PAGES
+			.filter(file => !readFileSync(file, "utf8").includes(SHELL))
+			.map(file => `${relativeSrc(file)}: 外壳需为 class="${SHELL}"`)
 		expect(OFFENDERS).toEqual([])
 	})
 

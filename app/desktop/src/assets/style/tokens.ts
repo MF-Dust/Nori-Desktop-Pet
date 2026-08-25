@@ -49,6 +49,30 @@ export const COLORS = {
 	"glow-teal": "rgba(125, 227, 255, 0.45)",
 	"glow-teal-soft": "rgba(125, 227, 255, 0.18)",
 	"glow-teal-strong": "rgba(94, 234, 212, 0.65)",
+
+	// 前景语义: 亮青绿填充上的深色文字 (对比度由 contrast.test.ts 看守)
+	"on-teal": "#03101c",
+	// 占位符与禁用态: 占位 ≥4.5:1, 禁用 ≥3:1
+	"text-placeholder": "rgba(157, 178, 192, 0.75)",
+	"text-disabled": "#6a8496",
+
+	// 品牌交互态 (按下 / info 悬停按下)
+	"nori-teal-pressed": "#2dd4bf",
+	"info-hover": "#a5f3fc",
+	"info-pressed": "#38bdf8",
+
+	// 中性叠加层: 玻璃面上的浅色覆盖, 数字即不透明度百分比
+	"overlay-2": "rgba(255, 255, 255, 0.02)",
+	"overlay-4": "rgba(255, 255, 255, 0.04)",
+	"overlay-6": "rgba(255, 255, 255, 0.06)",
+	"overlay-8": "rgba(255, 255, 255, 0.08)",
+	"overlay-12": "rgba(255, 255, 255, 0.12)",
+	"overlay-20": "rgba(255, 255, 255, 0.2)",
+
+	// 浮层背景 (下拉菜单 / 气泡 / 提示条)
+	"bg-popover": "rgba(10, 28, 44, 0.96)",
+	"bg-menu": "rgba(8, 24, 40, 0.96)",
+	"bg-tooltip": "rgba(6, 20, 32, 0.95)",
 } as const
 
 /** 圆角令牌 */
@@ -60,11 +84,19 @@ export const RADIUS = {
 	pill: "99.9rem",
 } as const
 
-/** 阴影令牌 */
+/**
+ * 阴影令牌
+ *
+ * elev-1/2/3 是层级刻度: 页面 → 卡片 → 卡片内卡片 → 浮层, 每升一级换一档。
+ * 之前只有 soft/glow/window 三档, 嵌套卡片没有可用的层次差, 观感扁平。
+ */
 export const SHADOWS = {
 	soft: "0 0.8rem 2.4rem rgba(0, 0, 0, 0.35)",
 	glow: "0 0 2rem rgba(125, 227, 255, 0.2)",
 	window: "0 1.2rem 3.6rem rgba(0, 0, 0, 0.65)",
+	"elev-1": "0 0.2rem 0.8rem rgba(0, 0, 0, 0.28)",
+	"elev-2": "0 0.8rem 2.4rem rgba(0, 0, 0, 0.45)",
+	"elev-3": "0 1.6rem 4rem rgba(0, 0, 0, 0.7), 0 0 2.4rem rgba(94, 234, 212, 0.12)",
 } as const
 
 /**
@@ -114,9 +146,7 @@ export const SPACING = {
 export const CSS_VARIABLES: Record<string, string> = {
 	...Object.fromEntries(Object.entries(COLORS).map(([key, value]) => [`--${key}`, value])),
 	...Object.fromEntries(Object.entries(RADIUS).map(([key, value]) => [`--radius-${key}`, value])),
-	"--shadow-soft": SHADOWS.soft,
-	"--shadow-glow": SHADOWS.glow,
-	"--shadow-window": SHADOWS.window,
+	...Object.fromEntries(Object.entries(SHADOWS).map(([key, value]) => [`--shadow-${key}`, value])),
 }
 
 /** 颜色令牌名 */
