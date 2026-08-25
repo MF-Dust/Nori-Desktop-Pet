@@ -44,6 +44,10 @@ public sealed class AppRuntime : IAsyncDisposable
 	/// <summary>工具授权等待超时 (秒); 超时一律 fail-closed 拒绝</summary>
 	public const int ApprovalTimeoutSeconds = 60;
 
+	private const string McpToolCategory = "mcp";
+	private const int McpRefreshLogMaxCharacters = 192;
+	private const int McpRefreshLogServerIdMaxCharacters = 64;
+
 	private readonly ConcurrentDictionary<string, AgentSessionState> _sessions = new();
 	private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new();
 	private readonly ConcurrentDictionary<string, PendingDesktopApproval> _desktopApprovals = new();
@@ -56,6 +60,7 @@ public sealed class AppRuntime : IAsyncDisposable
 	private readonly ReflectionWorker _reflectionWorker;
 	private readonly PetInteractionReactionService _petInteractionService;
 	private readonly SemaphoreSlim _petInteractionGate = new(1, 1);
+	private readonly SemaphoreSlim _mcpRefreshGate = new(1, 1);
 	private readonly Lock _petInteractionThrottleGate = new();
 	private readonly Lock _petSpeechGate = new();
 	private CancellationTokenSource? _petInteractionCts;
@@ -576,54 +581,122 @@ public sealed class AppRuntime : IAsyncDisposable
 	/// </summary>
 	public async Task RefreshMcpToolsAsync(CancellationToken cancellationToken = default)
 	{
+		// 安全模式不能通过聊天启动或其他间接路径刷新外部 MCP。
+		if (Services.SafeMode) return;
+
 		using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, cancellationToken);
 		CancellationToken ct = linkedCts.Token;
-		ct.ThrowIfCancellationRequested();
-
-		// 先完整构建新清单; 获取失败或取消时保留上一版动态工具, 避免先清空再等待造成半更新状态。
-		IReadOnlyList<McpServerStatusInfo> servers = await Services.Mcp.GetServersAsync();
-		ct.ThrowIfCancellationRequested();
-		List<RegisteredTool> replacements = [];
-		foreach (McpServerStatusInfo server in servers.Where(server => server.Status == "connected"))
+		bool entered = false;
+		string failureServerId = "unknown";
+		try
 		{
-			foreach (McpToolDefinition definition in server.Tools)
+			// 串行化刷新, 防止较早的慢刷新在较新的结果之后覆盖工具集合。
+			await _mcpRefreshGate.WaitAsync(ct).ConfigureAwait(false);
+			entered = true;
+			ct.ThrowIfCancellationRequested();
+
+			// 所有连接状态、Schema 和工具闭包都先在局部集合中完成。
+			// 任何失败或取消都不能触碰注册表中的上一版工具。
+			IReadOnlyList<McpServerStatusInfo> servers = await Services.Mcp.GetServersAsync().ConfigureAwait(false);
+			ct.ThrowIfCancellationRequested();
+
+			McpServerStatusInfo? unavailable = servers.FirstOrDefault(server =>
+				string.Equals(server.Status, "error", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(server.Status, "connecting", StringComparison.OrdinalIgnoreCase)
+				|| (!string.Equals(server.Status, "connected", StringComparison.OrdinalIgnoreCase)
+					&& !string.Equals(server.Status, "disconnected", StringComparison.OrdinalIgnoreCase)));
+			if (unavailable is not null)
 			{
-				string serverId = server.ServerId;
-				string toolName = definition.Name;
-				string fullName = $"mcp__{serverId}__{toolName}";
-				JsonObject schema = definition.InputSchema?.DeepClone() as JsonObject ?? new JsonObject
-				{
-					["type"] = "object",
-					["properties"] = new JsonObject(),
-				};
-
-				replacements.Add(new RegisteredTool
-				{
-					Name = fullName,
-					Description = $"[{server.Name}] {definition.Description ?? toolName}",
-					Parameters = schema,
-					PermissionLevel = "confirm",
-					Category = "mcp",
-					Execute = async (arguments, context) =>
-					{
-						JsonObject? objectArguments = arguments as JsonObject;
-						McpToolResult result = await Services.Mcp.CallToolAsync(serverId, toolName, objectArguments, context.CancellationToken);
-						if (result.IsError) throw new InvalidOperationException(result.AsText());
-						return result.AsText();
-					},
-				});
+				LogMcpRefreshFailure(
+					unavailable.ServerId,
+					string.Equals(unavailable.Status, "error", StringComparison.OrdinalIgnoreCase)
+						? "server-error"
+						: "server-not-ready");
+				return;
 			}
-		}
 
-		ct.ThrowIfCancellationRequested();
-		foreach (RegisteredTool tool in Tools.List().Where(tool => tool.Category == "mcp"))
-		{
-			Tools.Unregister(tool.Name);
+			List<RegisteredTool> replacements = [];
+			HashSet<string> replacementNames = new(StringComparer.Ordinal);
+			foreach (McpServerStatusInfo server in servers.Where(server =>
+				string.Equals(server.Status, "connected", StringComparison.OrdinalIgnoreCase)))
+			{
+				failureServerId = server.ServerId;
+				foreach (McpToolDefinition definition in server.Tools)
+				{
+					ct.ThrowIfCancellationRequested();
+					string serverId = server.ServerId;
+					string toolName = definition.Name;
+					if (string.IsNullOrWhiteSpace(serverId) || string.IsNullOrWhiteSpace(toolName))
+						throw new InvalidOperationException("MCP 工具定义无效");
+
+					string fullName = $"mcp__{serverId}__{toolName}";
+					if (!replacementNames.Add(fullName))
+						throw new InvalidOperationException("MCP 工具名称重复");
+
+					JsonObject schema = ToolLimits.CapSchema(definition.InputSchema);
+					replacements.Add(new RegisteredTool
+					{
+						Name = fullName,
+						Description = $"[{server.Name}] {McpConfigValidator.CapDescription(definition.Description ?? toolName)}",
+						Parameters = schema,
+						PermissionLevel = "confirm",
+						Category = McpToolCategory,
+						Execute = async (arguments, context) =>
+						{
+							JsonObject? objectArguments = arguments as JsonObject;
+							McpToolResult result = await Services.Mcp.CallToolAsync(serverId, toolName, objectArguments, context.CancellationToken);
+							if (result.IsError) throw new InvalidOperationException(result.AsText());
+							return result.AsText();
+						},
+					});
+				}
+			}
+
+			ct.ThrowIfCancellationRequested();
+			failureServerId = "unknown";
+			Tools.ReplaceCategory(McpToolCategory, replacements);
 		}
-		foreach (RegisteredTool replacement in replacements)
+		catch (OperationCanceledException) when (ct.IsCancellationRequested)
 		{
-			Tools.Register(replacement);
+			LogMcpRefreshFailure(failureServerId, "cancelled");
+			throw;
 		}
+		catch (Exception exception)
+		{
+			// 只记录服务 ID 和固定类别, 不写入异常正文、Schema、参数或工具结果。
+			LogMcpRefreshFailure(failureServerId, McpRefreshErrorCategory(exception));
+		}
+		finally
+		{
+			if (entered) _mcpRefreshGate.Release();
+		}
+	}
+
+	private void LogMcpRefreshFailure(string? serverId, string category)
+	{
+		string safeServerId = CapMcpLogPart(serverId, McpRefreshLogServerIdMaxCharacters);
+		string safeCategory = CapMcpLogPart(category, 32);
+		string message = $"MCP 工具刷新失败: server_id={safeServerId} category={safeCategory}";
+		if (message.Length > McpRefreshLogMaxCharacters) message = message[..McpRefreshLogMaxCharacters];
+		try { Services.Logger.Write(LogSource.Backend, "warn", message); }
+		catch { }
+	}
+
+	private static string McpRefreshErrorCategory(Exception exception) => exception switch
+	{
+		OperationCanceledException => "cancelled",
+		TimeoutException => "timeout",
+		JsonException => "schema",
+		IOException => "transport",
+		ObjectDisposedException => "lifecycle",
+		InvalidOperationException => "definition",
+		_ => "refresh",
+	};
+
+	private static string CapMcpLogPart(string? value, int maxCharacters)
+	{
+		if (string.IsNullOrEmpty(value) || maxCharacters <= 0) return "unknown";
+		return value.Length <= maxCharacters ? value : value[..maxCharacters];
 	}
 
 	private ToolRegistry BuildToolRegistry(bool audioAvailable)
@@ -1356,6 +1429,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		try { Voice.Dispose(); } catch { }
 		try { if (Services.Automation is not null) await Services.Automation.DisposeAsync().ConfigureAwait(false); } catch { }
 		_petInteractionGate.Dispose();
+		_mcpRefreshGate.Dispose();
 		_lifetimeCts.Dispose();
 	}
 

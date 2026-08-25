@@ -51,22 +51,58 @@ public sealed class ToolRegistry
 	private static readonly JsonSerializerOptions JsonOptions = new() {PropertyNamingPolicy = JsonNamingPolicy.CamelCase};
 
 	private readonly Lock _gate = new();
-	private readonly Dictionary<string, RegisteredTool> _tools = [];
+	private Dictionary<string, RegisteredTool> _tools = [];
 	private readonly HashSet<string> _disabled = [];
 
 	/// <summary>注册一个工具 (重名覆盖)</summary>
 	public void Register(RegisteredTool tool)
 	{
-		ArgumentNullException.ThrowIfNull(tool);
-		if (string.IsNullOrWhiteSpace(tool.Name) || tool.Name.Length > ToolLimits.MaxNameCharacters)
-		{
-			throw new InvalidOperationException($"工具名称不能为空且不能超过 {ToolLimits.MaxNameCharacters} 个字符");
-		}
-		if (tool.Execute is null) throw new InvalidOperationException($"工具 {tool.Name} 缺少执行体");
+		ValidateTool(tool);
 		lock (_gate)
 		{
 			if (_disabled.Contains(tool.Name)) tool.Enabled = false;
 			_tools[tool.Name] = tool;
+		}
+	}
+
+	/// <summary>
+	/// 原子替换指定分类的全部工具。新集合校验或构建失败时保留旧集合。
+	/// </summary>
+	public void ReplaceCategory(string category, IEnumerable<RegisteredTool> tools)
+	{
+		if (string.IsNullOrWhiteSpace(category)) throw new InvalidOperationException("工具分类不能为空");
+		ArgumentNullException.ThrowIfNull(tools);
+
+		List<RegisteredTool> replacements = tools.ToList();
+		HashSet<string> replacementNames = new(StringComparer.Ordinal);
+		foreach (RegisteredTool tool in replacements)
+		{
+			ValidateTool(tool);
+			if (!string.Equals(tool.Category, category, StringComparison.Ordinal))
+			{
+				throw new InvalidOperationException($"工具 {tool.Name} 不属于分类 {category}");
+			}
+			if (!replacementNames.Add(tool.Name))
+			{
+				throw new InvalidOperationException($"工具集合包含重复名称: {tool.Name}");
+			}
+		}
+
+		lock (_gate)
+		{
+			Dictionary<string, RegisteredTool> next = _tools
+				.Where(pair => !string.Equals(pair.Value.Category, category, StringComparison.Ordinal))
+				.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+			foreach (RegisteredTool tool in replacements)
+			{
+				if (next.ContainsKey(tool.Name))
+				{
+					throw new InvalidOperationException($"工具名称与其他分类冲突: {tool.Name}");
+				}
+				if (_disabled.Contains(tool.Name)) tool.Enabled = false;
+				next.Add(tool.Name, tool);
+			}
+			_tools = next;
 		}
 	}
 
@@ -128,6 +164,16 @@ public sealed class ToolRegistry
 				if (_tools.TryGetValue(name, out RegisteredTool? tool)) tool.Enabled = false;
 			}
 		}
+	}
+
+	private static void ValidateTool(RegisteredTool tool)
+	{
+		ArgumentNullException.ThrowIfNull(tool);
+		if (string.IsNullOrWhiteSpace(tool.Name) || tool.Name.Length > ToolLimits.MaxNameCharacters)
+		{
+			throw new InvalidOperationException($"工具名称不能为空且不能超过 {ToolLimits.MaxNameCharacters} 个字符");
+		}
+		if (tool.Execute is null) throw new InvalidOperationException($"工具 {tool.Name} 缺少执行体");
 	}
 
 	private bool IsDisabled(string name)
