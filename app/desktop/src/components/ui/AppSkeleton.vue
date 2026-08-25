@@ -14,7 +14,7 @@ withDefaults(defineProps<{
 		<div
 			v-for="row in rows"
 			:key="row"
-			class="h-8 w-full rounded-sm bg-white/4 animate-pulse"
+			class="h-8 w-full rounded-sm bg-overlay-4 animate-pulse"
 		/>
 	</div>
 </template>

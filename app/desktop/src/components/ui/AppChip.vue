@@ -22,8 +22,8 @@ const TONE_CLASS = computed(() => ({
 	neutral: "chip",
 	teal: "chip-teal",
 	success: "chip-success",
-	warning: "chip bg-warning/10 border-warning/30 text-warning",
-	danger: "chip bg-danger/10 border-danger/30 text-danger-text",
+	warning: "chip-warning",
+	danger: "chip-danger",
 }[props.tone]))
 
 const DOT_CLASS = computed(() => ({

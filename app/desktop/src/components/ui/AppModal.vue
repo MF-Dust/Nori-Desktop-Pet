@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
 		>
 			<section
 				ref="MODAL_ROOT"
-				:class="['flex flex-col overflow-hidden rounded-lg border border-line-strong bg-bg-glass-modal shadow-[0_1.6rem_4.8rem_rgba(0,0,0,0.7)]', panelClass]"
+				:class="['flex flex-col overflow-hidden rounded-lg border border-line-strong bg-bg-glass-modal shadow-elev-3', panelClass]"
 				role="dialog"
 				aria-modal="true"
 				:aria-labelledby="title ? TITLE_ID : undefined"

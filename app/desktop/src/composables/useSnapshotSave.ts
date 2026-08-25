@@ -12,6 +12,7 @@ import {computed, type ComputedRef} from "vue"
 import {useDebouncedSave, type SaveState} from "./useDebouncedSave"
 import {useSnapshotField, type SnapshotField} from "./useSnapshotField"
 import {feedback} from "../services/feedback"
+import useLanguages from "../services/i18n/useLanguages"
 import type {UiSnapshot} from "../services/runtime"
 
 export interface SnapshotSaveOptions {
@@ -41,9 +42,10 @@ export function useSnapshotSave(options: SnapshotSaveOptions = {}) {
 			if (options.onError) {
 				options.onError(key, error)
 			} else {
+				// 兜底文案在出错时才取, 这样切换语言后不会停留在旧语言包
 				const message = typeof options.defaultErrorMessage === "function"
 					? options.defaultErrorMessage(key)
-					: (options.defaultErrorMessage ?? "保存配置失败")
+					: (options.defaultErrorMessage ?? useLanguages().components.ui.state.saveFailed)
 				feedback.error(message, error)
 			}
 		},
