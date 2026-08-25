@@ -6,6 +6,7 @@ using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Resources;
 using Nori.Core.Telemetry;
+using Nori.Desktop.Automation;
 using Nori.Desktop.Live2D;
 using Nori.Desktop.Windows;
 
@@ -70,6 +71,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>Agent 聊天/MCP 操作取消注册表</summary>
 	public required Bridge.AgentOperationRegistry AgentOperations { get; init; }
 
+	/// <summary>自动化宿主运行时；安全模式下仍装配但所有执行入口 fail-closed。</summary>
+	public AutomationRuntime? Automation { get; set; }
+
 	/// <summary>有界的 Agent 性能 Trace；只保存阶段/用量元数据，不保存正文。</summary>
 	public AgentTraceCollector AgentTrace { get; } = new();
 
@@ -103,6 +107,7 @@ public sealed class AppServices : IAsyncDisposable
 		// Shutdown is best-effort: one broken subsystem must not strand the rest.
 		await DisposeStep(() => Bridge?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Runtime?.DisposeAsync() ?? ValueTask.CompletedTask);
+		await DisposeStep(() => Automation?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Mcp.DisposeAsync());
 		await DisposeStep(() => Assets?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() =>

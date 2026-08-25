@@ -19,6 +19,9 @@ public sealed class AutomationTaskManager : IAsyncDisposable
 	private WorkItem? _active;
 	private bool _disposed;
 
+	/// <summary>任务状态变化通知；订阅者不得依赖任务输入正文。</summary>
+	public event Action<AutomationTaskSnapshot>? TaskChanged;
+
 	/// <summary>创建任务管理器。</summary>
 	public AutomationTaskManager(int maxQueueLength = 32)
 	{
@@ -71,7 +74,37 @@ public sealed class AutomationTaskManager : IAsyncDisposable
 		if (!changed || item is null) return false;
 		item.Cancellation.Cancel();
 		if (!ReferenceEquals(item, _active)) item.Dispose();
+		Notify(item.Task.Snapshot);
 		return true;
+	}
+
+	/// <summary>取消所有未终态任务；重复调用不会产生额外取消。</summary>
+	public int CancelAll()
+	{
+		WorkItem[] pending;
+		WorkItem? active;
+		lock (_gate)
+		{
+			pending = _queue.ToArray();
+			_queue.Clear();
+			active = _active;
+		}
+
+		int changed = 0;
+		foreach (WorkItem item in pending)
+		{
+			if (item.Task.TryCancel(DateTimeOffset.UtcNow)) changed++;
+			item.Cancellation.Cancel();
+			item.Dispose();
+			Notify(item.Task.Snapshot);
+		}
+		if (active is not null && active.Task.TryCancel(DateTimeOffset.UtcNow))
+		{
+			changed++;
+			active.Cancellation.Cancel();
+			Notify(active.Task.Snapshot);
+		}
+		return changed;
 	}
 
 	/// <summary>取消指定任务。</summary>
@@ -115,9 +148,14 @@ public sealed class AutomationTaskManager : IAsyncDisposable
 			if (_queue.Count >= _maxQueueLength) throw new InvalidOperationException("自动化任务队列已满");
 			WorkItem item = new(task, operation, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken));
 			_queue.AddLast(item);
-			item.Registration = cancellationToken.Register(() => { task.TryCancel(DateTimeOffset.UtcNow); SignalSafely(); });
+			item.Registration = cancellationToken.Register(() =>
+			{
+				if (task.TryCancel(DateTimeOffset.UtcNow)) Notify(task.Snapshot);
+				SignalSafely();
+			});
 		}
 		_signal.Release();
+		Notify(task.Snapshot);
 		return task;
 	}
 
@@ -135,13 +173,20 @@ public sealed class AutomationTaskManager : IAsyncDisposable
 					continue;
 				}
 				if (!item.Task.TryMarkRunning(DateTimeOffset.UtcNow)) { item.Dispose(); continue; }
+				Notify(item.Task.Snapshot);
 				try
 				{
 					await item.Operation(new AutomationTaskContext(item.Task.Id), item.Cancellation.Token).ConfigureAwait(false);
-					item.Task.TryComplete(DateTimeOffset.UtcNow);
+					if (item.Task.TryComplete(DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
 				}
-				catch (OperationCanceledException) { item.Task.TryCancel(DateTimeOffset.UtcNow); }
-				catch (Exception) { item.Task.TryFail("execution_failed", DateTimeOffset.UtcNow); }
+				catch (OperationCanceledException)
+				{
+					if (item.Task.TryCancel(DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
+				}
+				catch (Exception)
+				{
+					if (item.Task.TryFail("execution_failed", DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
+				}
 				finally
 				{
 					lock (_gate) if (ReferenceEquals(_active, item)) _active = null;
@@ -176,6 +221,12 @@ public sealed class AutomationTaskManager : IAsyncDisposable
 	private void SignalSafely()
 	{
 		try { _signal.Release(); } catch (ObjectDisposedException) { }
+	}
+
+	private void Notify(AutomationTaskSnapshot snapshot)
+	{
+		try { TaskChanged?.Invoke(snapshot); }
+		catch { /* 状态通知不能影响任务生命周期 */ }
 	}
 
 	private sealed class WorkItem : IDisposable

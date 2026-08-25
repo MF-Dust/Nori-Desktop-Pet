@@ -18,6 +18,7 @@ using Nori.Core.Tools;
 using Nori.Core.Telemetry;
 using Nori.Core.Voice;
 using Nori.Desktop.Audio;
+using Nori.Desktop.Automation;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Telemetry;
 using Nori.Desktop.Windows;
@@ -119,6 +120,8 @@ public sealed class AppRuntime : IAsyncDisposable
 	{
 		Services = services;
 		ConfigStore config = services.Config;
+		services.Automation ??= new AutomationRuntime(config, services.SafeMode);
+		services.Automation.Changed += OnAutomationChanged;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config, startBackgroundWorker: !services.SafeMode);
 		Knowledge = new KnowledgeService(services.Database, Memory, config);
@@ -1064,6 +1067,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			}).ToArray(),
 			mcpServersCount = McpServerCount(),
 			emotion = new {type = Emotion.CurrentType},
+			automation = Services.Automation?.GetSnapshot(),
 		};
 	}
 
@@ -1126,6 +1130,15 @@ public sealed class AppRuntime : IAsyncDisposable
 		if (Volatile.Read(ref _disposed) != 0) return;
 		try { Services.Windows.GetNoriWindow(label)?.PostEvent(AgentEventName, payload); }
 		catch { /* windows may already be closing */ }
+	}
+
+	/// <summary>自动化状态变化只广播脱敏生命周期汇总。</summary>
+	private void OnAutomationChanged()
+	{
+		if (Volatile.Read(ref _disposed) != 0) return;
+		InvalidateSnapshot("automation");
+		AutomationSnapshot? snapshot = Services.Automation?.GetSnapshot();
+		if (snapshot is not null) BroadcastEvent("nori:automation-changed", snapshot);
 	}
 
 	/// <summary>向所有 WebView 窗口广播</summary>
@@ -1204,6 +1217,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		}
 		CancelPetInteractionRequest();
 		CancelPetInteractionSpeech();
+		if (Services.Automation is not null) Services.Automation.Changed -= OnAutomationChanged;
 
 		foreach ((string _, AgentSessionState session) in _sessions)
 		{
@@ -1231,6 +1245,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		// Voice.Dispose 会逆向释放 _playback; 录音票据要单独作废
 		try { _recorder.Dispose(); } catch { }
 		try { Voice.Dispose(); } catch { }
+		try { if (Services.Automation is not null) await Services.Automation.DisposeAsync().ConfigureAwait(false); } catch { }
 		_petInteractionGate.Dispose();
 		_lifetimeCts.Dispose();
 	}

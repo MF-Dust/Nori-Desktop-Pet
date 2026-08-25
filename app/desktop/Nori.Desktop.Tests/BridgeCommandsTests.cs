@@ -87,11 +87,15 @@ public class BridgeCommandsTests : IDisposable
 	private readonly AppServices _services;
 	private readonly AppRuntime _runtime;
 
-	public BridgeCommandsTests() : this(false)
+	public BridgeCommandsTests() : this(false, null)
 	{
 	}
 
-	private BridgeCommandsTests(bool safeMode)
+	private BridgeCommandsTests(bool safeMode) : this(safeMode, null)
+	{
+	}
+
+	private BridgeCommandsTests(bool safeMode, bool? automationWindows)
 	{
 		Directory.CreateDirectory(_tempDir);
 		_dbPath = Path.Combine(_tempDir, "nori.db");
@@ -113,6 +117,9 @@ public class BridgeCommandsTests : IDisposable
 			Mcp = new McpManager(_http, _config),
 			Http = _http,
 			AgentOperations = new AgentOperationRegistry(),
+			Automation = automationWindows is { } isWindows
+				? new Nori.Desktop.Automation.AutomationRuntime(_config, safeMode, isWindows, visionAvailable: false)
+				: new Nori.Desktop.Automation.AutomationRuntime(_config, safeMode),
 			Windows = _windows,
 			SafeMode = safeMode,
 		};
@@ -235,6 +242,62 @@ public class BridgeCommandsTests : IDisposable
 			await Assert.ThrowsAsync<InvalidOperationException>(() =>
 				commands.InvokeAsync(new FakeBridgeSource("init"), cmd, Args(new { })));
 		}
+	}
+
+	[Fact]
+	public async Task 自动化默认关闭且快照不含敏感正文()
+	{
+		BridgeCommands commands = CreateCommands();
+		object? result = await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_get_snapshot", Args(new { }));
+		string json = JsonSerializer.Serialize(result, BridgeJson.Options);
+
+		Assert.Contains("\"enabled\":false", json, StringComparison.Ordinal);
+		Assert.Contains("自动化默认关闭", json, StringComparison.Ordinal);
+		Assert.DoesNotContain("screenshot", json, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("prompt", json, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("url", json, StringComparison.OrdinalIgnoreCase);
+		Assert.DoesNotContain("tool", json, StringComparison.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public async Task 自动化状态变更只允许可见main且安全模式拒绝设置()
+	{
+		BridgeCommands commands = CreateCommands();
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "automation_update_settings", Args(new {enabled = true})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main, false), "automation_update_settings", Args(new {enabled = true})));
+
+		using BridgeCommandsTests safeFixture = new(true, true);
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			safeFixture.CreateCommands().InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_update_settings", Args(new {enabled = true})));
+	}
+
+	[Fact]
+	public async Task 非Windows自动化返回明确拒绝原因()
+	{
+		using BridgeCommandsTests fixture = new(false, false);
+		BridgeCommands commands = fixture.CreateCommands();
+		object? probe = await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_probe_vision", Args(new { }));
+		string json = JsonSerializer.Serialize(probe, BridgeJson.Options);
+		Assert.Contains("Windows", json, StringComparison.Ordinal);
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_update_settings", Args(new {enabled = true})));
+	}
+
+	[Fact]
+	public async Task 自动化停止命令幂等且只允许可见main()
+	{
+		BridgeCommands commands = CreateCommands();
+		string taskId = Guid.NewGuid().ToString();
+		object? first = await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_stop_task", Args(new {taskId}));
+		object? second = await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_stop_task", Args(new {taskId}));
+		object? all = await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_stop_all", Args(new { }));
+		Assert.Equal(false, first);
+		Assert.Equal(false, second);
+		Assert.Equal(0, all);
+		await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "automation_stop_all", Args(new { })));
 	}
 
 	[Fact]

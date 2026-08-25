@@ -63,6 +63,18 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	/// <summary>配置键: 全局音频音量 (0.0 ~ 1.0)。</summary>
 	public const string KeyAudioVolume = "audio_volume";
 
+	/// <summary>配置键: 自动化总开关。</summary>
+	public const string KeyAutomationEnabled = "automation_enabled";
+
+	/// <summary>配置键: 自动化鼠标能力显式授权。</summary>
+	public const string KeyAutomationAllowPointer = "automation_allow_pointer";
+
+	/// <summary>配置键: 自动化键盘能力显式授权。</summary>
+	public const string KeyAutomationAllowKeyboard = "automation_allow_keyboard";
+
+	/// <summary>配置键: 自动化滚轮能力显式授权。</summary>
+	public const string KeyAutomationAllowScroll = "automation_allow_scroll";
+
 	/// <summary>当前配置结构版本。</summary>
 	public const long ConfigSchemaVersion = 3;
 
@@ -327,6 +339,10 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 				("memory_knowledge_enabled", new ConfigValue.Boolean(true)),
 				("memory_knowledge_watch", new ConfigValue.Boolean(true)),
 				("memory_debug_retrieval", new ConfigValue.Boolean(false)),
+				(KeyAutomationEnabled, new ConfigValue.Boolean(false)),
+				(KeyAutomationAllowPointer, new ConfigValue.Boolean(false)),
+				(KeyAutomationAllowKeyboard, new ConfigValue.Boolean(false)),
+				(KeyAutomationAllowScroll, new ConfigValue.Boolean(false)),
 			];
 			foreach ((string key, ConfigValue value) in defaults)
 			{

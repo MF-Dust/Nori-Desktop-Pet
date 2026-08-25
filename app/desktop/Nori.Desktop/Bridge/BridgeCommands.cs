@@ -19,6 +19,7 @@ using Nori.Core.Resources;
 using Nori.Core.Security;
 using Nori.Core.Skills;
 using Nori.Core.Tools;
+using Nori.Desktop.Automation;
 using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Runtime;
 using Nori.Desktop.Telemetry;
@@ -57,6 +58,9 @@ public sealed class BridgeCommands
 
 	private AppRuntime Runtime => _services.Runtime
 		?? throw new InvalidOperationException("应用运行时尚未就绪");
+
+	private AutomationRuntime Automation => _services.Automation
+		?? throw new InvalidOperationException("自动化运行时尚未就绪");
 
 	/// <summary>
 	/// 分发一次命令调用。
@@ -116,6 +120,26 @@ public sealed class BridgeCommands
 				UpdateConfigDirect("voice_notice_pending", "0");
 				Runtime.InvalidateSnapshot("voice");
 			})),
+
+		// ---- 自动化宿主接线 ----
+		/// invoke("automation_get_snapshot")
+		"automation_get_snapshot" => RequireWebViewSource(source, () => Automation.GetSnapshot()),
+
+		/// invoke("automation_update_settings", {enabled?, allowPointer?, allowKeyboard?, allowScroll?})
+		"automation_update_settings" => RequireVisibleMain(source, () => Automation.UpdateSettings(
+			OptionalBool(args, "enabled"),
+			OptionalBool(args, "allowPointer"),
+			OptionalBool(args, "allowKeyboard"),
+			OptionalBool(args, "allowScroll"))),
+
+		/// invoke("automation_probe_vision")
+		"automation_probe_vision" => RequireVisibleMain(source, () => Automation.ProbeVision()),
+
+		/// invoke("automation_stop_task", {taskId: "..."})
+		"automation_stop_task" => RequireVisibleMain(source, () => Automation.StopTask(ParseGuid(args, "taskId"))),
+
+		/// invoke("automation_stop_all")
+		"automation_stop_all" => RequireVisibleMain(source, () => Automation.StopAll()),
 
 		// ---- AI 设置 ----
 		// invoke("llm_fetch_models", {provider, baseUrl, apiKey})
@@ -1059,6 +1083,14 @@ public sealed class BridgeCommands
 
 	private static object? RequireMain(IBridgeSource source, Func<object?> factory) => RequireLabel(source, WindowLabels.Main, factory);
 
+	/// <summary>校验来源是可见的 main WebView。</summary>
+	private static object? RequireVisibleMain(IBridgeSource source, Func<object?> factory)
+	{
+		RequireMainVoid(source);
+		if (!source.IsVisible) throw new InvalidOperationException("main 窗口不可见");
+		return factory();
+	}
+
 	/// <summary>
 	/// 首次启动完成: 只允许可见的 first-run 窗口调用。
 	/// </summary>
@@ -1889,6 +1921,14 @@ public sealed class BridgeCommands
 		args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
 			? value.GetString() ?? ""
 			: throw new InvalidOperationException($"缺少参数: {name}");
+
+	private static Guid ParseGuid(JsonElement args, string name)
+	{
+		string value = Str(args, name);
+		return Guid.TryParse(value, out Guid result) && result != Guid.Empty
+			? result
+			: throw new InvalidOperationException($"参数 {name} 无效");
+	}
 
 	private static bool RequiredBool(JsonElement args, string name) =>
 		args.ValueKind == JsonValueKind.Object

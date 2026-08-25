@@ -200,6 +200,7 @@ public sealed class App : Application
 			Http = http,
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
+			Automation = new Automation.AutomationRuntime(config, safeMode),
 			ShutdownToken = _shutdownCts.Token,
 			SafeMode = safeMode,
 		};
