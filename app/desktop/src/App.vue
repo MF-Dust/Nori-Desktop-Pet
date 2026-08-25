@@ -77,7 +77,7 @@ RUNTIME.onLanguageChanged((language) => {
 						role="alert"
 						aria-live="assertive"
 					>
-						<section class="w-full max-w-[48rem] flex flex-col items-center gap-4 rounded-lg border border-danger/35 bg-bg-card/90 p-6 text-center shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.55)]">
+						<section class="w-full max-w-[48rem] flex flex-col items-center gap-4 rounded-lg border border-danger/35 bg-bg-card/90 p-6 text-center shadow-elev-2">
 							<span class="flex h-12 w-12 items-center justify-center rounded-full bg-danger/12 text-danger-text">
 								<Icon name="alert" :size="24"/>
 							</span>

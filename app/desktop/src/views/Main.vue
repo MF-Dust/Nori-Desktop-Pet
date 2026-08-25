@@ -44,10 +44,11 @@ const PANEL_OPTIONS = {
 const HomePanel = defineAsyncComponent({loader: () => import("../components/home/HomePanel.vue"), ...PANEL_OPTIONS})
 const SettingsPanel = defineAsyncComponent({loader: () => import("../components/settings/SettingsPanel.vue"), ...PANEL_OPTIONS})
 const ModelManagement = defineAsyncComponent({loader: () => import("../components/settings/ModelManagement.vue"), ...PANEL_OPTIONS})
+const MemoryPanel = defineAsyncComponent({loader: () => import("../components/settings/MemorySettings.vue"), ...PANEL_OPTIONS})
 const ChatView = defineAsyncComponent({loader: () => import("../components/ChatView.vue"), ...PANEL_OPTIONS})
 
-// ---- 侧边导航 (「关于」已并入设置的二级列表) ----
-type NavKey = "home" | "talk" | "model" | "settings"
+// ---- 侧边导航 (「记忆」已从设置二级提升为一级页, 「关于」仍在设置的二级列表里) ----
+type NavKey = "home" | "talk" | "model" | "memory" | "settings"
 
 const aiConfigured = computed(() => RUNTIME.snapshot.value?.ai.configured ?? false)
 
@@ -55,14 +56,33 @@ const NAV_ITEMS = computed<{key: NavKey; label: string; icon: IconName; badge?: 
 	{key: "home", label: I18N.value.nav.home, icon: "noriOS"},
 	{key: "talk", label: I18N.value.nav.talk, icon: "send"},
 	{key: "model", label: I18N.value.nav.model, icon: "package"},
+	{key: "memory", label: I18N.value.nav.memory, icon: "server"},
 	{key: "settings", label: I18N.value.nav.settings, icon: "settings", badge: !aiConfigured.value},
 ])
 
 const activeNav = ref<NavKey>("home")
 const currentNav = computed(() => NAV_ITEMS.value.find((item) => item.key === activeNav.value))
 
-// 设置面板要打开的初始子页 (从主页磁贴跳过来时直达)
+// 设置面板要打开的初始子页 (从主页磁贴跳过来时直达)。
+// seq 是同一目标重复跳转的信号: 只看 target 的话第二次点同一张磁贴不会有反应。
 const settingsTarget = ref("")
+const settingsSeq = ref(0)
+
+// ---- 来路记录: 从对话/主页跳进设置后给一条明确的回头路 ----
+const navOrigin = ref<NavKey | null>(null)
+
+const ORIGIN_LABEL = computed(() =>
+	NAV_ITEMS.value.find(item => item.key === navOrigin.value)?.label ?? "")
+
+const goNav = (key: NavKey, origin: NavKey | null = null) => {
+	navOrigin.value = origin === key ? null : origin
+	activeNav.value = key
+}
+
+const goBack = () => {
+	const ORIGIN = navOrigin.value
+	if (ORIGIN) goNav(ORIGIN)
+}
 
 // ---- 侧边栏折叠 (状态持久化在 general.sidebarCollapsed) ----
 const collapsed = ref(false)
@@ -113,9 +133,12 @@ const togglePet = async () => {
 }
 
 // 主页磁贴跳转
-const navigate = (tab: "talk" | "model" | "settings") => {
-	if (tab === "settings") settingsTarget.value = "ai"
-	activeNav.value = tab
+const navigate = (tab: "talk" | "model" | "settings", origin: NavKey = "home") => {
+	if (tab === "settings") {
+		settingsTarget.value = "ai"
+		settingsSeq.value += 1
+	}
+	goNav(tab, origin)
 }
 
 // 面板内未捕获异常不能拖崩整个主窗口
@@ -143,13 +166,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div
-		class="w-100vw h-100vh flex flex-col overflow-hidden select-none rounded-lg
-			bg-[radial-gradient(110rem_70rem_at_90%_0%,rgba(125,227,255,0.18)_0%,transparent_60%),radial-gradient(60rem_50rem_at_0%_100%,rgba(15,45,71,0.5)_0%,transparent_60%),linear-gradient(165deg,var(--bg-panel)_0%,var(--bg-deep)_45%,var(--bg-abyss)_100%)]
-			shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.65),inset_0_0_0_0.1rem_var(--line-subtle)]"
-	>
+	<div class="window-root window-surface">
 		<TitleBar>
-			<div class="flex items-center gap-2 px-2.5 py-0.8 rounded-pill bg-white/4 border border-line-subtle text-xs text-text-faint font-500 backdrop-blur-[0.8rem]">
+			<div class="flex items-center gap-2 px-2.5 py-0.8 rounded-pill bg-overlay-4 border border-line-subtle text-xs text-text-faint font-500 backdrop-blur-[0.8rem]">
 				<Icon :name="currentNav?.icon || 'noriOS'" :size="13" class="text-nori-teal-bright"/>
 				<span class="text-text-muted">{{ currentNav?.label }}</span>
 			</div>
@@ -158,7 +177,7 @@ onBeforeUnmount(() => {
 				<button type="button" class="btn-icon" :title="I18N.footer.minimize" :aria-label="I18N.footer.minimize" @click="minimizeMain">
 					<Icon name="minus" :size="13"/>
 				</button>
-				<button type="button" class="close-btn" :title="I18N.footer.exit" :aria-label="I18N.footer.exit" @click="exitApp">
+				<button type="button" class="btn-close" :title="I18N.footer.exit" :aria-label="I18N.footer.exit" @click="exitApp">
 					<Icon name="close" class="close-icon"/>
 				</button>
 			</div>
@@ -184,7 +203,7 @@ onBeforeUnmount(() => {
 						:title="collapsed ? item.label : undefined"
 						:aria-label="item.label"
 						:aria-current="item.key === activeNav ? 'page' : undefined"
-						@click="activeNav = item.key"
+						@click="goNav(item.key)"
 					>
 						<span
 							v-if="item.key === activeNav"
@@ -207,7 +226,7 @@ onBeforeUnmount(() => {
 
 				<button
 					type="button"
-					class="nav-item justify-center text-text-faint hover:text-nori-teal-bright hover:bg-white/6"
+					class="nav-item justify-center text-text-faint hover:text-nori-teal-bright hover:bg-overlay-6"
 					:title="collapsed ? I18N.sidebar.expand : I18N.sidebar.collapse"
 					:aria-label="collapsed ? I18N.sidebar.expand : I18N.sidebar.collapse"
 					@click="toggleSidebar"
@@ -228,22 +247,41 @@ onBeforeUnmount(() => {
 					role="alert"
 				>{{ panelError }}</p>
 
-				<!-- 主页看板 -->
-				<HomePanel
-					v-if="activeNav === 'home'"
-					:pet-visible="petVisible"
-					@toggle-pet="togglePet"
-					@navigate="navigate"
-				/>
+				<!-- 来路返回条: 从别处跳进来时留一条明确的回头路 -->
+				<button
+					v-if="navOrigin"
+					type="button"
+					class="self-start shrink-0 mb-2.5 btn-ghost px-2.5 py-1 text-xs"
+					:aria-label="`${I18N.nav.back} ${ORIGIN_LABEL}`"
+					@click="goBack"
+				>
+					<Icon name="arrow-left" :size="12"/>
+					<span class="font-500">{{ I18N.nav.back }}</span>
+					<span class="text-text-faint">{{ ORIGIN_LABEL }}</span>
+				</button>
 
-				<!-- 对话 -->
-				<ChatView v-else-if="activeNav === 'talk'" @go-settings="navigate('settings')"/>
+				<!--
+					一级页依次是: 主页看板 / 对话 / 模型管理 / 长期记忆 / 全功能设置 (含关于)。
 
-				<!-- 模型管理 -->
-				<ModelManagement v-else-if="activeNav === 'model'"/>
-
-				<!-- 全功能设置面板 (含关于) -->
-				<SettingsPanel v-else :initial-tab="settingsTarget"/>
+					KeepAlive 是必需的, 不只是为了少一次挂载:
+					对话面板卸载会取消进行中的会话并自动拒掉所有待审批工具调用,
+					缓存住之后, 切到设置再切回来对话仍在继续。
+					注意 KeepAlive 内部不能夹注释 — 开发态编译会保留注释节点, 被判成多个子节点。
+				-->
+				<div class="flex-1 min-h-0 flex flex-col">
+					<KeepAlive>
+						<HomePanel
+							v-if="activeNav === 'home'"
+							:pet-visible="petVisible"
+							@toggle-pet="togglePet"
+							@navigate="navigate"
+						/>
+						<ChatView v-else-if="activeNav === 'talk'" @go-settings="navigate('settings', 'talk')"/>
+						<ModelManagement v-else-if="activeNav === 'model'"/>
+						<MemoryPanel v-else-if="activeNav === 'memory'"/>
+						<SettingsPanel v-else :initial-tab="settingsTarget" :open-seq="settingsSeq"/>
+					</KeepAlive>
+				</div>
 			</main>
 		</div>
 

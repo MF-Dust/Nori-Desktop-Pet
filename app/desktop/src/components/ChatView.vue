@@ -5,6 +5,7 @@ import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
 import ChatMessageBubble, {type ChatDisplayBubble} from "./chat/ChatMessageBubble.vue"
 import AppChip from "./ui/AppChip.vue"
+import AppConfirm from "./ui/AppConfirm.vue"
 import AppEmpty from "./ui/AppEmpty.vue"
 import AppButton from "./ui/AppButton.vue"
 import AppModal from "./ui/AppModal.vue"
@@ -166,6 +167,14 @@ const approvalVisible = computed({
 	},
 })
 const approvalSeconds = computed(() => activeApproval.value?.remainingSeconds ?? 0)
+const APPROVAL_ARGS = computed(() => JSON.stringify(activeApproval.value?.request.arguments ?? {}, null, 2))
+const APPROVAL_ARGS_LINES = computed(() => APPROVAL_ARGS.value.split("\n").length)
+// 参数默认折叠: 写文件类工具会把整段正文塞进 arguments, 展开会把「允许/拒绝」顶出视口
+const ARGS_COLLAPSIBLE = computed(() => APPROVAL_ARGS_LINES.value > 8)
+const argsExpanded = ref(false)
+watch(activeApproval, () => {
+	argsExpanded.value = false
+})
 
 const decideActiveApproval = async (approved: boolean): Promise<void> => {
 	const REQUEST = activeApproval.value?.request
@@ -175,6 +184,12 @@ const decideActiveApproval = async (approved: boolean): Promise<void> => {
 	} catch (error) {
 		feedback.error(I18N.value.cancelFailed, error)
 	}
+}
+
+// 延长倒计时: 超时是前端计时器在跑, 这里只把剩余秒数加回去, 不动后端
+const extendActiveApproval = () => {
+	const REQUEST = activeApproval.value?.request
+	if (REQUEST) CHAT.extendApproval(REQUEST.requestId)
 }
 
 // 历史翻页
@@ -271,7 +286,9 @@ const stopGeneration = async () => {
 }
 
 // 清空当前对话历史
+const clearOpen = ref(false)
 const clearChatHistory = async () => {
+	clearOpen.value = false
 	try {
 		await CHAT.clear()
 	} catch (error) {
@@ -320,9 +337,12 @@ const toggleVoiceInput = async () => {
 		stopRecordTimer()
 		try {
 			const RESULT = await RUNTIME.sttStop()
+			// 识别结果落到输入框而不是直接发出去: 语音转写常有错字, 先让用户过一眼
 			if (RESULT.text) {
-				input.value = RESULT.text
-				await send()
+				input.value = input.value.trim() ? `${input.value.trim()} ${RESULT.text}` : RESULT.text
+				await nextTick()
+				inputRef.value?.focus()
+				feedback.info(I18N.value.voice.inserted)
 			}
 		} catch (error) {
 			feedback.error(I18N.value.voice.failed, error)
@@ -356,52 +376,43 @@ const toggleVoiceInput = async () => {
 
 		<!-- 已配置: 聊天界面 -->
 		<template v-else>
-			<!-- 顶部标题与控制 -->
-			<div class="shrink-0 flex items-center justify-between gap-3 px-4.5 py-3 border-b border-line-subtle bg-bg-deep/70 backdrop-blur-[1.2rem]">
+			<!--
+				单条顶栏: 标题 / 模型 / 词元与缓存遥测 / 技能工具计数 / 清空。
+				原先这里叠了「标题栏 + 遥测 HUD」两条 bar, 加上下面的状态条和错误条一共四层,
+				正文区被压掉近 8rem; 现在遥测并入同一行, 状态与错误合成一条瞬时提示。
+			-->
+			<div class="shrink-0 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-4.5 py-2.5 border-b border-line-subtle bg-bg-deep/70 backdrop-blur-[1.2rem]">
 				<div class="flex items-center gap-2.5 min-w-0">
 					<span class="title-sm truncate text-text-primary">{{ I18N.title }}</span>
 					<AppChip tone="teal" dot class="mono font-500">{{ currentModel }}</AppChip>
 				</div>
 
-				<n-popconfirm
-					:positive-text="I18N.clearConfirmYes"
-					:negative-text="UI_I18N.cancel"
-					@positive-click="clearChatHistory"
-				>
-					<template #trigger>
-						<button type="button" class="btn-ghost px-3 py-1.5 text-xs text-text-muted hover:text-danger-text hover:border-danger/40" :title="I18N.clearHistory" :aria-label="I18N.clearHistory">
-							<Icon name="trash" :size="12"/>
-							<span>{{ I18N.clearHistory }}</span>
-						</button>
-					</template>
-					{{ I18N.clearConfirm }}
-				</n-popconfirm>
-			</div>
-
-			<!-- 性能指标与 Prompt Caching 遥测 HUD 条 -->
-			<div class="shrink-0 flex items-center justify-between gap-3 px-4.5 py-1.2 text-xs text-text-muted select-none bg-bg-abyss/85 border-b border-line-subtle backdrop-blur-[0.8rem]">
-				<div class="flex items-center gap-4">
+				<div class="flex items-center gap-4 text-xs text-text-muted select-none">
 					<span class="flex items-center gap-1.2">
-						<span class="text-text-faint">{{ I18N.metrics.context }}:</span>
+						<span class="text-text-faint">{{ I18N.metrics.context }}</span>
 						<span
 							class="mono"
 							:class="metrics && metrics.totalTokens > 0 ? 'text-nori-teal-bright font-600' : 'text-text-body'"
 						>{{ metrics ? formatNum(metrics.totalTokens) : "0" }} {{ I18N.tokens }}</span>
-						<span v-if="metrics && metrics.durationMs > 0" class="mono text-text-faint">({{ tokensPerSecond }} t/s)</span>
+						<span v-if="metrics && metrics.durationMs > 0" class="mono text-text-faint">{{ tokensPerSecond }} t/s</span>
 					</span>
 
 					<span class="flex items-center gap-1.2">
-						<span :class="metrics && metrics.cachedTokens > 0 ? 'text-nori-teal-soft' : 'text-text-faint'">{{ I18N.metrics.cache }}:</span>
+						<span :class="metrics && metrics.cachedTokens > 0 ? 'text-nori-teal-soft' : 'text-text-faint'">{{ I18N.metrics.cache }}</span>
 						<span
 							class="mono"
 							:class="metrics && metrics.cachedTokens > 0 ? 'text-nori-teal-bright font-600' : 'text-text-body'"
 						>{{ metrics ? metrics.cacheHitRate + "%" : "0%" }}</span>
 					</span>
-				</div>
 
-				<span class="text-text-faint font-500">
-					{{ activeSkillsCount }} {{ I18N.metrics.skills }} / {{ activeToolsCount }} {{ I18N.metrics.tools }}
-				</span>
+					<span class="mono text-text-faint">
+						{{ activeSkillsCount }} {{ I18N.metrics.skills }} / {{ activeToolsCount }} {{ I18N.metrics.tools }}
+					</span>
+
+					<AppButton variant="ghost" size="sm" icon="trash" :label="I18N.clearHistory" @click="clearOpen = true">
+						{{ I18N.clearHistory }}
+					</AppButton>
+				</div>
 			</div>
 
 			<!-- 消息滚动流 -->
@@ -444,11 +455,11 @@ const toggleVoiceInput = async () => {
 							:key="item.text"
 							type="button"
 							class="group inline-flex items-center gap-3 px-4 py-3 rounded-md text-left text-sm text-text-body
-								bg-white/4 border border-line-subtle backdrop-blur-[1rem] cursor-pointer transition-all duration-200 focus-ring
+								bg-overlay-4 border border-line-subtle backdrop-blur-[1rem] cursor-pointer transition-all duration-200 focus-ring
 								hover:(bg-nori-teal-bright/10 border-nori-teal-soft/80 text-nori-teal-bright shadow-[0_0.4rem_1.6rem_rgba(125,227,255,0.12)] -translate-y-[0.15rem])"
 							@click="sendQuickPrompt(item.text)"
 						>
-							<span class="w-7 h-7 rounded-sm flex items-center justify-center bg-white/6 border border-line-subtle text-nori-teal-bright transition-transform duration-200 group-hover:scale-110">
+							<span class="w-7 h-7 rounded-sm flex items-center justify-center bg-overlay-6 border border-line-subtle text-nori-teal-bright transition-transform duration-200 group-hover:scale-110">
 								<Icon :name="item.icon" :size="14"/>
 							</span>
 							<span class="font-500">{{ item.text }}</span>
@@ -495,19 +506,17 @@ const toggleVoiceInput = async () => {
 				</button>
 			</Transition>
 
-			<p
-				v-if="statusText"
-				class="shrink-0 m-0 px-4 py-1.5 text-xs text-text-muted bg-white/3 border-t border-line-subtle"
-				role="status"
-			>{{ statusText }}</p>
-
+			<!-- 瞬时提示条: 错误优先, 其次运行状态 (两者合成一条, 不再各占一层) -->
 			<div
-				v-if="errorMsg"
-				class="shrink-0 flex items-center justify-between gap-3 m-0 px-4 py-1.5 text-xs text-danger-text bg-danger/10 border-t border-danger/20"
-				role="alert"
+				v-if="errorMsg || statusText"
+				class="shrink-0 flex items-center justify-between gap-3 px-4.5 py-1.5 text-xs border-t"
+				:class="errorMsg
+					? 'text-danger-text bg-danger/10 border-danger/20'
+					: 'text-text-muted bg-overlay-4 border-line-subtle'"
+				:role="errorMsg ? 'alert' : 'status'"
 			>
-				<span class="min-w-0 break-words">{{ errorMsg }}</span>
-				<AppButton v-if="failedInput" size="sm" icon="refresh" @click="retryLast">{{ I18N.retryLast }}</AppButton>
+				<span class="min-w-0 break-words">{{ errorMsg || statusText }}</span>
+				<AppButton v-if="errorMsg && failedInput" variant="ghost" size="sm" icon="refresh" @click="retryLast">{{ I18N.retryLast }}</AppButton>
 			</div>
 
 			<!-- 底部输入控制台 (自适应多行, Enter 发送, Shift+Enter 换行) -->
@@ -518,7 +527,7 @@ const toggleVoiceInput = async () => {
 				<button
 					type="button"
 					class="w-[4rem] h-[4rem] shrink-0 flex flex-col items-center justify-center gap-0.5 rounded-sm
-						border border-line-subtle bg-white/4 text-text-muted cursor-pointer transition-all duration-200 focus-ring
+						border border-line-subtle bg-overlay-4 text-text-muted cursor-pointer transition-all duration-200 focus-ring
 						hover:(text-nori-teal-bright border-nori-teal-soft bg-nori-teal-bright/10 shadow-[0_0_1.4rem_rgba(125,227,255,0.12)])"
 					:class="voiceState === 'recording' ? 'text-danger-text border-danger bg-danger/15 animate-pulse-soft' : ''"
 					:title="voiceTitle"
@@ -583,20 +592,59 @@ const toggleVoiceInput = async () => {
 		:mask-closable="false"
 	>
 		<template v-if="activeApproval">
-			<p class="m-0 text-base font-600 text-nori-teal-bright">
-				{{ activeApproval.request.toolName }}
-			</p>
+			<div class="flex items-center justify-between gap-2">
+				<p class="m-0 text-base font-600 text-nori-teal-bright mono">
+					{{ activeApproval.request.toolName }}
+				</p>
+				<!-- 队列里还压着别的请求时提示总量, 否则用户不知道后面还有几个 -->
+				<AppChip v-if="pendingApprovals.length > 1" tone="warning">
+					{{ pendingApprovals.length }} {{ I18N.approvalQueueSuffix }}
+				</AppChip>
+			</div>
 			<p v-if="activeApproval.request.description" class="m-0 text-sm text-text-muted">
 				{{ activeApproval.request.description }}
 			</p>
-			<pre class="m-0 max-h-[16rem] overflow-auto rounded-sm bg-white/5 p-2.5 text-sm leading-relaxed whitespace-pre-wrap mono">{{ JSON.stringify(activeApproval.request.arguments ?? {}, null, 2) }}</pre>
-			<p class="m-0 text-xs text-text-muted" role="status" aria-live="polite">
-				{{ I18N.approvalCountdown }}: {{ approvalSeconds }}
-			</p>
+
+			<div class="flex items-center justify-between gap-2">
+				<span class="text-xs text-text-faint">{{ I18N.approvalArgs }}</span>
+				<AppButton
+					v-if="ARGS_COLLAPSIBLE"
+					variant="ghost"
+					size="sm"
+					:icon="argsExpanded ? 'arrow-up' : 'arrow-down'"
+					@click="argsExpanded = !argsExpanded"
+				>
+					{{ argsExpanded ? I18N.approvalCollapse : `${I18N.approvalExpand} (${APPROVAL_ARGS_LINES} ${I18N.approvalLines})` }}
+				</AppButton>
+			</div>
+			<pre
+				class="m-0 overflow-auto rounded-sm bg-overlay-6 p-2.5 text-sm leading-relaxed whitespace-pre-wrap mono"
+				:class="ARGS_COLLAPSIBLE && !argsExpanded ? 'max-h-[7rem]' : 'max-h-[24rem]'"
+			>{{ APPROVAL_ARGS }}</pre>
+
+			<div class="flex items-center justify-between gap-2">
+				<p class="m-0 text-xs text-text-muted" role="status" aria-live="polite">
+					{{ I18N.approvalCountdown }}: <span class="mono">{{ approvalSeconds }}</span>
+				</p>
+				<AppButton variant="ghost" size="sm" icon="refresh" @click="extendActiveApproval">{{ I18N.approvalExtend }}</AppButton>
+			</div>
 		</template>
 		<template #footer>
 			<AppButton variant="ghost" @click="decideActiveApproval(false)">{{ I18N.deny }}</AppButton>
 			<AppButton variant="primary" @click="decideActiveApproval(true)">{{ I18N.approve }}</AppButton>
 		</template>
 	</AppModal>
+
+	<!-- 清空对话历史确认 -->
+	<AppConfirm
+		:show="clearOpen"
+		:title="I18N.clearHistory"
+		:desc="I18N.clearConfirm"
+		:confirm-label="I18N.clearConfirmYes"
+		:cancel-label="UI_I18N.cancel"
+		:close-label="UI_I18N.close"
+		tone="danger"
+		@update:show="clearOpen = false"
+		@confirm="clearChatHistory"
+	/>
 </template>

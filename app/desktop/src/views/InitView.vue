@@ -112,13 +112,9 @@ onMounted(async () => {
 </script>
 
 <template>
-	<div
-		class="w-100vw h-100vh flex flex-col overflow-hidden select-none rounded-lg
-			bg-[radial-gradient(56rem_36rem_at_50%_45%,rgba(125,227,255,0.18),transparent_70%),radial-gradient(36rem_24rem_at_50%_60%,rgba(94,234,212,0.15),transparent_65%),linear-gradient(165deg,var(--bg-panel)_0%,var(--bg-deep)_50%,var(--bg-abyss)_100%)]
-			shadow-[0_1.2rem_3.6rem_rgba(0,0,0,0.65),inset_0_0_0_0.1rem_var(--line-subtle)]"
-	>
+	<div class="window-root window-surface-boot">
 		<TitleBar>
-			<button type="button" class="close-btn focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
+			<button type="button" class="btn-close focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
 				<Icon name="close" class="close-icon"/>
 			</button>
 		</TitleBar>

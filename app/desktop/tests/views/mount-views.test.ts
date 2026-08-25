@@ -192,7 +192,8 @@ describe("Views and Panels Mounting", () => {
 
 	it("switches Main tabs without leaving a blank panel", async () => {
 		const MOUNT = mountComponent(Main)
-		const MAIN_TABS = ["home", "talk", "model", "settings"]
+		// 「记忆」已从设置二级页提升为一级页, 侧栏共 5 项
+		const MAIN_TABS = ["home", "talk", "model", "memory", "settings"]
 		try {
 			await settleView()
 			expect(MOUNT.container.innerHTML).toBeTruthy()
@@ -210,7 +211,7 @@ describe("Views and Panels Mounting", () => {
 
 			click(NAV_BUTTONS[1])
 			click(NAV_BUTTONS[2])
-			click(NAV_BUTTONS[3])
+			click(NAV_BUTTONS[4])
 			await settleView()
 			const PANELS = MOUNT.container.querySelectorAll("[data-main-panel]")
 			expect(PANELS).toHaveLength(1)
@@ -223,7 +224,8 @@ describe("Views and Panels Mounting", () => {
 
 	it("switches all SettingsPanel tabs without leaving a blank panel", async () => {
 		const MOUNT = mountComponent(SettingsPanel)
-		const SETTINGS_TABS = ["ai", "memory", "voice", "proactive", "skills", "mcp", "general", "debug", "about"]
+		// 「长期记忆」不在设置里了 (已升为主窗一级页), 这里只剩 8 个子页
+		const SETTINGS_TABS = ["ai", "voice", "proactive", "skills", "mcp", "general", "debug", "about"]
 		try {
 			await settleView()
 			const NAV_BUTTONS = Array.from(MOUNT.container.querySelectorAll("nav button"))
@@ -237,7 +239,7 @@ describe("Views and Panels Mounting", () => {
 				expect(PANELS[0].textContent?.trim()).not.toBe("")
 			}
 
-			click(NAV_BUTTONS[8])
+			click(NAV_BUTTONS[7])
 			click(NAV_BUTTONS[3])
 			click(NAV_BUTTONS[0])
 			await settleView()

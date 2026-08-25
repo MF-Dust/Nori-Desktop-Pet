@@ -183,6 +183,13 @@ export function createChatStore(options: {watchdogMs?: number; approvalTimeoutMs
 		}
 	}
 
+	/** 延长一条待决授权的倒计时 (读长参数时 30 秒往往不够) */
+	function extendApproval(requestId: string, seconds = Math.max(1, Math.ceil(APPROVAL_TIMEOUT_MS / 1000))): void {
+		const ITEM = pendingApprovals.value.find(item => item.request.requestId === requestId)
+		if (!ITEM) return
+		ITEM.remainingSeconds += seconds
+	}
+
 	function removePlaceholderIfEmpty(): void {
 		const index = bubbles.value.findIndex(bubble => bubble.key === placeholderKey)
 		if (index >= 0 && bubbles.value[index].content === "") {
@@ -323,6 +330,7 @@ export function createChatStore(options: {watchdogMs?: number; approvalTimeoutMs
 		abort,
 		clear,
 		decideApproval,
+		extendApproval,
 		handleEvent,
 		connect,
 		dispose,
