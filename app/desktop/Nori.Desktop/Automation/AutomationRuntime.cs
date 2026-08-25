@@ -183,8 +183,8 @@ public sealed class AutomationRuntime : IAsyncDisposable
 	{
 		if (_safeMode) return "安全模式已禁用自动化";
 		if (!_isWindows) return "Windows 桌面自动化仅支持 Windows";
-		if (!_visionAvailable) return "当前版本未接入多模态视觉能力";
 		if (!settings.Enabled) return "自动化默认关闭，请在设置中显式启用";
+		if (!_visionAvailable) return "当前版本未接入多模态视觉能力";
 		if (!settings.AllowPointer && !settings.AllowKeyboard && !settings.AllowScroll)
 			return "未显式授权任何自动化输入能力";
 		return null;
