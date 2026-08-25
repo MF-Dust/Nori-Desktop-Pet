@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Nori.Core.Configuration;
 using Nori.Core.Network;
+using Nori.Core.Security;
 using YamlDotNet.Serialization;
 
 namespace Nori.Core.Skills;
@@ -21,6 +22,31 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 	{
 		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
 	};
+
+	private enum RemoteContentFailure
+	{
+		Empty,
+		TooLarge,
+		Sensitive,
+		InvalidFormat,
+	}
+
+	private static readonly Regex SensitiveRemoteContentPattern = new(
+		@"(?ix)
+			(?:
+				[""']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|bearer|password|secret|client[_-]?secret|private[_-]?key|cookie|token)[""']?
+				\s*[:=]\s*[""']?[^\s""',;}\]]+
+			)
+			|
+			[?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|bearer|password|secret|client[_-]?secret|private[_-]?key|cookie|token)=[^&#\s]+
+			|
+			-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----
+			|
+			\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{16,})\b",
+		RegexOptions.IgnoreCase
+			| RegexOptions.CultureInvariant
+			| RegexOptions.IgnorePatternWhitespace
+			| RegexOptions.Compiled);
 
 	private readonly Lock _gate = new();
 	private Dictionary<string, SkillRecord> _skills = [];
@@ -48,10 +74,13 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 						if (loaded.TryGetValue(rawSkill.Id, out SkillRecord? builtin))
 						{
 							// 只接受旧配置对内置技能的启停修改，拒绝覆盖内置定义。
-							loaded[rawSkill.Id] = builtin with {Enabled = rawSkill.Enabled};
+							loaded[rawSkill.Id] = builtin with
+							{
+								Enabled = !IsRemoteSource(rawSkill.Source) && rawSkill.Enabled,
+							};
 							continue;
 						}
-						SkillRecord normalized = SkillLimits.Normalize(rawSkill, remote: rawSkill.Source == "url");
+						SkillRecord normalized = SkillLimits.Normalize(rawSkill, remote: IsRemoteSource(rawSkill.Source));
 						loaded[normalized.Id] = normalized;
 					}
 				}
@@ -193,14 +222,46 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		{
 			throw new HttpRequestException($"下载技能失败: HTTP {(int)response.StatusCode}");
 		}
-		string text = await UrlAccessPolicy.ReadCappedTextAsync(
-			response.Content, SkillLimits.MaxRemoteDocumentCharacters, cancellationToken);
-		if (string.IsNullOrWhiteSpace(text))
+		if (response.Content.Headers.ContentLength > SkillLimits.MaxRemoteDocumentCharacters)
 		{
-			throw new InvalidOperationException("远程技能文件内容为空");
+			throw CreateRemoteContentError(RemoteContentFailure.TooLarge);
 		}
 
-		SkillRecord skill = text.TrimStart().StartsWith("---") ? ParseSkillMarkdown(text, url) : ParseSkillJson(text, url);
+		string text;
+		try
+		{
+			text = await UrlAccessPolicy.ReadCappedTextAsync(
+				response.Content, SkillLimits.MaxRemoteDocumentCharacters, cancellationToken);
+		}
+		catch (InvalidOperationException exception) when (
+			exception.Message.StartsWith("远程文件超过大小上限", StringComparison.Ordinal))
+		{
+			throw CreateRemoteContentError(RemoteContentFailure.TooLarge);
+		}
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			throw CreateRemoteContentError(RemoteContentFailure.Empty);
+		}
+		if (SensitiveRemoteContentPattern.IsMatch(text))
+		{
+			throw CreateRemoteContentError(RemoteContentFailure.Sensitive);
+		}
+
+		SkillRecord skill;
+		try
+		{
+			skill = text.TrimStart().StartsWith("---", StringComparison.Ordinal)
+				? ParseSkillMarkdown(text, url)
+				: ParseSkillJson(text, url);
+		}
+		catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+		{
+			throw CreateRemoteContentError(RemoteContentFailure.InvalidFormat);
+		}
+		if (string.IsNullOrWhiteSpace(skill.Instructions))
+		{
+			throw CreateRemoteContentError(RemoteContentFailure.InvalidFormat);
+		}
 		string remoteId = AvailableRemoteId(skill.Id);
 		SkillRecord remote = SkillLimits.Normalize(skill with
 		{
@@ -211,6 +272,21 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		}, remote: true);
 		Upsert(remote);
 		return remote;
+	}
+
+	private static bool IsRemoteSource(string? source) =>
+		string.Equals(source, "url", StringComparison.OrdinalIgnoreCase);
+
+	private static InvalidOperationException CreateRemoteContentError(RemoteContentFailure failure)
+	{
+		string message = failure switch
+		{
+			RemoteContentFailure.Empty => "远程技能文件内容为空",
+			RemoteContentFailure.TooLarge => "远程文件超过大小上限",
+			RemoteContentFailure.Sensitive => "远程技能文件包含敏感信息，已拒绝",
+			_ => "远程技能文件格式无效",
+		};
+		return new InvalidOperationException(message);
 	}
 
 	private string AvailableRemoteId(string requestedId)
@@ -337,15 +413,31 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		List<string> lines = ["【已激活技能与扩展指令 (Active Skills)】："];
 		for (int i = 0; i < active.Count; i++)
 		{
-			SkillRecord skill = SkillLimits.Normalize(active[i], remote: active[i].Source == "url");
+			SkillRecord skill = SkillLimits.Normalize(active[i], remote: IsRemoteSource(active[i].Source));
 			List<string> entry = [$"\n=== 技能 {i + 1}：{skill.Name} (v{skill.Version}) ==="];
 			if (!string.IsNullOrEmpty(skill.Description)) entry.Add($"简介: {skill.Description}");
 			if (skill.Tools is {Count: > 0})
 			{
-				IEnumerable<string> available = availableTools is null ? skill.Tools : skill.Tools.Where(availableTools.Contains);
-				IEnumerable<string> missing = availableTools is null ? [] : skill.Tools.Where(tool => !availableTools.Contains(tool));
-				entry.Add($"Available tools: {string.Join(", ", available)}");
-				if (missing.Any()) entry.Add($"Unavailable tools: {string.Join(", ", missing)}");
+				IReadOnlyList<string> declared = skill.Tools
+					.Where(tool => !string.IsNullOrWhiteSpace(tool))
+					.ToList();
+				IReadOnlyList<string> available = availableTools is null
+					? Array.Empty<string>()
+					: declared.Where(availableTools.Contains).ToList();
+				IReadOnlyList<string> missing = availableTools is null
+					? declared
+					: declared.Where(tool => !availableTools.Contains(tool)).ToList();
+				string availableText = available.Count == 0
+					? "(none)"
+					: string.Join(", ", available.Select(SafeToolName));
+				entry.Add($"Available tools: {availableText}");
+				if (missing.Count > 0)
+				{
+					string missingLabel = availableTools is null
+						? "Unavailable tools (未确认可用)"
+						: "Unavailable tools (未注册或已禁用)";
+					entry.Add($"{missingLabel}: {string.Join(", ", missing.Select(SafeToolName))}");
+				}
 			}
 			entry.Add(skill.Instructions);
 			string candidate = string.Join("\n", lines.Append(string.Join("\n", entry)));
@@ -355,9 +447,15 @@ public sealed class SkillService(ConfigStore configStore, HttpClient httpClient)
 		return SkillLimits.Cap(string.Join("\n", lines), SkillLimits.MaxPromptCharacters);
 	}
 
+	private static string SafeToolName(string name)
+	{
+		string singleLine = name.Replace('\r', ' ').Replace('\n', ' ');
+		return SkillLimits.Cap(SensitiveDataRedactor.Redact(singleLine), SkillLimits.MaxIdCharacters);
+	}
+
 	private void Upsert(SkillRecord skill)
 	{
-		SkillRecord normalized = SkillLimits.Normalize(skill, remote: skill.Source == "url");
+		SkillRecord normalized = SkillLimits.Normalize(skill, remote: IsRemoteSource(skill.Source));
 		lock (_gate)
 		{
 			if (_skills.TryGetValue(normalized.Id, out SkillRecord? existing)
