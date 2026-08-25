@@ -28,6 +28,8 @@
 		<!-- 跨平台原生 WebView: Windows→WebView2, macOS→WKWebView, Linux→WebKitGTK -->
 		<PackageReference Include="Avalonia.Controls.WebView" Version="12.1.0" />
 		<PackageReference Include="Sentry" Version="6.9.0" />
+		<!-- 仅控制 Nori 自行启动的可见隔离 Edge; 运行时不下载浏览器。 -->
+		<PackageReference Include="Microsoft.Playwright" Version="1.56.0" />
 	</ItemGroup>
 
 	<ItemGroup>

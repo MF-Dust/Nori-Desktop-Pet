@@ -27,6 +27,15 @@
 			"license": null,
 			"licenseStatus": "not-bundled-not-confirmed",
 			"note": "Windows 目标机预装运行时，不进入 ZIP。"
+		},
+		{
+			"name": "Microsoft.Playwright",
+			"version": "1.56.0",
+			"ecosystem": "NuGet",
+			"purl": "pkg:nuget/Microsoft.Playwright@1.56.0",
+			"license": "MIT",
+			"licenseStatus": "confirmed-from-nuget-metadata",
+			"note": "仅使用已安装 Microsoft Edge 的 msedge channel；不随包下载浏览器，任务使用临时隔离 profile。"
 		}
 	]
 }
