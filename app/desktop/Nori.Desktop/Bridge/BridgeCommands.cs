@@ -414,6 +414,16 @@ public sealed class BridgeCommands
 		// invoke("skills_marketplace")
 		"skills_marketplace" => RequireMain(source, () => SkillServiceMarketplace()),
 
+		/// 从内置市场安装技能: invoke("skills_install_marketplace", {skillId: "gaming-partner"}) → 脱敏 SkillDto
+		"skills_install_marketplace" => RequireVisibleMain(source, () =>
+		{
+			string skillId = Str(args, "skillId").Trim();
+			if (skillId.Length == 0) throw new InvalidOperationException("技能 ID 不能为空");
+			SkillRecord installed = Runtime.Skills.InstallFromMarketplace(skillId);
+			Runtime.InvalidateSnapshot("skills");
+			return RedactedSkillDto(installed);
+		}),
+
 		// invoke("skills_toggle", {id, enabled})
 		"skills_toggle" => RequireMain(source, () =>
 			Run(() =>
@@ -1635,6 +1645,22 @@ public sealed class BridgeCommands
 		tools = skill.Tools,
 		source = skill.Source,
 	}).ToArray();
+
+	/// <summary>构建不含技能指令正文和远程地址的脱敏 DTO。</summary>
+	private static object RedactedSkillDto(SkillRecord skill) => new
+	{
+		id = skill.Id,
+		name = skill.Name,
+		description = skill.Description,
+		author = skill.Author,
+		version = skill.Version,
+		icon = skill.Icon,
+		tags = skill.Tags.ToArray(),
+		category = skill.Category,
+		instructions = "",
+		enabled = skill.Enabled,
+		source = skill.Source,
+	};
 
 	private bool SkillsToggle(string id, bool enabled) => Runtime.Skills.Toggle(id, enabled);
 

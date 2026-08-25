@@ -579,13 +579,11 @@ public sealed class AppRuntime : IAsyncDisposable
 		using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token, cancellationToken);
 		CancellationToken ct = linkedCts.Token;
 		ct.ThrowIfCancellationRequested();
-		foreach (RegisteredTool tool in Tools.List().Where(tool => tool.Category == "mcp"))
-		{
-			Tools.Unregister(tool.Name);
-		}
 
+		// 先完整构建新清单; 获取失败或取消时保留上一版动态工具, 避免先清空再等待造成半更新状态。
 		IReadOnlyList<McpServerStatusInfo> servers = await Services.Mcp.GetServersAsync();
 		ct.ThrowIfCancellationRequested();
+		List<RegisteredTool> replacements = [];
 		foreach (McpServerStatusInfo server in servers.Where(server => server.Status == "connected"))
 		{
 			foreach (McpToolDefinition definition in server.Tools)
@@ -599,7 +597,7 @@ public sealed class AppRuntime : IAsyncDisposable
 					["properties"] = new JsonObject(),
 				};
 
-				Tools.Register(new RegisteredTool
+				replacements.Add(new RegisteredTool
 				{
 					Name = fullName,
 					Description = $"[{server.Name}] {definition.Description ?? toolName}",
@@ -615,6 +613,16 @@ public sealed class AppRuntime : IAsyncDisposable
 					},
 				});
 			}
+		}
+
+		ct.ThrowIfCancellationRequested();
+		foreach (RegisteredTool tool in Tools.List().Where(tool => tool.Category == "mcp"))
+		{
+			Tools.Unregister(tool.Name);
+		}
+		foreach (RegisteredTool replacement in replacements)
+		{
+			Tools.Register(replacement);
 		}
 	}
 
