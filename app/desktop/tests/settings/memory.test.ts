@@ -605,4 +605,385 @@ describe("MemorySettings.vue", () => {
 			HOST.restore()
 		}
 	})
+
+	it("exports memory data with sanitized stats and handles download/copy actions", async () => {
+		let exportCalled = false
+		window.URL.createObjectURL = vi.fn(() => "blob:mock-url")
+		window.URL.revokeObjectURL = vi.fn()
+		Object.assign(navigator, {
+			clipboard: {
+				writeText: vi.fn().mockResolvedValue(undefined),
+			},
+		})
+
+		const HOST = new MockHost({
+			ui_get_snapshot: () => createMockSnapshot(),
+			memory_knowledge_status: () => ({state: "ready", processed: 8, total: 8}),
+			memory_list_page: () => ({items: [mockMemoryItem], total: 1}),
+			memory_export: () => {
+				exportCalled = true
+				return {
+					fileName: "nori-memory-export-test.json",
+					totalCount: 15,
+					activeCount: 12,
+					archivedCount: 3,
+					atomCount: 20,
+					sanitizedFields: ["content", "canonicalSummary", "personaSummary", "kind", "importance", "confidence", "tags"],
+					exportedAt: "2025-01-15T12:00:00Z",
+					content: JSON.stringify({totalCount: 15, items: []}),
+				}
+			},
+		})
+		HOST.install()
+
+		const MOUNT = mountComponent()
+		try {
+			await settleView()
+
+			// 切换到记忆迁移 tab
+			const TABS = MOUNT.container.querySelectorAll<HTMLButtonElement>("button")
+			const TRANSFER_TAB = Array.from(TABS).find(b => b.textContent?.includes("记忆迁移"))
+			expect(TRANSFER_TAB).toBeTruthy()
+			TRANSFER_TAB?.click()
+			await settleView()
+
+			expect(MOUNT.container.textContent).toContain("导出记忆数据")
+			expect(MOUNT.container.textContent).toContain("导入记忆数据")
+
+			// 点击导出按钮
+			const EXPORT_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("导出脱敏记忆")
+			)
+			expect(EXPORT_BTN).toBeTruthy()
+			EXPORT_BTN?.click()
+			await settleView()
+
+			expect(exportCalled).toBe(true)
+			expect(MOUNT.container.textContent).toContain("导出数据概览")
+			expect(MOUNT.container.textContent).toContain("15")
+			expect(MOUNT.container.textContent).toContain("12")
+			expect(MOUNT.container.textContent).toContain("3")
+			expect(MOUNT.container.textContent).toContain("canonicalSummary")
+			expect(MOUNT.container.textContent).toContain("personaSummary")
+			expect(MOUNT.container.textContent).toContain("安全说明：原始向量、未脱敏聊天原文及工具执行参数已自动剔除")
+
+			// 点击下载脱敏文件
+			const DOWNLOAD_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("下载脱敏文件")
+			)
+			expect(DOWNLOAD_BTN).toBeTruthy()
+			DOWNLOAD_BTN?.click()
+			expect(window.URL.createObjectURL).toHaveBeenCalled()
+
+			// 点击复制导出内容
+			const COPY_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("复制导出内容")
+			)
+			expect(COPY_BTN).toBeTruthy()
+			COPY_BTN?.click()
+			expect(navigator.clipboard.writeText).toHaveBeenCalled()
+		} finally {
+			MOUNT.app.unmount()
+			MOUNT.container.remove()
+			HOST.restore()
+		}
+	})
+
+	it("handles export failure with feedback.error and error retry banner without faking success", async () => {
+		const FEEDBACK_SPY = vi.spyOn(feedback, "error").mockImplementation(() => {})
+		let exportAttempts = 0
+
+		const HOST = new MockHost({
+			ui_get_snapshot: () => createMockSnapshot(),
+			memory_knowledge_status: () => ({state: "ready", processed: 8, total: 8}),
+			memory_list_page: () => ({items: [], total: 0}),
+			memory_export: () => {
+				exportAttempts += 1
+				throw new Error("未知的命令: memory_export")
+			},
+		})
+		HOST.install()
+
+		const MOUNT = mountComponent()
+		try {
+			await settleView()
+
+			const TABS = MOUNT.container.querySelectorAll<HTMLButtonElement>("button")
+			const TRANSFER_TAB = Array.from(TABS).find(b => b.textContent?.includes("记忆迁移"))
+			TRANSFER_TAB?.click()
+			await settleView()
+
+			const EXPORT_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("导出脱敏记忆")
+			)
+			EXPORT_BTN?.click()
+			await settleView()
+
+			expect(exportAttempts).toBe(1)
+			expect(FEEDBACK_SPY).toHaveBeenCalledWith("导出记忆失败", expect.any(Error))
+			expect(MOUNT.container.textContent).toContain("未知的命令: memory_export")
+			expect(MOUNT.container.textContent).not.toContain("导出数据概览")
+		} finally {
+			MOUNT.app.unmount()
+			MOUNT.container.remove()
+			HOST.restore()
+		}
+	})
+
+	it("screens import file format, size limit, and invalid JSON", async () => {
+		const FEEDBACK_SPY = vi.spyOn(feedback, "error").mockImplementation(() => {})
+
+		const HOST = new MockHost({
+			ui_get_snapshot: () => createMockSnapshot(),
+			memory_knowledge_status: () => ({state: "ready", processed: 8, total: 8}),
+			memory_list_page: () => ({items: [], total: 0}),
+		})
+		HOST.install()
+
+		const MOUNT = mountComponent()
+		try {
+			await settleView()
+
+			const TABS = MOUNT.container.querySelectorAll<HTMLButtonElement>("button")
+			const TRANSFER_TAB = Array.from(TABS).find(b => b.textContent?.includes("记忆迁移"))
+			TRANSFER_TAB?.click()
+			await settleView()
+
+			const FILE_INPUT = MOUNT.container.querySelector<HTMLInputElement>("input[type='file']")
+			expect(FILE_INPUT).toBeTruthy()
+
+			// 1. 非 .json 文件测试
+			const TXT_FILE = new File(["hello world"], "notes.txt", {type: "text/plain"})
+			Object.defineProperty(FILE_INPUT, "files", {
+				value: [TXT_FILE],
+				configurable: true,
+			})
+			FILE_INPUT?.dispatchEvent(new Event("change"))
+			await settleView()
+
+			expect(FEEDBACK_SPY).toHaveBeenCalledWith("文件格式无效，仅支持 .json 文件")
+			expect(MOUNT.container.textContent).toContain("文件格式无效，仅支持 .json 文件")
+
+			// 2. 超大文件测试 (> 5MB)
+			const OVERSIZED_FILE = new File(["a"], "large.json", {type: "application/json"})
+			Object.defineProperty(OVERSIZED_FILE, "size", {value: 6 * 1024 * 1024, configurable: true})
+			Object.defineProperty(FILE_INPUT, "files", {
+				value: [OVERSIZED_FILE],
+				configurable: true,
+			})
+			FILE_INPUT?.dispatchEvent(new Event("change"))
+			await settleView()
+
+			expect(FEEDBACK_SPY).toHaveBeenCalledWith("文件过大，单文件不得超过 5MB")
+			expect(MOUNT.container.textContent).toContain("文件过大，单文件不得超过 5MB")
+
+			// 3. 非法 JSON 内容测试
+			const INVALID_JSON_FILE = new File(["{ invalid json"], "bad.json", {type: "application/json"})
+			INVALID_JSON_FILE.text = vi.fn().mockResolvedValue("{ invalid json")
+			Object.defineProperty(FILE_INPUT, "files", {
+				value: [INVALID_JSON_FILE],
+				configurable: true,
+			})
+			FILE_INPUT?.dispatchEvent(new Event("change"))
+			await settleView()
+
+			expect(FEEDBACK_SPY).toHaveBeenCalledWith("JSON 解析失败，请检查文件内容是否为合法 JSON")
+			expect(MOUNT.container.textContent).toContain("JSON 解析失败，请检查文件内容是否为合法 JSON")
+		} finally {
+			MOUNT.app.unmount()
+			MOUNT.container.remove()
+			HOST.restore()
+		}
+	})
+
+	it("previews memory import, shows conflict analysis, and commits import to refresh list", async () => {
+		let previewCalled = false
+		let commitCalled = false
+		let listReloads = 0
+
+		const VALID_BACKUP_JSON = JSON.stringify({
+			version: 1,
+			memories: [
+				{content: "主人爱喝拿铁", kind: "preference", importance: 0.9},
+				{content: "主人最喜欢的饮料是冰美式", kind: "preference", importance: 0.9},
+				{content: "主人工作地点在北京", kind: "factual", importance: 0.8},
+			],
+		})
+
+		const HOST = new MockHost({
+			ui_get_snapshot: () => createMockSnapshot(),
+			memory_knowledge_status: () => ({state: "ready", processed: 8, total: 8}),
+			memory_list_page: () => {
+				listReloads += 1
+				return {items: [mockMemoryItem], total: 1}
+			},
+			memory_import_preview: (args: any) => {
+				previewCalled = true
+				expect(args.fileName).toBe("backup.json")
+				return {
+					valid: true,
+					totalCount: 3,
+					newCount: 1,
+					duplicateCount: 1,
+					conflictCount: 1,
+					errorCount: 0,
+					previewToken: "tok-preview-999",
+					items: [
+						{id: 1, contentSummary: "主人爱喝拿铁", kind: "preference", importance: 0.9, conflictType: "none"},
+						{id: 2, contentSummary: "主人最喜欢的饮料是冰美式", kind: "preference", importance: 0.9, conflictType: "duplicate"},
+						{id: 3, contentSummary: "主人工作地点在北京", kind: "factual", importance: 0.8, conflictType: "conflict", conflictReason: "本地已有不同设定"},
+					],
+				}
+			},
+			memory_import_commit: (args: any) => {
+				commitCalled = true
+				expect(args.previewToken).toBe("tok-preview-999")
+				expect(args.conflictStrategy).toBe("skip")
+				return {
+					success: true,
+					importedCount: 2,
+					updatedCount: 0,
+					skippedCount: 1,
+				}
+			},
+		})
+		HOST.install()
+
+		const MOUNT = mountComponent()
+		try {
+			await settleView()
+
+			const TABS = MOUNT.container.querySelectorAll<HTMLButtonElement>("button")
+			const TRANSFER_TAB = Array.from(TABS).find(b => b.textContent?.includes("记忆迁移"))
+			TRANSFER_TAB?.click()
+			await settleView()
+
+			const FILE_INPUT = MOUNT.container.querySelector<HTMLInputElement>("input[type='file']")
+			const VALID_FILE = new File([VALID_BACKUP_JSON], "backup.json", {type: "application/json"})
+			VALID_FILE.text = vi.fn().mockResolvedValue(VALID_BACKUP_JSON)
+			Object.defineProperty(FILE_INPUT, "files", {
+				value: [VALID_FILE],
+				configurable: true,
+			})
+			FILE_INPUT?.dispatchEvent(new Event("change"))
+			await settleView()
+
+			expect(MOUNT.container.textContent).toContain("已选择文件: backup.json")
+
+			// 点击解析并预览
+			const PREVIEW_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("解析并预览")
+			)
+			expect(PREVIEW_BTN).toBeTruthy()
+			PREVIEW_BTN?.click()
+			await settleView()
+
+			expect(previewCalled).toBe(true)
+			expect(MOUNT.container.textContent).toContain("导入检测概览")
+			expect(MOUNT.container.textContent).toContain("主人爱喝拿铁")
+			expect(MOUNT.container.textContent).toContain("全新记忆")
+			expect(MOUNT.container.textContent).toContain("已存在相同条目")
+			expect(MOUNT.container.textContent).toContain("检测到冲突")
+			expect(MOUNT.container.textContent).toContain("本地已有不同设定")
+			expect(MOUNT.container.textContent).toContain("预览说明：仅展示脱敏摘要与核心元数据，不展示或保存内部原始向量与对话原文。")
+
+			// 点击确认并执行导入
+			const COMMIT_TRIGGER_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("确认并执行导入")
+			)
+			expect(COMMIT_TRIGGER_BTN).toBeTruthy()
+			COMMIT_TRIGGER_BTN?.click()
+			await settleView()
+
+			// 确认模态框出现
+			expect(document.body.textContent).toContain("确认导入记忆数据")
+			const CONFIRM_COMMIT_BTN = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.trim() === "确认导入" && b.classList.contains("btn-primary")
+			)
+			expect(CONFIRM_COMMIT_BTN).toBeTruthy()
+			CONFIRM_COMMIT_BTN?.click()
+			await settleView()
+
+			expect(commitCalled).toBe(true)
+			expect(listReloads).toBeGreaterThanOrEqual(2)
+		} finally {
+			MOUNT.app.unmount()
+			MOUNT.container.remove()
+			HOST.restore()
+		}
+	})
+
+	it("handles import commit failure and unknown command without faking success", async () => {
+		const FEEDBACK_SPY = vi.spyOn(feedback, "error").mockImplementation(() => {})
+		let commitAttempts = 0
+
+		const VALID_BACKUP_JSON = JSON.stringify({memories: [{content: "测试记忆"}]})
+
+		const HOST = new MockHost({
+			ui_get_snapshot: () => createMockSnapshot(),
+			memory_knowledge_status: () => ({state: "ready", processed: 8, total: 8}),
+			memory_list_page: () => ({items: [], total: 0}),
+			memory_import_preview: () => ({
+				valid: true,
+				totalCount: 1,
+				newCount: 1,
+				duplicateCount: 0,
+				conflictCount: 0,
+				errorCount: 0,
+				previewToken: "tok-fail",
+				items: [{id: 1, contentSummary: "测试记忆", kind: "general", conflictType: "none"}],
+			}),
+			memory_import_commit: () => {
+				commitAttempts += 1
+				throw new Error("未知的命令: memory_import_commit")
+			},
+		})
+		HOST.install()
+
+		const MOUNT = mountComponent()
+		try {
+			await settleView()
+
+			const TABS = MOUNT.container.querySelectorAll<HTMLButtonElement>("button")
+			const TRANSFER_TAB = Array.from(TABS).find(b => b.textContent?.includes("记忆迁移"))
+			TRANSFER_TAB?.click()
+			await settleView()
+
+			const FILE_INPUT = MOUNT.container.querySelector<HTMLInputElement>("input[type='file']")
+			const VALID_FILE = new File([VALID_BACKUP_JSON], "backup.json", {type: "application/json"})
+			VALID_FILE.text = vi.fn().mockResolvedValue(VALID_BACKUP_JSON)
+			Object.defineProperty(FILE_INPUT, "files", {
+				value: [VALID_FILE],
+				configurable: true,
+			})
+			FILE_INPUT?.dispatchEvent(new Event("change"))
+			await settleView()
+
+			const PREVIEW_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("解析并预览")
+			)
+			PREVIEW_BTN?.click()
+			await settleView()
+
+			const COMMIT_TRIGGER_BTN = Array.from(MOUNT.container.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.includes("确认并执行导入")
+			)
+			COMMIT_TRIGGER_BTN?.click()
+			await settleView()
+
+			const CONFIRM_COMMIT_BTN = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find(b =>
+				b.textContent?.trim() === "确认导入" && b.classList.contains("btn-primary")
+			)
+			CONFIRM_COMMIT_BTN?.click()
+			await settleView()
+
+			expect(commitAttempts).toBe(1)
+			expect(FEEDBACK_SPY).toHaveBeenCalledWith("导入记忆失败", expect.any(Error))
+			expect(MOUNT.container.textContent).toContain("未知的命令: memory_import_commit")
+		} finally {
+			MOUNT.app.unmount()
+			MOUNT.container.remove()
+			HOST.restore()
+		}
+	})
 })

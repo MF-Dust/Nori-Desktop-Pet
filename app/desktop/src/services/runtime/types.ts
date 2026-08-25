@@ -558,6 +558,70 @@ export interface MemoryRecallDebug {
 	echoes: {content: string; score: number}[]
 }
 
+/** 记忆导出结果 (脱敏, 不包含原始向量/聊天上下文/工具参数) */
+export interface MemoryExportResult {
+	fileName?: string
+	version?: string | number
+	totalCount: number
+	activeCount?: number
+	archivedCount?: number
+	atomCount?: number
+	sanitizedFields: string[]
+	exportedAt?: string
+	content?: string
+}
+
+/** 导入预览条目 (仅摘要与属性, 不展示或保存内部原始向量/对话/工具) */
+export interface MemoryImportPreviewItem {
+	id?: number
+	contentSummary: string
+	kind?: string
+	importance?: number
+	confidence?: number
+	status?: string
+	tags?: string
+	conflictType?: "none" | "duplicate" | "conflict"
+	conflictReason?: string
+}
+
+/** 导入预览结果 */
+export interface MemoryImportPreviewResult {
+	valid: boolean
+	totalCount: number
+	newCount: number
+	duplicateCount: number
+	conflictCount: number
+	errorCount: number
+	errors?: string[]
+	items?: MemoryImportPreviewItem[]
+	previewToken?: string
+	sanitizedNotice?: string
+}
+
+/** 导入提交条目 */
+export interface MemoryImportCommitItem {
+	id?: number
+	content: string
+	kind?: string
+	importance?: number
+	confidence?: number
+	tags?: string
+	action?: "create" | "update" | "skip"
+}
+
+/** 导入冲突解决策略 */
+export type MemoryImportConflictStrategy = "skip" | "overwrite" | "create_copy"
+
+/** 导入提交结果 */
+export interface MemoryImportCommitResult {
+	success: boolean
+	importedCount: number
+	updatedCount: number
+	skippedCount: number
+	errorCount?: number
+	message?: string
+}
+
 /** MCP 服务器状态 */
 export interface McpServerStatusInfo {
 	serverId: string

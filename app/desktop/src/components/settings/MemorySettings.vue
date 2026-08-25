@@ -3,7 +3,16 @@ import {computed, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {feedback} from "../../services/feedback"
-import {RUNTIME, type MemoryAtom, type MemoryItem, type MemoryRecallDebug, type MemorySource} from "../../services/runtime"
+import {
+	RUNTIME,
+	type MemoryAtom,
+	type MemoryExportResult,
+	type MemoryImportConflictStrategy,
+	type MemoryImportPreviewResult,
+	type MemoryItem,
+	type MemoryRecallDebug,
+	type MemorySource,
+} from "../../services/runtime"
 import Icon from "../Icon.vue"
 import AppCard from "../ui/AppCard.vue"
 import AppConfirm from "../ui/AppConfirm.vue"
@@ -22,7 +31,7 @@ const I18N = computed(() => useLanguages().views.main.memory)
 const UI_I18N = computed(() => useLanguages().components.ui.state)
 const SNAPSHOT = computed(() => RUNTIME.snapshot.value)
 
-type MemorySection = "overview" | "memories" | "atoms" | "knowledge" | "archive" | "debugger" | "advanced"
+type MemorySection = "overview" | "memories" | "atoms" | "knowledge" | "archive" | "transfer" | "debugger" | "advanced"
 const CURRENT_SECTION = ref<MemorySection>("overview")
 const memories = ref<MemoryItem[]>([])
 const memoryTotal = ref(0)
@@ -91,6 +100,7 @@ const SECTIONS = computed<SegmentItem<MemorySection>[]>(() => [
 	{key: "atoms", label: I18N.value.tabs.atoms},
 	{key: "knowledge", label: I18N.value.tabs.knowledge},
 	{key: "archive", label: I18N.value.tabs.archive},
+	{key: "transfer", label: I18N.value.tabs.transfer},
 	{key: "debugger", label: I18N.value.tabs.debugger},
 	{key: "advanced", label: I18N.value.tabs.advanced},
 ])
@@ -583,6 +593,231 @@ const addMemory = async () => {
 		adding.value = false
 	}
 }
+
+// ===================================================================
+// 记忆数据迁移与导入导出
+// ===================================================================
+
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024 // 5MB 初筛限制
+
+// 导出状态
+const isExporting = ref(false)
+const exportResult = ref<MemoryExportResult | null>(null)
+const exportError = ref("")
+const copiedExport = ref(false)
+
+const exportSanitizedFields = computed<string[]>(() => {
+	if (exportResult.value?.sanitizedFields?.length) {
+		return exportResult.value.sanitizedFields
+	}
+	return ["content", "canonicalSummary", "personaSummary", "kind", "importance", "confidence", "tags", "status"]
+})
+
+const runExport = async () => {
+	if (isExporting.value) return
+	isExporting.value = true
+	exportError.value = ""
+	try {
+		const RESULT = await RUNTIME.memoryExport()
+		exportResult.value = RESULT
+		feedback.success(I18N.value.transfer.exportSuccess)
+	} catch (error) {
+		exportError.value = error instanceof Error ? error.message : String(error)
+		feedback.error(I18N.value.toast.exportFailed, error)
+	} finally {
+		isExporting.value = false
+	}
+}
+
+const downloadExportFile = () => {
+	if (!exportResult.value) return
+	try {
+		const DATA_STR = exportResult.value.content || JSON.stringify(exportResult.value, null, 2)
+		const BLOB = new Blob([DATA_STR], {type: "application/json"})
+		const URL = window.URL.createObjectURL(BLOB)
+		const LINK = document.createElement("a")
+		LINK.href = URL
+		LINK.download = exportResult.value.fileName || `nori-memory-export-${new Date().toISOString().slice(0, 10)}.json`
+		document.body.appendChild(LINK)
+		LINK.click()
+		document.body.removeChild(LINK)
+		window.URL.revokeObjectURL(URL)
+	} catch (error) {
+		feedback.error(I18N.value.toast.exportFailed, error)
+	}
+}
+
+const copyExportContent = async () => {
+	if (!exportResult.value) return
+	try {
+		const CONTENT = exportResult.value.content || JSON.stringify({
+			version: exportResult.value.version ?? 1,
+			totalCount: exportResult.value.totalCount,
+			sanitizedFields: exportSanitizedFields.value,
+			exportedAt: exportResult.value.exportedAt || new Date().toISOString(),
+		}, null, 2)
+		await navigator.clipboard.writeText(CONTENT)
+		copiedExport.value = true
+		feedback.success(I18N.value.transfer.copied)
+		setTimeout(() => {
+			copiedExport.value = false
+		}, 2000)
+	} catch (error) {
+		feedback.error(I18N.value.toast.exportFailed, error)
+	}
+}
+
+// 导入状态
+const importFile = ref<File | null>(null)
+const importFileContent = ref<string>("")
+const importError = ref("")
+const isPreviewing = ref(false)
+const importPreview = ref<MemoryImportPreviewResult | null>(null)
+const isCommitting = ref(false)
+const importConfirmOpen = ref(false)
+const conflictStrategy = ref<MemoryImportConflictStrategy>("skip")
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const STRATEGY_OPTIONS = computed<SegmentItem<MemoryImportConflictStrategy>[]>(() => [
+	{key: "skip", label: I18N.value.transfer.strategySkip},
+	{key: "overwrite", label: I18N.value.transfer.strategyOverwrite},
+	{key: "create_copy", label: I18N.value.transfer.strategyCreateCopy},
+])
+
+const formatFileSize = (bytes: number): string => {
+	if (bytes < 1024) return `${bytes} B`
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+	return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+const handleFileSelect = async (event: Event) => {
+	const INPUT = event.target as HTMLInputElement
+	const FILE = INPUT.files?.[0]
+	if (!FILE) return
+
+	importError.value = ""
+	importPreview.value = null
+	importFileContent.value = ""
+
+	// 1. 文件格式初筛 (.json)
+	if (!FILE.name.toLowerCase().endsWith(".json")) {
+		importFile.value = null
+		importError.value = I18N.value.transfer.fileInvalidFormat
+		feedback.error(I18N.value.transfer.fileInvalidFormat)
+		INPUT.value = ""
+		return
+	}
+
+	// 2. 文件大小初筛 (<= 5MB)
+	if (FILE.size > MAX_IMPORT_BYTES) {
+		importFile.value = null
+		importError.value = I18N.value.transfer.fileTooLarge
+		feedback.error(I18N.value.transfer.fileTooLarge)
+		INPUT.value = ""
+		return
+	}
+
+	importFile.value = FILE
+
+	try {
+		const TEXT = await FILE.text()
+		// 3. JSON 合法性初筛
+		try {
+			JSON.parse(TEXT)
+		} catch {
+			importError.value = I18N.value.transfer.jsonParseFailed
+			feedback.error(I18N.value.transfer.jsonParseFailed)
+			return
+		}
+		importFileContent.value = TEXT
+	} catch (error) {
+		importError.value = I18N.value.transfer.fileReadFailed
+		feedback.error(I18N.value.transfer.fileReadFailed, error)
+	}
+}
+
+const triggerFileInput = () => {
+	fileInputRef.value?.click()
+}
+
+const runImportPreview = async () => {
+	if (!importFileContent.value.trim() || isPreviewing.value) return
+	isPreviewing.value = true
+	importError.value = ""
+	try {
+		const PREVIEW = await RUNTIME.memoryImportPreview(
+			importFileContent.value,
+			importFile.value?.name,
+			importFile.value?.size,
+		)
+		if (PREVIEW.valid === false && PREVIEW.errors?.length) {
+			importError.value = PREVIEW.errors.join("; ")
+			feedback.error(I18N.value.transfer.previewFailed)
+		} else {
+			importPreview.value = PREVIEW
+			feedback.success(I18N.value.transfer.previewSuccess)
+		}
+	} catch (error) {
+		importError.value = error instanceof Error ? error.message : String(error)
+		feedback.error(I18N.value.transfer.previewFailed, error)
+	} finally {
+		isPreviewing.value = false
+	}
+}
+
+const cancelImportPreview = () => {
+	importFile.value = null
+	importFileContent.value = ""
+	importPreview.value = null
+	importError.value = ""
+	if (fileInputRef.value) {
+		fileInputRef.value.value = ""
+	}
+}
+
+const requestCommitImport = () => {
+	importConfirmOpen.value = true
+}
+
+const confirmCommitImport = async () => {
+	if (isCommitting.value) return
+	isCommitting.value = true
+	try {
+		const RESULT = await RUNTIME.memoryImportCommit({
+			previewToken: importPreview.value?.previewToken,
+			conflictStrategy: conflictStrategy.value,
+		})
+		if (RESULT.success) {
+			feedback.success(I18N.value.transfer.importSuccess)
+			cancelImportPreview()
+			importConfirmOpen.value = false
+			await loadMemories()
+			await RUNTIME.refresh()
+		} else {
+			importError.value = RESULT.message || I18N.value.transfer.importFailed
+			feedback.error(I18N.value.toast.importFailed, new Error(RESULT.message || I18N.value.transfer.importFailed))
+			importConfirmOpen.value = false
+		}
+	} catch (error) {
+		importError.value = error instanceof Error ? error.message : String(error)
+		feedback.error(I18N.value.toast.importFailed, error)
+		importConfirmOpen.value = false
+	} finally {
+		isCommitting.value = false
+	}
+}
+
+const getConflictTone = (conflictType?: string): "teal" | "warning" | "danger" | "neutral" => {
+	if (conflictType === "conflict") return "danger"
+	if (conflictType === "duplicate") return "warning"
+	return "teal"
+}
+
+const getConflictLabel = (conflictType?: string): string => {
+	if (conflictType === "conflict") return I18N.value.transfer.conflictLabel
+	if (conflictType === "duplicate") return I18N.value.transfer.duplicateLabel
+	return I18N.value.transfer.newLabel
+}
 </script>
 
 <template>
@@ -796,6 +1031,199 @@ const addMemory = async () => {
 					</div>
 				</div>
 				<AppEmpty v-else icon="terminal" :title="I18N.debugger.empty"/>
+			</AppCard>
+		</div>
+
+		<!-- 记忆迁移视图 (导入 / 导出) -->
+		<div v-if="CURRENT_SECTION === 'transfer'" class="flex flex-col gap-3.5 pb-5">
+			<!-- 1. 记忆导出 -->
+			<AppCard :title="I18N.transfer.exportTitle" icon="download">
+				<p class="text-sm text-text-muted leading-relaxed">{{ I18N.transfer.exportDesc }}</p>
+
+				<div class="flex items-center gap-2 pt-1">
+					<AppButton
+						variant="primary"
+						size="sm"
+						icon="download"
+						:loading="isExporting"
+						:disabled="isExporting"
+						@click="runExport"
+					>
+						{{ isExporting ? I18N.transfer.exporting : I18N.transfer.exportBtn }}
+					</AppButton>
+				</div>
+
+				<!-- 导出错误提示 -->
+				<div v-if="exportError" class="surface-card flex items-center justify-between p-3 text-sm text-danger-text border border-danger/24" role="alert">
+					<span>{{ exportError }}</span>
+					<AppButton size="sm" variant="ghost" @click="runExport">{{ I18N.detail.retry }}</AppButton>
+				</div>
+
+				<!-- 导出结果概览与下载 -->
+				<div v-else-if="exportResult" class="surface-card flex flex-col gap-3 p-3.5 border border-line-subtle" role="region" :aria-label="I18N.transfer.exportStatsTitle">
+					<div class="flex items-center justify-between">
+						<span class="text-sm font-600 text-text-primary">{{ I18N.transfer.exportStatsTitle }}</span>
+						<AppChip tone="teal">{{ I18N.transfer.privacyBadge }}</AppChip>
+					</div>
+
+					<div class="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+						<AppStatTile :label="I18N.transfer.totalExported" :value="String(exportResult.totalCount)" tone="teal"/>
+						<AppStatTile :label="I18N.transfer.activeExported" :value="String(exportResult.activeCount ?? SNAPSHOT?.memory?.active ?? exportResult.totalCount)" tone="teal"/>
+						<AppStatTile :label="I18N.transfer.archivedExported" :value="String(exportResult.archivedCount ?? SNAPSHOT?.memory?.archived ?? 0)"/>
+					</div>
+
+					<div class="flex flex-col gap-1.5 pt-2 border-t border-line-subtle">
+						<span class="field-label">{{ I18N.transfer.sanitizedFieldsTitle }}</span>
+						<div class="flex flex-wrap gap-1.5">
+							<AppChip v-for="field in exportSanitizedFields" :key="field" tone="neutral">{{ field }}</AppChip>
+						</div>
+					</div>
+
+					<div class="flex items-center gap-2 pt-1 text-xs text-text-muted">
+						<Icon name="shield" :size="13" class="text-nori-teal-soft shrink-0"/>
+						<span>{{ I18N.transfer.sanitizedNotice }}</span>
+					</div>
+
+					<div class="flex items-center gap-2 pt-2 border-t border-line-subtle">
+						<AppButton size="sm" icon="download" @click="downloadExportFile">{{ I18N.transfer.downloadFile }}</AppButton>
+						<AppButton size="sm" variant="ghost" icon="copy" @click="copyExportContent">
+							{{ copiedExport ? I18N.transfer.copied : I18N.transfer.copyJson }}
+						</AppButton>
+					</div>
+				</div>
+			</AppCard>
+
+			<!-- 2. 记忆导入 -->
+			<AppCard :title="I18N.transfer.importTitle" icon="upload">
+				<p class="text-sm text-text-muted leading-relaxed">{{ I18N.transfer.importDesc }}</p>
+
+				<!-- 隐藏的文件 input -->
+				<input
+					ref="fileInputRef"
+					type="file"
+					accept=".json"
+					class="hidden"
+					aria-hidden="true"
+					@change="handleFileSelect"
+				/>
+
+				<!-- 文件选择区域 -->
+				<div class="flex flex-col gap-2">
+					<div
+						class="surface-card flex flex-col items-center justify-center gap-2 p-5 border border-dashed border-line-subtle rounded-md cursor-pointer transition-all duration-200 hover:(border-nori-teal-bright/40 bg-nori-teal-bright/4)"
+						@click="triggerFileInput"
+					>
+						<div class="w-10 h-10 rounded-full bg-nori-teal-bright/10 text-nori-teal-bright flex items-center justify-center">
+							<Icon :name="importFile ? 'file' : 'upload'" :size="20"/>
+						</div>
+						<div class="text-center">
+							<p class="text-sm font-500 text-text-primary">
+								{{ importFile ? `${I18N.transfer.fileSelected}: ${importFile.name}` : I18N.transfer.dragDropHint }}
+							</p>
+							<p class="text-xs text-text-muted mt-0.5">
+								{{ importFile ? `${I18N.transfer.fileSize}: ${formatFileSize(importFile.size)}` : I18N.transfer.fileLimitHint }}
+							</p>
+						</div>
+						<AppButton size="sm" variant="ghost" class="mt-1" @click.stop="triggerFileInput">
+							{{ importFile ? I18N.transfer.changeFile : I18N.transfer.selectFile }}
+						</AppButton>
+					</div>
+				</div>
+
+				<!-- 导入错误提示 -->
+				<div v-if="importError" class="surface-card flex items-center justify-between p-3 text-sm text-danger-text border border-danger/24" role="alert">
+					<span>{{ importError }}</span>
+					<AppButton size="sm" variant="ghost" @click="importError = ''">{{ I18N.common.close }}</AppButton>
+				</div>
+
+				<!-- 解析与预览按钮 -->
+				<div v-if="importFile && !importPreview" class="flex items-center gap-2 pt-1">
+					<AppButton
+						variant="primary"
+						size="sm"
+						icon="sparkles"
+						:loading="isPreviewing"
+						:disabled="isPreviewing || !importFileContent"
+						@click="runImportPreview"
+					>
+						{{ isPreviewing ? I18N.transfer.previewing : I18N.transfer.previewBtn }}
+					</AppButton>
+					<AppButton size="sm" variant="ghost" @click="cancelImportPreview">
+						{{ I18N.transfer.cancelPreview }}
+					</AppButton>
+				</div>
+
+				<!-- 预览分析与确认区域 -->
+				<div v-if="importPreview" class="surface-card flex flex-col gap-3.5 p-3.5 border border-line-subtle" role="region" :aria-label="I18N.transfer.previewSummaryTitle">
+					<div class="flex items-center justify-between">
+						<span class="text-sm font-600 text-text-primary">{{ I18N.transfer.previewSummaryTitle }}</span>
+						<AppChip tone="teal">{{ I18N.transfer.privacyBadge }}</AppChip>
+					</div>
+
+					<!-- 统计卡片 -->
+					<div class="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+						<AppStatTile :label="I18N.transfer.totalToImport" :value="String(importPreview.totalCount)" tone="teal"/>
+						<AppStatTile :label="I18N.transfer.newItems" :value="String(importPreview.newCount)" tone="teal"/>
+						<AppStatTile :label="I18N.transfer.duplicateItems" :value="String(importPreview.duplicateCount)" tone="warning"/>
+						<AppStatTile :label="I18N.transfer.conflictItems" :value="String(importPreview.conflictCount)" :tone="importPreview.conflictCount > 0 ? 'danger' : 'neutral'"/>
+					</div>
+
+					<!-- 冲突处理策略 -->
+					<div class="flex flex-col gap-1.5 pt-2 border-t border-line-subtle">
+						<span class="field-label">{{ I18N.transfer.strategyTitle }}</span>
+						<AppSegmented
+							v-model="conflictStrategy"
+							:items="STRATEGY_OPTIONS"
+							:label="I18N.transfer.strategyTitle"
+							size="sm"
+						/>
+					</div>
+
+					<!-- 隐私说明 -->
+					<div class="flex items-center gap-2 text-xs text-text-muted">
+						<Icon name="info" :size="13" class="text-nori-teal-soft shrink-0"/>
+						<span>{{ I18N.transfer.previewNotice }}</span>
+					</div>
+
+					<!-- 条目预览列表 -->
+					<div class="flex flex-col gap-2 pt-2 border-t border-line-subtle">
+						<span class="field-label">{{ I18N.transfer.previewListTitle }} ({{ importPreview.items?.length ?? 0 }})</span>
+						<div v-if="importPreview.items && importPreview.items.length > 0" class="flex flex-col gap-2 max-h-[18rem] scroll-area">
+							<div
+								v-for="(item, index) in importPreview.items"
+								:key="item.id ?? index"
+								class="p-2.5 rounded bg-overlay-2 border border-line-subtle flex flex-col gap-1.5 text-sm"
+							>
+								<div class="flex flex-wrap items-center gap-1.5">
+									<AppChip :tone="getConflictTone(item.conflictType)">{{ getConflictLabel(item.conflictType) }}</AppChip>
+									<AppChip v-if="item.kind" tone="teal">{{ getKindLabel(item.kind) }}</AppChip>
+									<AppChip v-if="item.importance !== undefined" tone="warning">{{ I18N.add.importance }} {{ Math.round(item.importance * 100) }}%</AppChip>
+									<AppChip v-if="item.tags" tone="neutral">{{ item.tags }}</AppChip>
+								</div>
+								<p class="text-base text-text-primary leading-normal">{{ item.contentSummary }}</p>
+								<p v-if="item.conflictReason" class="text-xs text-warning">{{ item.conflictReason }}</p>
+							</div>
+						</div>
+						<p v-else class="text-xs text-text-faint py-2">{{ I18N.transfer.previewNoItems }}</p>
+					</div>
+
+					<!-- 底部操作按钮 -->
+					<div class="flex items-center justify-between pt-2 border-t border-line-subtle">
+						<AppButton size="sm" variant="ghost" @click="cancelImportPreview">
+							{{ I18N.transfer.cancelPreview }}
+						</AppButton>
+						<AppButton
+							variant="primary"
+							size="sm"
+							icon="check"
+							:loading="isCommitting"
+							:disabled="isCommitting || importPreview.totalCount === 0"
+							@click="requestCommitImport"
+						>
+							{{ isCommitting ? I18N.transfer.importing : I18N.transfer.confirmImportBtn }}
+						</AppButton>
+					</div>
+				</div>
 			</AppCard>
 		</div>
 
@@ -1277,6 +1705,19 @@ const addMemory = async () => {
 			tone="danger"
 			@update:show="closeDeleteConfirm"
 			@confirm="confirmDelete"
+		/>
+
+		<!-- 导入记忆确认 -->
+		<AppConfirm
+			:show="importConfirmOpen"
+			:title="I18N.transfer.confirmModalTitle"
+			:desc="I18N.transfer.confirmModalDesc"
+			:confirm-label="I18N.transfer.confirmCommit"
+			:cancel-label="I18N.common.cancel"
+			:close-label="I18N.common.close"
+			tone="primary"
+			@update:show="importConfirmOpen = $event"
+			@confirm="confirmCommitImport"
 		/>
 	</div>
 </template>

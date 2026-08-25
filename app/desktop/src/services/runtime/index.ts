@@ -15,6 +15,11 @@ import type {
 	InteractionConfig,
 	McpServerStatusInfo,
 	MemoryAtom,
+	MemoryExportResult,
+	MemoryImportCommitItem,
+	MemoryImportCommitResult,
+	MemoryImportConflictStrategy,
+	MemoryImportPreviewResult,
 	MemoryItem,
 	MemoryIndexStatus,
 	MemoryListPage,
@@ -52,6 +57,12 @@ export type {
 	InteractionRegion,
 	McpServerStatusInfo,
 	MemoryAtom,
+	MemoryExportResult,
+	MemoryImportCommitItem,
+	MemoryImportCommitResult,
+	MemoryImportConflictStrategy,
+	MemoryImportPreviewItem,
+	MemoryImportPreviewResult,
 	MemoryItem,
 	MemoryIndexStatus,
 	MemoryListPage,
@@ -473,6 +484,15 @@ export const RUNTIME = {
 	},
 	memoryReembed(): Promise<number> {
 		return invoke("memory_reembed_all")
+	},
+	memoryExport(): Promise<MemoryExportResult> {
+		return invoke("memory_export")
+	},
+	memoryImportPreview(fileContent: string, fileName?: string, fileSize?: number): Promise<MemoryImportPreviewResult> {
+		return invoke("memory_import_preview", {fileContent, fileName, fileSize})
+	},
+	memoryImportCommit(options: {previewToken?: string; items?: MemoryImportCommitItem[]; conflictStrategy?: MemoryImportConflictStrategy} = {}): Promise<MemoryImportCommitResult> {
+		return invoke("memory_import_commit", options)
 	},
 
 	// ------------------------------------------------------------------

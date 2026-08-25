@@ -2,6 +2,11 @@ import type {
 	HistoryMessage,
 	InteractionConfig,
 	MemoryAtom,
+	MemoryExportResult,
+	MemoryImportCommitItem,
+	MemoryImportCommitResult,
+	MemoryImportConflictStrategy,
+	MemoryImportPreviewResult,
 	MemoryIndexStatus,
 	MemoryItem,
 	MemoryOverview,
@@ -100,6 +105,9 @@ export interface BridgeCommandMap {
 	memory_get_settings: {args: EmptyCommandArgs; result: MemorySettings}
 	memory_update_settings: {args: {settings: CommandArgs}; result: MemorySettings}
 	memory_reembed_all: {args: EmptyCommandArgs; result: number}
+	memory_export: {args: EmptyCommandArgs; result: MemoryExportResult}
+	memory_import_preview: {args: {fileContent: string; fileName?: string; fileSize?: number}; result: MemoryImportPreviewResult}
+	memory_import_commit: {args: {previewToken?: string; items?: MemoryImportCommitItem[]; conflictStrategy?: MemoryImportConflictStrategy}; result: MemoryImportCommitResult}
 
 	skills_marketplace: {args: EmptyCommandArgs; result: SkillDto[]}
 	skills_toggle: {args: {id: string; enabled: boolean}; result: void}
