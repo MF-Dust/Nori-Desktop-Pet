@@ -30,13 +30,17 @@ const volumeField = defineField(
 )
 const volume = volumeField.value
 
-// TTS 配置 (云端路径: openai / custom / gpt_sovits)
-type TtsProvider = "openai" | "custom" | "gpt_sovits"
+// TTS 配置 (云端路径: openai / minimax / custom / gpt_sovits)
+type TtsProvider = "openai" | "minimax" | "custom" | "gpt_sovits"
+const TTS_DEFAULT_BASE_URLS: Partial<Record<TtsProvider, string>> = {
+	openai: "https://api.openai.com/v1",
+	minimax: "https://api.minimaxi.com/v1",
+}
 const ttsProviderField = defineField<TtsProvider>(
 	"ttsProvider",
 	snapshot => {
 		const VALUE = snapshot.voice.ttsProvider
-		return (["openai", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
+		return (["openai", "minimax", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
 	},
 	"openai",
 	val => RUNTIME.updateVoice({ttsProvider: val}),
@@ -135,8 +139,29 @@ const onVolumeChange = (value: number) => {
 }
 
 const onTtsProviderChange = (value: TtsProvider) => {
+	const PREVIOUS_BASE_URL = ttsBaseUrl.value.trim()
+	const KNOWN_DEFAULTS = Object.values(TTS_DEFAULT_BASE_URLS)
 	ttsProvider.value = value
 	void ttsProviderField.saveNow()
+
+	if (!PREVIOUS_BASE_URL || KNOWN_DEFAULTS.includes(PREVIOUS_BASE_URL)) {
+		const NEXT_BASE_URL = TTS_DEFAULT_BASE_URLS[value]
+		if (NEXT_BASE_URL && NEXT_BASE_URL !== PREVIOUS_BASE_URL) {
+			ttsBaseUrl.value = NEXT_BASE_URL
+			ttsBaseUrlField.touch()
+			void ttsBaseUrlField.saveNow()
+		}
+	}
+
+	if (value === "minimax" && (!ttsVoice.value.trim() || ttsVoice.value === "nova")) {
+		ttsVoice.value = "male-qn-qingse"
+		ttsVoiceField.touch()
+		void ttsVoiceField.saveNow()
+	} else if (value === "openai" && ttsVoice.value === "male-qn-qingse") {
+		ttsVoice.value = "nova"
+		ttsVoiceField.touch()
+		void ttsVoiceField.saveNow()
+	}
 }
 
 const onTtsBaseUrlBlur = () => ttsBaseUrlField.save()
@@ -264,6 +289,14 @@ const testVoice = async () => {
 						</label>
 						<label
 							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="ttsProvider === 'minimax' ? 'pill-choice-on' : 'pill-choice-off'"
+						>
+							<input v-model="ttsProvider" type="radio" value="minimax" class="sr-only"
+								@change="onTtsProviderChange('minimax')"/>
+							MiniMax
+						</label>
+						<label
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
 							:class="ttsProvider === 'custom' ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="ttsProvider" type="radio" value="custom" class="sr-only"
@@ -281,13 +314,13 @@ const testVoice = async () => {
 					</div>
 				</div>
 
-				<template v-if="ttsProvider === 'openai' || ttsProvider === 'custom'">
+				<template v-if="ttsProvider === 'openai' || ttsProvider === 'minimax' || ttsProvider === 'custom'">
 					<label class="field">
 						<span class="field-label font-500">{{ I18N.tts.baseUrl }}</span>
 						<input
 							v-model="ttsBaseUrl"
 							class="input-base"
-							placeholder="https://api.openai.com/v1"
+							:placeholder="ttsProvider === 'minimax' ? 'https://api.minimaxi.com/v1' : 'https://api.openai.com/v1'"
 							@focus="ttsBaseUrlField.focus"
 							@input="ttsBaseUrlField.touch"
 							@blur="onTtsBaseUrlBlur"
@@ -363,7 +396,7 @@ const testVoice = async () => {
 						<input
 							v-model="ttsVoice"
 							class="input-base"
-							placeholder="nova, alloy, shimmer..."
+							:placeholder="ttsProvider === 'minimax' ? 'male-qn-qingse' : 'nova, alloy, shimmer...'"
 							@focus="ttsVoiceField.focus"
 							@input="ttsVoiceField.touch"
 							@blur="onTtsVoiceBlur"
