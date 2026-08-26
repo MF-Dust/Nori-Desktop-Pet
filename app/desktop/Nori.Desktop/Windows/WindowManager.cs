@@ -131,7 +131,11 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		if (Get(label) is not { } window) return;
 		_windows.Remove(label);
 		if (window is NoriWindow nw) nw.AllowClose = true;
-		else if (window is PetWindow pw) pw.AllowClose = true;
+		else if (window is PetWindow pw)
+		{
+			pw.AllowClose = true;
+			if (ReferenceEquals(_petWindow, pw)) _petWindow = null;
+		}
 		window.Close();
 		if (_visible.TryUpdate(label, false, true)) VisibilityChanged?.Invoke(label, false);
 	}
