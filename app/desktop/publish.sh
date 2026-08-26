@@ -51,19 +51,15 @@ detect_rid() {
 	esac
 }
 
-# macOS 的 .app bundle: Avalonia 需要它才能拿到正常的 Dock/权限行为,
-# 麦克风权限也必须在 Info.plist 里声明, 否则 getUserMedia 会被系统直接拒绝。
 make_macos_bundle() {
 	local rid="$1" publish_dir="$2"
 	local app_dir="bin/publish/$rid/Nori.app"
 	rm -rf "$app_dir"
 	mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
-
 	cp -R "$publish_dir/." "$app_dir/Contents/MacOS/"
-
 	cat > "$app_dir/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key><string>Nori</string>
@@ -75,7 +71,6 @@ make_macos_bundle() {
 	<key>CFBundleExecutable</key><string>$APP_NAME</string>
 	<key>LSMinimumSystemVersion</key><string>12.0</string>
 	<key>NSHighResolutionCapable</key><true/>
-	<!-- 语音输入: 前端 MediaRecorder 会触发系统麦克风授权, 缺这条会被直接拒绝 -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Nori 需要使用麦克风来进行语音对话。</string>
 </dict>
@@ -84,37 +79,29 @@ PLIST
 	echo "已生成 $app_dir"
 }
 
-# Linux: tar.gz + .desktop 模板 (安装路径由用户决定, 因此 Exec 用占位符)
 make_linux_package() {
 	local rid="$1" publish_dir="$2"
 	local out_dir="bin/publish/$rid"
-
-	# 保留原 apphost 作为兼容入口，同时提供不会被 Dolphin 按 .desktop 误判的主入口。
 	cp -p "$publish_dir/$APP_NAME" "$publish_dir/$LINUX_APP_NAME"
 	test -x "$publish_dir/$LINUX_APP_NAME"
-
 	cat > "$out_dir/nori.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Nori Desktop Pet
 Comment=Live2D 桌面陪伴伙伴
-# 安装后请把 /opt/nori 换成实际安装路径
 Exec=/opt/nori/$LINUX_APP_NAME
 Icon=/opt/nori/nori.png
 Terminal=false
 Categories=Utility;
 StartupWMClass=Nori.Desktop
 DESKTOP
-
 	cp "$out_dir/nori.desktop" "$publish_dir/nori.desktop"
 	tar -czf "$out_dir/nori-$APP_VERSION-$rid.tar.gz" -C "$publish_dir" .
 	echo "已生成 $out_dir/nori-$APP_VERSION-$rid.tar.gz"
 }
 
 RIDS=("$@")
-if [ ${#RIDS[@]} -eq 0 ]; then
-	RIDS=("$(detect_rid)")
-fi
+if [ ${#RIDS[@]} -eq 0 ]; then RIDS=("$(detect_rid)"); fi
 
 if [ "$SKIP_FRONTEND" = "1" ]; then
 	echo "[1/2] 跳过前端构建, 使用现有 dist/"
@@ -128,10 +115,8 @@ for rid in "${RIDS[@]}"; do
 		linux-x64 | linux-arm64 | osx-arm64 | osx-x64) ;;
 		*) echo "不支持的 RID: $rid" >&2; exit 1 ;;
 	esac
-
 	publish_dir="bin/publish/$rid/app"
-	mode="framework-dependent"
-	echo "[2/2] 发布 $APP_NAME ($rid, $mode)..."
+	echo "[2/2] 发布 $APP_NAME ($rid, framework-dependent)..."
 	rm -rf "bin/publish/$rid"
 	publish_args=(
 		-c Release -r "$rid" --self-contained false
@@ -147,14 +132,12 @@ for rid in "${RIDS[@]}"; do
 		publish_args+=("-p:DebugType=None" "-p:DebugSymbols=false")
 	fi
 	dotnet publish "$APP_NAME/$APP_NAME.csproj" "${publish_args[@]}" -o "$publish_dir"
-
 	if [ "$KEEP_SYMBOLS" != "1" ]; then find "$publish_dir" -name "*.pdb" -delete; fi
-
+	node scripts/check-package-size.mjs --path "$publish_dir" --label "$rid publish" --max-mib 80
 	case "$rid" in
 		osx-*) make_macos_bundle "$rid" "$publish_dir" ;;
 		linux-*) make_linux_package "$rid" "$publish_dir" ;;
 	esac
-
 	echo "========================================================"
 	echo "发布完成: app/desktop/bin/publish/$rid/"
 	echo "========================================================"
