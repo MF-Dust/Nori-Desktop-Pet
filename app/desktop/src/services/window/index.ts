@@ -48,12 +48,16 @@ function getTarget(label: WindowLabel) {
 }
 
 /**
- * 显示并聚焦窗口
+ * 显示窗口。
+ *
+ * Bridge 只允许 WebView 修改自己的窗口属性；主窗口仅额外获准 show/hide pet。
+ * 因此跨窗口显示时不能紧接着调用 window_focus，否则 main → pet 会被权限层拒绝。
+ * 当前窗口仍保留原来的 show + focus 行为。
  */
 export async function showWindow(label: WindowLabel) {
 	const WINDOW = getTarget(label)
 	await WINDOW.show()
-	await WINDOW.setFocus()
+	if (getCurrentWindow().label === label) await WINDOW.setFocus()
 }
 
 /**
