@@ -119,7 +119,7 @@ onMounted(async () => {
 			</button>
 		</TitleBar>
 
-		<div class="flex-1 flex flex-col items-center justify-center gap-7 pb-6 relative">
+		<div class="flex-1 min-h-0 scroll-area flex flex-col items-center justify-center gap-7 pb-6 relative">
 			<!-- 多重轨道天体声呐光环 -->
 			<div class="relative w-[15rem] h-[15rem] flex items-center justify-center">
 				<span class="absolute inset-0 rounded-full border border-dashed border-nori-teal-bright/40 [animation:rotate_14s_linear_infinite]"/>
