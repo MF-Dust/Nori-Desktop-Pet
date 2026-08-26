@@ -5,7 +5,6 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Avalonia.Input.Platform;
-using Avalonia.Threading;
 using Nori.Core.Agent;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
@@ -41,19 +40,17 @@ namespace Nori.Desktop.Bridge;
 public sealed class BridgeCommands
 {
 	private readonly AppServices _services;
+	private readonly IUiDispatcher _uiDispatcher;
 
-	/// <summary>UI 线程调度入口, 测试可注入同步实现</summary>
-	private readonly Action<Action> _postUi;
-
-	public BridgeCommands(AppServices services) : this(services, null)
+	public BridgeCommands(AppServices services) : this(services, AvaloniaUiDispatcher.Instance)
 	{
 	}
 
-	/// <summary>测试可注入 UI 调度入口的构造函数</summary>
-	public BridgeCommands(AppServices services, Action<Action>? postUi)
+	/// <summary>测试可注入 UI 调度器的构造函数</summary>
+	public BridgeCommands(AppServices services, IUiDispatcher uiDispatcher)
 	{
 		_services = services;
-		_postUi = postUi ?? (action => Dispatcher.UIThread.Post(action));
+		_uiDispatcher = uiDispatcher ?? throw new ArgumentNullException(nameof(uiDispatcher));
 	}
 
 	private AppRuntime Runtime => _services.Runtime
@@ -84,11 +81,11 @@ public sealed class BridgeCommands
 		{
 		// ---- 应用 ----
 		// invoke("exit_app")
-		"exit_app" => RequireWebViewSource(source, () =>
+		"exit_app" => await OnUi(() => RequireWebViewSource(source, () =>
 		{
 			_services.Windows.Shutdown();
 			return (object?)null;
-		}),
+		})),
 
 		// invoke("write_log", {level: "info", message: "xxx"})
 		"write_log" => WriteFrontendLog(args),
@@ -1954,7 +1951,7 @@ public sealed class BridgeCommands
 		if (string.IsNullOrWhiteSpace(filePath))
 		{
 			Avalonia.Controls.Window? self = source.Self ?? throw new InvalidOperationException("来源窗口不可用");
-			filePath = await Dispatcher.UIThread.InvokeAsync(async () =>
+			filePath = await _uiDispatcher.InvokeTaskAsync(async () =>
 			{
 				if (sourceKind == "folder")
 				{
@@ -2049,7 +2046,7 @@ public sealed class BridgeCommands
 	{
 		RequireMainVoid(source);
 		Window self = source.Self ?? throw new InvalidOperationException("来源窗口不可用");
-		string? targetPath = await Dispatcher.UIThread.InvokeAsync(async () =>
+		string? targetPath = await _uiDispatcher.InvokeTaskAsync(async () =>
 		{
 			IStorageFile? file = await self.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
 			{
@@ -2089,7 +2086,7 @@ public sealed class BridgeCommands
 		switch (mode)
 		{
 			case "ui_thread":
-				Dispatcher.UIThread.Post(() => throw new InvalidOperationException("调试崩溃测试: UI 线程未处理异常"));
+				_uiDispatcher.Post(() => throw new InvalidOperationException("调试崩溃测试: UI 线程未处理异常"));
 				break;
 			case "background_thread":
 				new Thread(() => throw new InvalidOperationException("调试崩溃测试: 后台线程未处理异常")).Start();
@@ -2115,7 +2112,7 @@ public sealed class BridgeCommands
 		return null;
 	}
 
-	private static async Task<object?> WriteClipboardAsync(IBridgeSource source, string text)
+	private async Task<object?> WriteClipboardAsync(IBridgeSource source, string text)
 	{
 		await OnUiAsync(async () =>
 		{
@@ -2131,7 +2128,7 @@ public sealed class BridgeCommands
 	// ===================================================================
 
 	/// <summary>切到 UI 线程后向所有 WebView 窗口广播事件</summary>
-	private void PostBroadcast(string name, object payload) => _postUi(() => _services.Windows.Broadcast(name, payload));
+	private void PostBroadcast(string name, object payload) => _uiDispatcher.Post(() => _services.Windows.Broadcast(name, payload));
 
 	private string AuthorizedWindowLabel(IBridgeSource source, JsonElement args, bool allowMainToTargetPet = false)
 	{
@@ -2302,9 +2299,7 @@ public sealed class BridgeCommands
 		return null;
 	}
 
-	private static Task<T> OnUi<T>(Func<T> action) =>
-		Dispatcher.UIThread.CheckAccess() ? Task.FromResult(action()) : Dispatcher.UIThread.InvokeAsync(action).GetTask();
+	private Task<T> OnUi<T>(Func<T> action) => _uiDispatcher.InvokeAsync(action);
 
-	private static Task OnUiAsync(Func<Task> action) =>
-		Dispatcher.UIThread.CheckAccess() ? action() : Dispatcher.UIThread.InvokeAsync(action);
+	private Task OnUiAsync(Func<Task> action) => _uiDispatcher.InvokeTaskAsync(action);
 }

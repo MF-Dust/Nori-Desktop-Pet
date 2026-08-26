@@ -106,6 +106,35 @@ public class BridgeCommandsTests : IDisposable
 		}
 	}
 
+	private sealed class SynchronousUiDispatcher : IUiDispatcher
+	{
+		public int InvokeCount { get; private set; }
+
+		public void Post(Action action)
+		{
+			InvokeCount++;
+			action();
+		}
+
+		public Task<T> InvokeAsync<T>(Func<T> action)
+		{
+			InvokeCount++;
+			return Task.FromResult(action());
+		}
+
+		public Task InvokeTaskAsync(Func<Task> action)
+		{
+			InvokeCount++;
+			return action();
+		}
+
+		public Task<T> InvokeTaskAsync<T>(Func<Task<T>> action)
+		{
+			InvokeCount++;
+			return action();
+		}
+	}
+
 	private sealed class FakeWindowManager : IWindowManager
 	{
 		public List<(string Name, object? Payload)> Broadcasts { get; } = [];
@@ -250,7 +279,8 @@ public class BridgeCommandsTests : IDisposable
 		}
 	}
 
-	private BridgeCommands CreateCommands() => new(_services, action => action());
+	private BridgeCommands CreateCommands(IUiDispatcher? uiDispatcher = null) =>
+		new(_services, uiDispatcher ?? new SynchronousUiDispatcher());
 
 	private static JsonElement Args(object payload) =>
 		JsonSerializer.SerializeToElement(payload, new JsonSerializerOptions {PropertyNamingPolicy = JsonNamingPolicy.CamelCase});
@@ -1215,6 +1245,24 @@ public class BridgeCommandsTests : IDisposable
 			commands.InvokeAsync(main, "model_set_display", Args(new {modelId = "nori", opacity = 2})));
 		await Assert.ThrowsAsync<InvalidOperationException>(() =>
 			commands.InvokeAsync(main, "model_set_display", Args(new {modelId = "nori", qualityMode = "unknown"})));
+	}
+
+	[Fact]
+	public async Task 首启初始化和窗口命令通过同步UI调度器完成()
+	{
+		InstallKnownModel("nori");
+		SynchronousUiDispatcher dispatcher = new();
+		BridgeCommands commands = CreateCommands(dispatcher);
+
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.FirstRun), "complete_first_run",
+			Args(new {modelId = "nori", telemetryEnabled = false}));
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Init), "init_enter_main", Args(new { }));
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "window_hide", Args(new { }));
+		await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "window_show", Args(new { }));
+
+		Assert.True(_windows.IsWindowVisible(WindowLabels.Main));
+		Assert.False(_windows.IsWindowVisible(WindowLabels.Init));
+		Assert.Equal(6, dispatcher.InvokeCount);
 	}
 
 	[Fact]
