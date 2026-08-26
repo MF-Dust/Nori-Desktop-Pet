@@ -244,9 +244,14 @@ public sealed class VoiceService : IDisposable
 
 	private string ResolveProviderEndpoint(string providerName)
 	{
-		string endpoint = providerName.Equals("gpt_sovits", StringComparison.OrdinalIgnoreCase)
-			? _config.GetStringOr("gptsovits_base_url", "http://127.0.0.1:9880")
-			: _config.GetStringOr("tts_base_url", "https://api.openai.com/v1");
+		string endpoint = providerName.ToLowerInvariant() switch
+		{
+			"gpt_sovits" => _config.GetStringOr("gptsovits_base_url", "http://127.0.0.1:9880"),
+			"minimax" => _config.GetStringOr("tts_base_url", "") is {Length: > 0} minimaxUrl
+				? minimaxUrl
+				: "https://api.minimaxi.com/v1",
+			_ => _config.GetStringOr("tts_base_url", "https://api.openai.com/v1"),
+		};
 		return $"{providerName}:{endpoint.Trim().TrimEnd('/') }";
 	}
 
@@ -255,10 +260,11 @@ public sealed class VoiceService : IDisposable
 	{
 		if (RetiredProviders.Contains(name))
 		{
-			throw new InvalidOperationException($"语音提供商 {name} 依赖浏览器能力, 已在纯后端版本中停用, 请改用 OpenAI / 自定义 HTTP / GPT-SoVITS");
+			throw new InvalidOperationException($"语音提供商 {name} 依赖浏览器能力, 已在纯后端版本中停用, 请改用 OpenAI / MiniMax / 自定义 HTTP / GPT-SoVITS");
 		}
 		return name switch
 		{
+			"minimax" => new MiniMaxTtsProvider(_httpClient, _config),
 			"gpt_sovits" => new GptSoVitsTtsProvider(_httpClient, _config),
 			"custom" => new CustomHttpTtsProvider(_httpClient, _config),
 			_ => new OpenAiTtsProvider(_httpClient, _config),
