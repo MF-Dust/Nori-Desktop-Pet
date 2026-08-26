@@ -73,21 +73,23 @@ RUNTIME.onLanguageChanged((language) => {
 				<NNotificationProvider>
 					<main
 						v-if="RUNTIME.bootstrapError.value"
-						class="w-100vw h-100vh flex items-center justify-center bg-bg-abyss p-6"
+						class="w-100vw h-100vh scroll-area bg-bg-abyss p-6"
 						role="alert"
 						aria-live="assertive"
 					>
-						<section class="w-full max-w-[48rem] flex flex-col items-center gap-4 rounded-lg border border-danger/35 bg-bg-card/90 p-6 text-center shadow-elev-2">
-							<span class="flex h-12 w-12 items-center justify-center rounded-full bg-danger/12 text-danger-text">
-								<Icon name="alert" :size="24"/>
-							</span>
-							<h1 class="m-0 text-xl font-700 text-text-primary">{{ I18N.bootstrapTitle }}</h1>
-							<p class="m-0 text-base text-text-body">{{ I18N.bootstrapDesc }}</p>
-							<p v-if="bootstrapErrorText" class="m-0 max-w-full break-words text-sm text-danger-text" role="status">{{ bootstrapErrorText }}</p>
-							<AppButton variant="primary" icon="refresh" :loading="retryingBootstrap" @click="retryBootstrap">
-								{{ retryingBootstrap ? I18N.bootstrapRetrying : I18N.retry }}
-							</AppButton>
-						</section>
+						<div class="min-h-full flex items-center justify-center">
+							<section class="w-full max-w-[48rem] flex flex-col items-center gap-4 rounded-lg border border-danger/35 bg-bg-card/90 p-6 text-center shadow-elev-2">
+								<span class="flex h-12 w-12 items-center justify-center rounded-full bg-danger/12 text-danger-text">
+									<Icon name="alert" :size="24"/>
+								</span>
+								<h1 class="m-0 text-xl font-700 text-text-primary">{{ I18N.bootstrapTitle }}</h1>
+								<p class="m-0 text-base text-text-body">{{ I18N.bootstrapDesc }}</p>
+								<p v-if="bootstrapErrorText" class="m-0 max-w-full break-words text-sm text-danger-text" role="status">{{ bootstrapErrorText }}</p>
+								<AppButton variant="primary" icon="refresh" :loading="retryingBootstrap" @click="retryBootstrap">
+									{{ retryingBootstrap ? I18N.bootstrapRetrying : I18N.retry }}
+								</AppButton>
+							</section>
+						</div>
 					</main>
 					<template v-else>
 						<FeedbackHost/>
@@ -111,4 +113,3 @@ RUNTIME.onLanguageChanged((language) => {
 		</NMessageProvider>
 	</NConfigProvider>
 </template>
-

@@ -273,7 +273,7 @@ onBeforeUnmount(() => {
 					缓存住之后, 切到设置再切回来对话仍在继续。
 					注意 KeepAlive 内部不能夹注释 — 开发态编译会保留注释节点, 被判成多个子节点。
 				-->
-				<div class="flex-1 min-h-0 flex flex-col">
+				<div class="flex-1 min-h-0 flex flex-col scroll-area">
 					<KeepAlive>
 						<HomePanel
 							v-if="activeNav === 'home'"
