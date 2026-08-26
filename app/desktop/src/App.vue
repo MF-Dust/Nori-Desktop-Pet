@@ -73,7 +73,7 @@ RUNTIME.onLanguageChanged((language) => {
 				<NNotificationProvider>
 					<main
 						v-if="RUNTIME.bootstrapError.value"
-						class="w-100vw h-100vh flex items-center justify-center bg-bg-abyss p-6"
+						class="w-100vw h-100vh scroll-area flex items-center justify-center bg-bg-abyss p-6"
 						role="alert"
 						aria-live="assertive"
 					>
