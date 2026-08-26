@@ -175,6 +175,7 @@ Nori-Desktop-Pet/
 - **.NET SDK**：[.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) 或更高版本。
 - **Node.js**：Node.js 18+ 与 [pnpm](https://pnpm.io/)（必须使用 pnpm）。
 - **WebView 运行时**：Windows 内置 Microsoft Edge WebView2 Evergreen Runtime。
+- **浏览器 DOM 自动化（可选）**：仅 Windows 支持，目标机需安装 Microsoft Edge stable；Playwright 使用 `msedge` channel 和进程临时隔离 profile，不随发布包捆绑或下载浏览器。自动化默认关闭，启用后填充等高风险动作仍需主界面审批。
 
 ### 安装与运行
 
