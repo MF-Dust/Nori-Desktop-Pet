@@ -13,6 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="Nori.Desktop"
+LINUX_APP_NAME="${APP_NAME}.bin"
 APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-Dev}}"
 APP_NUMERIC_VERSION="${APP_VERSION%%-*}"
 APP_NUMERIC_VERSION="${APP_NUMERIC_VERSION%%+*}"
@@ -88,13 +89,17 @@ make_linux_package() {
 	local rid="$1" publish_dir="$2"
 	local out_dir="bin/publish/$rid"
 
+	# 保留原 apphost 作为兼容入口，同时提供不会被 Dolphin 按 .desktop 误判的主入口。
+	cp -p "$publish_dir/$APP_NAME" "$publish_dir/$LINUX_APP_NAME"
+	test -x "$publish_dir/$LINUX_APP_NAME"
+
 	cat > "$out_dir/nori.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Nori Desktop Pet
 Comment=Live2D 桌面陪伴伙伴
 # 安装后请把 /opt/nori 换成实际安装路径
-Exec=/opt/nori/$APP_NAME
+Exec=/opt/nori/$LINUX_APP_NAME
 Icon=/opt/nori/nori.png
 Terminal=false
 Categories=Utility;
