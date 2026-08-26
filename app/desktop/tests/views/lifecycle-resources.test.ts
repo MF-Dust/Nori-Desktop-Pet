@@ -2,9 +2,11 @@ import {readFileSync} from "node:fs"
 import {join} from "node:path"
 import {describe, expect, it} from "vitest"
 
-const SRC = join(process.cwd(), "src")
+const ROOT = process.cwd()
+const SRC = join(ROOT, "src")
 
 const read = (path: string): string => readFileSync(join(SRC, path), "utf8")
+const readProject = (path: string): string => readFileSync(join(ROOT, path), "utf8")
 
 describe("页面与宿主资源生命周期", () => {
 	it("主工作区只缓存对话页，其他重资源页面切走后正常卸载", () => {
@@ -18,6 +20,13 @@ describe("页面与宿主资源生命周期", () => {
 		expect(KEEP_ALIVE).not.toContain("<SettingsPanel")
 		expect(MAIN).toContain("<ModelManagement v-if=\"activeNav === 'model'\"")
 		expect(MAIN).toContain("<SettingsPanel\n\t\t\t\t\t\tv-if=\"activeNav === 'settings'\"")
+	})
+
+	it("应用根组件卸载时退订模块级语言监听", () => {
+		const APP = read("App.vue")
+
+		expect(APP).toContain("const stopLanguageSync = RUNTIME.onLanguageChanged")
+		expect(APP).toContain("onBeforeUnmount(() => {\n\tstopLanguageSync()")
 	})
 
 	it("音频宿主卸载会关闭 WebAudio 并取消过期的麦克风启动", () => {
@@ -37,5 +46,16 @@ describe("页面与宿主资源生命周期", () => {
 		expect(LIVE2D.split(DESTROY).length - 1).toBe(2)
 		expect(LIVE2D).not.toContain("app.destroy(true)\n")
 		expect(LIVE2D).not.toContain("inner.app.destroy(true)\n")
+	})
+
+	it("真正关闭桌宠窗口时断开运行时事件与 WindowManager 强引用", () => {
+		const PET_WINDOW = readProject("Nori.Desktop/Windows/PetWindow.cs")
+		const WINDOW_MANAGER = readProject("Nori.Desktop/Windows/WindowManager.cs")
+
+		expect(PET_WINDOW).toContain("_runtime.ModelChanged -= OnRuntimeModelChanged")
+		expect(PET_WINDOW).toContain("_runtime.LayoutChanged -= OnRuntimeLayoutChanged")
+		expect(PET_WINDOW).toContain("_cursorTrackingTimer.Tick -= OnCursorTrackingTick")
+		expect(PET_WINDOW).toContain("_hitShapeTimer.Tick -= OnHitShapeTick")
+		expect(WINDOW_MANAGER).toContain("if (ReferenceEquals(_petWindow, pw)) _petWindow = null;")
 	})
 })
