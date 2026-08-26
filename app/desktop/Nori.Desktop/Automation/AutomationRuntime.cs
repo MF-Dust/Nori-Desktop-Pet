@@ -123,6 +123,15 @@ public sealed record AutomationSnapshot(
 	AutomationTaskStatusSnapshot? ActiveTask,
 	int QueuedCount)
 {
+	/// <summary>前端设置页使用的桌面能力总开关投影。</summary>
+	public bool DesktopEnabled => Settings.AllowPointer || Settings.AllowKeyboard || Settings.AllowScroll;
+
+	/// <summary>前端设置页使用的浏览器能力开关投影。</summary>
+	public bool BrowserEnabled => Settings.BrowserEnabled;
+
+	/// <summary>前端设置页使用的视觉能力就绪投影。</summary>
+	public bool VisionReady => Capabilities.VisionReady;
+
 	/// <summary>最近的桌面视觉任务脱敏状态。</summary>
 	public IReadOnlyList<AutomationTaskStatusSnapshot> Tasks { get; init; } = [];
 
@@ -506,6 +515,10 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		lock (_desktopStateGate)
 		{
 			_desktopApprovals[request.RequestId] = new(request.RequestId, request.TaskId, request.ActionKinds);
+			if (_browserTasks.TryGetValue(request.TaskId, out BrowserTaskState? browserState))
+			{
+				browserState.MarkApprovalPending(request.RequestId, request.ActionKinds);
+			}
 		}
 		RecordAudit(new AutomationAuditEvent(
 			request.RequestedAt,
@@ -1344,9 +1357,8 @@ public sealed class AutomationRuntime : IAsyncDisposable
 						_actionKinds = [];
 						break;
 					case BrowserAutomationProgressState.AwaitingApproval:
-						_category = "awaiting_approval";
+						// 审批请求先由宿主登记，再由 MarkApprovalPending 对外公开，避免 UI 看到空的 pendingApprovals。
 						_approvalRequestId = progress.ApprovalRequestId;
-						_actionKinds = [AutomationActionKind.TypeText];
 						break;
 					case BrowserAutomationProgressState.ActionSucceeded:
 						_category = "step_succeeded";
@@ -1360,6 +1372,16 @@ public sealed class AutomationRuntime : IAsyncDisposable
 						_actionKinds = [];
 						break;
 				}
+			}
+		}
+
+		public void MarkApprovalPending(Guid requestId, IReadOnlyList<AutomationActionKind> actionKinds)
+		{
+			lock (_gate)
+			{
+				_category = "awaiting_approval";
+				_approvalRequestId = requestId;
+				_actionKinds = actionKinds;
 			}
 		}
 

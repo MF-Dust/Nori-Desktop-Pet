@@ -128,12 +128,10 @@ public sealed class BridgeCommands
 		"automation_get_snapshot" => RequireWebViewSource(source, () => Automation.GetSnapshot()),
 
 		/// 更新自动化设置: invoke("automation_update_settings", {enabled?, allowPointer?, allowKeyboard?, allowScroll?, browserEnabled?})
-		"automation_update_settings" => RequireVisibleMain(source, () => Automation.UpdateSettings(
-			OptionalBool(args, "enabled"),
-			OptionalBool(args, "allowPointer"),
-			OptionalBool(args, "allowKeyboard"),
-			OptionalBool(args, "allowScroll"),
-			OptionalBool(args, "browserEnabled"))),
+		"automation_update_settings" => RequireVisibleMain(source, () => UpdateAutomationSettings(args)),
+
+		/// 兼容设置页自动化总开关: invoke("settings_update_automation", {enabled?, desktopEnabled?, browserEnabled?})
+		"settings_update_automation" => RequireVisibleMain(source, () => UpdateFrontendAutomationSettings(args)),
 
 		/// 启动浏览器自动化: invoke("automation_browser_start")
 		"automation_browser_start" => await AutomationBrowserStartAsync(source, cancellationToken),
@@ -686,6 +684,24 @@ public sealed class BridgeCommands
 	{
 		RequireMainVoid(source);
 		if (!source.IsVisible) throw new InvalidOperationException("main 窗口不可见");
+	}
+
+	private AutomationSettingsSnapshot UpdateAutomationSettings(JsonElement args) => Automation.UpdateSettings(
+		OptionalBool(args, "enabled"),
+		OptionalBool(args, "allowPointer"),
+		OptionalBool(args, "allowKeyboard"),
+		OptionalBool(args, "allowScroll"),
+		OptionalBool(args, "browserEnabled"));
+
+	private AutomationSettingsSnapshot UpdateFrontendAutomationSettings(JsonElement args)
+	{
+		bool? desktopEnabled = OptionalBool(args, "desktopEnabled");
+		return Automation.UpdateSettings(
+			OptionalBool(args, "enabled"),
+			desktopEnabled,
+			desktopEnabled,
+			desktopEnabled,
+			OptionalBool(args, "browserEnabled"));
 	}
 
 	private object AutomationDesktopListWindows(IBridgeSource source)

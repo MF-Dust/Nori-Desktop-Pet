@@ -637,6 +637,32 @@ public class BridgeCommandsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task 设置页自动化命令映射桌面和浏览器开关()
+	{
+		BridgeCommands commands = CreateCommands();
+		FakeBridgeSource main = new(WindowLabels.Main);
+
+		await commands.InvokeAsync(main, "settings_update_automation", Args(new
+		{
+			enabled = true,
+			desktopEnabled = true,
+			browserEnabled = true,
+		}));
+
+		Assert.True(_config.GetBoolOr(ConfigStore.KeyAutomationEnabled, false));
+		Assert.True(_config.GetBoolOr(ConfigStore.KeyAutomationAllowPointer, false));
+		Assert.True(_config.GetBoolOr(ConfigStore.KeyAutomationAllowKeyboard, false));
+		Assert.True(_config.GetBoolOr(ConfigStore.KeyAutomationAllowScroll, false));
+		Assert.True(_config.GetBoolOr(ConfigStore.KeyAutomationBrowserEnabled, false));
+
+		await commands.InvokeAsync(main, "settings_update_automation", Args(new {desktopEnabled = false}));
+
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyAutomationAllowPointer, true));
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyAutomationAllowKeyboard, true));
+		Assert.False(_config.GetBoolOr(ConfigStore.KeyAutomationAllowScroll, true));
+	}
+
+	[Fact]
 	public async Task 自动化默认关闭且快照不含敏感正文()
 	{
 		BridgeCommands commands = CreateCommands();
