@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using Nori.Core.Logging;
 using Nori.Core.Security;
 using Nori.Core.Telemetry;
+using Nori.Desktop.Automation.Browser;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Bridge;
@@ -40,7 +41,7 @@ public sealed class NoriBridge(AppServices services)
 		}
 		if (message is null) return;
 
-			switch (message.Kind)
+		switch (message.Kind)
 		{
 			case "invoke":
 				TrackInvoke(source, message);
@@ -110,7 +111,22 @@ public sealed class NoriBridge(AppServices services)
 		try
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			object? value = await _services.Commands.InvokeAsync(source, cmd, message.Args, cancellationToken);
+			object? value;
+			if (cmd == "automation_browser_status" && !PlaywrightRuntimeAvailability.IsAvailable())
+			{
+				value = new
+				{
+					state = "Stopped",
+					enabled = false,
+					available = false,
+					unavailableReason = PlaywrightRuntimeAvailability.MissingReason,
+					running = false,
+				};
+			}
+			else
+			{
+				value = await _services.Commands.InvokeAsync(source, cmd, message.Args, cancellationToken);
+			}
 			cancellationToken.ThrowIfCancellationRequested();
 			source.PostResult(message.Id, value, null);
 		}
