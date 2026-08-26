@@ -424,6 +424,7 @@ export const createLive2D = () => {
 						tex.baseTexture.mipmap = 1
 						tex.baseTexture.update?.()
 					}
+				}
 			}
 			// 裁剪蒙版缓冲: pixi-live2d-display 默认 256, 眼/口/发的蒙版边缘会有明显阶梯。
 			// 渲染器挂在 internalModel.renderer 上 (不是 coreModel.renderer), 且只接受一个参数。
