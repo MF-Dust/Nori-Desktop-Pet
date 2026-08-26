@@ -111,8 +111,14 @@ public sealed class NoriBridge(AppServices services)
 		try
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+			bool playwrightAvailable = PlaywrightRuntimeAvailability.IsAvailable();
+			if (!playwrightAvailable && cmd is "automation_browser_start" or "automation_browser_start_task")
+			{
+				throw new InvalidOperationException(PlaywrightRuntimeAvailability.MissingReason);
+			}
+
 			object? value;
-			if (cmd == "automation_browser_status" && !PlaywrightRuntimeAvailability.IsAvailable())
+			if (cmd == "automation_browser_status" && !playwrightAvailable)
 			{
 				value = new
 				{
