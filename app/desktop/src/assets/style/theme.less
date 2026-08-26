@@ -115,23 +115,28 @@ option {
 
 // ---------- 现代化暗色发光滚动条 ----------
 ::-webkit-scrollbar {
-	width: 0.6rem;
-	height: 0.6rem;
+	width: 0.7rem;
+	height: 0.7rem;
 }
 
 ::-webkit-scrollbar-track {
-	background: rgba(0, 0, 0, 0.15);
-	border-radius: 0.3rem;
+	background: rgba(0, 0, 0, 0.18);
+	border-radius: 0.35rem;
 }
 
 ::-webkit-scrollbar-thumb {
-	background: rgba(125, 227, 255, 0.16);
-	border-radius: 0.3rem;
-	transition: all 0.2s ease;
+	background: rgba(125, 227, 255, 0.28);
+	border: 0.1rem solid rgba(5, 14, 26, 0.5);
+	border-radius: 0.35rem;
+	transition: background 0.2s ease, box-shadow 0.2s ease;
 
 	&:hover {
-		background: rgba(125, 227, 255, 0.35);
+		background: rgba(125, 227, 255, 0.46);
 		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+	}
+
+	&:active {
+		background: rgba(94, 234, 212, 0.58);
 	}
 }
 
@@ -177,193 +182,4 @@ option {
 	100% {
 		box-shadow: 0 0 0 0 rgba(32, 224, 144, 0);
 	}
-}
-
-@keyframes bubble-fade-in {
-	from {
-		opacity: 0;
-		transform: translateY(0.5rem) scale(0.98);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0) scale(1);
-	}
-}
-
-.spin {
-	animation: rotate 1s linear infinite;
-}
-
-.animate-breathe {
-	animation: breathe 2.4s ease-in-out infinite;
-}
-
-.animate-glow-pulse {
-	animation: glow-pulse 2.5s ease-in-out infinite;
-}
-
-.animate-pulse-soft {
-	animation: pulse-soft 1.2s infinite;
-}
-
-.animate-bubble-in {
-	animation: bubble-fade-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-// ---------- 聊天气泡内的 Markdown 排版 ----------
-// v-html 生成的内容无法用原子类修饰, 因此这里给一套全局排版 (色值全走令牌)
-.chat-markdown {
-	> :first-child {
-		margin-top: 0;
-	}
-
-	> :last-child {
-		margin-bottom: 0;
-	}
-
-	p {
-		margin: 0.4rem 0;
-	}
-
-	h1, h2, h3, h4, h5, h6 {
-		margin: 0.8rem 0 0.4rem;
-		font-size: 1.4rem;
-		line-height: 1.4;
-	}
-
-	ul, ol {
-		margin: 0.4rem 0;
-		padding-left: 1.8rem;
-	}
-
-	li {
-		margin: 0.2rem 0;
-	}
-
-	code {
-		padding: 0.1rem 0.4rem;
-		border-radius: var(--radius-xs);
-		background: rgba(0, 0, 0, 0.35);
-		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-		font-size: 1.2rem;
-		color: var(--nori-teal-bright);
-	}
-
-	pre {
-		margin: 0.8rem 0;
-		padding: 1rem 1.4rem;
-		border-radius: var(--radius-sm);
-		border: 0.1rem solid var(--line-subtle);
-		background: rgba(4, 12, 22, 0.75);
-		box-shadow: inset 0 0 1.2rem rgba(0, 0, 0, 0.4);
-		overflow-x: auto;
-
-		code {
-			padding: 0;
-			background: transparent;
-			color: var(--text-body);
-			line-height: 1.6;
-		}
-	}
-
-	blockquote {
-		margin: 0.8rem 0;
-		padding: 0.4rem 0 0.4rem 1.2rem;
-		border-left: 0.3rem solid var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.04);
-		border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-		color: var(--text-muted);
-	}
-
-	table {
-		margin: 0.6rem 0;
-		border-collapse: collapse;
-		font-size: 1.2rem;
-	}
-
-	th, td {
-		padding: 0.4rem 0.8rem;
-		border: 0.1rem solid var(--line-subtle);
-		text-align: left;
-	}
-
-	th {
-		background: rgba(255, 255, 255, 0.04);
-		color: var(--text-primary);
-	}
-
-	a {
-		color: var(--nori-teal-bright);
-		text-decoration: underline;
-		text-underline-offset: 0.2rem;
-		cursor: pointer;
-	}
-
-	hr {
-		margin: 0.8rem 0;
-		border: none;
-		border-top: 0.1rem solid var(--line-subtle);
-	}
-}
-
-// ---------- 尊重系统的减少动态效果偏好 ----------
-@media (prefers-reduced-motion: reduce) {
-	*,
-	*::before,
-	*::after {
-		animation-duration: 0.01ms !important;
-		animation-iteration-count: 1 !important;
-		transition-duration: 0.01ms !important;
-		scroll-behavior: auto !important;
-	}
-}
-
-// ---------- Vue 过渡类 (无法用原子类表达, 全局保留) ----------
-.page-next-enter-active,
-.page-next-leave-active,
-.page-prev-enter-active,
-.page-prev-leave-active {
-	transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.page-next-enter-from {
-	opacity: 0;
-	transform: translateX(3rem) scale(0.98);
-}
-
-.page-next-leave-to {
-	opacity: 0;
-	transform: translateX(-3rem) scale(0.98);
-}
-
-.page-prev-enter-from {
-	opacity: 0;
-	transform: translateX(-3rem) scale(0.98);
-}
-
-.page-prev-leave-to {
-	opacity: 0;
-	transform: translateX(3rem) scale(0.98);
-}
-
-// 纯淡入淡出 (蒙版菜单 / 整页面板)
-.fade-enter-active,
-.fade-leave-active {
-	transition: opacity 0.2s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-	opacity: 0;
-}
-
-.fade-scale-enter-active,
-.fade-scale-leave-active {
-	transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.fade-scale-enter-from,
-.fade-scale-leave-to {
-	opacity: 0;
-	transform: scale(0.9);
 }
