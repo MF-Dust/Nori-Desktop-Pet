@@ -29,4 +29,13 @@ describe("页面与宿主资源生命周期", () => {
 		expect(AUDIO).toContain("GENERATION !== recordingGeneration")
 		expect(AUDIO).toContain("stopStream(acquiredStream)")
 	})
+
+	it("Live2D 销毁会递归释放模型子资源但保留共享纹理", () => {
+		const LIVE2D = read("services/live2d/index.ts")
+		const DESTROY = "destroy(true, {children: true, texture: false, baseTexture: false})"
+
+		expect(LIVE2D.split(DESTROY).length - 1).toBe(2)
+		expect(LIVE2D).not.toContain("app.destroy(true)\n")
+		expect(LIVE2D).not.toContain("inner.app.destroy(true)\n")
+	})
 })
