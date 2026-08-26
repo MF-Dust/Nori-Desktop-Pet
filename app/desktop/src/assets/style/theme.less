@@ -115,23 +115,28 @@ option {
 
 // ---------- 现代化暗色发光滚动条 ----------
 ::-webkit-scrollbar {
-	width: 0.6rem;
-	height: 0.6rem;
+	width: 0.7rem;
+	height: 0.7rem;
 }
 
 ::-webkit-scrollbar-track {
-	background: rgba(0, 0, 0, 0.15);
-	border-radius: 0.3rem;
+	background: rgba(0, 0, 0, 0.18);
+	border-radius: 0.35rem;
 }
 
 ::-webkit-scrollbar-thumb {
-	background: rgba(125, 227, 255, 0.16);
-	border-radius: 0.3rem;
-	transition: all 0.2s ease;
+	background: rgba(125, 227, 255, 0.28);
+	border: 0.1rem solid rgba(5, 14, 26, 0.5);
+	border-radius: 0.35rem;
+	transition: background 0.2s ease, box-shadow 0.2s ease;
 
 	&:hover {
-		background: rgba(125, 227, 255, 0.35);
+		background: rgba(125, 227, 255, 0.46);
 		box-shadow: 0 0 0.8rem var(--glow-teal-soft);
+	}
+
+	&:active {
+		background: rgba(94, 234, 212, 0.58);
 	}
 }
 
