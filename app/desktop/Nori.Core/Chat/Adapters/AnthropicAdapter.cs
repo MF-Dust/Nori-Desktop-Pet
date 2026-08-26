@@ -250,54 +250,58 @@ public sealed class AnthropicAdapter(HttpClient httpClient) : ILlmAdapter
 		request.Headers.Add("anthropic-version", AnthropicVersion);
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-		HttpResponseMessage? response = null;
+		HttpResponseMessage response;
 		try
 		{
 			response = await _httpClient.SendAsync(request, cancellationToken);
 		}
-		catch (Exception)
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
-			// 如果网络或端点请求失败，将使用内置常用模型列表
+			throw;
+		}
+		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+		{
+			throw new ChatException($"获取模型列表失败: {exception.Message}", exception);
 		}
 
-		if (response is not null)
+		using (response)
 		{
-			using (response)
+			if (!response.IsSuccessStatusCode)
 			{
-				if (response.IsSuccessStatusCode)
+				string errorText = await SafeReadErrorAsync(response, cancellationToken);
+				throw new ChatException($"获取模型列表失败: HTTP {(int)response.StatusCode}{(errorText.Length > 0 ? $", {errorText}" : "")}");
+			}
+
+			JsonNode? body;
+			try
+			{
+				body = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+			}
+			catch (JsonException exception)
+			{
+				throw new ChatException($"获取模型列表失败: 响应 JSON 无效: {exception.Message}", exception);
+			}
+
+			if (body?["data"] is not JsonArray data)
+			{
+				throw new ChatException("获取模型列表失败: 响应缺少 data 数组");
+			}
+
+			SortedSet<string> models = new(StringComparer.Ordinal);
+			foreach (JsonNode? item in data)
+			{
+				if (item?["id"] is JsonValue idVal && idVal.TryGetValue(out string? id) && !string.IsNullOrWhiteSpace(id))
 				{
-					try
-					{
-						JsonNode? body = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-						if (body?["data"] is JsonArray data && data.Count > 0)
-						{
-							SortedSet<string> models = new(StringComparer.Ordinal);
-							foreach (JsonNode? item in data)
-							{
-								if (item?["id"] is JsonValue idVal && idVal.TryGetValue(out string? id) && !string.IsNullOrWhiteSpace(id))
-								{
-									models.Add(id);
-								}
-							}
-							if (models.Count > 0) return [.. models];
-						}
-					}
-					catch
-					{
-						// 解析异常回退
-					}
+					models.Add(id);
 				}
 			}
-		}
 
-		// 回退内置常用模型
-		return
-		[
-			"claude-3-7-sonnet-20250219",
-			"claude-3-5-sonnet-20241022",
-			"claude-3-5-haiku-20241022",
-			"claude-3-opus-20240229",
-		];
+			if (models.Count == 0)
+			{
+				throw new ChatException("获取模型列表失败: 服务端返回了空模型列表");
+			}
+			return [.. models];
+		}
 	}
 
 	/// <summary>
