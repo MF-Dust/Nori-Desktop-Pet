@@ -1,4 +1,7 @@
 import type {
+	AutomationAuditRecordDto,
+	BrowserActionDto,
+	BrowserTaskResultDto,
 	HistoryMessage,
 	InteractionConfig,
 	MemoryAtom,
@@ -60,6 +63,10 @@ export interface BridgeCommandMap {
 	automation_probe_vision: {args: EmptyCommandArgs; result: VisionProbeResult}
 	automation_stop_task: {args: {taskId: string}; result: void}
 	automation_stop_all: {args: EmptyCommandArgs; result: void}
+	automation_browser_start_task: {args: {actions: BrowserActionDto[] | Record<string, unknown>[]}; result: {taskId: string; state?: string}}
+	automation_browser_get_result: {args: {taskId: string}; result: BrowserTaskResultDto | null}
+	automation_browser_stop_task: {args: {taskId: string}; result: void}
+	automation_audit_list: {args: {limit?: number}; result: AutomationAuditRecordDto[]}
 	settings_ack_voice_notice: {args: EmptyCommandArgs; result: void}
 
 	chat_start: {args: {text: string}; result: string}

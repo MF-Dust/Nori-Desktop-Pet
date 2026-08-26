@@ -269,17 +269,140 @@ describe("OperationDrawer & AutomationTaskCard", () => {
 		expect(document.body.querySelector("[role='dialog']")).toBeNull()
 	})
 
-	it("invokes feedback.error when host command fails", async () => {
-		const ERROR_SPY = vi.spyOn(feedback, "error")
-		;(window as any).__nori.invoke = async () => {
-			throw new Error("Command failed in host")
+	it("displays browser task kind and toggles bounded result availability", async () => {
+		if (RUNTIME.snapshot.value?.automation) {
+			RUNTIME.snapshot.value.automation.tasks = [
+				{
+					id: "browser-task-01",
+					title: "抓取天气简报",
+					taskKind: "browser",
+					state: "succeeded",
+					hasResult: true,
+					resultSummary: "已完成天气数据提取",
+					finishedAt: "2025-01-15T12:30:00Z",
+				},
+			]
+		}
+
+		const {container} = mountComponent()
+		await settleView()
+
+		const BUTTON = container.querySelector("button")
+		expect(BUTTON?.textContent).toContain("已完成")
+
+		BUTTON?.click()
+		await settleView()
+
+		const DIALOG = document.body.querySelector("[role='dialog']")
+		expect(DIALOG?.textContent).toContain("抓取天气简报")
+		expect(DIALOG?.textContent).toContain("浏览器任务")
+
+		// 查看结果切换
+		const VIEW_RESULT_BTN = Array.from(document.body.querySelectorAll("button")).find(b =>
+			b.textContent?.includes("查看结果")
+		)
+		expect(VIEW_RESULT_BTN).toBeDefined()
+		VIEW_RESULT_BTN?.click()
+		await settleView()
+
+		expect(DIALOG?.textContent).toContain("受限执行结果")
+		expect(DIALOG?.textContent).toContain("已完成天气数据提取")
+
+		// 收起结果
+		const CLOSE_RESULT_BTN = Array.from(document.body.querySelectorAll("button")).find(b =>
+			b.textContent?.includes("收起结果")
+		)
+		expect(CLOSE_RESULT_BTN).toBeDefined()
+		CLOSE_RESULT_BTN?.click()
+		await settleView()
+		expect(DIALOG?.textContent).not.toContain("受限执行结果")
+	})
+
+	it("renders safe-page paused state and allows cancellation", async () => {
+		let stopCalled = false
+		;(window as any).__nori.invoke = async (cmd: string, args: any) => {
+			if (cmd === "automation_browser_stop_task" || cmd === "automation_stop_task") {
+				stopCalled = true
+				return
+			}
+			if (cmd === "ui_get_snapshot") return RUNTIME.snapshot.value
+			return null
 		}
 
 		if (RUNTIME.snapshot.value?.automation) {
-			RUNTIME.snapshot.value.automation.activeTask = {
-				id: "task-fail-host",
-				state: "running",
+			RUNTIME.snapshot.value.automation.tasks = [
+				{
+					id: "safe-page-task-02",
+					title: "受保护页面操作",
+					taskKind: "browser",
+					state: "paused",
+					pauseReason: "safe_page",
+				},
+			]
+		}
+
+		const {container} = mountComponent()
+		await settleView()
+
+		const BUTTON = container.querySelector("button")
+		expect(BUTTON?.textContent).toContain("安全页面暂停")
+
+		BUTTON?.click()
+		await settleView()
+
+		const DIALOG = document.body.querySelector("[role='dialog']")
+		expect(DIALOG?.textContent).toContain("安全保护页面暂停")
+		expect(DIALOG?.textContent).toContain("受保护安全列表或需要人工确认")
+
+		// 取消按钮
+		const CANCEL_BTN = Array.from(document.body.querySelectorAll("button")).find(b =>
+			b.textContent?.includes("取消任务")
+		)
+		expect(CANCEL_BTN).toBeDefined()
+		CANCEL_BTN?.click()
+		await settleView()
+
+		expect(stopCalled).toBe(true)
+	})
+
+	it("switches to audit tab, renders audit history records, handles empty and error states", async () => {
+		let auditListCalls = 0
+		let shouldFailAudit = false
+
+		const MOCK_AUDIT_LOG = [
+			{
+				id: "audit-1",
+				taskId: "task-01",
+				timestamp: "2025-01-15T14:20:00Z",
+				taskKind: "browser",
+				actionCategory: "navigate",
+				outcome: "succeeded",
+			},
+			{
+				id: "audit-2",
+				taskId: "task-02",
+				timestamp: "2025-01-15T14:22:00Z",
+				taskKind: "desktop",
+				actionCategory: "click",
+				outcome: "failed",
+				failureReason: "navigation_failed",
+			},
+		]
+
+		;(window as any).__nori.invoke = async (cmd: string, _args: any) => {
+			if (cmd === "automation_audit_list") {
+				auditListCalls += 1
+				if (shouldFailAudit) throw new Error("审计日志加载失败")
+				return MOCK_AUDIT_LOG
 			}
+			if (cmd === "ui_get_snapshot") return RUNTIME.snapshot.value
+			return null
+		}
+
+		if (RUNTIME.snapshot.value?.automation) {
+			RUNTIME.snapshot.value.automation.tasks = [
+				{id: "task-running", state: "running"},
+			]
 		}
 
 		const {container} = mountComponent()
@@ -288,10 +411,41 @@ describe("OperationDrawer & AutomationTaskCard", () => {
 		container.querySelector("button")?.click()
 		await settleView()
 
-		const CANCEL_BTN = Array.from(document.body.querySelectorAll("button")).find(b => b.textContent?.includes("取消任务"))
-		CANCEL_BTN?.click()
+		const DIALOG = document.body.querySelector("[role='dialog']")
+		expect(DIALOG).not.toBeNull()
+
+		// 切换到审计 Tab
+		const AUDIT_TAB_BTN = Array.from(DIALOG?.querySelectorAll("button") ?? []).find(b =>
+			b.textContent?.includes("执行审计")
+		)
+		expect(AUDIT_TAB_BTN).toBeDefined()
+		AUDIT_TAB_BTN?.click()
 		await settleView()
 
-		expect(ERROR_SPY).toHaveBeenCalled()
+		expect(auditListCalls).toBe(1)
+		expect(DIALOG?.textContent).toContain("浏览器任务")
+		expect(DIALOG?.textContent).toContain("网页跳转")
+		expect(DIALOG?.textContent).toContain("桌面任务")
+		expect(DIALOG?.textContent).toContain("鼠标点击")
+		expect(DIALOG?.textContent).toContain("页面导航失败")
+
+		// 测试审计错误与重试
+		shouldFailAudit = true
+		const REFRESH_BTN = Array.from(DIALOG?.querySelectorAll("button") ?? []).find(b =>
+			b.textContent?.includes("刷新")
+		)
+		REFRESH_BTN?.click()
+		await settleView()
+
+		expect(DIALOG?.textContent).toContain("审计日志加载失败")
+
+		// 重试恢复
+		shouldFailAudit = false
+		const RETRY_BTN = Array.from(DIALOG?.querySelectorAll("button") ?? []).find(b =>
+			b.textContent?.includes("刷新")
+		)
+		RETRY_BTN?.click()
+		await settleView()
+		expect(DIALOG?.textContent).toContain("浏览器任务")
 	})
 })

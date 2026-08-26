@@ -10,7 +10,10 @@ import {listen, type UnlistenFn} from "../host/event"
 import {feedback} from "../feedback"
 import type {
 	AgentEventPayload,
+	AutomationAuditRecordDto,
 	BehaviorsState,
+	BrowserActionDto,
+	BrowserTaskResultDto,
 	HistoryMessage,
 	InteractionConfig,
 	McpServerStatusInfo,
@@ -40,11 +43,14 @@ export type {
 	ApprovalRequestDto,
 	AppInfo,
 	AutomationApprovalDto,
+	AutomationAuditRecordDto,
 	AutomationCapabilityDto,
 	AutomationState,
 	AutomationTaskDto,
 	AutomationTaskStatus,
 	BehaviorsState,
+	BrowserActionDto,
+	BrowserTaskResultDto,
 	EmbeddingState,
 	EmotionDto,
 	GeneralState,
@@ -343,6 +349,18 @@ export const RUNTIME = {
 	},
 	stopAllAutomation(): Promise<void> {
 		return invoke("automation_stop_all")
+	},
+	automationBrowserStartTask(actions: BrowserActionDto[] | Record<string, unknown>[]): Promise<{taskId: string; state?: string}> {
+		return invoke("automation_browser_start_task", {actions})
+	},
+	automationBrowserGetResult(taskId: string): Promise<BrowserTaskResultDto | null> {
+		return invoke("automation_browser_get_result", {taskId})
+	},
+	automationBrowserStopTask(taskId: string): Promise<void> {
+		return invoke("automation_browser_stop_task", {taskId})
+	},
+	automationAuditList(limit = 50): Promise<AutomationAuditRecordDto[]> {
+		return invoke("automation_audit_list", {limit})
 	},
 	respondAutomationApproval(requestId: string, approved: boolean): Promise<boolean> {
 		return invoke("approval_respond", {requestId, approved})

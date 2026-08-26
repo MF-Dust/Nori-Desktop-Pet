@@ -3,11 +3,13 @@ import {computed, onBeforeUnmount, onMounted, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
 import AppButton from "../ui/AppButton.vue"
+import AppChip from "../ui/AppChip.vue"
 import AppEmpty from "../ui/AppEmpty.vue"
+import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
 import AutomationTaskCard from "./AutomationTaskCard.vue"
 import {RUNTIME} from "../../services/runtime"
 import {feedback} from "../../services/feedback"
-import type {AutomationTaskDto} from "../../services/runtime/types"
+import type {AutomationAuditRecordDto, AutomationTaskDto} from "../../services/runtime/types"
 
 const props = withDefaults(defineProps<{
 	/** 是否强制打开抽屉 */
@@ -26,6 +28,9 @@ const TEXT = computed(() => useLanguages().views.main.actionCenter)
 const isOpen = ref(false)
 const drawerRef = ref<HTMLElement | null>(null)
 const capsuleBtnRef = ref<HTMLButtonElement | null>(null)
+
+type ActionCenterTab = "active" | "audit"
+const currentTab = ref<ActionCenterTab>("active")
 
 watch(() => props.modelValue, (val) => {
 	isOpen.value = val
@@ -74,11 +79,25 @@ const hasAwaitingApproval = computed(() =>
 // 是否有任何活动或近期任务 (决定胶囊是否显示)
 const hasTasksToShow = computed(() => tasks.value.length > 0)
 
+// 导航分段
+const TAB_ITEMS = computed<SegmentItem<ActionCenterTab>[]>(() => [
+	{
+		key: "active",
+		label: `${TEXT.value.tabs.active}${activeTasks.value.length > 0 ? ` (${activeTasks.value.length})` : ""}`,
+	},
+	{
+		key: "audit",
+		label: TEXT.value.tabs.audit,
+	},
+])
+
 // 胶囊状态文案与配色
 const capsuleTone = computed<"neutral" | "teal" | "success" | "warning" | "danger">(() => {
 	if (hasAwaitingApproval.value) return "warning"
 	const RUNNING = tasks.value.find(t => t.state === "running")
 	if (RUNNING) return "teal"
+	const SAFE_PAUSED = tasks.value.find(t => t.state === "paused" && t.pauseReason === "safe_page")
+	if (SAFE_PAUSED) return "warning"
 	const FAILED = tasks.value.find(t => t.state === "failed")
 	if (FAILED) return "danger"
 	const SUCCEEDED = tasks.value.find(t => t.state === "succeeded" || t.state === "completed")
@@ -90,6 +109,8 @@ const capsuleLabel = computed(() => {
 	if (hasAwaitingApproval.value) return TEXT.value.capsule.awaitingApproval
 	const RUNNING = tasks.value.find(t => t.state === "running")
 	if (RUNNING) return TEXT.value.capsule.running
+	const SAFE_PAUSED = tasks.value.find(t => t.state === "paused" && t.pauseReason === "safe_page")
+	if (SAFE_PAUSED) return TEXT.value.capsule.safePagePaused
 	const QUEUED = tasks.value.find(t => t.state === "queued")
 	if (QUEUED) return TEXT.value.capsule.queued
 	const PAUSED = tasks.value.find(t => t.state === "paused")
@@ -141,7 +162,16 @@ const handleReject = async (taskId: string, requestId?: string) => {
 const handleCancelTask = async (taskId: string) => {
 	cancellingIds.value.add(taskId)
 	try {
-		await RUNTIME.stopAutomationTask(taskId)
+		const TARGET = tasks.value.find(t => t.id === taskId)
+		if (TARGET?.taskKind === "browser") {
+			try {
+				await RUNTIME.automationBrowserStopTask(taskId)
+			} catch {
+				await RUNTIME.stopAutomationTask(taskId)
+			}
+		} else {
+			await RUNTIME.stopAutomationTask(taskId)
+		}
 		await RUNTIME.refresh()
 	} catch (error) {
 		feedback.error(TEXT.value.feedback.stopTaskFailed, error)
@@ -161,6 +191,92 @@ const handleStopAll = async () => {
 	} finally {
 		stoppingAll.value = false
 	}
+}
+
+// ------------------------------------------------------------------
+// 执行审计历史
+// ------------------------------------------------------------------
+
+const auditRecords = ref<AutomationAuditRecordDto[]>([])
+const auditLoading = ref(false)
+const auditError = ref("")
+
+const loadAuditLog = async () => {
+	auditLoading.value = true
+	auditError.value = ""
+	try {
+		auditRecords.value = await RUNTIME.automationAuditList(50)
+	} catch (error) {
+		auditError.value = error instanceof Error ? error.message : String(error)
+		feedback.error(TEXT.value.feedback.loadAuditFailed, error)
+	} finally {
+		auditLoading.value = false
+	}
+}
+
+watch(currentTab, (tab) => {
+	if (tab === "audit") {
+		void loadAuditLog()
+	}
+})
+
+watch(isOpen, (open) => {
+	if (open && currentTab.value === "audit") {
+		void loadAuditLog()
+	}
+})
+
+const formatAuditTime = (timeStr?: string | null) => {
+	if (!timeStr) return ""
+	try {
+		const D = new Date(timeStr)
+		if (Number.isNaN(D.getTime())) return timeStr
+		const H = String(D.getHours()).padStart(2, "0")
+		const M = String(D.getMinutes()).padStart(2, "0")
+		const S = String(D.getSeconds()).padStart(2, "0")
+		return `${H}:${M}:${S}`
+	} catch {
+		return timeStr
+	}
+}
+
+const getOutcomeTone = (outcome?: string): "success" | "danger" | "warning" | "neutral" => {
+	switch (outcome) {
+		case "succeeded":
+		case "completed":
+			return "success"
+		case "failed":
+			return "danger"
+		case "rejected":
+			return "warning"
+		case "cancelled":
+		default:
+			return "neutral"
+	}
+}
+
+const getOutcomeLabel = (outcome?: string): string => {
+	if (!outcome) return TEXT.value.audit.outcomes.unknown
+	const OUTCOMES = TEXT.value.audit.outcomes as Record<string, string>
+	return OUTCOMES[outcome] || outcome
+}
+
+const getTaskKindLabel = (kind?: string): string => {
+	if (!kind) return TEXT.value.taskKinds.unknown
+	const KINDS = TEXT.value.taskKinds as Record<string, string>
+	return KINDS[kind] || kind
+}
+
+const getActionKindLabel = (kind?: string): string => {
+	if (!kind) return TEXT.value.actionKinds.unknown
+	const ACTIONS = TEXT.value.actionKinds as Record<string, string>
+	return ACTIONS[kind] || kind
+}
+
+const getFailureReasonText = (code?: string | null): string | null => {
+	if (!code) return null
+	const ERRORS = TEXT.value.errors as Record<string, string>
+	return ERRORS[code] || code
 }
 
 // 键盘 Escape 监听与焦点陷阱
@@ -194,7 +310,7 @@ onBeforeUnmount(() => {
 			type="button"
 			class="btn-base gap-2 px-2.5 py-1 rounded-pill text-xs font-500 transition-all duration-200 border"
 			:class="[
-				hasAwaitingApproval
+				hasAwaitingApproval || capsuleTone === 'warning'
 					? 'bg-warning/15 border-warning/50 text-warning shadow-[0_0_1.2rem_var(--warning)] animate-pulse'
 					: capsuleTone === 'teal'
 						? 'bg-nori-teal-bright/12 border-nori-teal-bright/40 text-nori-teal-bright shadow-[0_0_1.2rem_var(--glow-teal-soft)]'
@@ -205,7 +321,7 @@ onBeforeUnmount(() => {
 			@click="toggleDrawer"
 		>
 			<Icon
-				:name="hasAwaitingApproval ? 'shield' : capsuleTone === 'teal' ? 'activity' : 'bot'"
+				:name="hasAwaitingApproval || capsuleTone === 'warning' ? 'shield' : capsuleTone === 'teal' ? 'activity' : 'bot'"
 				:size="13"
 				:class="capsuleTone === 'teal' ? 'spin' : ''"
 			/>
@@ -248,7 +364,7 @@ onBeforeUnmount(() => {
 
 						<div class="flex items-center gap-2 shrink-0">
 							<AppButton
-								v-if="activeTasks.length > 0"
+								v-if="currentTab === 'active' && activeTasks.length > 0"
 								variant="danger"
 								size="sm"
 								icon="stop"
@@ -270,8 +386,18 @@ onBeforeUnmount(() => {
 						</div>
 					</header>
 
-					<!-- 任务列表容器 -->
-					<div class="flex-1 min-h-0 scroll-area p-4 flex flex-col gap-3">
+					<!-- 标签切换导航 (当前任务 vs 执行审计) -->
+					<div class="shrink-0 px-4 pt-3 pb-1">
+						<AppSegmented
+							v-model="currentTab"
+							:items="TAB_ITEMS"
+							:label="TEXT.title"
+							size="sm"
+						/>
+					</div>
+
+					<!-- 任务列表容器 (当前任务) -->
+					<div v-if="currentTab === 'active'" class="flex-1 min-h-0 scroll-area p-4 flex flex-col gap-3">
 						<template v-if="tasks.length > 0">
 							<AutomationTaskCard
 								v-for="task in tasks"
@@ -292,6 +418,86 @@ onBeforeUnmount(() => {
 							:title="TEXT.emptyTitle"
 							:desc="TEXT.emptyDesc"
 						/>
+					</div>
+
+					<!-- 审计历史容器 (执行审计) -->
+					<div v-else-if="currentTab === 'audit'" class="flex-1 min-h-0 scroll-area p-4 flex flex-col gap-3">
+						<div class="flex items-center justify-between pb-1">
+							<span class="text-xs text-text-faint">{{ TEXT.audit.subtitle }}</span>
+							<AppButton
+								variant="ghost"
+								size="sm"
+								icon="refresh"
+								:loading="auditLoading"
+								@click="loadAuditLog"
+							>
+								{{ TEXT.audit.refresh }}
+							</AppButton>
+						</div>
+
+						<!-- 错误提示与重试 -->
+						<div
+							v-if="auditError"
+							class="surface-card flex items-center justify-between p-3 text-xs text-danger-text border border-danger/30"
+							role="alert"
+						>
+							<span>{{ auditError }}</span>
+							<AppButton size="sm" variant="ghost" @click="loadAuditLog">
+								{{ TEXT.audit.refresh }}
+							</AppButton>
+						</div>
+
+						<!-- 加载中 -->
+						<div
+							v-else-if="auditLoading"
+							class="py-8 text-center text-xs text-text-faint flex items-center justify-center gap-2"
+						>
+							<Icon name="loading" :size="15" class="spin"/>
+							<span>{{ TEXT.audit.loading }}</span>
+						</div>
+
+						<!-- 空状态 -->
+						<AppEmpty
+							v-else-if="auditRecords.length === 0"
+							icon="clock"
+							:title="TEXT.audit.empty"
+						/>
+
+						<!-- 审计记录列表 (紧凑/清晰/层级明确) -->
+						<div v-else class="flex flex-col gap-2">
+							<div
+								v-for="record in auditRecords"
+								:key="record.id"
+								class="surface-card flex flex-col gap-1.5 p-2.5 border border-line-subtle text-xs"
+							>
+								<div class="flex items-center justify-between gap-2">
+									<div class="flex items-center gap-1.5 min-w-0">
+										<span class="mono text-text-faint shrink-0">
+											{{ formatAuditTime(record.timestamp) }}
+										</span>
+										<AppChip tone="teal" size="sm">
+											{{ getTaskKindLabel(record.taskKind) }}
+										</AppChip>
+										<span class="px-1.5 py-0.5 rounded-xs bg-overlay-4 border border-line-subtle text-text-body font-500 truncate">
+											{{ getActionKindLabel(record.actionCategory) }}
+										</span>
+									</div>
+
+									<AppChip :tone="getOutcomeTone(record.outcome)" dot size="sm" class="shrink-0">
+										{{ getOutcomeLabel(record.outcome) }}
+									</AppChip>
+								</div>
+
+								<!-- 失败原因展示 -->
+								<div
+									v-if="record.failureReason"
+									class="flex items-center gap-1.5 text-xs text-danger-text pt-1 border-t border-line-subtle/40"
+								>
+									<Icon name="alert" :size="12" class="shrink-0"/>
+									<span class="truncate">{{ TEXT.audit.failureReason }}: {{ getFailureReasonText(record.failureReason) }}</span>
+								</div>
+							</div>
+						</div>
 					</div>
 				</aside>
 			</div>

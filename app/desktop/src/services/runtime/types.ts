@@ -312,6 +312,35 @@ export interface AutomationCapabilityDto {
 	unavailableReason?: string | null
 }
 
+/** 浏览器结构化动作条目 (脱敏与受控定义) */
+export interface BrowserActionDto {
+	type: string
+	description?: string
+	targetKind?: string
+	[key: string]: unknown
+}
+
+/** 浏览器任务受限结果 (脱敏, 不含截图、完整页面源码或敏感输入) */
+export interface BrowserTaskResultDto {
+	taskId: string
+	success: boolean
+	summary?: string
+	data?: unknown
+	error?: string | null
+	finishedAt?: string
+}
+
+/** 自动化审计日志条目 (脱敏, 仅包含时间、类型、动作分类与结果) */
+export interface AutomationAuditRecordDto {
+	id: string
+	taskId?: string
+	timestamp: string
+	taskKind: "browser" | "desktop" | string
+	actionCategory: string
+	outcome: "succeeded" | "failed" | "cancelled" | "rejected" | string
+	failureReason?: string | null
+}
+
 /** 自动化任务生命周期状态 */
 export type AutomationTaskStatus =
 	| "queued"
@@ -329,8 +358,12 @@ export interface AutomationTaskDto {
 	id: string
 	/** 脱敏短标题 */
 	title?: string
+	/** 任务类型 (如 browser / desktop / custom) */
+	taskKind?: "browser" | "desktop" | string
 	/** 生命周期状态 */
 	state: AutomationTaskStatus | string
+	/** 暂停原因 (如 safe_page / sensitive_action / user_paused) */
+	pauseReason?: "safe_page" | "sensitive_action" | "user_paused" | string | null
 	/** 创建时间 (ISO 字符串或格式化时间) */
 	createdAt?: string
 	/** 开始执行时间 */
@@ -349,6 +382,12 @@ export interface AutomationTaskDto {
 	actionKinds?: string[]
 	/** 关联的审批请求标识 (若处于待审批) */
 	approvalRequestId?: string
+	/** 是否有受限结果可获取 */
+	hasResult?: boolean
+	/** 简明脱敏结果摘要 */
+	resultSummary?: string | null
+	/** 受限结果对象 (可选) */
+	result?: BrowserTaskResultDto | unknown
 }
 
 /** 脱敏审批请求 */

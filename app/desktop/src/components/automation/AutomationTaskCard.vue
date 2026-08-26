@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import {computed} from "vue"
+import {computed, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages"
 import Icon from "../Icon.vue"
 import AppChip from "../ui/AppChip.vue"
 import AppButton from "../ui/AppButton.vue"
-import type {AutomationTaskDto} from "../../services/runtime/types"
+import type {AutomationTaskDto, BrowserTaskResultDto} from "../../services/runtime/types"
 
 const props = defineProps<{
 	task: AutomationTaskDto
@@ -35,8 +35,34 @@ const displayTitle = computed(() => {
 	return `${TEXT.value.card.taskId}: ${shortTaskId.value}`
 })
 
+// 任务类型 (browser / desktop / custom)
+const taskKindLabel = computed(() => {
+	const K = props.task.taskKind || ""
+	const KINDS = TEXT.value.taskKinds as Record<string, string>
+	return KINDS[K] || (K ? K : null)
+})
+
+// 任务类型对应图标
+const taskKindIcon = computed(() => {
+	if (props.task.taskKind === "browser") return "globe"
+	if (props.task.taskKind === "desktop") return "monitor"
+	return "bot"
+})
+
+// 是否安全页面暂停
+const isSafePagePaused = computed(() =>
+	props.task.state === "paused" && props.task.pauseReason === "safe_page")
+
+// 暂停原因可读文本
+const pauseReasonLabel = computed(() => {
+	if (!props.task.pauseReason) return null
+	const REASONS = TEXT.value.pauseReasons as Record<string, string>
+	return REASONS[props.task.pauseReason] || props.task.pauseReason
+})
+
 // 状态色与文案
 const stateTone = computed<"neutral" | "teal" | "success" | "warning" | "danger">(() => {
+	if (isSafePagePaused.value) return "warning"
 	switch (props.task.state) {
 		case "running":
 			return "teal"
@@ -56,6 +82,9 @@ const stateTone = computed<"neutral" | "teal" | "success" | "warning" | "danger"
 })
 
 const stateLabel = computed(() => {
+	if (isSafePagePaused.value) {
+		return TEXT.value.capsule.safePagePaused
+	}
 	const S = props.task.state
 	const STATES = TEXT.value.states as Record<string, string>
 	return STATES[S] || S
@@ -102,6 +131,34 @@ const progressPercent = computed(() => {
 	return null
 })
 
+// 受限结果提取 (脱敏且受限)
+const boundedResultSummary = computed<string | null>(() => {
+	if (props.task.resultSummary && props.task.resultSummary.trim().length > 0) {
+		return props.task.resultSummary
+	}
+	if (props.task.result) {
+		const R = props.task.result as BrowserTaskResultDto
+		if (typeof R.summary === "string" && R.summary.trim().length > 0) {
+			return R.summary
+		}
+		if (typeof R.data === "string" && R.data.trim().length > 0) {
+			return R.data
+		}
+	}
+	return null
+})
+
+// 是否存在受限结果
+const hasBoundedResult = computed(() =>
+	Boolean(props.task.hasResult || boundedResultSummary.value || (props.task.state === "succeeded" && props.task.result)))
+
+// 查看结果展开状态
+const showResult = ref(false)
+
+const toggleResult = () => {
+	showResult.value = !showResult.value
+}
+
 // 是否可取消
 const canCancel = computed(() => {
 	const S = props.task.state
@@ -127,7 +184,7 @@ const onCancel = () => {
 <template>
 	<div
 		class="surface-card relative flex flex-col gap-3 p-3.5 border transition-all duration-200"
-		:class="isAwaitingApproval ? 'border-warning/50 bg-warning/6 shadow-glow' : 'border-line-subtle'"
+		:class="isAwaitingApproval || isSafePagePaused ? 'border-warning/50 bg-warning/6 shadow-glow' : 'border-line-subtle'"
 		role="article"
 		:aria-labelledby="`task-title-${task.id}`"
 	>
@@ -135,9 +192,9 @@ const onCancel = () => {
 		<div class="flex items-center justify-between gap-2 min-w-0">
 			<div class="flex items-center gap-2 min-w-0">
 				<Icon
-					:name="isAwaitingApproval ? 'shield' : task.state === 'running' ? 'activity' : 'bot'"
+					:name="isAwaitingApproval || isSafePagePaused ? 'shield' : task.state === 'running' ? 'activity' : taskKindIcon"
 					:size="15"
-					:class="isAwaitingApproval ? 'text-warning' : task.state === 'running' ? 'text-nori-teal-bright spin' : 'text-text-muted'"
+					:class="isAwaitingApproval || isSafePagePaused ? 'text-warning' : task.state === 'running' ? 'text-nori-teal-bright spin' : 'text-text-muted'"
 				/>
 				<span
 					:id="`task-title-${task.id}`"
@@ -147,9 +204,14 @@ const onCancel = () => {
 				</span>
 			</div>
 
-			<AppChip :tone="stateTone" dot size="sm">
-				{{ stateLabel }}
-			</AppChip>
+			<div class="flex items-center gap-1.5 shrink-0">
+				<AppChip v-if="taskKindLabel" tone="teal" size="sm">
+					{{ taskKindLabel }}
+				</AppChip>
+				<AppChip :tone="stateTone" dot size="sm">
+					{{ stateLabel }}
+				</AppChip>
+			</div>
 		</div>
 
 		<!-- 步骤与进度条 -->
@@ -179,6 +241,26 @@ const onCancel = () => {
 			</div>
 		</div>
 
+		<!-- 安全页面暂停提示 -->
+		<div v-if="isSafePagePaused" class="flex flex-col gap-2 p-2.5 rounded-sm bg-overlay-4 border border-warning/30">
+			<div class="flex items-center gap-1.5 text-xs font-500 text-warning">
+				<Icon name="shield" :size="13"/>
+				<span>{{ TEXT.card.safePagePauseTitle }}</span>
+			</div>
+			<p class="text-xs text-text-muted leading-relaxed m-0">
+				{{ TEXT.card.safePagePauseNotice }}
+			</p>
+			<div v-if="pauseReasonLabel" class="text-xs text-text-faint">
+				{{ TEXT.card.pauseReason }}: {{ pauseReasonLabel }}
+			</div>
+		</div>
+
+		<!-- 通用暂停原因 (非 safe_page) -->
+		<div v-else-if="task.state === 'paused' && pauseReasonLabel" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm bg-overlay-4 border border-line-subtle text-xs text-text-muted">
+			<Icon name="pause" :size="13" class="text-warning shrink-0"/>
+			<span>{{ TEXT.card.pauseReason }}: {{ pauseReasonLabel }}</span>
+		</div>
+
 		<!-- 审批动作提示与动作标签 -->
 		<div v-if="isAwaitingApproval" class="flex flex-col gap-2 p-2.5 rounded-sm bg-overlay-4 border border-warning/30">
 			<div class="flex items-center gap-1.5 text-xs font-500 text-warning">
@@ -206,6 +288,16 @@ const onCancel = () => {
 			<span class="truncate">{{ TEXT.card.errorCategory }}: {{ failureReasonText }}</span>
 		</div>
 
+		<!-- 受限结果展示区域 (受控/脱敏) -->
+		<div v-if="hasBoundedResult && showResult" class="flex flex-col gap-1.5 p-2.5 rounded-sm bg-overlay-4 border border-line-subtle text-xs">
+			<div class="flex items-center justify-between text-text-muted">
+				<span class="font-500">{{ TEXT.card.resultTitle }}</span>
+			</div>
+			<p class="mono text-text-primary leading-relaxed m-0 break-words whitespace-pre-wrap">
+				{{ boundedResultSummary || TEXT.card.noResult }}
+			</p>
+		</div>
+
 		<!-- 时间指标 -->
 		<div class="flex items-center justify-between text-xs text-text-faint mono">
 			<span v-if="task.createdAt">
@@ -217,41 +309,58 @@ const onCancel = () => {
 		</div>
 
 		<!-- 操作按钮栏 -->
-		<div v-if="isAwaitingApproval || canCancel" class="flex items-center justify-end gap-2 pt-1 border-t border-line-subtle/50">
-			<template v-if="isAwaitingApproval">
-				<AppButton
-					variant="ghost"
-					size="sm"
-					:disabled="approving || rejecting"
-					:loading="rejecting"
-					@click="onReject"
+		<div v-if="isAwaitingApproval || canCancel || hasBoundedResult" class="flex items-center justify-between gap-2 pt-1 border-t border-line-subtle/50">
+			<!-- 左侧结果查看切换 -->
+			<div class="flex items-center">
+				<button
+					v-if="hasBoundedResult"
+					type="button"
+					class="btn-base text-xs text-nori-teal-bright hover:underline gap-1 p-0 focus-ring"
+					:aria-expanded="showResult"
+					@click="toggleResult"
 				>
-					{{ TEXT.card.reject }}
-				</AppButton>
-				<AppButton
-					variant="primary"
-					size="sm"
-					icon="check"
-					:disabled="approving || rejecting"
-					:loading="approving"
-					@click="onApprove"
-				>
-					{{ TEXT.card.approve }}
-				</AppButton>
-			</template>
+					<Icon :name="showResult ? 'arrow-up' : 'arrow-down'" :size="12"/>
+					<span>{{ showResult ? TEXT.card.closeResult : TEXT.card.viewResult }}</span>
+				</button>
+			</div>
 
-			<template v-else-if="canCancel">
-				<AppButton
-					variant="danger"
-					size="sm"
-					icon="close"
-					:disabled="cancelling"
-					:loading="cancelling"
-					@click="onCancel"
-				>
-					{{ TEXT.card.cancel }}
-				</AppButton>
-			</template>
+			<!-- 右侧操作按钮 -->
+			<div class="flex items-center gap-2">
+				<template v-if="isAwaitingApproval">
+					<AppButton
+						variant="ghost"
+						size="sm"
+						:disabled="approving || rejecting"
+						:loading="rejecting"
+						@click="onReject"
+					>
+						{{ TEXT.card.reject }}
+					</AppButton>
+					<AppButton
+						variant="primary"
+						size="sm"
+						icon="check"
+						:disabled="approving || rejecting"
+						:loading="approving"
+						@click="onApprove"
+					>
+						{{ TEXT.card.approve }}
+					</AppButton>
+				</template>
+
+				<template v-else-if="canCancel">
+					<AppButton
+						variant="danger"
+						size="sm"
+						icon="close"
+						:disabled="cancelling"
+						:loading="cancelling"
+						@click="onCancel"
+					>
+						{{ TEXT.card.cancel }}
+					</AppButton>
+				</template>
+			</div>
 		</div>
 	</div>
 </template>
