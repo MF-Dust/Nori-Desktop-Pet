@@ -39,6 +39,8 @@ if not exist bin\publish\win-x64\wwwroot\index.html (
 	exit /b 2
 )
 if not "%KEEP_SYMBOLS%"=="1" if /I not "%KEEP_SYMBOLS%"=="true" for /r "bin\publish\win-x64" %%F in (*.pdb) do del /q "%%F"
+node scripts\check-package-size.mjs --path bin\publish\win-x64 --label "win-x64 publish" --max-mib 80
+if errorlevel 1 goto :error
 
 echo.
 echo ========================================================
