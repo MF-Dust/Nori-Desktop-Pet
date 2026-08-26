@@ -424,7 +424,6 @@ export const createLive2D = () => {
 						tex.baseTexture.mipmap = 1
 						tex.baseTexture.update?.()
 					}
-				}
 			}
 			// 裁剪蒙版缓冲: pixi-live2d-display 默认 256, 眼/口/发的蒙版边缘会有明显阶梯。
 			// 渲染器挂在 internalModel.renderer 上 (不是 coreModel.renderer), 且只接受一个参数。
@@ -494,7 +493,7 @@ export const createLive2D = () => {
 		} catch (error) {
 			console.error("[Live2D] 模型加载失败:", error)
 			try {
-				app.destroy(true)
+				app.destroy(true, {children: true, texture: false, baseTexture: false})
 			} catch {
 				/* ignore */
 			}
@@ -519,7 +518,7 @@ export const createLive2D = () => {
 			/* ignore */
 		}
 		try {
-			inner.app.destroy(true)
+			inner.app.destroy(true, {children: true, texture: false, baseTexture: false})
 		} catch {
 			/* ignore */
 		}
