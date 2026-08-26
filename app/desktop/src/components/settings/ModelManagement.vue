@@ -395,7 +395,7 @@ onBeforeUnmount(() => {
 					<AppStatTile :label="I18N.installed" :value="INSTALLED_SUMMARY" icon="package"/>
 				</div>
 
-				<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+				<div class="grid grid-cols-1 gap-3 xl:grid-cols-2">
 					<article
 						v-for="model in MODEL_LIST"
 						:key="model.id"
@@ -519,10 +519,10 @@ onBeforeUnmount(() => {
 				</header>
 
 				<div class="flex-1 min-h-0 flex gap-4 px-5 py-4">
-					<!-- 预览舞台: 容器尺寸会被 getBoundingClientRect 读去建画布, 不要改这里的几何 -->
-					<div class="shrink-0 scroll-area">
+					<!-- 预览舞台: 容器尺寸会被 getBoundingClientRect 读去建画布 -->
+					<div class="shrink-0 flex flex-col items-center justify-center">
 						<div class="glow-card p-2">
-							<div ref="showcaseRef" class="relative w-[34rem] h-[50rem] overflow-hidden rounded-sm">
+							<div ref="showcaseRef" class="relative w-[28rem] sm:w-[32rem] max-h-[calc(100vh-11rem)] aspect-[3/4] max-w-full overflow-hidden rounded-sm">
 								<!-- 互动区域编辑蒙版 (覆盖在 Pixi 画布上方) -->
 								<InteractionRegionOverlay
 									v-if="previewReady && adjustTab === 'interactions'"
