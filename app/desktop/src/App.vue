@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, onMounted, ref} from "vue"
+import {computed, onBeforeUnmount, onMounted, ref} from "vue"
 import {useRouter} from "vue-router"
 import {getCurrentWindowLabel, navigateToOwnWindow} from "./services/window"
 import {RUNTIME} from "./services/runtime"
@@ -60,9 +60,14 @@ onMounted(async () => {
 	}
 })
 
-// 语言在任何窗口被改都会广播 state-changed, 这里跟随快照重放, 避免多窗口语言不一致
-RUNTIME.onLanguageChanged((language) => {
+// 语言在任何窗口被改都会广播 state-changed, 这里跟随快照重放, 避免多窗口语言不一致。
+// RUNTIME 是模块级单例，App 卸载时必须显式移除 handler，避免窗口重挂载/HMR 后累积旧闭包。
+const stopLanguageSync = RUNTIME.onLanguageChanged((language) => {
 	void useLanguage.setLanguage(language)
+})
+
+onBeforeUnmount(() => {
+	stopLanguageSync()
 })
 </script>
 
