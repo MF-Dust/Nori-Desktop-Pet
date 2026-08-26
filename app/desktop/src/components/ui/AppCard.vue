@@ -15,7 +15,7 @@ defineProps<{
 </script>
 
 <template>
-	<section class="surface-card relative overflow-hidden flex flex-col gap-3.5 p-4 transition-all duration-250 hover:border-line-strong hover:shadow-[0_0.4rem_2rem_rgba(0,0,0,0.3)]">
+	<section class="surface-card relative overflow-hidden flex shrink-0 flex-col gap-3.5 p-4 transition-all duration-250 hover:border-line-strong hover:shadow-[0_0.4rem_2rem_rgba(0,0,0,0.3)]">
 		<span class="absolute top-0 inset-x-0 h-[0.1rem] bg-gradient-to-r from-transparent via-nori-teal-bright/20 to-transparent pointer-events-none"/>
 
 		<header v-if="title || $slots.header" class="flex items-center gap-2.5 min-h-[2.8rem]">
