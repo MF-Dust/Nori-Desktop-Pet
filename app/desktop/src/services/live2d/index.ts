@@ -494,7 +494,7 @@ export const createLive2D = () => {
 		} catch (error) {
 			console.error("[Live2D] 模型加载失败:", error)
 			try {
-				app.destroy(true)
+				app.destroy(true, {children: true, texture: false, baseTexture: false})
 			} catch {
 				/* ignore */
 			}
@@ -519,7 +519,7 @@ export const createLive2D = () => {
 			/* ignore */
 		}
 		try {
-			inner.app.destroy(true)
+			inner.app.destroy(true, {children: true, texture: false, baseTexture: false})
 		} catch {
 			/* ignore */
 		}

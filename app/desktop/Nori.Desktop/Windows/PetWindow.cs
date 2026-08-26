@@ -95,8 +95,8 @@ public sealed class PetWindow : Window
 		PointerReleased += OnPointerReleased;
 		PointerCaptureLost += (_, _) => FinishDrag();
 
-		_runtime.ModelChanged += () => Dispatcher.UIThread.Post(ApplyWindowSize);
-		_runtime.LayoutChanged += () => Dispatcher.UIThread.Post(ApplyWindowSize);
+		_runtime.ModelChanged += OnRuntimeModelChanged;
+		_runtime.LayoutChanged += OnRuntimeLayoutChanged;
 
 		_cursorTrackingTimer = new DispatcherTimer
 		{
@@ -151,6 +151,10 @@ public sealed class PetWindow : Window
 
 	/// <summary>清除桌宠短句气泡。</summary>
 	public void ClearSpeech() => _speechOverlay.ClearText();
+
+	private void OnRuntimeModelChanged() => Dispatcher.UIThread.Post(ApplyWindowSize);
+
+	private void OnRuntimeLayoutChanged() => Dispatcher.UIThread.Post(ApplyWindowSize);
 
 	private void OnOpened(object? sender, EventArgs e)
 	{
@@ -234,7 +238,14 @@ public sealed class PetWindow : Window
 		_glControl.PauseRenderLoop();
 		_speechOverlay.ClearText();
 		_cursorTrackingTimer.Stop();
-		_hitShapeTimer?.Stop();
+		_cursorTrackingTimer.Tick -= OnCursorTrackingTick;
+		if (_hitShapeTimer is not null)
+		{
+			_hitShapeTimer.Stop();
+			_hitShapeTimer.Tick -= OnHitShapeTick;
+		}
+		_runtime.ModelChanged -= OnRuntimeModelChanged;
+		_runtime.LayoutChanged -= OnRuntimeLayoutChanged;
 		if (OperatingSystem.IsWindows())
 		{
 			Win32Properties.RemoveWndProcHookCallback(this, _wndProcHook);
