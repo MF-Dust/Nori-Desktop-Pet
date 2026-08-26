@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import {computed, ref} from "vue"
+import {computed, onMounted, ref} from "vue"
 import {RUNTIME, type VisionProbeResult} from "../../services/runtime"
+import {invoke} from "../../services/host/invoke"
 import {useSnapshotSave} from "../../composables/useSnapshotSave"
 import {feedback} from "../../services/feedback"
 import useLanguages from "../../services/i18n/useLanguages"
@@ -48,6 +49,9 @@ const browserEnabled = browserField.value
 const visionReady = computed(() => automationState.value?.visionReady ?? false)
 const capabilities = computed(() => automationState.value?.capabilities ?? [])
 const unavailableReason = computed(() => automationState.value?.unavailableReason ?? null)
+const browserRuntimeStatus = ref<{available: boolean; unavailableReason?: string | null} | null>(null)
+const browserRuntimeAvailable = computed(() => browserRuntimeStatus.value?.available ?? true)
+const browserRuntimeReason = computed(() => browserRuntimeStatus.value?.unavailableReason ?? null)
 
 const probing = ref(false)
 const probeResult = ref<VisionProbeResult | null>(null)
@@ -63,6 +67,7 @@ const desktopDesc = computed(() => {
 })
 
 const browserDesc = computed(() => {
+	if (!browserRuntimeAvailable.value) return browserRuntimeReason.value || TEXT.value.browser.desc
 	if (!enabled.value) return TEXT.value.browser.requiresMaster
 	return TEXT.value.browser.desc
 })
@@ -78,6 +83,7 @@ const onDesktopChange = (val: boolean) => {
 }
 
 const onBrowserChange = (val: boolean) => {
+	if (!browserRuntimeAvailable.value) return
 	browserEnabled.value = val
 	void browserField.saveNow()
 }
@@ -98,6 +104,14 @@ const onProbeVision = async () => {
 		probing.value = false
 	}
 }
+
+onMounted(async () => {
+	try {
+		browserRuntimeStatus.value = await invoke("automation_browser_status")
+	} catch {
+		// 老宿主没有该状态命令时保持兼容，不阻断设置页。
+	}
+})
 </script>
 
 <template>
@@ -134,10 +148,15 @@ const onProbeVision = async () => {
 				<AppSwitchRow
 					:title="TEXT.browser.title"
 					:desc="browserDesc"
-					:model-value="browserEnabled"
-					:disabled="!automationSupported || !enabled"
+					:model-value="browserRuntimeAvailable ? browserEnabled : false"
+					:disabled="!automationSupported || !enabled || !browserRuntimeAvailable"
 					@update:model-value="onBrowserChange"
 				/>
+				<div v-if="!browserRuntimeAvailable && browserRuntimeReason" class="flex items-center gap-2 pt-1">
+					<AppChip tone="warning" icon="alert" dot>
+						{{ browserRuntimeReason }}
+					</AppChip>
+				</div>
 			</AppCard>
 
 			<!-- 3. 视觉能力检测 -->
