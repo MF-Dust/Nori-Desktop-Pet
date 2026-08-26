@@ -5,8 +5,9 @@ import {describe, expect, it} from "vitest"
 const ROOT = process.cwd()
 const SRC = join(ROOT, "src")
 
-const read = (path: string): string => readFileSync(join(SRC, path), "utf8")
-const readProject = (path: string): string => readFileSync(join(ROOT, path), "utf8")
+const normalizeEol = (content: string): string => content.replace(/\r\n?/g, "\n")
+const read = (path: string): string => normalizeEol(readFileSync(join(SRC, path), "utf8"))
+const readProject = (path: string): string => normalizeEol(readFileSync(join(ROOT, path), "utf8"))
 
 describe("页面与宿主资源生命周期", () => {
 	it("主工作区只缓存对话页，其他重资源页面切走后正常卸载", () => {
@@ -19,14 +20,14 @@ describe("页面与宿主资源生命周期", () => {
 		expect(KEEP_ALIVE).not.toContain("<MemoryPanel")
 		expect(KEEP_ALIVE).not.toContain("<SettingsPanel")
 		expect(MAIN).toContain("<ModelManagement v-if=\"activeNav === 'model'\"")
-		expect(MAIN).toContain("<SettingsPanel\n\t\t\t\t\t\tv-if=\"activeNav === 'settings'\"")
+		expect(MAIN).toMatch(/<SettingsPanel\s+v-if="activeNav === 'settings'"/)
 	})
 
 	it("应用根组件卸载时退订模块级语言监听", () => {
 		const APP = read("App.vue")
 
 		expect(APP).toContain("const stopLanguageSync = RUNTIME.onLanguageChanged")
-		expect(APP).toContain("onBeforeUnmount(() => {\n\tstopLanguageSync()")
+		expect(APP).toMatch(/onBeforeUnmount\(\(\) => \{\s+stopLanguageSync\(\)/)
 	})
 
 	it("音频宿主卸载会关闭 WebAudio 并取消过期的麦克风启动", () => {
