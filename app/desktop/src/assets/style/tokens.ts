@@ -94,9 +94,9 @@ export const SHADOWS = {
 	soft: "0 0.8rem 2.4rem rgba(0, 0, 0, 0.35)",
 	glow: "0 0 2rem rgba(125, 227, 255, 0.2)",
 	window: "0 1.2rem 3.6rem rgba(0, 0, 0, 0.65)",
-	"elev-1": "0 0.2rem 0.8rem rgba(0, 0, 0, 0.28)",
-	"elev-2": "0 0.8rem 2.4rem rgba(0, 0, 0, 0.45)",
-	"elev-3": "0 1.6rem 4rem rgba(0, 0, 0, 0.7), 0 0 2.4rem rgba(94, 234, 212, 0.12)",
+	"elev-1": "0 0.2rem 0.8rem rgba(0, 0, 0, 0.32), 0 0 0.1rem rgba(125, 227, 255, 0.08)",
+	"elev-2": "0 0.8rem 2.4rem rgba(0, 0, 0, 0.48), 0 0 1.6rem rgba(125, 227, 255, 0.1)",
+	"elev-3": "0 1.6rem 4rem rgba(0, 0, 0, 0.7), 0 0 2.4rem rgba(94, 234, 212, 0.14)",
 } as const
 
 /**
