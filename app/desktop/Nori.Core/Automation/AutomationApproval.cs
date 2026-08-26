@@ -1,5 +1,10 @@
 namespace Nori.Core.Automation;
 
+/// <summary>自动化高风险动作审批回调；请求与结论均不携带正文。</summary>
+public delegate Task<AutomationApprovalDecision> AutomationApprovalCallback(
+	AutomationApprovalRequest request,
+	CancellationToken cancellationToken);
+
 /// <summary>审批结论，不携带自由文本。</summary>
 public enum AutomationApprovalOutcome
 {

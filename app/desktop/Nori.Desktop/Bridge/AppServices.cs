@@ -76,6 +76,11 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>自动化宿主运行时；安全模式下仍装配但所有执行入口 fail-closed。</summary>
 	public AutomationRuntime? Automation { get; set; }
 
+	private AutomationAuditRepository? _automationAudit;
+
+	/// <summary>自动化审计仓储；只保存固定分类和稳定失败码。</summary>
+	public AutomationAuditRepository AutomationAudit => _automationAudit ??= new AutomationAuditRepository(Database);
+
 	/// <summary>浏览器运行器工厂；生产默认使用隔离 Edge，测试可注入 fake。</summary>
 	public Func<IAutomationBrowserRunner>? AutomationBrowserRunnerFactory { get; set; }
 

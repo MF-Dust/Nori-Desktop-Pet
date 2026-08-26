@@ -12,7 +12,7 @@ namespace Nori.Core.Data;
 public sealed class NoriDatabase : IDisposable
 {
 	/// <summary>当前数据库结构版本</summary>
-	public const long DatabaseSchemaVersion = 6;
+	public const long DatabaseSchemaVersion = 7;
 
 	/// <summary>单个迁移备份的最大大小，避免损坏的旧库拖垮磁盘。</summary>
 	private const long MigrationBackupMaxBytes = 64L * 1024 * 1024;
@@ -48,6 +48,17 @@ public sealed class NoriDatabase : IDisposable
 		);
 		CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC, id DESC);
 		CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at, id);
+		CREATE TABLE IF NOT EXISTS automation_audit (
+		    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		    timestamp   TEXT NOT NULL,
+		    task_id     TEXT,
+		    task_kind   TEXT NOT NULL,
+		    event_category TEXT NOT NULL,
+		    outcome     TEXT NOT NULL,
+		    failure_code TEXT,
+		    duration_ms INTEGER
+		);
+		CREATE INDEX IF NOT EXISTS idx_automation_audit_timestamp ON automation_audit(timestamp DESC, id DESC);
 		""";
 	private readonly SqliteConnection _connection;
 	private readonly string _databasePath;
@@ -143,6 +154,7 @@ public sealed class NoriDatabase : IDisposable
 		{
 			MigrateEmbeddingStorageV5(connection, null);
 			MigrateRemindersV6(connection, null);
+			MigrateAutomationAuditV7(connection, null);
 			EnsureOperationalIndexes(connection, null);
 			return;
 		}
@@ -172,6 +184,9 @@ public sealed class NoriDatabase : IDisposable
 						break;
 					case 5:
 						MigrateRemindersV6(connection, transaction);
+						break;
+					case 6:
+						MigrateAutomationAuditV7(connection, transaction);
 						break;
 					default:
 						throw new InvalidOperationException($"不支持的记忆数据库版本: {version}");
@@ -476,6 +491,27 @@ public sealed class NoriDatabase : IDisposable
 				END;
 			""";
 		backfill.ExecuteNonQuery();
+	}
+
+	/// <summary>v7: 创建有界脱敏的自动化审计表；绝不保存页面、动作正文或凭据。</summary>
+	private static void MigrateAutomationAuditV7(SqliteConnection connection, SqliteTransaction? transaction)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = """
+			CREATE TABLE IF NOT EXISTS automation_audit (
+			    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			    timestamp   TEXT NOT NULL,
+			    task_id     TEXT,
+			    task_kind   TEXT NOT NULL,
+			    event_category TEXT NOT NULL,
+			    outcome     TEXT NOT NULL,
+			    failure_code TEXT,
+			    duration_ms INTEGER
+			);
+			CREATE INDEX IF NOT EXISTS idx_automation_audit_timestamp ON automation_audit(timestamp DESC, id DESC);
+			""";
+		command.ExecuteNonQuery();
 	}
 
 	/// <summary>

@@ -32,7 +32,7 @@ public sealed class ReminderStoreTests
 				Assert.True(reader.Read());
 				return (reader.GetInt64(0).ToString(), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4));
 			});
-			Assert.Equal(6, database.Locked(ReadVersion));
+			Assert.Equal(NoriDatabase.DatabaseSchemaVersion, database.Locked(ReadVersion));
 			Assert.Equal("1", row.repeat);
 			Assert.Equal("pending", row.status);
 			Assert.Equal("UTC", row.timezone);

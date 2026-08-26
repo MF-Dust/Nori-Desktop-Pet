@@ -10,6 +10,7 @@ using Nori.Core.Mcp;
 using Nori.Core.Resources;
 using Nori.Core.Tools;
 using Nori.Desktop.Automation;
+using Nori.Desktop.Automation.Browser;
 using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Automation.Windows;
 using Nori.Desktop.Bridge;
@@ -41,14 +42,62 @@ public class BridgeCommandsTests : IDisposable
 	private sealed class FakeBrowserRunner : IAutomationBrowserRunner
 	{
 		public int StartCount { get; private set; }
+		public int ExecuteCount { get; private set; }
+		public int CompletedActionCount { get; private set; }
 		public int DisposeCount { get; private set; }
 		public bool FailOnStart { get; init; }
+		public bool PauseForSafety { get; set; }
+		public string VisibleText { get; set; } = "受限测试文本";
+		public TaskCompletionSource<bool>? StartedExecution { get; set; }
+		public TaskCompletionSource<bool>? WaitForRelease { get; set; }
 
 		public Task StartAsync(CancellationToken cancellationToken = default)
 		{
 			StartCount++;
 			if (FailOnStart) throw new InvalidOperationException("模拟 Edge 启动失败: https://example.test/?token=secret");
 			return Task.CompletedTask;
+		}
+
+		public async Task<BrowserAutomationExecutionResult> ExecuteAsync(
+			BrowserAutomationTaskPlan plan,
+			BrowserAutomationExecutionContext executionContext,
+			CancellationToken cancellationToken = default)
+		{
+			ExecuteCount++;
+			StartedExecution?.TrySetResult(true);
+			if (WaitForRelease is not null) await WaitForRelease.Task.WaitAsync(cancellationToken);
+			if (PauseForSafety) throw new BrowserAutomationPolicy.PausedException(
+				BrowserAutomationPolicy.PauseReason.SensitivePage,
+				"模拟安全页面: secret");
+			int completed = 0;
+			string? visibleText = null;
+			foreach (BrowserAutomationAction action in plan.Actions)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				await executionContext.EnsureExecutionAllowedAsyncCore(cancellationToken);
+				int step = completed + 1;
+				executionContext.Report(new BrowserAutomationProgress(step, action.Kind, BrowserAutomationProgressState.Running));
+				if (action is BrowserFillAction)
+				{
+					AutomationApprovalCallback? callback = executionContext.ApprovalCallback;
+					if (callback is null) throw new AutomationTaskExecutionException("approval_denied");
+					AutomationApprovalRequest request = new(Guid.NewGuid(), executionContext.TaskId, [AutomationActionKind.TypeText], DateTimeOffset.UtcNow);
+					executionContext.Report(new BrowserAutomationProgress(
+						step,
+						BrowserAutomationActionKind.Fill,
+						BrowserAutomationProgressState.AwaitingApproval,
+						request.RequestId));
+					AutomationApprovalDecision decision = await callback(request, cancellationToken);
+					if (decision.RequestId != request.RequestId || decision.Outcome != AutomationApprovalOutcome.Approved)
+						throw new AutomationTaskExecutionException("approval_denied");
+					executionContext.Report(new BrowserAutomationProgress(step, BrowserAutomationActionKind.Fill, BrowserAutomationProgressState.Running));
+				}
+				if (action is BrowserReadVisibleTextAction) visibleText = VisibleText;
+				completed = step;
+				CompletedActionCount++;
+				executionContext.Report(new BrowserAutomationProgress(step, action.Kind, BrowserAutomationProgressState.ActionSucceeded));
+			}
+			return BrowserAutomationExecutionResult.Completed(completed, visibleText);
 		}
 
 		public ValueTask DisposeAsync()
@@ -208,7 +257,8 @@ public class BridgeCommandsTests : IDisposable
 		Func<IDesktopVisionActionExecutor>? desktopVisionActionFactory = null,
 		Func<IDesktopVisionScreenshotSource>? desktopVisionScreenshotFactory = null,
 		Func<IDesktopVisionWindowCatalog>? desktopVisionWindowCatalogFactory = null,
-		DesktopVisionApprovalCallback? desktopVisionApprovalCallback = null)
+		DesktopVisionApprovalCallback? desktopVisionApprovalCallback = null,
+		TimeSpan? browserTaskTimeout = null)
 	{
 		Directory.CreateDirectory(_tempDir);
 		_dbPath = Path.Combine(_tempDir, "nori.db");
@@ -244,7 +294,8 @@ public class BridgeCommandsTests : IDisposable
 					desktopVisionActionFactory: desktopVisionActionFactory,
 					desktopVisionScreenshotFactory: desktopVisionScreenshotFactory,
 					desktopVisionWindowCatalogFactory: desktopVisionWindowCatalogFactory,
-					desktopVisionApprovalCallback: desktopVisionApprovalCallback)
+					desktopVisionApprovalCallback: desktopVisionApprovalCallback,
+					browserTaskTimeout: browserTaskTimeout)
 				: new Nori.Desktop.Automation.AutomationRuntime(
 					_config,
 					safeMode,
@@ -257,7 +308,8 @@ public class BridgeCommandsTests : IDisposable
 					desktopVisionActionFactory: desktopVisionActionFactory,
 					desktopVisionScreenshotFactory: desktopVisionScreenshotFactory,
 					desktopVisionWindowCatalogFactory: desktopVisionWindowCatalogFactory,
-					desktopVisionApprovalCallback: desktopVisionApprovalCallback),
+					desktopVisionApprovalCallback: desktopVisionApprovalCallback,
+					browserTaskTimeout: browserTaskTimeout),
 			Windows = _windows,
 			SafeMode = safeMode,
 		};
@@ -920,6 +972,169 @@ public class BridgeCommandsTests : IDisposable
 		Assert.Contains("\"running\":false", status, StringComparison.Ordinal);
 		Assert.DoesNotContain("example.test", status, StringComparison.Ordinal);
 		Assert.DoesNotContain("token=secret", status, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 浏览器结构化任务执行受限计划且结果不进入快照()
+	{
+		FakeBrowserRunner fake = new() {VisibleText = "页面可见但受限的测试文本"};
+		using BridgeCommandsTests fixture = new(false, true, () => fake);
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		BridgeCommands commands = fixture.CreateCommands();
+		FakeBridgeSource main = new(WindowLabels.Main);
+
+		AutomationBrowserTaskStartSnapshot start = Assert.IsType<AutomationBrowserTaskStartSnapshot>(await commands.InvokeAsync(main,
+			"automation_browser_start_task", Args(new
+			{
+				actions = new object[]
+				{
+					new {type = "navigate", url = "https://example.test/private?token=secret"},
+					new {type = "read_visible_text"},
+				},
+			})));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == start.TaskId && task.State == AutomationTaskState.Completed && task.HasResult));
+
+		AutomationTaskStatusSnapshot task = Assert.Single(fixture._services.Automation!.GetSnapshot().Tasks, item => item.Id == start.TaskId);
+		Assert.Equal("browser", task.TaskKind);
+		Assert.Equal(2, task.TotalSteps);
+		Assert.True(task.HasResult);
+		Assert.Equal(2, fake.CompletedActionCount);
+		string snapshot = JsonSerializer.Serialize(fixture._services.Automation!.GetSnapshot(), BridgeJson.Options);
+		Assert.DoesNotContain("example.test", snapshot, StringComparison.Ordinal);
+		Assert.DoesNotContain("token=secret", snapshot, StringComparison.Ordinal);
+		Assert.DoesNotContain("页面可见但受限的测试文本", snapshot, StringComparison.Ordinal);
+
+		object? result = await commands.InvokeAsync(main, "automation_browser_get_result", Args(new {taskId = start.TaskId}));
+		string resultJson = JsonSerializer.Serialize(result, BridgeJson.Options);
+		Assert.Contains("页面可见但受限的测试文本", resultJson, StringComparison.Ordinal);
+		Assert.DoesNotContain("example.test", resultJson, StringComparison.Ordinal);
+
+		string audit = JsonSerializer.Serialize(await commands.InvokeAsync(main, "automation_audit_list", Args(new {limit = 100})), BridgeJson.Options);
+		Assert.Contains("\"taskKind\":\"browser\"", audit, StringComparison.Ordinal);
+		Assert.Contains("read_visible_text", audit, StringComparison.Ordinal);
+		Assert.DoesNotContain("example.test", audit, StringComparison.Ordinal);
+		Assert.DoesNotContain("页面可见但受限的测试文本", audit, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 浏览器填写忽略客户端confirmed并等待现有审批流()
+	{
+		FakeBrowserRunner fake = new();
+		using BridgeCommandsTests fixture = new(false, true, () => fake);
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		BridgeCommands commands = fixture.CreateCommands();
+		AutomationBrowserTaskStartSnapshot start = Assert.IsType<AutomationBrowserTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main),
+			"automation_browser_start_task",
+			Args(new
+			{
+				actions = new object[]
+				{
+					new {type = "fill", selector = "#secret-field", text = "private-input", confirmed = true},
+				},
+			})));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == start.TaskId && task.ProgressCategory == "awaiting_approval"));
+		AutomationDesktopApprovalSnapshot approval = Assert.Single(fixture._services.Automation!.GetSnapshot().PendingApprovals);
+		Assert.Equal(start.TaskId, approval.TaskId);
+
+		Assert.True(await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "approval_respond", Args(new
+		{
+			requestId = approval.RequestId,
+			approved = false,
+		})) is true);
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == start.TaskId && task.State == AutomationTaskState.Failed && task.ErrorCategory == "approval_denied"));
+		Assert.Equal(0, fake.CompletedActionCount);
+
+		AutomationBrowserTaskStartSnapshot approvedStart = Assert.IsType<AutomationBrowserTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_browser_start_task", Args(new
+			{
+				actions = new object[]
+				{
+					new {type = "fill", selector = "#other-secret", text = "another-private-input", confirmed = false},
+				},
+			})));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().PendingApprovals.Any(item => item.TaskId == approvedStart.TaskId));
+		AutomationDesktopApprovalSnapshot approvedRequest = Assert.Single(fixture._services.Automation!.GetSnapshot().PendingApprovals);
+		Assert.True(await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "approval_respond", Args(new
+		{
+			requestId = approvedRequest.RequestId,
+			approved = true,
+		})) is true);
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == approvedStart.TaskId && task.State == AutomationTaskState.Completed));
+		Assert.Equal(1, fake.CompletedActionCount);
+
+		string snapshot = JsonSerializer.Serialize(fixture._services.Automation!.GetSnapshot(), BridgeJson.Options);
+		string audit = JsonSerializer.Serialize(await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_audit_list", Args(new { })), BridgeJson.Options);
+		Assert.DoesNotContain("private-input", snapshot, StringComparison.Ordinal);
+		Assert.DoesNotContain("secret-field", snapshot, StringComparison.Ordinal);
+		Assert.DoesNotContain("another-private-input", audit, StringComparison.Ordinal);
+		Assert.DoesNotContain("other-secret", audit, StringComparison.Ordinal);
+		Assert.Contains("approval", audit, StringComparison.Ordinal);
+		Assert.Contains("\"outcome\":\"denied\"", audit, StringComparison.Ordinal);
+		Assert.Contains("\"outcome\":\"approved\"", audit, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 浏览器安全页面暂停可取消并清理隔离profile()
+	{
+		FakeBrowserRunner fake = new() {PauseForSafety = true};
+		using BridgeCommandsTests fixture = new(false, true, () => fake);
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		BridgeCommands commands = fixture.CreateCommands();
+		AutomationBrowserTaskStartSnapshot start = Assert.IsType<AutomationBrowserTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_browser_start_task", Args(new
+			{
+				actions = new object[] {new {type = "read_visible_text"}},
+			})));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == start.TaskId && task.State == AutomationTaskState.Paused && task.PauseReason == "safe_page"));
+
+		string paused = JsonSerializer.Serialize(fixture._services.Automation!.GetSnapshot(), BridgeJson.Options);
+		Assert.Contains("\"pauseReason\":\"safe_page\"", paused, StringComparison.Ordinal);
+		Assert.DoesNotContain("模拟安全页面", paused, StringComparison.Ordinal);
+		Assert.True(await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_browser_stop_task", Args(new {taskId = start.TaskId})) is true);
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == start.TaskId && task.State == AutomationTaskState.Cancelled));
+		Assert.Equal(1, fake.DisposeCount);
+
+		string audit = JsonSerializer.Serialize(await commands.InvokeAsync(new FakeBridgeSource(WindowLabels.Main), "automation_audit_list", Args(new { })), BridgeJson.Options);
+		Assert.Contains("safe_page", audit, StringComparison.Ordinal);
+		Assert.DoesNotContain("模拟安全页面", audit, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 浏览器任务超时和专用命令来源均被边界保护()
+	{
+		FakeBrowserRunner fake = new()
+		{
+			WaitForRelease = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
+		};
+		using BridgeCommandsTests fixture = new(false, true, () => fake, browserTaskTimeout: TimeSpan.FromMilliseconds(50));
+		fixture._config.Set(ConfigStore.KeyAutomationEnabled, new ConfigValue.Boolean(true));
+		fixture._config.Set(ConfigStore.KeyAutomationBrowserEnabled, new ConfigValue.Boolean(true));
+		BridgeCommands commands = fixture.CreateCommands();
+		await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Init), "automation_browser_start_task", Args(new {actions = Array.Empty<object>()})));
+		await Assert.ThrowsAsync<InvalidOperationException>(() => commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main, false), "automation_audit_list", Args(new { })));
+
+		AutomationBrowserTaskStartSnapshot start = Assert.IsType<AutomationBrowserTaskStartSnapshot>(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_browser_start_task", Args(new
+			{
+				actions = new object[] {new {type = "wait", milliseconds = 1}},
+			})));
+		await WaitUntilAsync(() => fixture._services.Automation!.GetSnapshot().Tasks.Any(task =>
+			task.Id == start.TaskId && task.State == AutomationTaskState.Failed && task.ErrorCategory == "timeout"));
+		string result = JsonSerializer.Serialize(await commands.InvokeAsync(
+			new FakeBridgeSource(WindowLabels.Main), "automation_browser_get_result", Args(new {taskId = start.TaskId})), BridgeJson.Options);
+		Assert.Contains("timeout", result, StringComparison.Ordinal);
 	}
 
 	[Fact]

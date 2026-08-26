@@ -139,10 +139,16 @@ public sealed class AppRuntime : IAsyncDisposable
 			desktopVisionActionFactory: services.SafeMode ? null : services.AutomationDesktopVisionActionFactory,
 			desktopVisionScreenshotFactory: services.SafeMode ? null : services.AutomationDesktopVisionScreenshotFactory,
 			desktopVisionWindowCatalogFactory: services.SafeMode ? null : services.AutomationDesktopVisionWindowCatalogFactory,
-			desktopVisionApprovalCallback: services.SafeMode ? null : services.AutomationDesktopVisionApprovalCallback);
+			desktopVisionApprovalCallback: services.SafeMode ? null : services.AutomationDesktopVisionApprovalCallback,
+			auditSink: services.AutomationAudit);
+		services.Automation.AuditSink ??= services.AutomationAudit;
 		if (!services.SafeMode && services.Automation.DesktopVisionApprovalCallback is null)
 		{
-			services.Automation.DesktopVisionApprovalCallback = RequestDesktopVisionApprovalAsync;
+			services.Automation.DesktopVisionApprovalCallback = RequestAutomationApprovalAsync;
+		}
+		if (!services.SafeMode && services.Automation.BrowserApprovalCallback is null)
+		{
+			services.Automation.BrowserApprovalCallback = RequestAutomationApprovalAsync;
 		}
 		services.Automation.Changed += OnAutomationChanged;
 
@@ -905,25 +911,33 @@ public sealed class AppRuntime : IAsyncDisposable
 		return await tcs.Task;
 	}
 
-	/// <summary>等待桌面视觉高风险动作的用户决定；未装配或取消时一律不自动放行。</summary>
-	private async Task<AutomationApprovalDecision> RequestDesktopVisionApprovalAsync(
+	/// <summary>等待桌面或浏览器高风险动作的用户决定；未装配或取消时一律不自动放行。</summary>
+	private async Task<AutomationApprovalDecision> RequestAutomationApprovalAsync(
 		AutomationApprovalRequest request,
 		CancellationToken cancellationToken)
 	{
-		if (Services.SafeMode) return AutomationApprovalDecision.Create(request, AutomationApprovalOutcome.Denied, DateTimeOffset.UtcNow);
+		if (Services.SafeMode)
+		{
+			Services.Automation?.RecordApprovalOutcome(request, AutomationApprovalOutcome.Denied);
+			return AutomationApprovalDecision.Create(request, AutomationApprovalOutcome.Denied, DateTimeOffset.UtcNow);
+		}
 		TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 		PendingDesktopApproval approval = new(request, tcs);
 		if (!_desktopApprovals.TryAdd(request.RequestId.ToString("D"), approval))
+		{
+			Services.Automation?.RecordApprovalOutcome(request, AutomationApprovalOutcome.Denied);
 			return AutomationApprovalDecision.Create(request, AutomationApprovalOutcome.Denied, DateTimeOffset.UtcNow);
+		}
 
-		Services.Automation?.SetDesktopApproval(request);
+		Services.Automation?.SetAutomationApproval(request);
 		approval.ArmTimeout(ApprovalTimeoutSeconds, () =>
 		{
 			if (_desktopApprovals.TryRemove(request.RequestId.ToString("D"), out PendingDesktopApproval? expired))
 			{
 				expired.Tcs.TrySetResult(false);
 				expired.Dispose();
-				Services.Automation?.ClearDesktopApproval(request.RequestId);
+				Services.Automation?.ClearAutomationApproval(request.RequestId);
+				Services.Automation?.RecordApprovalOutcome(request, AutomationApprovalOutcome.Expired);
 				PostAgentEvent(WindowLabels.Main, new
 				{
 					type = "approval-result",
@@ -951,12 +965,17 @@ public sealed class AppRuntime : IAsyncDisposable
 				approved ? AutomationApprovalOutcome.Approved : AutomationApprovalOutcome.Denied,
 				DateTimeOffset.UtcNow);
 		}
+		catch (OperationCanceledException)
+		{
+			Services.Automation?.RecordApprovalCancellation(request);
+			throw;
+		}
 		finally
 		{
 			if (_desktopApprovals.TryRemove(request.RequestId.ToString("D"), out PendingDesktopApproval? removed))
 			{
 				removed.Dispose();
-				Services.Automation?.ClearDesktopApproval(request.RequestId);
+				Services.Automation?.ClearAutomationApproval(request.RequestId);
 			}
 		}
 	}
@@ -985,7 +1004,10 @@ public sealed class AppRuntime : IAsyncDisposable
 			|| !_desktopApprovals.TryGetValue(requestId, out PendingDesktopApproval? desktopApproval)) return false;
 		if (!_desktopApprovals.TryRemove(new KeyValuePair<string, PendingDesktopApproval>(requestId, desktopApproval))) return false;
 		desktopApproval.Dispose();
-		Services.Automation?.ClearDesktopApproval(desktopApproval.Request.RequestId);
+		Services.Automation?.ClearAutomationApproval(desktopApproval.Request.RequestId);
+		Services.Automation?.RecordApprovalOutcome(
+			desktopApproval.Request,
+			approved ? AutomationApprovalOutcome.Approved : AutomationApprovalOutcome.Denied);
 		PostAgentEvent(WindowLabels.Main, new
 		{
 			type = "approval-result",
@@ -1409,7 +1431,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		{
 			approval.Tcs.TrySetResult(false);
 			approval.Dispose();
-			Services.Automation?.ClearDesktopApproval(approval.Request.RequestId);
+			Services.Automation?.ClearAutomationApproval(approval.Request.RequestId);
+			Services.Automation?.RecordApprovalCancellation(approval.Request);
 		}
 		_desktopApprovals.Clear();
 

@@ -12,6 +12,12 @@ public interface IAutomationBrowserRunner : IAsyncDisposable
 {
 	/// <summary>启动一个隔离的浏览器会话。</summary>
 	Task StartAsync(CancellationToken cancellationToken = default);
+
+	/// <summary>在已启动的隔离会话中执行受限结构化 DOM 动作计划。</summary>
+	Task<BrowserAutomationExecutionResult> ExecuteAsync(
+		BrowserAutomationTaskPlan plan,
+		BrowserAutomationExecutionContext executionContext,
+		CancellationToken cancellationToken = default);
 }
 
 /// <summary>浏览器自动化宿主状态。</summary>
@@ -68,6 +74,9 @@ public sealed record AutomationBrowserStatusSnapshot(
 	public bool Running => State == AutomationBrowserState.Running;
 }
 
+/// <summary>浏览器结构化任务启动结果；不包含动作计划或页面数据。</summary>
+public sealed record AutomationBrowserTaskStartSnapshot(Guid TaskId, AutomationTaskState State);
+
 /// <summary>自动化视觉探测结果；不会包含截图或请求正文。</summary>
 public sealed record AutomationVisionProbeSnapshot(bool Available, string? Reason);
 
@@ -77,7 +86,32 @@ public sealed record AutomationTaskStatusSnapshot(
 	AutomationTaskState State,
 	int Step,
 	string ProgressCategory,
-	string? ErrorCategory);
+	string? ErrorCategory)
+{
+	/// <summary>任务种类；只公开 browser 或 desktop。</summary>
+	public string TaskKind { get; init; } = "desktop";
+
+	/// <summary>安全暂停原因；不包含页面或动作正文。</summary>
+	public string? PauseReason { get; init; }
+
+	/// <summary>当前步骤的前端兼容字段。</summary>
+	public int CurrentStep => Step;
+
+	/// <summary>计划动作总数；桌面视觉任务未公开固定总数。</summary>
+	public int? TotalSteps { get; init; }
+
+	/// <summary>是否可通过浏览器专用命令读取短期内存结果。</summary>
+	public bool HasResult { get; init; }
+
+	/// <summary>不含页面文本的固定结果摘要。</summary>
+	public string? ResultSummary { get; init; }
+
+	/// <summary>等待审批时的动作类别。</summary>
+	public IReadOnlyList<AutomationActionKind> ActionKinds { get; init; } = [];
+
+	/// <summary>等待审批时的请求标识。</summary>
+	public Guid? ApprovalRequestId { get; init; }
+}
 
 /// <summary>自动化运行时汇总；不包含截图、提示词、URL 或工具参数。</summary>
 public sealed record AutomationSnapshot(
@@ -115,6 +149,18 @@ public sealed class PlaywrightEdgeBrowserAutomationRunner : IAutomationBrowserRu
 	{
 		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 		_session = await _runner.StartAsync(cancellationToken).ConfigureAwait(false);
+	}
+
+	/// <summary>在已启动会话中执行受限 DOM 动作。</summary>
+	public async Task<BrowserAutomationExecutionResult> ExecuteAsync(
+		BrowserAutomationTaskPlan plan,
+		BrowserAutomationExecutionContext executionContext,
+		CancellationToken cancellationToken = default)
+	{
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		PlaywrightEdgeBrowserSession session = Volatile.Read(ref _session)
+			?? throw new InvalidOperationException("浏览器会话尚未启动");
+		return await session.ExecuteAsync(plan, executionContext, cancellationToken).ConfigureAwait(false);
 	}
 
 	/// <summary>关闭页面、Edge 上下文及临时 profile。</summary>
@@ -155,17 +201,23 @@ public sealed class AutomationRuntime : IAsyncDisposable
 	private readonly Func<IDesktopVisionWindowCatalog>? _desktopVisionWindowCatalogFactory;
 	private readonly object _desktopStateGate = new();
 	private readonly Dictionary<Guid, DesktopTaskState> _desktopTasks = [];
+	private readonly Dictionary<Guid, BrowserTaskState> _browserTasks = [];
 	private readonly Dictionary<string, DesktopWindowTarget> _desktopWindowTargets = new(StringComparer.Ordinal);
 	private readonly Dictionary<Guid, AutomationDesktopApprovalSnapshot> _desktopApprovals = [];
+	private readonly BrowserAutomationResultStore _browserResults;
+	private readonly TimeSpan _browserTaskTimeout;
 	private DesktopVisionApprovalCallback? _desktopVisionApprovalCallback;
+	private AutomationApprovalCallback? _browserApprovalCallback;
+	private IAutomationAuditSink? _auditSink;
 	private readonly SemaphoreSlim _browserGate = new(1, 1);
 	private readonly object _browserStateGate = new();
 	private IAutomationBrowserRunner? _browserRunner;
 	private AutomationBrowserState _browserState = AutomationBrowserState.Stopped;
 	private string? _browserFailureCode;
+	private long _publicTaskSequence;
 	private int _disposed;
 
-	private const int MaxPublicDesktopTasks = 32;
+	private const int MaxPublicAutomationTasks = 32;
 
 	/// <summary>自动化状态发生变化时触发；订阅者只能读取脱敏快照。</summary>
 	public event Action? Changed;
@@ -190,7 +242,11 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		Func<IDesktopVisionActionExecutor>? desktopVisionActionFactory = null,
 		Func<IDesktopVisionScreenshotSource>? desktopVisionScreenshotFactory = null,
 		Func<IDesktopVisionWindowCatalog>? desktopVisionWindowCatalogFactory = null,
-		DesktopVisionApprovalCallback? desktopVisionApprovalCallback = null)
+		DesktopVisionApprovalCallback? desktopVisionApprovalCallback = null,
+		AutomationApprovalCallback? browserApprovalCallback = null,
+		IAutomationAuditSink? auditSink = null,
+		BrowserAutomationResultStore? browserResults = null,
+		TimeSpan? browserTaskTimeout = null)
 	{
 		ArgumentNullException.ThrowIfNull(config);
 		_config = config;
@@ -200,6 +256,11 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		_visionAvailable = visionAvailable;
 		_tasks = taskManager ?? new AutomationTaskManager();
 		_browserRunnerFactory = browserRunnerFactory ?? (() => new PlaywrightEdgeBrowserAutomationRunner());
+		_browserResults = browserResults ?? new BrowserAutomationResultStore();
+		_browserTaskTimeout = browserTaskTimeout ?? BrowserAutomationTaskLimits.MaximumDuration;
+		if (_browserTaskTimeout <= TimeSpan.Zero || _browserTaskTimeout > BrowserAutomationTaskLimits.MaximumDuration)
+			throw new ArgumentOutOfRangeException(nameof(browserTaskTimeout));
+		_auditSink = auditSink;
 
 		// 安全模式装配时不保留任何桌面视觉外部依赖工厂；Bridge 和执行入口仍会再次拒绝。
 		if (safeMode)
@@ -210,6 +271,7 @@ public sealed class AutomationRuntime : IAsyncDisposable
 			_desktopVisionScreenshotFactory = null;
 			_desktopVisionWindowCatalogFactory = null;
 			_desktopVisionApprovalCallback = null;
+			_browserApprovalCallback = null;
 		}
 		else
 		{
@@ -220,6 +282,7 @@ public sealed class AutomationRuntime : IAsyncDisposable
 			_desktopVisionScreenshotFactory = desktopVisionScreenshotFactory ?? (() => new WindowsDesktopVisionScreenshotSource());
 			_desktopVisionWindowCatalogFactory = desktopVisionWindowCatalogFactory ?? (() => new WindowsDesktopVisionWindowCatalog());
 			_desktopVisionApprovalCallback = desktopVisionApprovalCallback;
+			_browserApprovalCallback = browserApprovalCallback;
 		}
 
 		_tasks.TaskChanged += OnTaskChanged;
@@ -234,6 +297,24 @@ public sealed class AutomationRuntime : IAsyncDisposable
 			if (_safeMode) return;
 			_desktopVisionApprovalCallback = value;
 		}
+	}
+
+	/// <summary>浏览器填写动作使用的宿主审批协调器；空值一律拒绝。</summary>
+	public AutomationApprovalCallback? BrowserApprovalCallback
+	{
+		get => _browserApprovalCallback;
+		set
+		{
+			if (_safeMode) return;
+			_browserApprovalCallback = value;
+		}
+	}
+
+	/// <summary>设置审计接收器；审计失败不会影响自动化生命周期。</summary>
+	public IAutomationAuditSink? AuditSink
+	{
+		get => _auditSink;
+		set => _auditSink = value;
 	}
 
 	/// <summary>读取当前设置。</summary>
@@ -283,7 +364,7 @@ public sealed class AutomationRuntime : IAsyncDisposable
 			_tasks.QueuedCount)
 		{
 			Browser = GetBrowserStatus(settings),
-			Tasks = GetDesktopTaskSnapshots(),
+			Tasks = GetTaskSnapshots(),
 			PendingApprovals = GetDesktopApprovalSnapshots(),
 		};
 	}
@@ -399,34 +480,92 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		}
 
 		AutomationTask taskModel = _tasks.Enqueue(new DesktopVisionRunnerAdapter(runner, state));
-		state.Attach(taskModel.Id);
+		state.Attach(taskModel.Id, NextTaskSequence());
 		lock (_desktopStateGate)
 		{
 			_desktopTasks[taskModel.Id] = state;
-			TrimDesktopTasks();
+			TrimPublicTasks();
 		}
 		ApplyTaskSnapshot(taskModel.Snapshot);
+		RecordAudit(new AutomationAuditEvent(
+			DateTimeOffset.UtcNow,
+			taskModel.Id,
+			AutomationAuditTaskKind.Desktop,
+			AutomationAuditEventCategory.Task,
+			AutomationAuditOutcome.Queued));
 		NotifyChanged();
 		return new(taskModel.Id, ToStatus(taskModel.Snapshot) ?? throw new InvalidOperationException("自动化任务状态不可用"));
 	}
 
-	/// <summary>登记或清除当前桌面高风险动作审批，供宿主现有协调器复用。</summary>
-	public void SetDesktopApproval(AutomationApprovalRequest request)
+	/// <summary>登记当前高风险动作审批，供桌面和浏览器共用宿主 RespondApproval 流程。</summary>
+	public void SetAutomationApproval(AutomationApprovalRequest request)
 	{
 		ArgumentNullException.ThrowIfNull(request);
 		if (_safeMode) return;
+		AutomationAuditTaskKind taskKind = GetAuditTaskKind(request.TaskId);
 		lock (_desktopStateGate)
 		{
 			_desktopApprovals[request.RequestId] = new(request.RequestId, request.TaskId, request.ActionKinds);
 		}
+		RecordAudit(new AutomationAuditEvent(
+			request.RequestedAt,
+			request.TaskId,
+			taskKind,
+			AutomationAuditEventCategory.Approval,
+			AutomationAuditOutcome.Requested));
 		NotifyChanged();
 	}
 
-	/// <summary>清除桌面高风险动作审批。</summary>
-	public void ClearDesktopApproval(Guid requestId)
+	/// <summary>兼容现有桌面视觉调用的审批登记入口。</summary>
+	public void SetDesktopApproval(AutomationApprovalRequest request) => SetAutomationApproval(request);
+
+	/// <summary>清除高风险动作审批。</summary>
+	public void ClearAutomationApproval(Guid requestId)
 	{
 		lock (_desktopStateGate) _desktopApprovals.Remove(requestId);
 		NotifyChanged();
+	}
+
+	/// <summary>兼容现有桌面视觉调用的审批清理入口。</summary>
+	public void ClearDesktopApproval(Guid requestId) => ClearAutomationApproval(requestId);
+
+	/// <summary>记录由宿主现有审批协调器产生的固定结论。</summary>
+	public void RecordApprovalOutcome(AutomationApprovalRequest request, AutomationApprovalOutcome outcome)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+		AutomationAuditOutcome auditOutcome = outcome switch
+		{
+			AutomationApprovalOutcome.Approved => AutomationAuditOutcome.Approved,
+			AutomationApprovalOutcome.Denied => AutomationAuditOutcome.Denied,
+			AutomationApprovalOutcome.Expired => AutomationAuditOutcome.TimedOut,
+			_ => AutomationAuditOutcome.Denied,
+		};
+		string? failureCode = outcome switch
+		{
+			AutomationApprovalOutcome.Expired => "approval_timeout",
+			AutomationApprovalOutcome.Denied => "approval_denied",
+			_ => null,
+		};
+		RecordAudit(new AutomationAuditEvent(
+			DateTimeOffset.UtcNow,
+			request.TaskId,
+			GetAuditTaskKind(request.TaskId),
+			AutomationAuditEventCategory.Approval,
+			auditOutcome,
+			failureCode));
+	}
+
+	/// <summary>记录审批因取消而 fail-closed 的结论。</summary>
+	public void RecordApprovalCancellation(AutomationApprovalRequest request)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+		RecordAudit(new AutomationAuditEvent(
+			DateTimeOffset.UtcNow,
+			request.TaskId,
+			GetAuditTaskKind(request.TaskId),
+			AutomationAuditEventCategory.Approval,
+			AutomationAuditOutcome.Cancelled,
+			"approval_cancelled"));
 	}
 
 	/// <summary>登记一个经过显式能力授权的执行任务。</summary>
@@ -486,11 +625,60 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		}
 	}
 
+	/// <summary>启动并排队一个受限浏览器 DOM 任务；动作正文只存在于内存执行链。</summary>
+	public async Task<AutomationBrowserTaskStartSnapshot> StartBrowserTaskAsync(
+		BrowserAutomationTaskPlan plan,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(plan);
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		BrowserAutomationPolicy.ValidatePlan(plan);
+		ThrowIfBrowserExecutionBlocked(GetSettings());
+		await StartBrowserAsync(cancellationToken).ConfigureAwait(false);
+		// 启动浏览器期间可能发生配置或安全模式切换，入队前必须再复核一次。
+		ThrowIfBrowserExecutionBlocked(GetSettings());
+		IAutomationBrowserRunner runner = _browserRunner
+			?? throw new InvalidOperationException("浏览器会话不可用");
+		BrowserTaskState state = new(plan.Actions.Count);
+		AutomationTask task = _tasks.Enqueue(new BrowserTaskRunnerAdapter(this, runner, plan, state));
+		state.Attach(task.Id, NextTaskSequence());
+		lock (_desktopStateGate)
+		{
+			_browserTasks[task.Id] = state;
+			TrimPublicTasks();
+		}
+		ApplyTaskSnapshot(task.Snapshot);
+		RecordAudit(new AutomationAuditEvent(
+			DateTimeOffset.UtcNow,
+			task.Id,
+			AutomationAuditTaskKind.Browser,
+			AutomationAuditEventCategory.Task,
+			AutomationAuditOutcome.Queued));
+		NotifyChanged();
+		return new(task.Id, task.State);
+	}
+
+	/// <summary>读取短期内存中的浏览器任务结果；过期后返回空且不会回退到持久化数据。</summary>
+	public BrowserAutomationTaskResult? GetBrowserTaskResult(Guid taskId)
+	{
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		ThrowIfBrowserExecutionBlocked(GetSettings());
+		return _browserResults.Get(taskId);
+	}
+
+	/// <summary>取消一个浏览器任务；任务和临时 profile 的后续清理由现有停止入口完成。</summary>
+	public bool StopBrowserTask(Guid taskId)
+	{
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		return IsBrowserTask(taskId) && StopTask(taskId);
+	}
+
 	/// <summary>停止隔离 Edge；没有会话时重复调用保持幂等。</summary>
 	public async Task<AutomationBrowserStatusSnapshot> StopBrowserAsync(CancellationToken cancellationToken = default)
 	{
 		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-		// 停止是清理操作，不因桥接取消而留下浏览器 profile。
+		// 停止是清理操作：先终止浏览器任务，再尽力删除隔离 profile。
+		CancelBrowserTasks();
 		await _browserGate.WaitAsync().ConfigureAwait(false);
 		try { return await StopBrowserCoreAsync(notify: true).ConfigureAwait(false); }
 		finally { _browserGate.Release(); }
@@ -500,7 +688,9 @@ public sealed class AutomationRuntime : IAsyncDisposable
 	public bool StopTask(Guid taskId)
 	{
 		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		bool browserTask = IsBrowserTask(taskId);
 		bool stopped = _tasks.Cancel(taskId);
+		if (stopped && browserTask) StopBrowserSynchronously();
 		if (stopped) NotifyChanged();
 		return stopped;
 	}
@@ -774,21 +964,78 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		NotifyChanged();
 	}
 
+	private void OnBrowserProgress(BrowserTaskState state, BrowserAutomationProgress progress)
+	{
+		state.Report(progress);
+		if (progress.State == BrowserAutomationProgressState.ActionSucceeded && progress.ActionKind is { } actionKind)
+		{
+			RecordAudit(new AutomationAuditEvent(
+				DateTimeOffset.UtcNow,
+				state.TaskId,
+				AutomationAuditTaskKind.Browser,
+				ToAuditCategory(actionKind),
+				AutomationAuditOutcome.Succeeded));
+		}
+		NotifyChanged();
+	}
+
+	private void OnBrowserSafePagePause(BrowserTaskState state)
+	{
+		state.Report(new BrowserAutomationProgress(
+			state.Step,
+			null,
+			BrowserAutomationProgressState.Paused,
+			null,
+			"safe_page"));
+		RecordAudit(new AutomationAuditEvent(
+			DateTimeOffset.UtcNow,
+			state.TaskId,
+			AutomationAuditTaskKind.Browser,
+			AutomationAuditEventCategory.SafePage,
+			AutomationAuditOutcome.Rejected,
+			"safe_page"));
+		NotifyChanged();
+	}
+
+	private void StoreBrowserResult(BrowserTaskState state, BrowserAutomationExecutionResult result)
+	{
+		string? failureCode = result.Succeeded ? null : NormalizePublicFailureCode(result.FailureCode);
+		BrowserAutomationTaskResult stored = new(
+			state.TaskId,
+			result.Succeeded,
+			result.Succeeded ? result.VisibleText : null,
+			failureCode,
+			DateTimeOffset.UtcNow);
+		_browserResults.Set(stored);
+		state.SetResult(stored);
+		NotifyChanged();
+	}
+
+	private Task EnsureBrowserTaskExecutionAsync(CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		ThrowIfBrowserExecutionBlocked(GetSettings());
+		if (_browserRunner is null) throw new AutomationTaskExecutionException("browser_unavailable");
+		return Task.CompletedTask;
+	}
+
 	private void ApplyTaskSnapshot(AutomationTaskSnapshot snapshot)
 	{
 		lock (_desktopStateGate)
 		{
-			if (_desktopTasks.TryGetValue(snapshot.Id, out DesktopTaskState? state)) state.ApplyLifecycle(snapshot);
+			if (_desktopTasks.TryGetValue(snapshot.Id, out DesktopTaskState? desktopState)) desktopState.ApplyLifecycle(snapshot);
+			if (_browserTasks.TryGetValue(snapshot.Id, out BrowserTaskState? browserState)) browserState.ApplyLifecycle(snapshot);
 		}
 	}
 
-	private IReadOnlyList<AutomationTaskStatusSnapshot> GetDesktopTaskSnapshots()
+	private IReadOnlyList<AutomationTaskStatusSnapshot> GetTaskSnapshots()
 	{
 		lock (_desktopStateGate)
 		{
-			return _desktopTasks.Values
-				.OrderByDescending(state => state.Sequence)
-				.Select(state => state.ToSnapshot())
+			return _desktopTasks.Values.Select(state => (state.Sequence, Snapshot: state.ToSnapshot()))
+				.Concat(_browserTasks.Values.Select(state => (state.Sequence, Snapshot: state.ToSnapshot())))
+				.OrderByDescending(item => item.Sequence)
+				.Select(item => item.Snapshot)
 				.ToArray();
 		}
 	}
@@ -798,19 +1045,98 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		lock (_desktopStateGate) return _desktopApprovals.Values.ToArray();
 	}
 
-	private void TrimDesktopTasks()
+	private void TrimPublicTasks()
 	{
-		while (_desktopTasks.Count > MaxPublicDesktopTasks)
+		while (_desktopTasks.Count + _browserTasks.Count > MaxPublicAutomationTasks)
 		{
-			(Guid id, _) = _desktopTasks.OrderBy(pair => pair.Value.Sequence).First();
-			_desktopTasks.Remove(id);
+			long oldestDesktop = _desktopTasks.Count == 0 ? long.MaxValue : _desktopTasks.Min(pair => pair.Value.Sequence);
+			long oldestBrowser = _browserTasks.Count == 0 ? long.MaxValue : _browserTasks.Min(pair => pair.Value.Sequence);
+			if (oldestDesktop <= oldestBrowser)
+			{
+				Guid id = _desktopTasks.First(pair => pair.Value.Sequence == oldestDesktop).Key;
+				_desktopTasks.Remove(id);
+			}
+			else
+			{
+				Guid id = _browserTasks.First(pair => pair.Value.Sequence == oldestBrowser).Key;
+				_browserTasks.Remove(id);
+				_browserResults.Remove(id);
+			}
 		}
 	}
+
+	private long NextTaskSequence() => Interlocked.Increment(ref _publicTaskSequence);
 
 	private void OnTaskChanged(AutomationTaskSnapshot snapshot)
 	{
 		ApplyTaskSnapshot(snapshot);
+		if (TryGetAuditTaskKind(snapshot.Id, out AutomationAuditTaskKind taskKind)) RecordTaskLifecycle(snapshot, taskKind);
 		NotifyChanged();
+	}
+
+	private void RecordTaskLifecycle(AutomationTaskSnapshot snapshot, AutomationAuditTaskKind taskKind)
+	{
+		AutomationAuditOutcome outcome = snapshot.State switch
+		{
+			AutomationTaskState.Queued => AutomationAuditOutcome.Queued,
+			AutomationTaskState.Running => AutomationAuditOutcome.Running,
+			AutomationTaskState.Paused => AutomationAuditOutcome.Paused,
+			AutomationTaskState.Completed => AutomationAuditOutcome.Succeeded,
+			AutomationTaskState.Cancelled => AutomationAuditOutcome.Cancelled,
+			AutomationTaskState.Failed => AutomationAuditOutcome.Failed,
+			_ => AutomationAuditOutcome.Failed,
+		};
+		TimeSpan? duration = snapshot.StartedAt is { } startedAt && snapshot.FinishedAt is { } finishedAt
+			? finishedAt - startedAt
+			: null;
+		RecordAudit(new AutomationAuditEvent(
+			DateTimeOffset.UtcNow,
+			snapshot.Id,
+			taskKind,
+			AutomationAuditEventCategory.Task,
+			outcome,
+			snapshot.State == AutomationTaskState.Failed ? NormalizePublicFailureCode(snapshot.FailureCode) : null,
+			duration));
+	}
+
+	private void RecordAudit(AutomationAuditEvent entry)
+	{
+		try { _auditSink?.Record(entry); }
+		catch { /* 审计持久化失败不能破坏自动化 fail-closed 生命周期 */ }
+	}
+
+	private void CancelBrowserTasks()
+	{
+		Guid[] taskIds;
+		lock (_desktopStateGate) taskIds = _browserTasks.Keys.ToArray();
+		foreach (Guid taskId in taskIds) _tasks.Cancel(taskId);
+	}
+
+	private bool IsBrowserTask(Guid taskId)
+	{
+		lock (_desktopStateGate) return _browserTasks.ContainsKey(taskId);
+	}
+
+	private AutomationAuditTaskKind GetAuditTaskKind(Guid taskId) =>
+		TryGetAuditTaskKind(taskId, out AutomationAuditTaskKind taskKind) ? taskKind : AutomationAuditTaskKind.Desktop;
+
+	private bool TryGetAuditTaskKind(Guid taskId, out AutomationAuditTaskKind taskKind)
+	{
+		lock (_desktopStateGate)
+		{
+			if (_browserTasks.ContainsKey(taskId))
+			{
+				taskKind = AutomationAuditTaskKind.Browser;
+				return true;
+			}
+			if (_desktopTasks.ContainsKey(taskId))
+			{
+				taskKind = AutomationAuditTaskKind.Desktop;
+				return true;
+			}
+		}
+		taskKind = default;
+		return false;
 	}
 
 	private void NotifyChanged()
@@ -824,9 +1150,9 @@ public sealed class AutomationRuntime : IAsyncDisposable
 		if (task is null) return null;
 		lock (_desktopStateGate)
 		{
-			return _desktopTasks.TryGetValue(task.Id, out DesktopTaskState? state)
-				? state.ToSnapshot(task)
-				: new(task.Id, task.State, 0, LifecycleCategory(task.State), task.State == AutomationTaskState.Failed ? task.FailureCode : null);
+			if (_desktopTasks.TryGetValue(task.Id, out DesktopTaskState? desktopState)) return desktopState.ToSnapshot(task);
+			if (_browserTasks.TryGetValue(task.Id, out BrowserTaskState? browserState)) return browserState.ToSnapshot(task);
+			return new(task.Id, task.State, 0, LifecycleCategory(task.State), task.State == AutomationTaskState.Failed ? task.FailureCode : null);
 		}
 	}
 
@@ -834,10 +1160,35 @@ public sealed class AutomationRuntime : IAsyncDisposable
 	{
 		AutomationTaskState.Queued => "queued",
 		AutomationTaskState.Running => "running",
+		AutomationTaskState.Paused => "paused",
 		AutomationTaskState.Completed => "completed",
 		AutomationTaskState.Cancelled => "cancelled",
 		AutomationTaskState.Failed => "execution_failed",
 		_ => "unknown",
+	};
+
+	private static AutomationAuditEventCategory ToAuditCategory(BrowserAutomationActionKind actionKind) => actionKind switch
+	{
+		BrowserAutomationActionKind.Navigate => AutomationAuditEventCategory.Navigate,
+		BrowserAutomationActionKind.Click => AutomationAuditEventCategory.Click,
+		BrowserAutomationActionKind.Fill => AutomationAuditEventCategory.Fill,
+		BrowserAutomationActionKind.Scroll => AutomationAuditEventCategory.Scroll,
+		BrowserAutomationActionKind.Wait => AutomationAuditEventCategory.Wait,
+		BrowserAutomationActionKind.ReadVisibleText => AutomationAuditEventCategory.ReadVisibleText,
+		_ => AutomationAuditEventCategory.Task,
+	};
+
+	private static string NormalizePublicFailureCode(string? failureCode) => failureCode switch
+	{
+		"timeout" => "timeout",
+		"safe_page" => "safe_page",
+		"approval_denied" => "approval_denied",
+		"approval_failed" => "approval_failed",
+		"policy_rejected" => "policy_rejected",
+		"invalid_action" => "invalid_action",
+		"browser_unavailable" => "browser_unavailable",
+		"cancelled" => "cancelled",
+		_ => "execution_failed",
 	};
 
 	private sealed record DesktopWindowTarget(nint Handle, int Width, int Height, bool IsForeground);
@@ -854,12 +1205,12 @@ public sealed class AutomationRuntime : IAsyncDisposable
 
 		public long Sequence => Volatile.Read(ref _sequence);
 
-		public void Attach(Guid taskId)
+		public void Attach(Guid taskId, long sequence)
 		{
 			lock (_gate)
 			{
 				_taskId = taskId;
-				Interlocked.Increment(ref _sequence);
+				_sequence = sequence;
 			}
 		}
 
@@ -903,6 +1254,11 @@ public sealed class AutomationRuntime : IAsyncDisposable
 					_category = snapshot.FailureCode ?? "execution_failed";
 					_errorCategory = _category;
 				}
+				else if (snapshot.State == AutomationTaskState.Paused)
+				{
+					_category = "paused";
+					_errorCategory = null;
+				}
 				else if (snapshot.State == AutomationTaskState.Running && _category == "queued")
 				{
 					_category = "running";
@@ -926,7 +1282,10 @@ public sealed class AutomationRuntime : IAsyncDisposable
 				if (state == AutomationTaskState.Completed && _errorCategory is not null) state = AutomationTaskState.Failed;
 				string category = _category;
 				string? error = _errorCategory;
-				return new(_taskId, state, _step, category, error);
+				return new(_taskId, state, _step, category, error)
+				{
+					TaskKind = "desktop",
+				};
 			}
 		}
 
@@ -934,6 +1293,209 @@ public sealed class AutomationRuntime : IAsyncDisposable
 			DesktopVisionAutomationCategory.Running
 			or DesktopVisionAutomationCategory.StepSucceeded
 			or DesktopVisionAutomationCategory.Completed);
+	}
+
+	private sealed class BrowserTaskState
+	{
+		private readonly object _gate = new();
+		private readonly int _totalSteps;
+		private Guid _taskId;
+		private AutomationTaskSnapshot? _lifecycle;
+		private int _step;
+		private string _category = "queued";
+		private string? _errorCategory;
+		private string? _pauseReason;
+		private Guid? _approvalRequestId;
+		private IReadOnlyList<AutomationActionKind> _actionKinds = [];
+		private bool _hasResult;
+		private string? _resultSummary;
+		private long _sequence;
+
+		public BrowserTaskState(int totalSteps)
+		{
+			if (totalSteps is < 1 or > BrowserAutomationTaskLimits.MaxActions)
+				throw new ArgumentOutOfRangeException(nameof(totalSteps));
+			_totalSteps = totalSteps;
+		}
+
+		public Guid TaskId { get { lock (_gate) return _taskId; } }
+		public int Step { get { lock (_gate) return _step; } }
+		public long Sequence => Volatile.Read(ref _sequence);
+
+		public void Attach(Guid taskId, long sequence)
+		{
+			lock (_gate)
+			{
+				_taskId = taskId;
+				_sequence = sequence;
+			}
+		}
+
+		public void Report(BrowserAutomationProgress progress)
+		{
+			lock (_gate)
+			{
+				_step = Math.Clamp(Math.Max(_step, progress.Step), 0, _totalSteps);
+				switch (progress.State)
+				{
+					case BrowserAutomationProgressState.Running:
+						if (_category is "queued" or "awaiting_approval") _category = "running";
+						_approvalRequestId = null;
+						_actionKinds = [];
+						break;
+					case BrowserAutomationProgressState.AwaitingApproval:
+						_category = "awaiting_approval";
+						_approvalRequestId = progress.ApprovalRequestId;
+						_actionKinds = [AutomationActionKind.TypeText];
+						break;
+					case BrowserAutomationProgressState.ActionSucceeded:
+						_category = "step_succeeded";
+						_approvalRequestId = null;
+						_actionKinds = [];
+						break;
+					case BrowserAutomationProgressState.Paused:
+						_category = "paused";
+						_pauseReason = progress.PauseReason == "safe_page" ? "safe_page" : "safe_page";
+						_approvalRequestId = null;
+						_actionKinds = [];
+						break;
+				}
+			}
+		}
+
+		public void SetResult(BrowserAutomationTaskResult result)
+		{
+			lock (_gate)
+			{
+				_hasResult = true;
+				_resultSummary = result.Succeeded ? "浏览器任务已完成" : null;
+				if (!result.Succeeded && result.FailureCode != "safe_page" && _errorCategory is null)
+					_errorCategory = NormalizePublicFailureCode(result.FailureCode);
+			}
+		}
+
+		public void ApplyLifecycle(AutomationTaskSnapshot snapshot)
+		{
+			lock (_gate)
+			{
+				_lifecycle = snapshot;
+				switch (snapshot.State)
+				{
+					case AutomationTaskState.Queued:
+						_category = "queued";
+						break;
+					case AutomationTaskState.Running when _category == "queued":
+						_category = "running";
+						break;
+					case AutomationTaskState.Paused:
+						_category = "paused";
+						_pauseReason = snapshot.PauseReason == "safe_page" ? "safe_page" : "safe_page";
+						_errorCategory = null;
+						break;
+					case AutomationTaskState.Completed:
+						if (_category is "queued" or "running" or "step_succeeded") _category = "completed";
+						break;
+					case AutomationTaskState.Cancelled:
+						_category = "cancelled";
+						_errorCategory = null;
+						_approvalRequestId = null;
+						_actionKinds = [];
+						break;
+					case AutomationTaskState.Failed:
+						_category = NormalizePublicFailureCode(snapshot.FailureCode);
+						_errorCategory = _category;
+						_approvalRequestId = null;
+						_actionKinds = [];
+						break;
+				}
+			}
+		}
+
+		public AutomationTaskStatusSnapshot ToSnapshot(AutomationTaskSnapshot? current = null)
+		{
+			lock (_gate)
+			{
+				AutomationTaskSnapshot lifecycle = current ?? _lifecycle ?? new AutomationTaskSnapshot(
+					_taskId,
+					AutomationTaskState.Queued,
+					DateTimeOffset.UtcNow,
+					null,
+					null,
+					null);
+				return new(_taskId, lifecycle.State, _step, _category, _errorCategory)
+				{
+					TaskKind = "browser",
+					PauseReason = lifecycle.State == AutomationTaskState.Paused ? _pauseReason : null,
+					TotalSteps = _totalSteps,
+					HasResult = _hasResult,
+					ResultSummary = _resultSummary,
+					ActionKinds = _actionKinds,
+					ApprovalRequestId = _approvalRequestId,
+				};
+			}
+		}
+	}
+
+	private sealed class BrowserTaskRunnerAdapter(
+		AutomationRuntime owner,
+		IAutomationBrowserRunner runner,
+		BrowserAutomationTaskPlan plan,
+		BrowserTaskState state) : IAutomationTaskRunner
+	{
+		public async Task RunAsync(AutomationTaskContext context, CancellationToken cancellationToken)
+		{
+			DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+			using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+			timeout.CancelAfter(owner._browserTaskTimeout);
+			BrowserAutomationExecutionContext executionContext = new(
+				context.TaskId,
+				owner.BrowserApprovalCallback,
+				owner.EnsureBrowserTaskExecutionAsync,
+				progress => owner.OnBrowserProgress(state, progress));
+			try
+			{
+				BrowserAutomationExecutionResult result = await runner.ExecuteAsync(plan, executionContext, timeout.Token).ConfigureAwait(false);
+				if (!result.Succeeded)
+				{
+					string failureCode = NormalizePublicFailureCode(result.FailureCode);
+					owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(result.CompletedActions, failureCode));
+					throw new AutomationTaskExecutionException(failureCode);
+				}
+				owner.StoreBrowserResult(state, result);
+			}
+			catch (BrowserAutomationPolicy.PausedException) when (!cancellationToken.IsCancellationRequested)
+			{
+				TimeSpan remaining = owner._browserTaskTimeout - (DateTimeOffset.UtcNow - startedAt);
+				if (remaining <= TimeSpan.Zero)
+				{
+					owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(state.Step, "timeout"));
+					throw new AutomationTaskExecutionException("timeout");
+				}
+				owner.OnBrowserSafePagePause(state);
+				owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(state.Step, "safe_page"));
+				throw new AutomationTaskPausedException("safe_page", remaining);
+			}
+			catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+			{
+				owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(state.Step, "timeout"));
+				throw new AutomationTaskExecutionException("timeout");
+			}
+			catch (OperationCanceledException)
+			{
+				owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(state.Step, "cancelled"));
+				throw;
+			}
+			catch (AutomationTaskExecutionException exception)
+			{
+				owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(state.Step, NormalizePublicFailureCode(exception.FailureCode)));
+				throw;
+			}
+			catch
+			{
+				owner.StoreBrowserResult(state, BrowserAutomationExecutionResult.Failed(state.Step, "execution_failed"));
+				throw new AutomationTaskExecutionException("execution_failed");
+			}
+		}
 	}
 
 	private sealed class DesktopVisionRunnerAdapter(IAutomationTaskRunner inner, DesktopTaskState state) : IAutomationTaskRunner

@@ -74,6 +74,19 @@ public sealed class AutomationTests
 	}
 
 	[Fact]
+	public async Task 安全暂停复用任务管理器且可取消()
+	{
+		await using AutomationTaskManager manager = new();
+		AutomationTask task = manager.Enqueue(_ => throw new AutomationTaskPausedException("safe_page", TimeSpan.FromSeconds(5)));
+		for (int attempt = 0; attempt < 100 && task.State != AutomationTaskState.Paused; attempt++) await Task.Delay(10);
+
+		Assert.Equal(AutomationTaskState.Paused, task.State);
+		Assert.Equal("safe_page", task.Snapshot.PauseReason);
+		Assert.True(manager.Cancel(task.Id));
+		Assert.Equal(AutomationTaskState.Cancelled, (await task.Completion.WaitAsync(TimeSpan.FromSeconds(5))).State);
+	}
+
+	[Fact]
 	public void 审批DTO仅包含脱敏标识和动作种类()
 	{
 		Guid taskId = Guid.NewGuid();

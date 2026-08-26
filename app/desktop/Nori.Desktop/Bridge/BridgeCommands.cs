@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Avalonia.Input.Platform;
 using Nori.Core.Agent;
+using Nori.Core.Automation;
 using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
@@ -139,6 +140,18 @@ public sealed class BridgeCommands
 
 		/// 停止浏览器自动化: invoke("automation_browser_stop")
 		"automation_browser_stop" => await AutomationBrowserStopAsync(source, cancellationToken),
+
+		/// invoke("automation_browser_start_task", {actions})
+		"automation_browser_start_task" => await AutomationBrowserStartTaskAsync(source, args, cancellationToken),
+
+		/// invoke("automation_browser_get_result", {taskId})
+		"automation_browser_get_result" => RequireVisibleMain(source, () => BrowserTaskResultDto(ParseGuid(args, "taskId"))),
+
+		/// invoke("automation_browser_stop_task", {taskId})
+		"automation_browser_stop_task" => RequireVisibleMain(source, () => Automation.StopBrowserTask(ParseGuid(args, "taskId"))),
+
+		/// invoke("automation_audit_list", {limit?})
+		"automation_audit_list" => RequireVisibleMain(source, () => AutomationAuditList(ClampLimit(OptionalInt(args, "limit"), 50))),
 
 		/// 查询浏览器自动化状态: invoke("automation_browser_status")
 		"automation_browser_status" => RequireVisibleMain(source, () => Automation.GetBrowserStatus()),
@@ -708,6 +721,71 @@ public sealed class BridgeCommands
 		RequireVisibleMainVoid(source);
 		return await Automation.StopBrowserAsync(cancellationToken).ConfigureAwait(false);
 	}
+
+	/// <summary>启动受限浏览器 DOM 任务。前端调用: invoke("automation_browser_start_task", {actions})</summary>
+	private async Task<object?> AutomationBrowserStartTaskAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
+	{
+		RequireVisibleMainVoid(source);
+		if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty("actions", out JsonElement actions))
+			throw new InvalidOperationException("缺少参数: actions");
+		BrowserAutomationTaskPlan plan = BrowserAutomationTaskPlan.Parse(actions);
+		return await Automation.StartBrowserTaskAsync(plan, cancellationToken).ConfigureAwait(false);
+	}
+
+	/// <summary>读取短期浏览器结果。前端调用: invoke("automation_browser_get_result", {taskId})</summary>
+	private object? BrowserTaskResultDto(Guid taskId)
+	{
+		BrowserAutomationTaskResult? result = Automation.GetBrowserTaskResult(taskId);
+		if (result is null) return null;
+		return new
+		{
+			taskId = result.TaskId,
+			success = result.Succeeded,
+			summary = result.Succeeded ? "浏览器任务已完成" : null,
+			data = result.VisibleText,
+			error = result.FailureCode,
+			finishedAt = result.FinishedAt,
+		};
+	}
+
+	/// <summary>读取脱敏审计记录。前端调用: invoke("automation_audit_list", {limit?})</summary>
+	private object AutomationAuditList(int limit) => _services.AutomationAudit.List(limit).Select(record => new
+	{
+		id = record.Id,
+		taskId = record.TaskId,
+		timestamp = record.Timestamp,
+		taskKind = record.TaskKind == AutomationAuditTaskKind.Browser ? "browser" : "desktop",
+		actionCategory = record.Category switch
+		{
+			AutomationAuditEventCategory.Navigate => "navigate",
+			AutomationAuditEventCategory.Click => "click",
+			AutomationAuditEventCategory.Fill => "fill",
+			AutomationAuditEventCategory.Scroll => "scroll",
+			AutomationAuditEventCategory.Wait => "wait",
+			AutomationAuditEventCategory.ReadVisibleText => "read_visible_text",
+			AutomationAuditEventCategory.SafePage => "safe_page",
+			AutomationAuditEventCategory.Approval => "approval",
+			_ => "task",
+		},
+		outcome = record.Outcome switch
+		{
+			AutomationAuditOutcome.Queued => "queued",
+			AutomationAuditOutcome.Running => "running",
+			AutomationAuditOutcome.Succeeded => "succeeded",
+			AutomationAuditOutcome.Failed => "failed",
+			AutomationAuditOutcome.Cancelled => "cancelled",
+			AutomationAuditOutcome.Rejected => "rejected",
+			AutomationAuditOutcome.Requested => "requested",
+			AutomationAuditOutcome.Approved => "approved",
+			AutomationAuditOutcome.Denied => "denied",
+			AutomationAuditOutcome.TimedOut => "timed_out",
+			AutomationAuditOutcome.Paused => "paused",
+			_ => "failed",
+		},
+		failureReason = record.FailureCode,
+		failureCode = record.FailureCode,
+		durationMs = record.DurationMilliseconds,
+	}).ToArray();
 
 	private async Task<object?> AutomationStopAllAsync(IBridgeSource source, CancellationToken cancellationToken)
 	{

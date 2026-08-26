@@ -7,6 +7,8 @@ public enum AutomationTaskState
 	Queued,
 	/// <summary>正在执行。</summary>
 	Running,
+	/// <summary>因安全边界暂停，仍可被取消或超时终止。</summary>
+	Paused,
 	/// <summary>已成功完成。</summary>
 	Completed,
 	/// <summary>已取消，终态。</summary>
@@ -16,7 +18,14 @@ public enum AutomationTaskState
 }
 
 /// <summary>自动化任务只读状态快照，不包含动作正文。</summary>
-public sealed record AutomationTaskSnapshot(Guid Id, AutomationTaskState State, DateTimeOffset CreatedAt, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt, string? FailureCode);
+public sealed record AutomationTaskSnapshot(
+	Guid Id,
+	AutomationTaskState State,
+	DateTimeOffset CreatedAt,
+	DateTimeOffset? StartedAt,
+	DateTimeOffset? FinishedAt,
+	string? FailureCode,
+	string? PauseReason = null);
 
 /// <summary>供桌面端或 Edge runner 注入的最小执行上下文。</summary>
 public sealed record AutomationTaskContext(Guid TaskId);
@@ -30,6 +39,7 @@ public sealed class AutomationTask
 	private DateTimeOffset? _startedAt;
 	private DateTimeOffset? _finishedAt;
 	private string? _failureCode;
+	private string? _pauseReason;
 
 	/// <summary>创建任务。</summary>
 	public AutomationTask(Guid? id = null, DateTimeOffset? createdAt = null)
@@ -70,6 +80,18 @@ public sealed class AutomationTask
 		}
 	}
 
+	internal bool TryPause(string pauseReason)
+	{
+		if (string.IsNullOrWhiteSpace(pauseReason)) throw new ArgumentException("暂停原因不能为空", nameof(pauseReason));
+		lock (_gate)
+		{
+			if (_state != AutomationTaskState.Running) return false;
+			_state = AutomationTaskState.Paused;
+			_pauseReason = pauseReason;
+			return true;
+		}
+	}
+
 	internal bool TryCancel(DateTimeOffset finishedAt)
 	{
 		lock (_gate)
@@ -87,7 +109,7 @@ public sealed class AutomationTask
 		if (string.IsNullOrWhiteSpace(failureCode)) throw new ArgumentException("失败代码不能为空", nameof(failureCode));
 		lock (_gate)
 		{
-			if (_state != AutomationTaskState.Running) return false;
+			if (_state is not (AutomationTaskState.Running or AutomationTaskState.Paused)) return false;
 			_state = AutomationTaskState.Failed;
 			_failureCode = failureCode;
 			_finishedAt = finishedAt;
@@ -97,5 +119,5 @@ public sealed class AutomationTask
 	}
 
 	private void Complete() => _completion.TrySetResult(CreateSnapshot());
-	private AutomationTaskSnapshot CreateSnapshot() => new(Id, _state, CreatedAt, _startedAt, _finishedAt, _failureCode);
+	private AutomationTaskSnapshot CreateSnapshot() => new(Id, _state, CreatedAt, _startedAt, _finishedAt, _failureCode, _pauseReason);
 }

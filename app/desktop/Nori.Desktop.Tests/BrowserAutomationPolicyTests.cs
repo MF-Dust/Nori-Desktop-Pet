@@ -1,3 +1,4 @@
+using Nori.Core.Automation;
 using Nori.Desktop.Automation.Browser;
 
 namespace Nori.Desktop.Tests;
@@ -42,11 +43,32 @@ public sealed class BrowserAutomationPolicyTests
 	}
 
 	[Fact]
+	public void 结构化动作经过同一策略复核且不接受脚本能力()
+	{
+		BrowserAutomationTaskPlan allowed = new(
+		[
+			new BrowserNavigateAction("https://example.test"),
+			new BrowserClickAction("#safe"),
+			new BrowserFillAction("#query", "text"),
+			new BrowserScrollAction(100),
+			new BrowserWaitAction(1),
+			new BrowserReadVisibleTextAction(),
+		]);
+		Assert.Same(allowed, BrowserAutomationPolicy.ValidatePlan(allowed));
+		Assert.Throws<InvalidOperationException>(() => BrowserAutomationPolicy.ValidateAction(new UnsupportedBrowserAction()));
+	}
+
+	[Fact]
 	public void 截图只接受限制内存数据()
 	{
 		byte[] data = [1, 2, 3];
 		Assert.Same(data, BrowserAutomationPolicy.ValidateScreenshot(data));
 		Assert.Throws<InvalidOperationException>(() => BrowserAutomationPolicy.ValidateScreenshot([]));
 		Assert.Throws<InvalidOperationException>(() => BrowserAutomationPolicy.ValidateScreenshot(new byte[BrowserAutomationPolicy.MaxScreenshotBytes + 1]));
+	}
+
+	private sealed record UnsupportedBrowserAction : BrowserAutomationAction
+	{
+		public override BrowserAutomationActionKind Kind => BrowserAutomationActionKind.Click;
 	}
 }

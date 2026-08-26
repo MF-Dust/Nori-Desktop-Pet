@@ -7,6 +7,39 @@ public interface IAutomationTaskRunner
 	Task RunAsync(AutomationTaskContext context, CancellationToken cancellationToken);
 }
 
+/// <summary>执行器可抛出的稳定失败；消息不会进入公开状态或审计库。</summary>
+public sealed class AutomationTaskExecutionException : Exception
+{
+	/// <summary>创建稳定失败。</summary>
+	public AutomationTaskExecutionException(string failureCode)
+	{
+		if (string.IsNullOrWhiteSpace(failureCode)) throw new ArgumentException("失败代码不能为空", nameof(failureCode));
+		FailureCode = failureCode;
+	}
+
+	/// <summary>稳定失败分类。</summary>
+	public string FailureCode { get; }
+}
+
+/// <summary>执行器请求安全暂停；任务管理器维持同一生命周期并等待取消或超时。</summary>
+public sealed class AutomationTaskPausedException : Exception
+{
+	/// <summary>创建安全暂停。</summary>
+	public AutomationTaskPausedException(string pauseReason, TimeSpan timeout)
+	{
+		if (string.IsNullOrWhiteSpace(pauseReason)) throw new ArgumentException("暂停原因不能为空", nameof(pauseReason));
+		if (timeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(timeout));
+		PauseReason = pauseReason;
+		Timeout = timeout;
+	}
+
+	/// <summary>公开的稳定暂停原因。</summary>
+	public string PauseReason { get; }
+
+	/// <summary>在没有取消时结束暂停的剩余时间。</summary>
+	public TimeSpan Timeout { get; }
+}
+
 /// <summary>单活动自动化任务管理器；队列和状态转换线程安全，执行器在锁外运行。</summary>
 public sealed class AutomationTaskManager : IAsyncDisposable
 {
@@ -179,9 +212,26 @@ public sealed class AutomationTaskManager : IAsyncDisposable
 					await item.Operation(new AutomationTaskContext(item.Task.Id), item.Cancellation.Token).ConfigureAwait(false);
 					if (item.Task.TryComplete(DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
 				}
+				catch (AutomationTaskPausedException exception)
+				{
+					if (item.Task.TryPause(exception.PauseReason)) Notify(item.Task.Snapshot);
+					try
+					{
+						await Task.Delay(exception.Timeout, item.Cancellation.Token).ConfigureAwait(false);
+						if (item.Task.TryFail("timeout", DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
+					}
+					catch (OperationCanceledException)
+					{
+						if (item.Task.TryCancel(DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
+					}
+				}
 				catch (OperationCanceledException)
 				{
 					if (item.Task.TryCancel(DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
+				}
+				catch (AutomationTaskExecutionException exception)
+				{
+					if (item.Task.TryFail(exception.FailureCode, DateTimeOffset.UtcNow)) Notify(item.Task.Snapshot);
 				}
 				catch (Exception)
 				{
