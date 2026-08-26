@@ -956,6 +956,250 @@ public sealed class MemoryStore
 		return result;
 	}
 
+	/// <summary>
+	/// 在同一 SQLite 事务中应用经预览签发的传输条目。
+	/// 父记忆、默认 Atom 和两份 FTS 索引要么一起提交，要么一起回滚；向量队列由调用方在本方法成功返回后处理。
+	/// </summary>
+	internal MemoryTransferStoreCommit CommitMemoryTransfer(
+		IReadOnlyList<MemoryTransferValidatedItem> items,
+		MemoryTransferConflictStrategy strategy,
+		DateTimeOffset now)
+	{
+		(List<long> ChangedIds, MemoryTransferStoreCommit Result) applied = _database.Locked(connection =>
+		{
+			using SqliteTransaction transaction = connection.BeginTransaction();
+			try
+			{
+				Dictionary<string, long> existing = ReadTransferDedupeTargets(connection, transaction, now);
+				HashSet<string> payloadHashes = new(StringComparer.Ordinal);
+				List<MemoryTransferConflict> conflicts = [];
+				List<MemoryEmbeddingWorkItem> embeddingWork = [];
+				List<long> changedIds = [];
+				int added = 0;
+				int updated = 0;
+				int skipped = 0;
+				string timestamp = now.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
+
+				foreach (MemoryTransferValidatedItem item in items)
+				{
+					if (!payloadHashes.Add(item.DedupeHash))
+					{
+						conflicts.Add(TransferConflict(item, MemoryTransferConflictReason.DuplicateInPayload));
+						skipped++;
+						continue;
+					}
+
+					if (existing.TryGetValue(item.DedupeHash, out long existingId))
+					{
+						conflicts.Add(TransferConflict(item, MemoryTransferConflictReason.Existing));
+						if (strategy == MemoryTransferConflictStrategy.Skip)
+						{
+							skipped++;
+							continue;
+						}
+						if (strategy == MemoryTransferConflictStrategy.Overwrite)
+						{
+							OverwriteTransferAggregate(connection, transaction, existingId, item, timestamp);
+							changedIds.Add(existingId);
+							embeddingWork.Add(new MemoryEmbeddingWorkItem
+							{
+								Id = existingId,
+								UpdatedAt = timestamp,
+								Text = item.CanonicalSummary ?? item.Content,
+							});
+							updated++;
+							continue;
+						}
+					}
+
+					long id = InsertTransferAggregate(connection, transaction, item, timestamp);
+					changedIds.Add(id);
+					embeddingWork.Add(new MemoryEmbeddingWorkItem
+					{
+						Id = id,
+						UpdatedAt = timestamp,
+						Text = item.CanonicalSummary ?? item.Content,
+					});
+					added++;
+				}
+
+				transaction.Commit();
+				return (changedIds, new MemoryTransferStoreCommit(added, updated, skipped, conflicts, embeddingWork));
+			}
+			catch
+			{
+				try { transaction.Rollback(); }
+				catch { /* 保留原始写入异常。 */ }
+				throw;
+			}
+		});
+		foreach (long id in applied.ChangedIds) EvictVector(id);
+		return applied.Result;
+	}
+
+	private Dictionary<string, long> ReadTransferDedupeTargets(SqliteConnection connection, SqliteTransaction transaction, DateTimeOffset now)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = BaseSelect + " WHERE status IN ('active', 'dormant', 'archived') AND superseded_by IS NULL ORDER BY updated_at DESC, id DESC";
+		using SqliteDataReader reader = command.ExecuteReader();
+		Dictionary<string, long> result = new(StringComparer.Ordinal);
+		while (reader.Read())
+		{
+			MemoryItem item = ReadRow(reader);
+			if (!MemoryTransferService.IsEligibleForTransfer(item, now)) continue;
+			result.TryAdd(MemoryTransferService.ComputeDedupeHash(item.Kind, item.CanonicalSummary ?? item.Content), item.Id);
+		}
+		return result;
+	}
+
+	private long InsertTransferAggregate(
+		SqliteConnection connection,
+		SqliteTransaction transaction,
+		MemoryTransferValidatedItem item,
+		string timestamp)
+	{
+		using SqliteCommand memory = connection.CreateCommand();
+		memory.Transaction = transaction;
+		memory.CommandText = """
+			INSERT INTO memories
+				(type, content, importance, source, tags, embedding, embedding_blob, created_at, updated_at,
+				 kind, canonical_summary, persona_summary, confidence, status, ttl_days, expires_at, superseded_by, embedding_fingerprint)
+			VALUES ($type, $content, $importance, $source, $tags, NULL, NULL, $created_at, $updated_at,
+				 $kind, $canonical_summary, $persona_summary, $confidence, 'active', NULL, NULL, NULL, NULL);
+			SELECT last_insert_rowid();
+			""";
+		AddTransferMemoryParameters(memory, item, timestamp);
+		long memoryId = Convert.ToInt64(memory.ExecuteScalar(), CultureInfo.InvariantCulture);
+		long atomId = InsertTransferAtom(connection, transaction, memoryId, item, timestamp);
+		RefreshMemoryIndex(connection, transaction, memoryId);
+		RefreshAtomIndex(connection, transaction, atomId);
+		return memoryId;
+	}
+
+	private void OverwriteTransferAggregate(
+		SqliteConnection connection,
+		SqliteTransaction transaction,
+		long memoryId,
+		MemoryTransferValidatedItem item,
+		string timestamp)
+	{
+		using SqliteCommand memory = connection.CreateCommand();
+		memory.Transaction = transaction;
+		memory.CommandText = """
+			UPDATE memories SET
+				type = $type,
+				content = $content,
+				importance = $importance,
+				source = $source,
+				tags = $tags,
+				embedding = NULL,
+				embedding_blob = NULL,
+				updated_at = $updated_at,
+				kind = $kind,
+				canonical_summary = $canonical_summary,
+				persona_summary = $persona_summary,
+				confidence = $confidence,
+				status = 'active',
+				ttl_days = NULL,
+				expires_at = NULL,
+				superseded_by = NULL,
+				embedding_fingerprint = NULL
+			WHERE id = $id;
+			""";
+		AddTransferMemoryParameters(memory, item, timestamp);
+		AddParameter(memory, "$id", memoryId);
+		if (memory.ExecuteNonQuery() != 1) throw new InvalidOperationException("记忆传输写入失败");
+
+		long? atomId = FindDefaultAtom(connection, transaction, memoryId);
+		if (atomId is null)
+		{
+			atomId = InsertTransferAtom(connection, transaction, memoryId, item, timestamp);
+		}
+		else
+		{
+			using SqliteCommand atom = connection.CreateCommand();
+			atom.Transaction = transaction;
+			atom.CommandText = """
+				UPDATE memory_atoms SET
+					atom_type = $kind,
+					content = $content,
+					importance = $importance,
+					confidence = $confidence,
+					status = 'active',
+					ttl_days = NULL,
+					expires_at = NULL,
+					superseded_by = NULL
+				WHERE id = $id;
+				""";
+			AddParameter(atom, "$id", atomId.Value);
+			AddParameter(atom, "$kind", item.Kind.ToStorage());
+			AddParameter(atom, "$content", item.CanonicalSummary ?? item.Content);
+			AddParameter(atom, "$importance", item.Importance);
+			AddParameter(atom, "$confidence", item.Confidence);
+			if (atom.ExecuteNonQuery() != 1) throw new InvalidOperationException("记忆传输写入失败");
+		}
+		RefreshMemoryIndex(connection, transaction, memoryId);
+		RefreshAtomIndex(connection, transaction, atomId.Value);
+	}
+
+	private static void AddTransferMemoryParameters(SqliteCommand command, MemoryTransferValidatedItem item, string timestamp)
+	{
+		AddParameter(command, "$type", item.Kind.ToStorage());
+		AddParameter(command, "$content", item.Content);
+		AddParameter(command, "$importance", item.Importance);
+		AddParameter(command, "$source", MemoryTransferService.ImportSource);
+		AddParameter(command, "$tags", item.Tags);
+		AddParameter(command, "$created_at", timestamp);
+		AddParameter(command, "$updated_at", timestamp);
+		AddParameter(command, "$kind", item.Kind.ToStorage());
+		AddParameter(command, "$canonical_summary", item.CanonicalSummary ?? item.Content);
+		AddParameter(command, "$persona_summary", item.PersonaSummary ?? item.Content);
+		AddParameter(command, "$confidence", item.Confidence);
+	}
+
+	private static long InsertTransferAtom(
+		SqliteConnection connection,
+		SqliteTransaction transaction,
+		long memoryId,
+		MemoryTransferValidatedItem item,
+		string timestamp)
+	{
+		using SqliteCommand atom = connection.CreateCommand();
+		atom.Transaction = transaction;
+		atom.CommandText = """
+			INSERT INTO memory_atoms
+				(parent_memory_id, atom_type, content, importance, confidence, status, created_at)
+			VALUES ($parent_memory_id, $kind, $content, $importance, $confidence, 'active', $created_at);
+			SELECT last_insert_rowid();
+			""";
+		AddParameter(atom, "$parent_memory_id", memoryId);
+		AddParameter(atom, "$kind", item.Kind.ToStorage());
+		AddParameter(atom, "$content", item.CanonicalSummary ?? item.Content);
+		AddParameter(atom, "$importance", item.Importance);
+		AddParameter(atom, "$confidence", item.Confidence);
+		AddParameter(atom, "$created_at", timestamp);
+		return Convert.ToInt64(atom.ExecuteScalar(), CultureInfo.InvariantCulture);
+	}
+
+	private static long? FindDefaultAtom(SqliteConnection connection, SqliteTransaction transaction, long memoryId)
+	{
+		using SqliteCommand command = connection.CreateCommand();
+		command.Transaction = transaction;
+		command.CommandText = "SELECT id FROM memory_atoms WHERE parent_memory_id = $parent_memory_id ORDER BY id ASC LIMIT 1";
+		AddParameter(command, "$parent_memory_id", memoryId);
+		object? value = command.ExecuteScalar();
+		return value is null or DBNull ? null : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+	}
+
+	private static MemoryTransferConflict TransferConflict(MemoryTransferValidatedItem item, MemoryTransferConflictReason reason) => new()
+	{
+		ItemIndex = item.ItemIndex,
+		DedupeHash = item.DedupeHash,
+		Kind = item.Kind.ToStorage(),
+		Reason = reason,
+	};
+
 	private const string BaseSelect = "SELECT id, type, content, importance, source, tags, embedding, embedding_blob, created_at, updated_at, kind, canonical_summary, persona_summary, confidence, status, access_count, reinforcement_count, last_accessed_at, last_reinforced_at, ttl_days, expires_at, superseded_by, embedding_fingerprint FROM memories";
 
 	private static List<MemoryItem> ReadItems(SqliteCommand command)

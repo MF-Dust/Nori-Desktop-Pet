@@ -410,6 +410,15 @@ public sealed class BridgeCommands
 		/// invoke("memory_reembed_all")
 		"memory_reembed_all" => await MemoryReembedAllAsync(source),
 
+		/// invoke("memory_export")
+		"memory_export" => RequireVisibleMain(source, MemoryExport),
+
+		/// invoke("memory_import_preview", {fileContent, fileName?, fileSize?})
+		"memory_import_preview" => RequireVisibleMain(source, () => MemoryImportPreview(args)),
+
+		/// invoke("memory_import_commit", {previewToken, conflictStrategy?})；忽略客户端 items。
+		"memory_import_commit" => RequireVisibleMain(source, () => MemoryImportCommit(args)),
+
 		// ---- 技能 ----
 		// invoke("skills_marketplace")
 		"skills_marketplace" => RequireMain(source, () => SkillServiceMarketplace()),
@@ -760,6 +769,89 @@ public sealed class BridgeCommands
 		Runtime.InvalidateSnapshot("memory");
 		return count;
 	}
+
+	/// <summary>导出白名单化的 nori-memory-v1 文档。前端调用: invoke("memory_export")</summary>
+	private object MemoryExport()
+	{
+		MemoryTransferExport exported = Runtime.Memory.ExportTransfer();
+		return new
+		{
+			fileName = exported.FileName,
+			version = exported.Version,
+			totalCount = exported.TotalCount,
+			activeCount = exported.ActiveCount,
+			archivedCount = exported.ArchivedCount,
+			sanitizedFields = exported.SanitizedFields,
+			exportedAt = exported.ExportedAt,
+			content = exported.Content,
+		};
+	}
+
+	/// <summary>预览 nori-memory-v1 导入而不写库。前端调用: invoke("memory_import_preview", {fileContent})</summary>
+	private object MemoryImportPreview(JsonElement args)
+	{
+		MemoryTransferPreview preview = Runtime.Memory.PreviewTransfer(OptionalStr(args, "fileContent") ?? "");
+		return new
+		{
+			valid = preview.IsValid,
+			totalCount = preview.TotalCount,
+			newCount = preview.AcceptedCount,
+			duplicateCount = preview.DuplicateCount,
+			conflictCount = preview.ConflictCount,
+			errorCount = preview.Errors.Sum(error => error.Count),
+			errors = preview.Errors.Select(error => MemoryTransferException.MessageFor(error.Category)).ToArray(),
+			items = preview.Items.Select(item => new
+			{
+				id = item.ItemIndex,
+				contentSummary = item.ContentSummary,
+				kind = item.Kind,
+				importance = item.Importance,
+				confidence = item.Confidence,
+				tags = item.Tags,
+				conflictType = item.ConflictReason switch
+				{
+					MemoryTransferConflictReason.DuplicateInPayload => "duplicate",
+					MemoryTransferConflictReason.Existing => "conflict",
+					_ => "none",
+				},
+				conflictReason = item.ConflictReason switch
+				{
+					MemoryTransferConflictReason.DuplicateInPayload => "导入文件中存在相同记忆",
+					MemoryTransferConflictReason.Existing => "本地已有相同记忆",
+					_ => null,
+				},
+			}).ToArray(),
+			previewToken = preview.PreviewToken,
+			sanitizedNotice = "仅展示受限摘要；不会导入向量、来源正文或内部状态",
+		};
+	}
+
+	/// <summary>使用一次性预览令牌提交导入。前端调用: invoke("memory_import_commit", {previewToken, conflictStrategy})</summary>
+	private object MemoryImportCommit(JsonElement args)
+	{
+		MemoryTransferConflictStrategy strategy = ParseMemoryTransferConflictStrategy(OptionalStr(args, "conflictStrategy"));
+		// 刻意不读取 args.items：提交只能使用服务端令牌保存的已校验预览。
+		MemoryTransferCommitResult result = Runtime.Memory.CommitTransfer(OptionalStr(args, "previewToken"), strategy);
+		if (result.Succeeded) Runtime.InvalidateSnapshot("memory");
+		MemoryTransferError? error = result.Errors.FirstOrDefault();
+		return new
+		{
+			success = result.Succeeded,
+			importedCount = result.AddedCount,
+			updatedCount = result.UpdatedCount,
+			skippedCount = result.SkippedCount,
+			errorCount = result.Errors.Sum(entry => entry.Count),
+			message = error is null ? null : MemoryTransferException.MessageFor(error.Category),
+		};
+	}
+
+	private static MemoryTransferConflictStrategy ParseMemoryTransferConflictStrategy(string? value) => value?.Trim().ToLowerInvariant() switch
+	{
+		null or "" or "skip" => MemoryTransferConflictStrategy.Skip,
+		"overwrite" => MemoryTransferConflictStrategy.Overwrite,
+		"create_copy" => MemoryTransferConflictStrategy.CreateCopy,
+		_ => throw new InvalidOperationException("导入冲突处理方式无效"),
+	};
 
 	private object? HardDeleteMemory(IBridgeSource source, JsonElement args)
 	{

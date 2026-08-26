@@ -22,6 +22,7 @@ public sealed class MemoryService : IAsyncDisposable
 	private readonly IEmbeddingAdapter _embedding;
 	private readonly ConfigStore _config;
 	private readonly AiSettingsStore _aiSettings;
+	private readonly MemoryTransferService _transfer;
 	private readonly SemaphoreSlim _reembedGate = new(1, 1);
 	private readonly Channel<EmbeddingJob> _embeddingQueue = Channel.CreateBounded<EmbeddingJob>(new BoundedChannelOptions(128)
 	{
@@ -43,12 +44,26 @@ public sealed class MemoryService : IAsyncDisposable
 		_embedding = embedding;
 		_config = config;
 		_aiSettings = new AiSettingsStore(config);
+		_transfer = new MemoryTransferService(_store, queueEmbedding: QueueTransferEmbedding);
 		_embeddingWorker = startBackgroundWorker
 			? Task.Run(ProcessEmbeddingQueueAsync)
 			: Task.CompletedTask;
 	}
 
 	public MemoryStore Store => _store;
+
+	/// <summary>记忆迁移内核；提交成功后才把新文本排入后台 Embedding 队列。</summary>
+	public MemoryTransferService Transfer => _transfer;
+
+	/// <summary>导出 nori-memory-v1 安全文档。</summary>
+	public MemoryTransferExport ExportTransfer() => _transfer.ExportResult();
+
+	/// <summary>解析 nori-memory-v1 文件而不写入数据库。</summary>
+	public MemoryTransferPreview PreviewTransfer(string? content) => _transfer.Preview(content);
+
+	/// <summary>使用一次性预览令牌提交 nori-memory-v1 导入。</summary>
+	public MemoryTransferCommitResult CommitTransfer(string? previewToken, MemoryTransferConflictStrategy strategy = MemoryTransferConflictStrategy.Skip) =>
+		_transfer.Commit(previewToken, strategy);
 
 	/// <summary>独立 ARG 知识服务，由宿主装配后回填。</summary>
 	public KnowledgeService? Knowledge { get; set; }
@@ -353,6 +368,8 @@ public sealed class MemoryService : IAsyncDisposable
 		_embeddingQueue.Writer.TryWrite(new EmbeddingJob(id, text));
 	}
 
+	private void QueueTransferEmbedding(MemoryEmbeddingWorkItem work) => QueueEmbedding(work.Id, work.Text);
+
 	private async Task ProcessEmbeddingQueueAsync()
 	{
 		try
@@ -399,6 +416,7 @@ public sealed class MemoryService : IAsyncDisposable
 		try { await _embeddingWorker.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
 		catch (OperationCanceledException) { }
 		catch (TimeoutException) { }
+		_transfer.Dispose();
 		_embeddingCts.Dispose();
 		_reembedGate.Dispose();
 	}
