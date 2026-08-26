@@ -128,10 +128,10 @@ public sealed class BridgeCommands
 		"automation_get_snapshot" => RequireWebViewSource(source, () => Automation.GetSnapshot()),
 
 		/// 更新自动化设置: invoke("automation_update_settings", {enabled?, allowPointer?, allowKeyboard?, allowScroll?, browserEnabled?})
-		"automation_update_settings" => RequireVisibleMain(source, () => UpdateAutomationSettings(args)),
+		"automation_update_settings" => await RequireVisibleMainAsync(source, () => UpdateAutomationSettings(args)),
 
 		/// 兼容设置页自动化总开关: invoke("settings_update_automation", {enabled?, desktopEnabled?, browserEnabled?})
-		"settings_update_automation" => RequireVisibleMain(source, () => UpdateFrontendAutomationSettings(args)),
+		"settings_update_automation" => await RequireVisibleMainAsync(source, () => UpdateFrontendAutomationSettings(args)),
 
 		/// 启动浏览器自动化: invoke("automation_browser_start")
 		"automation_browser_start" => await AutomationBrowserStartAsync(source, cancellationToken),
@@ -143,31 +143,31 @@ public sealed class BridgeCommands
 		"automation_browser_start_task" => await AutomationBrowserStartTaskAsync(source, args, cancellationToken),
 
 		/// invoke("automation_browser_get_result", {taskId})
-		"automation_browser_get_result" => RequireVisibleMain(source, () => BrowserTaskResultDto(ParseGuid(args, "taskId"))),
+		"automation_browser_get_result" => await RequireVisibleMainAsync(source, () => BrowserTaskResultDto(ParseGuid(args, "taskId"))),
 
 		/// invoke("automation_browser_stop_task", {taskId})
-		"automation_browser_stop_task" => RequireVisibleMain(source, () => Automation.StopBrowserTask(ParseGuid(args, "taskId"))),
+		"automation_browser_stop_task" => await RequireVisibleMainAsync(source, () => Automation.StopBrowserTask(ParseGuid(args, "taskId"))),
 
 		/// invoke("automation_audit_list", {limit?})
-		"automation_audit_list" => RequireVisibleMain(source, () => AutomationAuditList(ClampLimit(OptionalInt(args, "limit"), 50))),
+		"automation_audit_list" => await RequireVisibleMainAsync(source, () => AutomationAuditList(ClampLimit(OptionalInt(args, "limit"), 50))),
 
 		/// 查询浏览器自动化状态: invoke("automation_browser_status")
-		"automation_browser_status" => RequireVisibleMain(source, () => Automation.GetBrowserStatus()),
+		"automation_browser_status" => await RequireVisibleMainAsync(source, () => Automation.GetBrowserStatus()),
 
 		/// invoke("automation_probe_vision")
-		"automation_probe_vision" => RequireVisibleMain(source, () => Automation.ProbeVision()),
+		"automation_probe_vision" => await RequireVisibleMainAsync(source, () => Automation.ProbeVision()),
 
 		/// invoke("automation_desktop_list_windows") → [{token, width, height, isForeground}]
-		"automation_desktop_list_windows" => AutomationDesktopListWindows(source),
+		"automation_desktop_list_windows" => await AutomationDesktopListWindowsAsync(source),
 
 		/// invoke("automation_desktop_start", {task: "...", targetToken: "..."})
-		"automation_desktop_start" => AutomationDesktopStart(source, args),
+		"automation_desktop_start" => await AutomationDesktopStartAsync(source, args),
 
 		/// invoke("automation_desktop_stop", {taskId: "..."})
-		"automation_desktop_stop" => AutomationDesktopStop(source, args),
+		"automation_desktop_stop" => await AutomationDesktopStopAsync(source, args),
 
 		/// invoke("automation_stop_task", {taskId: "..."})
-		"automation_stop_task" => RequireVisibleMain(source, () => Automation.StopTask(ParseGuid(args, "taskId"))),
+		"automation_stop_task" => await RequireVisibleMainAsync(source, () => Automation.StopTask(ParseGuid(args, "taskId"))),
 
 		/// invoke("automation_stop_all")
 		"automation_stop_all" => await AutomationStopAllAsync(source, cancellationToken),
@@ -419,20 +419,20 @@ public sealed class BridgeCommands
 		"memory_reembed_all" => await MemoryReembedAllAsync(source),
 
 		/// invoke("memory_export")
-		"memory_export" => RequireVisibleMain(source, MemoryExport),
+		"memory_export" => await RequireVisibleMainAsync(source, MemoryExport),
 
 		/// invoke("memory_import_preview", {fileContent, fileName?, fileSize?})
-		"memory_import_preview" => RequireVisibleMain(source, () => MemoryImportPreview(args)),
+		"memory_import_preview" => await RequireVisibleMainAsync(source, () => MemoryImportPreview(args)),
 
 		/// invoke("memory_import_commit", {previewToken, conflictStrategy?})；忽略客户端 items。
-		"memory_import_commit" => RequireVisibleMain(source, () => MemoryImportCommit(args)),
+		"memory_import_commit" => await RequireVisibleMainAsync(source, () => MemoryImportCommit(args)),
 
 		// ---- 技能 ----
 		// invoke("skills_marketplace")
 		"skills_marketplace" => RequireMain(source, () => SkillServiceMarketplace()),
 
 		/// 从内置市场安装技能: invoke("skills_install_marketplace", {skillId: "gaming-partner"}) → 脱敏 SkillDto
-		"skills_install_marketplace" => RequireVisibleMain(source, () =>
+		"skills_install_marketplace" => await RequireVisibleMainAsync(source, () =>
 		{
 			string skillId = Str(args, "skillId").Trim();
 			if (skillId.Length == 0) throw new InvalidOperationException("技能 ID 不能为空");
@@ -680,10 +680,20 @@ public sealed class BridgeCommands
 		}
 	}
 
-	private static void RequireVisibleMainVoid(IBridgeSource source)
+	/// <summary>在 UI 线程读取可见性后校验来源; Avalonia 的 Window.IsVisible 只能在 UI 线程访问。</summary>
+	private async Task<object?> RequireVisibleMainAsync(IBridgeSource source, Func<object?> factory)
 	{
 		RequireMainVoid(source);
-		if (!source.IsVisible) throw new InvalidOperationException("main 窗口不可见");
+		bool visible = await OnUi(() => (object?)source.IsVisible) is true;
+		if (!visible) throw new InvalidOperationException("main 窗口不可见");
+		return factory();
+	}
+
+	private async Task RequireVisibleMainVoidAsync(IBridgeSource source)
+	{
+		RequireMainVoid(source);
+		bool visible = await OnUi(() => (object?)source.IsVisible) is true;
+		if (!visible) throw new InvalidOperationException("main 窗口不可见");
 	}
 
 	private AutomationSettingsSnapshot UpdateAutomationSettings(JsonElement args) => Automation.UpdateSettings(
@@ -704,15 +714,15 @@ public sealed class BridgeCommands
 			OptionalBool(args, "browserEnabled"));
 	}
 
-	private object AutomationDesktopListWindows(IBridgeSource source)
+	private async Task<object?> AutomationDesktopListWindowsAsync(IBridgeSource source)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		return Automation.ListDesktopWindows();
 	}
 
-	private object AutomationDesktopStart(IBridgeSource source, JsonElement args)
+	private async Task<object?> AutomationDesktopStartAsync(IBridgeSource source, JsonElement args)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		string task = OptionalStr(args, "task") ?? OptionalStr(args, "goal")
 			?? throw new InvalidOperationException("缺少参数: task");
 		string targetToken = OptionalStr(args, "targetToken") ?? OptionalStr(args, "windowToken")
@@ -720,28 +730,28 @@ public sealed class BridgeCommands
 		return Automation.StartDesktopTask(task, targetToken);
 	}
 
-	private object AutomationDesktopStop(IBridgeSource source, JsonElement args)
+	private async Task<object?> AutomationDesktopStopAsync(IBridgeSource source, JsonElement args)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		return Automation.StopDesktopTask(ParseGuid(args, "taskId"));
 	}
 
 	private async Task<object?> AutomationBrowserStartAsync(IBridgeSource source, CancellationToken cancellationToken)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		return await Automation.StartBrowserAsync(cancellationToken).ConfigureAwait(false);
 	}
 
 	private async Task<object?> AutomationBrowserStopAsync(IBridgeSource source, CancellationToken cancellationToken)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		return await Automation.StopBrowserAsync(cancellationToken).ConfigureAwait(false);
 	}
 
 	/// <summary>启动受限浏览器 DOM 任务。前端调用: invoke("automation_browser_start_task", {actions})</summary>
 	private async Task<object?> AutomationBrowserStartTaskAsync(IBridgeSource source, JsonElement args, CancellationToken cancellationToken)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty("actions", out JsonElement actions))
 			throw new InvalidOperationException("缺少参数: actions");
 		BrowserAutomationTaskPlan plan = BrowserAutomationTaskPlan.Parse(actions);
@@ -805,7 +815,7 @@ public sealed class BridgeCommands
 
 	private async Task<object?> AutomationStopAllAsync(IBridgeSource source, CancellationToken cancellationToken)
 	{
-		RequireVisibleMainVoid(source);
+		await RequireVisibleMainVoidAsync(source);
 		return await Automation.StopAllAsync(cancellationToken).ConfigureAwait(false);
 	}
 
@@ -1458,14 +1468,6 @@ public sealed class BridgeCommands
 	}
 
 	private static object? RequireMain(IBridgeSource source, Func<object?> factory) => RequireLabel(source, WindowLabels.Main, factory);
-
-	/// <summary>校验来源是可见的 main WebView。</summary>
-	private static object? RequireVisibleMain(IBridgeSource source, Func<object?> factory)
-	{
-		RequireMainVoid(source);
-		if (!source.IsVisible) throw new InvalidOperationException("main 窗口不可见");
-		return factory();
-	}
 
 	/// <summary>
 	/// 首次启动完成: 只允许可见的 first-run 窗口调用。
