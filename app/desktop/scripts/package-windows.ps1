@@ -37,6 +37,11 @@ if (Get-ChildItem -LiteralPath $publish -Recurse -File -Filter "*.map" -ErrorAct
 	throw "发布目录仍含 source map, 不能打包"
 }
 
+# 体积门禁按未压缩 publish 目录计数，避免不同 ZIP 实现/压缩率造成波动。
+node (Join-Path $PSScriptRoot "check-package-size.mjs") `
+	--path $publish --label "windows publish" --max-mib 80
+if ($LASTEXITCODE -ne 0) { throw "Windows 发布体积门禁失败" }
+
 $metadataOutput = Join-Path $output "metadata"
 Remove-Item -LiteralPath $metadataOutput -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $metadataOutput -Force | Out-Null
