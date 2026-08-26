@@ -268,24 +268,26 @@ onBeforeUnmount(() => {
 				<!--
 					一级页依次是: 主页看板 / 对话 / 模型管理 / 长期记忆 / 全功能设置 (含关于)。
 
-					KeepAlive 是必需的, 不只是为了少一次挂载:
-					对话面板卸载会取消进行中的会话并自动拒掉所有待审批工具调用,
-					缓存住之后, 切到设置再切回来对话仍在继续。
-					注意 KeepAlive 内部不能夹注释 — 开发态编译会保留注释节点, 被判成多个子节点。
+					只有对话面板需要 KeepAlive: 它卸载会取消进行中的会话并自动拒掉所有待审批工具调用。
+					模型/记忆/设置页切走后必须正常卸载，以释放 Live2D/WebGL、全局监听器和页面级计时器。
 				-->
 				<div class="flex-1 min-h-0 flex flex-col scroll-area">
+					<HomePanel
+						v-if="activeNav === 'home'"
+						:pet-visible="petVisible"
+						@toggle-pet="togglePet"
+						@navigate="navigate"
+					/>
 					<KeepAlive>
-						<HomePanel
-							v-if="activeNav === 'home'"
-							:pet-visible="petVisible"
-							@toggle-pet="togglePet"
-							@navigate="navigate"
-						/>
-						<ChatView v-else-if="activeNav === 'talk'" @go-settings="navigate('settings', 'talk')"/>
-						<ModelManagement v-else-if="activeNav === 'model'"/>
-						<MemoryPanel v-else-if="activeNav === 'memory'"/>
-						<SettingsPanel v-else :initial-tab="settingsTarget" :open-seq="settingsSeq"/>
+						<ChatView v-if="activeNav === 'talk'" @go-settings="navigate('settings', 'talk')"/>
 					</KeepAlive>
+					<ModelManagement v-if="activeNav === 'model'"/>
+					<MemoryPanel v-if="activeNav === 'memory'"/>
+					<SettingsPanel
+						v-if="activeNav === 'settings'"
+						:initial-tab="settingsTarget"
+						:open-seq="settingsSeq"
+					/>
 				</div>
 			</main>
 		</div>
