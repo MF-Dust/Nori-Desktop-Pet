@@ -1,0 +1,134 @@
+using System.Net;
+using System.Text;
+using System.Text.Json.Nodes;
+using Nori.Core.Configuration;
+using Nori.Core.Data;
+using Nori.Core.Voice;
+
+namespace Nori.Core.Tests;
+
+/// <summary>MiniMax 同步 T2A 请求映射、hex 解码与错误诊断测试。</summary>
+public class MiniMaxTtsProviderTests : IDisposable
+{
+	private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"nori-minimax-tts-{Guid.NewGuid():N}.db");
+	private readonly NoriDatabase _database;
+	private readonly ConfigStore _config;
+
+	public MiniMaxTtsProviderTests()
+	{
+		_database = NoriDatabase.Open(_dbPath);
+		_config = new ConfigStore(_database);
+		_config.InitDefaults("0.1.0");
+		_config.Set("tts_provider", new ConfigValue.Text("minimax"));
+		_config.Set("tts_base_url", new ConfigValue.Text("https://api.minimaxi.com/v1"));
+		_config.Set("tts_api_key", new ConfigValue.Text("test-secret"));
+	}
+
+	[Fact]
+	public async Task 同步T2A正确映射请求并解码Hex音频()
+	{
+		CaptureHandler handler = new(_ => SuccessResponse("494433"));
+		using HttpClient client = new(handler);
+		MiniMaxTtsProvider provider = new(client, _config);
+
+		EncodedAudio audio = await provider.SynthesizeAsync(
+			"你好，Nori",
+			new TtsSynthesizeOptions {Voice = "male-qn-qingse", Speed = 1.2},
+			CancellationToken.None);
+
+		Assert.Equal(new Uri("https://api.minimaxi.com/v1/t2a_v2"), handler.LastUri);
+		Assert.Equal("Bearer", handler.AuthorizationScheme);
+		Assert.Equal("test-secret", handler.AuthorizationParameter);
+		Assert.Equal("audio/mpeg", audio.Mime);
+		Assert.Equal(new byte[] {0x49, 0x44, 0x33}, audio.Bytes);
+
+		JsonNode body = JsonNode.Parse(handler.LastBody!)!;
+		Assert.Equal("speech-2.8-turbo", body["model"]?.GetValue<string>());
+		Assert.Equal("你好，Nori", body["text"]?.GetValue<string>());
+		Assert.False(body["stream"]?.GetValue<bool>() ?? true);
+		Assert.Equal("male-qn-qingse", body["voice_setting"]?["voice_id"]?.GetValue<string>());
+		Assert.Equal(1.2, body["voice_setting"]?["speed"]?.GetValue<double>());
+		Assert.Equal("mp3", body["audio_setting"]?["format"]?.GetValue<string>());
+		Assert.Equal("hex", body["output_format"]?.GetValue<string>());
+	}
+
+	[Fact]
+	public async Task 完整端点不会重复追加T2A路径()
+	{
+		_config.Set("tts_base_url", new ConfigValue.Text("https://api.minimaxi.com/v1/t2a_v2"));
+		CaptureHandler handler = new(_ => SuccessResponse("01"));
+		using HttpClient client = new(handler);
+		MiniMaxTtsProvider provider = new(client, _config);
+
+		await provider.SynthesizeAsync("测试", new TtsSynthesizeOptions(), CancellationToken.None);
+
+		Assert.Equal(new Uri("https://api.minimaxi.com/v1/t2a_v2"), handler.LastUri);
+	}
+
+	[Fact]
+	public async Task 业务错误包含状态消息与TraceId()
+	{
+		CaptureHandler handler = new(_ => JsonResponse("""
+			{
+				"data": null,
+				"trace_id": "trace-123",
+				"base_resp": {"status_code": 1008, "status_msg": "invalid api key"}
+			}
+			"""));
+		using HttpClient client = new(handler);
+		MiniMaxTtsProvider provider = new(client, _config);
+
+		InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			provider.SynthesizeAsync("测试", new TtsSynthesizeOptions(), CancellationToken.None));
+
+		Assert.Contains("status_code=1008", error.Message, StringComparison.Ordinal);
+		Assert.Contains("invalid api key", error.Message, StringComparison.Ordinal);
+		Assert.Contains("trace-123", error.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public void VoiceService能够创建MiniMaxProvider()
+	{
+		using HttpClient client = new(new CaptureHandler(_ => SuccessResponse("01")));
+		using VoiceService service = new(client, _config, null, () => null);
+
+		Assert.IsType<MiniMaxTtsProvider>(service.CreateProvider("minimax"));
+	}
+
+	public void Dispose()
+	{
+		_database.Dispose();
+		try { File.Delete(_dbPath); } catch (IOException) { }
+	}
+
+	private static HttpResponseMessage SuccessResponse(string audioHex) => JsonResponse($$"""
+		{
+			"data": {"audio": "{{audioHex}}", "status": 2},
+			"extra_info": {"audio_format": "mp3"},
+			"trace_id": "trace-ok",
+			"base_resp": {"status_code": 0, "status_msg": "success"}
+		}
+		""");
+
+	private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
+	{
+		Content = new StringContent(json, Encoding.UTF8, "application/json"),
+	};
+
+	private sealed class CaptureHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+	{
+		public Uri? LastUri { get; private set; }
+		public string? AuthorizationScheme { get; private set; }
+		public string? AuthorizationParameter { get; private set; }
+		public string? LastBody { get; private set; }
+
+		protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			LastUri = request.RequestUri;
+			AuthorizationScheme = request.Headers.Authorization?.Scheme;
+			AuthorizationParameter = request.Headers.Authorization?.Parameter;
+			LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+			return responder(request);
+		}
+	}
+}
