@@ -61,6 +61,9 @@ let recorderChunks: Blob[] = []
 let recorderStream: MediaStream | null = null
 let recordUploadUrl = ""
 let recordToken = ""
+let recordingGeneration = 0
+let recordingStopping = false
+let audioHostInstalled = false
 
 /** 校验并规范音频 MIME，保留 codecs 参数。 */
 export const normalizeAudioMime = (mime: string | null | undefined): string => {
@@ -174,6 +177,23 @@ const cancelPlayback = () => {
 	if (TOKEN) reportFinalLevel(TOKEN)
 }
 
+/** 彻底释放 WebAudio 图和原生 AudioContext；重新安装宿主时会按需重建。 */
+const releaseAudioGraph = () => {
+	stopLevelTimer()
+	try { gain?.disconnect() } catch { /* 已断开 */ }
+	try { analyser?.disconnect() } catch { /* 已断开 */ }
+	gain = null
+	analyser = null
+	rmsBuffer = new Float32Array(1024)
+	const CONTEXT = context
+	context = null
+	if (CONTEXT && CONTEXT.state !== "closed") {
+		void CONTEXT.close().catch(() => {
+			/* WebView 正在退出时忽略 */
+		})
+	}
+}
+
 const isCurrentPlayback = (token: string, generation: number): boolean =>
 	currentToken === token && playbackGeneration === generation
 
@@ -234,35 +254,75 @@ const reportRecordingFailure = (token: string, error: unknown, upload = false) =
 	})
 }
 
+const stopStream = (stream: MediaStream | null) => {
+	stream?.getTracks().forEach(track => track.stop())
+}
+
+/** 宿主卸载时只取消录音，不上传可能不完整的半截数据。 */
+const cancelRecording = () => {
+	recordingGeneration += 1
+	recordingStopping = false
+	const ACTIVE = recorder
+	const STREAM = recorderStream
+	recorder = null
+	recorderStream = null
+	recordUploadUrl = ""
+	recordToken = ""
+	recorderChunks = []
+	if (ACTIVE) {
+		ACTIVE.ondataavailable = null
+		ACTIVE.onstop = null
+		ACTIVE.onerror = null
+		if (ACTIVE.state !== "inactive") {
+			try { ACTIVE.stop() } catch { /* 已停止 */ }
+		}
+	}
+	stopStream(STREAM)
+}
+
 const startRecording = async (payload: RecordStartPayload): Promise<void> => {
+	if (recordingStopping) {
+		reportRecordingFailure(payload.token, new Error("上一段录音仍在结束"))
+		return
+	}
+	// 新请求取代尚未完成的权限申请；已开始的录音按宿主协议不会并发启动。
+	const GENERATION = ++recordingGeneration
 	recordToken = payload.token
 	recordUploadUrl = payload.uploadUrl
 	recorderChunks = []
+	let acquiredStream: MediaStream | null = null
 	try {
 		if (!navigator.mediaDevices?.getUserMedia) throw new Error("当前 WebView 不支持麦克风")
-		const STREAM = await navigator.mediaDevices.getUserMedia({audio: true})
-		recorderStream = STREAM
+		acquiredStream = await navigator.mediaDevices.getUserMedia({audio: true})
+		if (!audioHostInstalled || GENERATION !== recordingGeneration || recordToken !== payload.token) {
+			stopStream(acquiredStream)
+			return
+		}
+		recorderStream = acquiredStream
 		const REQUESTED_MIME = chooseRecordingMime(globalThis.MediaRecorder)
 		recorder = REQUESTED_MIME
-			? new MediaRecorder(STREAM, {mimeType: REQUESTED_MIME})
-			: new MediaRecorder(STREAM)
+			? new MediaRecorder(acquiredStream, {mimeType: REQUESTED_MIME})
+			: new MediaRecorder(acquiredStream)
 		const ACTIVE = recorder
 		ACTIVE.ondataavailable = (event) => {
-			if (event.data.size > 0) recorderChunks.push(event.data)
+			if (GENERATION === recordingGeneration && event.data.size > 0) recorderChunks.push(event.data)
 		}
 		ACTIVE.start()
 		normalizeAudioMime(ACTIVE.mimeType || REQUESTED_MIME)
 		await invoke("audio_record_ready", {token: payload.token})
 		// 保留浏览器报告的真实 MIME，不能在停止时强制改成 audio/wav。
 	} catch (error) {
-		if (recordToken === payload.token) {
-		recorderStream?.getTracks().forEach(track => track.stop())
-			recorder = null
-			recorderStream = null
-			recordUploadUrl = ""
-			recordToken = ""
-			recorderChunks = []
+		if (GENERATION !== recordingGeneration || recordToken !== payload.token) {
+			stopStream(acquiredStream)
+			return
 		}
+		stopStream(recorderStream ?? acquiredStream)
+		recorder = null
+		recorderStream = null
+		recordUploadUrl = ""
+		recordToken = ""
+		recorderChunks = []
+		recordingGeneration += 1
 		console.error("启动录音失败:", error)
 		reportRecordingFailure(payload.token, error)
 	}
@@ -273,16 +333,21 @@ const stopRecording = async (payload?: RecordStopPayload): Promise<void> => {
 	const ACTIVE = recorder
 	const URL_TARGET = recordUploadUrl
 	const STREAM = recorderStream
+	const GENERATION = recordingGeneration
 	if (TOKEN && recordToken && TOKEN !== recordToken) return
 	recorder = null
 	recordUploadUrl = ""
 	recordToken = ""
 	recorderStream = null
 	if (!ACTIVE || !URL_TARGET || !TOKEN) {
+		if (GENERATION === recordingGeneration) recordingGeneration += 1
+		recorderChunks = []
+		stopStream(STREAM)
 		if (TOKEN) reportRecordingFailure(TOKEN, new Error("录音未启动"), true)
 		return
 	}
 
+	recordingStopping = true
 	try {
 		await new Promise<void>((resolve, reject) => {
 			ACTIVE.onstop = () => resolve()
@@ -312,9 +377,12 @@ const stopRecording = async (payload?: RecordStopPayload): Promise<void> => {
 		console.error("上传录音失败:", error)
 		reportRecordingFailure(TOKEN, error, true)
 	} finally {
-		STREAM?.getTracks().forEach(track => track.stop())
+		stopStream(STREAM)
+		ACTIVE.ondataavailable = null
 		ACTIVE.onstop = null
 		ACTIVE.onerror = null
+		if (GENERATION === recordingGeneration) recordingGeneration += 1
+		recordingStopping = false
 	}
 }
 
@@ -322,28 +390,35 @@ let unlisteners: UnlistenFn[] = []
 
 /** 安装音频宿主 (仅 main 窗口调用)。 */
 export const installAudioHost = async (): Promise<void> => {
-	if (unlisteners.length > 0) return
-	unlisteners = await Promise.all([
-		listen<PlayPayload>("nori:audio-play", ({payload}) => void play(payload)),
-		listen("nori:audio-stop", () => cancelPlayback()),
-		listen<RecordStartPayload>("nori:audio-record-start", ({payload}) => void startRecording(payload)),
-		listen<RecordStopPayload>("nori:audio-record-stop", ({payload}) => void stopRecording(payload)),
-	])
+	if (audioHostInstalled) return
+	audioHostInstalled = true
+	const NEXT_UNLISTENERS: UnlistenFn[] = []
 	try {
+		NEXT_UNLISTENERS.push(await listen<PlayPayload>("nori:audio-play", ({payload}) => void play(payload)))
+		NEXT_UNLISTENERS.push(await listen("nori:audio-stop", () => cancelPlayback()))
+		NEXT_UNLISTENERS.push(await listen<RecordStartPayload>("nori:audio-record-start", ({payload}) => void startRecording(payload)))
+		NEXT_UNLISTENERS.push(await listen<RecordStopPayload>("nori:audio-record-stop", ({payload}) => void stopRecording(payload)))
+		unlisteners = NEXT_UNLISTENERS
 		await invoke("audio_host_ready")
 	} catch (error) {
-		for (const UNLISTEN of unlisteners) UNLISTEN()
+		for (const UNLISTEN of NEXT_UNLISTENERS) UNLISTEN()
 		unlisteners = []
+		audioHostInstalled = false
+		cancelPlayback()
+		cancelRecording()
+		releaseAudioGraph()
 		throw error
 	}
 }
 
-/** 卸载音频宿主。 */
+/** 卸载音频宿主并释放浏览器侧原生音频/麦克风资源。 */
 export const uninstallAudioHost = (): void => {
+	audioHostInstalled = false
 	for (const UNLISTEN of unlisteners) UNLISTEN()
 	unlisteners = []
 	cancelPlayback()
-	void stopRecording({token: recordToken})
+	cancelRecording()
+	releaseAudioGraph()
 }
 
 /** 供测试使用的纯函数：由时域样本算 RMS 电平。 */
