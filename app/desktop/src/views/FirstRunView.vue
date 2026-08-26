@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed, ref, onMounted} from "vue"
+import {useWindowFocus} from "@vueuse/core"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../services/runtime"
 import Icon from "../components/Icon.vue"
@@ -17,6 +18,7 @@ import {feedback} from "../services/feedback"
 import {APP_VERSION} from "../services/version"
 
 const I18N = computed(() => useLanguages().views.firstRun)
+const isWindowFocused = useWindowFocus()
 
 // 首次运行期间仅保存用于展示/日志的快照信息
 const appVersion = ref(APP_VERSION)
@@ -154,10 +156,14 @@ const finish = async () => {
 
 <template>
 	<div
-		class="w-full h-full window-chrome transition-[background] duration-600"
-		:class="STEP_GLOW[currentStep]"
+		class="w-full h-full window-chrome transition-[background,box-shadow] duration-600"
+		:class="[STEP_GLOW[currentStep], isWindowFocused ? 'window-chrome-focused' : '']"
 	>
-		<TitleBar>
+		<TitleBar
+			show-close
+			:close-label="I18N.close"
+			@close="closeApp"
+		>
 			<div class="flex items-center justify-center">
 				<div class="flex items-center gap-2 px-3 py-1 rounded-pill bg-bg-abyss/80 border border-line-strong backdrop-blur-[1.2rem] shadow-[0_0.4rem_1.6rem_rgba(0,0,0,0.4)]">
 					<div
@@ -193,9 +199,6 @@ const finish = async () => {
 					</div>
 					<span class="text-xs text-text-faint mono font-500">{{ currentStep + 1 }} / {{ STEPS_COUNT }}</span>
 				</div>
-				<button type="button" class="btn-close focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
-					<Icon name="close" class="close-icon"/>
-				</button>
 			</div>
 		</TitleBar>
 

@@ -62,15 +62,15 @@ option {
 	--nori-teal: #5eead4;
 	--nori-teal-bright: #7de3ff;
 	--nori-teal-soft: #7fd4e8;
-	--bg-base: #05070a;
-	--bg-abyss: #050e1a;
-	--bg-deep: #081a2e;
-	--bg-panel: #0f2d47;
-	--bg-card: rgba(10, 28, 44, 0.55);
-	--bg-card-hover: rgba(16, 46, 72, 0.72);
-	--bg-card-active: rgba(22, 58, 90, 0.85);
-	--bg-glass: rgba(8, 24, 38, 0.75);
-	--bg-glass-modal: rgba(5, 16, 28, 0.92);
+	--bg-base: #171B22;
+	--bg-abyss: #13171f;
+	--bg-deep: #1c212a;
+	--bg-panel: #242f3d;
+	--bg-card: rgba(28, 35, 47, 0.65);
+	--bg-card-hover: rgba(36, 47, 61, 0.78);
+	--bg-card-active: rgba(42, 54, 70, 0.88);
+	--bg-glass: rgba(23, 27, 34, 0.8);
+	--bg-glass-modal: rgba(19, 23, 31, 0.95);
 	--text-primary: #ecf8ff;
 	--text-body: #cfdde5;
 	--text-muted: #9db2c0;
@@ -97,9 +97,24 @@ option {
 	--overlay-8: rgba(255, 255, 255, 0.08);
 	--overlay-12: rgba(255, 255, 255, 0.12);
 	--overlay-20: rgba(255, 255, 255, 0.2);
-	--bg-popover: rgba(10, 28, 44, 0.96);
-	--bg-menu: rgba(8, 24, 40, 0.96);
-	--bg-tooltip: rgba(6, 20, 32, 0.95);
+	--bg-popover: rgba(23, 27, 34, 0.96);
+	--bg-menu: rgba(21, 25, 33, 0.96);
+	--bg-tooltip: rgba(19, 23, 31, 0.95);
+	--slider-fill: #77c6d4;
+	--slider-fill-hover: #8de0ee;
+	--window-focus-border: #9bd4de;
+	--window-focus-glow: rgba(155, 212, 222, 0.25);
+	--chat-user-bg: #454752;
+	--chat-user-text: #ffffff;
+	--chat-ai-bg: #b8d7d8;
+	--chat-ai-text: #111827;
+	--chat-ai-border: rgba(155, 196, 197, 0.5);
+	--traffic-close: #ff5f56;
+	--traffic-close-hover: #e0443e;
+	--traffic-minimize: #ffbd2e;
+	--traffic-minimize-hover: #dea123;
+	--traffic-zoom: #27c93f;
+	--traffic-zoom-hover: #1aab29;
 	--radius-xs: 0.4rem;
 	--radius-sm: 0.8rem;
 	--radius-md: 1.2rem;
@@ -216,8 +231,10 @@ option {
 }
 
 // ---------- 聊天气泡内的 Markdown 排版 ----------
-// v-html 生成的内容无法用原子类修饰, 因此这里给一套全局排版 (色值全走令牌)
+// v-html 生成的内容无法用原子类修饰, 专为 AI 浅色气泡 (#B8D7D8) 定制清晰排版
 .chat-markdown {
+	color: var(--chat-ai-text);
+
 	> :first-child {
 		margin-top: 0;
 	}
@@ -228,17 +245,21 @@ option {
 
 	p {
 		margin: 0.4rem 0;
+		color: var(--chat-ai-text);
 	}
 
 	h1, h2, h3, h4, h5, h6 {
 		margin: 0.8rem 0 0.4rem;
 		font-size: 1.4rem;
 		line-height: 1.4;
+		color: var(--chat-ai-text);
+		font-weight: 700;
 	}
 
 	ul, ol {
 		margin: 0.4rem 0;
 		padding-left: 1.8rem;
+		color: var(--chat-ai-text);
 	}
 
 	li {
@@ -248,36 +269,38 @@ option {
 	code {
 		padding: 0.1rem 0.4rem;
 		border-radius: var(--radius-xs);
-		background: rgba(0, 0, 0, 0.35);
+		background: rgba(0, 0, 0, 0.12);
 		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 		font-size: 1.2rem;
-		color: var(--nori-teal-bright);
+		color: #082f49;
+		font-weight: 600;
 	}
 
 	pre {
 		margin: 0.8rem 0;
 		padding: 1rem 1.4rem;
 		border-radius: var(--radius-sm);
-		border: 0.1rem solid var(--line-subtle);
-		background: rgba(4, 12, 22, 0.75);
+		border: 0.1rem solid rgba(0, 0, 0, 0.15);
+		background: var(--bg-base);
 		box-shadow: inset 0 0 1.2rem rgba(0, 0, 0, 0.4);
 		overflow-x: auto;
 
 		code {
 			padding: 0;
 			background: transparent;
-			color: var(--text-body);
+			color: var(--text-primary);
 			line-height: 1.6;
+			font-weight: 400;
 		}
 	}
 
 	blockquote {
 		margin: 0.8rem 0;
 		padding: 0.4rem 0 0.4rem 1.2rem;
-		border-left: 0.3rem solid var(--nori-teal-soft);
-		background: rgba(125, 227, 255, 0.04);
+		border-left: 0.3rem solid #4a7c82;
+		background: rgba(0, 0, 0, 0.06);
 		border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-		color: var(--text-muted);
+		color: #334155;
 	}
 
 	table {
@@ -288,26 +311,29 @@ option {
 
 	th, td {
 		padding: 0.4rem 0.8rem;
-		border: 0.1rem solid var(--line-subtle);
+		border: 0.1rem solid rgba(0, 0, 0, 0.15);
 		text-align: left;
+		color: #1e293b;
 	}
 
 	th {
-		background: rgba(255, 255, 255, 0.04);
-		color: var(--text-primary);
+		background: rgba(0, 0, 0, 0.08);
+		color: #0f172a;
+		font-weight: 600;
 	}
 
 	a {
-		color: var(--nori-teal-bright);
+		color: #0369a1;
 		text-decoration: underline;
 		text-underline-offset: 0.2rem;
 		cursor: pointer;
+		font-weight: 600;
 	}
 
 	hr {
 		margin: 0.8rem 0;
 		border: none;
-		border-top: 0.1rem solid var(--line-subtle);
+		border-top: 0.1rem solid rgba(0, 0, 0, 0.15);
 	}
 }
 

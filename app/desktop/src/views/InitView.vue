@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref} from "vue"
+import {useWindowFocus} from "@vueuse/core"
 import {RUNTIME} from "../services/runtime"
 import {listen, type UnlistenFn} from "../services/host/event"
 import {getCurrentWindow} from "../services/host/window"
@@ -10,6 +11,7 @@ import AppButton from "../components/ui/AppButton.vue"
 import logo from "../assets/images/logo.png"
 
 const I18N = computed(() => useLanguages().views.init)
+const isWindowFocused = useWindowFocus()
 
 /** 等待宿主初始化信号的上限, 超时后给用户一条自救路径 */
 const INIT_TIMEOUT_MS = 10_000
@@ -112,12 +114,15 @@ onMounted(async () => {
 </script>
 
 <template>
-	<div class="window-root window-surface-boot">
-		<TitleBar>
-			<button type="button" class="btn-close focus-ring" :aria-label="I18N.close" :title="I18N.close" @click="closeApp">
-				<Icon name="close" class="close-icon"/>
-			</button>
-		</TitleBar>
+	<div
+		class="window-root window-surface-boot"
+		:class="isWindowFocused ? 'window-chrome-focused' : ''"
+	>
+		<TitleBar
+			show-close
+			:close-label="I18N.close"
+			@close="closeApp"
+		/>
 
 		<div class="flex-1 min-h-0 scroll-area">
 			<div class="min-h-full flex flex-col items-center justify-center gap-7 pb-6 relative">

@@ -38,8 +38,8 @@ const handleCopy = () => {
 			<div
 				class="px-4.5 py-3 text-base leading-relaxed break-words"
 				:class="props.bubble.role === 'user'
-					? 'rounded-[1.4rem_1.4rem_0.4rem_1.4rem] text-text-primary border border-nori-teal-bright/40 bg-[linear-gradient(135deg,rgba(94,234,212,0.22)_0%,rgba(125,227,255,0.1)_100%)] shadow-[0_0.4rem_2rem_rgba(94,234,212,0.12)] whitespace-pre-wrap'
-					: 'rounded-[1.4rem_1.4rem_1.4rem_0.4rem] text-text-primary border border-line-subtle bg-bg-card/85 backdrop-blur-[1.2rem] shadow-[0_0.4rem_2rem_rgba(0,0,0,0.35)] chat-markdown'"
+					? 'rounded-[1.4rem_1.4rem_0.4rem_1.4rem] text-chat-user-text border border-line-subtle bg-chat-user-bg shadow-[0_0.4rem_1.6rem_rgba(0,0,0,0.25)] whitespace-pre-wrap'
+					: 'rounded-[1.4rem_1.4rem_1.4rem_0.4rem] text-chat-ai-text border border-chat-ai-border bg-chat-ai-bg shadow-[0_0.4rem_2rem_rgba(0,0,0,0.18)] chat-markdown'"
 			>
 				<span v-if="props.bubble.role === 'user'">{{ props.bubble.content }}</span>
 				<!-- eslint-disable-next-line vue/no-v-html -->

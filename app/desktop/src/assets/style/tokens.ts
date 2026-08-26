@@ -15,18 +15,18 @@ export const COLORS = {
 	"nori-teal-bright": "#7de3ff",
 	"nori-teal-soft": "#7fd4e8",
 
-	// 深色背景层级 (不变)
-	"bg-base": "#05070a",
-	"bg-abyss": "#050e1a",
-	"bg-deep": "#081a2e",
-	"bg-panel": "#0f2d47",
+	// 深色背景层级 (焕新为 #171B22 底色)
+	"bg-base": "#171B22",
+	"bg-abyss": "#13171f",
+	"bg-deep": "#1c212a",
+	"bg-panel": "#242f3d",
 
-	// 玻璃拟态表面 (不变)
-	"bg-card": "rgba(10, 28, 44, 0.55)",
-	"bg-card-hover": "rgba(16, 46, 72, 0.72)",
-	"bg-card-active": "rgba(22, 58, 90, 0.85)",
-	"bg-glass": "rgba(8, 24, 38, 0.75)",
-	"bg-glass-modal": "rgba(5, 16, 28, 0.92)",
+	// 玻璃拟态表面
+	"bg-card": "rgba(28, 35, 47, 0.65)",
+	"bg-card-hover": "rgba(36, 47, 61, 0.78)",
+	"bg-card-active": "rgba(42, 54, 70, 0.88)",
+	"bg-glass": "rgba(23, 27, 34, 0.8)",
+	"bg-glass-modal": "rgba(19, 23, 31, 0.95)",
 
 	// 文字: primary/body 不变, muted/faint 提亮到 ≥4.5:1
 	"text-primary": "#ecf8ff",
@@ -70,9 +70,26 @@ export const COLORS = {
 	"overlay-20": "rgba(255, 255, 255, 0.2)",
 
 	// 浮层背景 (下拉菜单 / 气泡 / 提示条)
-	"bg-popover": "rgba(10, 28, 44, 0.96)",
-	"bg-menu": "rgba(8, 24, 40, 0.96)",
-	"bg-tooltip": "rgba(6, 20, 32, 0.95)",
+	"bg-popover": "rgba(23, 27, 34, 0.96)",
+	"bg-menu": "rgba(21, 25, 33, 0.96)",
+	"bg-tooltip": "rgba(19, 23, 31, 0.95)",
+
+	// 视觉焕新控件与对话令牌
+	"slider-fill": "#77c6d4",
+	"slider-fill-hover": "#8de0ee",
+	"window-focus-border": "#9bd4de",
+	"window-focus-glow": "rgba(155, 212, 222, 0.25)",
+	"chat-user-bg": "#454752",
+	"chat-user-text": "#ffffff",
+	"chat-ai-bg": "#b8d7d8",
+	"chat-ai-text": "#111827",
+	"chat-ai-border": "rgba(155, 196, 197, 0.5)",
+	"traffic-close": "#ff5f56",
+	"traffic-close-hover": "#e0443e",
+	"traffic-minimize": "#ffbd2e",
+	"traffic-minimize-hover": "#dea123",
+	"traffic-zoom": "#27c93f",
+	"traffic-zoom-hover": "#1aab29",
 } as const
 
 /** 圆角令牌 */

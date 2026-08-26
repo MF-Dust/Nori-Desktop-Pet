@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed, defineAsyncComponent, h, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch} from "vue"
+import {useWindowFocus} from "@vueuse/core"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import {RUNTIME} from "../services/runtime"
 import TitleBar from "../components/TitleBar.vue"
@@ -17,6 +18,7 @@ import {installAudioHost, uninstallAudioHost} from "../services/audio"
 const I18N = computed(() => useLanguages().views.main)
 const UI_I18N = computed(() => useLanguages().components.ui.state)
 const PLATFORM_I18N = computed(() => useLanguages().views.main.platform)
+const isWindowFocused = useWindowFocus()
 
 // 平台能力: 托盘不可用时要在主窗内补一个常驻入口 (部分 Linux 桌面环境没有 StatusNotifier)
 const PLATFORM = computed(() => RUNTIME.platform())
@@ -167,24 +169,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="window-root window-surface">
-		<TitleBar>
-			<div class="flex items-center gap-2 px-2.5 py-0.8 rounded-pill bg-overlay-4 border border-line-subtle text-xs text-text-faint font-500 backdrop-blur-[0.8rem]">
-				<Icon :name="currentNav?.icon || 'noriOS'" :size="13" class="text-nori-teal-bright"/>
-				<span class="text-text-muted">{{ currentNav?.label }}</span>
-			</div>
-
-			<div class="flex items-center gap-2">
-				<OperationDrawer/>
-
-				<div class="flex items-center gap-1.5">
-					<button type="button" class="btn-icon" :title="I18N.footer.minimize" :aria-label="I18N.footer.minimize" @click="minimizeMain">
-						<Icon name="minus" :size="13"/>
-					</button>
-					<button type="button" class="btn-close" :title="I18N.footer.exit" :aria-label="I18N.footer.exit" @click="exitApp">
-						<Icon name="close" class="close-icon"/>
-					</button>
+	<div
+		class="window-root window-surface"
+		:class="isWindowFocused ? 'window-chrome-focused' : ''"
+	>
+		<TitleBar
+			show-close
+			show-minimize
+			:close-label="I18N.footer.exit"
+			:minimize-label="I18N.footer.minimize"
+			@close="exitApp"
+			@minimize="minimizeMain"
+		>
+			<div class="flex items-center gap-2.5">
+				<div class="flex items-center gap-2 px-2.5 py-0.8 rounded-pill bg-overlay-4 border border-line-subtle text-xs text-text-faint font-500 backdrop-blur-[0.8rem]">
+					<Icon :name="currentNav?.icon || 'noriOS'" :size="13" class="text-nori-teal-bright"/>
+					<span class="text-text-muted">{{ currentNav?.label }}</span>
 				</div>
+
+				<OperationDrawer/>
 			</div>
 		</TitleBar>
 

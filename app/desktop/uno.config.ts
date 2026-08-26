@@ -69,8 +69,12 @@ export default defineConfig({
 		// window-surface 是默认底纹 (first-run 用自己的分步渐变替换它)。
 		[
 			"window-chrome",
-			"relative flex flex-col rounded-lg overflow-hidden select-none text-text-body "
+			"relative flex flex-col rounded-lg overflow-hidden select-none text-text-body transition-[box-shadow] duration-200 "
 			+ "shadow-[var(--shadow-window),inset_0_0_0_0.1rem_var(--line-subtle)]",
+		],
+		[
+			"window-chrome-focused",
+			"!shadow-[var(--shadow-window),inset_0_0_0_0.15rem_var(--window-focus-border),0_0_1.4rem_var(--window-focus-glow)]",
 		],
 		["window-root", "w-100vw h-100vh window-chrome"],
 		[
@@ -143,6 +147,22 @@ export default defineConfig({
 			"btn-base w-7 h-7 rounded-full bg-transparent text-text-muted transition-all duration-150 "
 			+ "hover:(bg-overlay-8 text-nori-teal-bright scale-108) active:scale-92",
 		],
+		// macOS 红绿灯窗口控制按钮
+		[
+			"btn-traffic",
+			"inline-flex items-center justify-center w-[1.2rem] h-[1.2rem] rounded-full p-0 border-none "
+			+ "transition-all duration-150 select-none cursor-pointer focus-ring outline-none "
+			+ "hover:(scale-110 brightness-105) active:scale-92 disabled:(opacity-40 cursor-not-allowed pointer-events-none)",
+		],
+		[
+			"btn-traffic-close",
+			"btn-traffic bg-traffic-close hover:shadow-[0_0_0.6rem_rgba(255,95,86,0.6)] text-[#4c0002]/0 hover:text-[#4c0002]/85 active:text-[#4c0002]",
+		],
+		[
+			"btn-traffic-min",
+			"btn-traffic bg-traffic-minimize hover:shadow-[0_0_0.6rem_rgba(255,189,46,0.6)] text-[#5c3c00]/0 hover:text-[#5c3c00]/85 active:text-[#5c3c00]",
+		],
+
 		// 三个窗口标题栏的关闭按钮 (与 btn-icon 同尺寸, 悬停转危险色)
 		[
 			"btn-close",
