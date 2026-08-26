@@ -103,6 +103,20 @@ describe("样式规范静态检查", () => {
 		expect(OFFENDERS).toEqual([])
 	})
 
+	it("窗口级页面保留纵向滚动兜底", () => {
+		// html/body/#app 与 window-chrome 都会裁掉外层溢出, 所以真正的页面宿主必须显式接管滚动。
+		// 这层门禁覆盖主窗口一级页、初始化页与启动错误页, 避免新增内容后底部直接不可达。
+		const APP = readFileSync(join(SRC, "App.vue"), "utf8")
+		const MAIN = readFileSync(join(SRC, "views/Main.vue"), "utf8")
+		const INIT = readFileSync(join(SRC, "views/InitView.vue"), "utf8")
+		const FIRST_RUN = readFileSync(join(SRC, "views/FirstRunView.vue"), "utf8")
+
+		expect(APP).toContain("w-100vw h-100vh scroll-area flex items-center justify-center bg-bg-abyss p-6")
+		expect(MAIN).toContain("flex-1 min-h-0 flex flex-col scroll-area")
+		expect(INIT).toContain("flex-1 min-h-0 scroll-area flex flex-col items-center justify-center gap-7 pb-6 relative")
+		expect(FIRST_RUN).toContain("relative flex-1 w-full min-h-0 scroll-area flex flex-col")
+	})
+
 	it("legacy 名单只包含真实存在且仍未迁移的文件", () => {
 		const ALL = new Set(listFiles(SRC, ".vue").map(relativeSrc))
 		for (const file of LEGACY_FILES) {
