@@ -260,19 +260,9 @@ public sealed class JsonPluginStorage : IPluginStorage
 			throw new PluginException(PluginErrorCodes.StorageFailed, "插件存储键无效");
 	}
 
-	private static void EnsureNoReparsePoints(string path)
-	{
-		string fullPath = Path.GetFullPath(path);
-		string root = Path.GetPathRoot(fullPath) ?? fullPath;
-		string relative = Path.GetRelativePath(root, fullPath);
-		string current = root;
-		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
-		{
-			current = Path.Combine(current, segment);
-			if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-				throw new PluginException(PluginErrorCodes.StorageFailed, "插件存储目录包含符号链接");
-		}
-	}
+	/// <summary>拒绝插件自己的存储目录是链接，但允许宿主运行于系统级 symlink 祖先之下。</summary>
+	private static void EnsureNoReparsePoints(string path) =>
+		PluginPathSafety.EnsureNoReparsePoint(path, PluginErrorCodes.StorageFailed, "插件存储目录包含符号链接");
 }
 
 /// <summary>插件包公开资源读取器。</summary>
