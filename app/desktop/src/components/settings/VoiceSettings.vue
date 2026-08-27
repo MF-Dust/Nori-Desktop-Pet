@@ -31,16 +31,17 @@ const volumeField = defineField(
 const volume = volumeField.value
 
 // TTS 配置 (云端路径: openai / minimax / custom / gpt_sovits)
-type TtsProvider = "openai" | "minimax" | "custom" | "gpt_sovits"
+type TtsProvider = "openai" | "gemini" | "minimax" | "custom" | "gpt_sovits"
 const TTS_DEFAULT_BASE_URLS: Partial<Record<TtsProvider, string>> = {
 	openai: "https://api.openai.com/v1",
+	gemini: "https://generativelanguage.googleapis.com/v1beta",
 	minimax: "https://api.minimaxi.com/v1",
 }
 const ttsProviderField = defineField<TtsProvider>(
 	"ttsProvider",
 	snapshot => {
 		const VALUE = snapshot.voice.ttsProvider
-		return (["openai", "minimax", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
+		return (["openai", "gemini", "minimax", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
 	},
 	"openai",
 	val => RUNTIME.updateVoice({ttsProvider: val}),
@@ -54,6 +55,14 @@ const ttsBaseUrlField = defineField(
 	val => RUNTIME.updateVoice({ttsBaseUrl: val.trim()}),
 )
 const ttsBaseUrl = ttsBaseUrlField.value
+
+const ttsModelField = defineField(
+	"tts_model",
+	snapshot => snapshot.voice.ttsModel || "tts-1",
+	"tts-1",
+	val => RUNTIME.updateVoice({ttsModel: val.trim()}),
+)
+const ttsModel = ttsModelField.value
 
 const ttsApiKeyInput = ref("")
 
@@ -153,11 +162,15 @@ const onTtsProviderChange = (value: TtsProvider) => {
 		}
 	}
 
-	if (value === "minimax" && (!ttsVoice.value.trim() || ttsVoice.value === "nova")) {
+	if (value === "gemini") {
+		if (!ttsModel.value.trim() || ttsModel.value === "tts-1") { ttsModel.value = "gemini-3.1-flash-tts-preview"; ttsModelField.touch(); void ttsModelField.saveNow() }
+		if (!ttsVoice.value.trim() || ttsVoice.value === "nova" || ttsVoice.value === "male-qn-qingse") { ttsVoice.value = "Kore"; ttsVoiceField.touch(); void ttsVoiceField.saveNow() }
+	} else if (value === "minimax" && (!ttsVoice.value.trim() || ttsVoice.value === "nova")) {
 		ttsVoice.value = "male-qn-qingse"
 		ttsVoiceField.touch()
 		void ttsVoiceField.saveNow()
-	} else if (value === "openai" && ttsVoice.value === "male-qn-qingse") {
+	} else if (value === "openai" && (ttsVoice.value === "male-qn-qingse" || ttsVoice.value === "Kore")) {
+		if (ttsModel.value.startsWith("gemini-")) { ttsModel.value = "tts-1"; ttsModelField.touch(); void ttsModelField.saveNow() }
 		ttsVoice.value = "nova"
 		ttsVoiceField.touch()
 		void ttsVoiceField.saveNow()
@@ -165,6 +178,7 @@ const onTtsProviderChange = (value: TtsProvider) => {
 }
 
 const onTtsBaseUrlBlur = () => ttsBaseUrlField.save()
+const onTtsModelBlur = () => ttsModelField.save()
 const onTtsVoiceBlur = () => ttsVoiceField.save()
 const onGptBaseUrlBlur = () => gptsovitsBaseUrlField.save()
 const onGptRefAudioBlur = () => gptsovitsRefAudioField.save()
@@ -289,6 +303,13 @@ const testVoice = async () => {
 						</label>
 						<label
 							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="ttsProvider === 'gemini' ? 'pill-choice-on' : 'pill-choice-off'"
+						>
+							<input v-model="ttsProvider" type="radio" value="gemini" class="sr-only" @change="onTtsProviderChange('gemini')"/>
+							{{ I18N.tts.providerGemini }}
+						</label>
+						<label
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
 							:class="ttsProvider === 'minimax' ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="ttsProvider" type="radio" value="minimax" class="sr-only"
@@ -314,17 +335,30 @@ const testVoice = async () => {
 					</div>
 				</div>
 
-				<template v-if="ttsProvider === 'openai' || ttsProvider === 'minimax' || ttsProvider === 'custom'">
+				<template v-if="ttsProvider === 'openai' || ttsProvider === 'gemini' || ttsProvider === 'minimax' || ttsProvider === 'custom'">
 					<label class="field">
 						<span class="field-label font-500">{{ I18N.tts.baseUrl }}</span>
 						<input
 							v-model="ttsBaseUrl"
 							class="input-base"
-							:placeholder="ttsProvider === 'minimax' ? 'https://api.minimaxi.com/v1' : 'https://api.openai.com/v1'"
+							:placeholder="ttsProvider === 'minimax' ? 'https://api.minimaxi.com/v1' : ttsProvider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'"
 							@focus="ttsBaseUrlField.focus"
 							@input="ttsBaseUrlField.touch"
 							@blur="onTtsBaseUrlBlur"
 						/>
+					</label>
+
+					<label v-if="ttsProvider === 'openai' || ttsProvider === 'gemini'" class="field">
+						<span class="field-label font-500">{{ I18N.tts.model }}</span>
+						<input
+							v-model="ttsModel"
+							class="input-base"
+							placeholder="tts-1"
+							@focus="ttsModelField.focus"
+							@input="ttsModelField.touch"
+							@blur="onTtsModelBlur"
+						/>
+						<span class="text-hint">{{ I18N.tts.modelHint }}</span>
 					</label>
 
 					<label class="field">

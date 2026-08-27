@@ -206,6 +206,7 @@ public sealed class BridgeCommands
 				UpdateOptionalConfig(args, "volume", "audio_volume");
 				UpdateOptionalConfig(args, "ttsProvider", "tts_provider");
 				UpdateOptionalConfig(args, "ttsBaseUrl", "tts_base_url");
+				UpdateOptionalConfig(args, "ttsModel", "tts_model");
 				UpdateSecretConfig(args, "ttsApiKey", "tts_api_key");
 				UpdateOptionalConfig(args, "ttsVoice", "tts_voice");
 				UpdateOptionalConfig(args, "ttsSpeed", "tts_speed");
@@ -224,7 +225,7 @@ public sealed class BridgeCommands
 					{
 						_services.Runtime.Voice.SetVolume(vol);
 					}
-					if (HasTtsConfigurationChange(args)) _services.Runtime.Voice.NotifyConfigurationChanged();
+					if (HasTtsConfigurationChange(args) || HasString(args, "ttsModel")) _services.Runtime.Voice.NotifyConfigurationChanged();
 				}
 				Runtime.InvalidateSnapshot("voice");
 			})),

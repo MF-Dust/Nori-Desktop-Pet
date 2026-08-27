@@ -135,6 +135,7 @@ export interface VoiceState {
 	volume: number
 	ttsProvider: string
 	ttsBaseUrl: string
+	ttsModel: string
 	hasTtsApiKey: boolean
 	ttsVoice: string
 	ttsSpeed: number
