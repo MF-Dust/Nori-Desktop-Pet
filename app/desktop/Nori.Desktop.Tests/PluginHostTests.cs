@@ -488,20 +488,27 @@ public sealed class PluginHostTests
 		public bool Closed { get; private set; }
 
 		private readonly Dictionary<long, TaskCompletionSource<FakeResult>> _pending = new();
+		private readonly Dictionary<long, FakeResult> _completed = new();
 		private readonly Lock _lock = new();
 
 		public void PostResult(long id, object? value, string? error)
 		{
+			FakeResult result = new()
+			{
+				Kind = error == null ? "resolve" : "reject",
+				Value = value,
+				Error = error,
+			};
+
 			lock (_lock)
 			{
-				if (_pending.TryGetValue(id, out TaskCompletionSource<FakeResult>? tcs))
+				if (_pending.Remove(id, out TaskCompletionSource<FakeResult>? tcs))
 				{
-					tcs.TrySetResult(new FakeResult
-					{
-						Kind = error == null ? "resolve" : "reject",
-						Value = value,
-						Error = error,
-					});
+					tcs.TrySetResult(result);
+				}
+				else
+				{
+					_completed[id] = result;
 				}
 			}
 		}
@@ -521,6 +528,10 @@ public sealed class PluginHostTests
 			TaskCompletionSource<FakeResult> tcs;
 			lock (_lock)
 			{
+				if (_completed.Remove(id, out FakeResult? completed))
+				{
+					return Task.FromResult(completed);
+				}
 				if (!_pending.TryGetValue(id, out tcs!))
 				{
 					tcs = new TaskCompletionSource<FakeResult>(TaskCreationOptions.RunContinuationsAsynchronously);

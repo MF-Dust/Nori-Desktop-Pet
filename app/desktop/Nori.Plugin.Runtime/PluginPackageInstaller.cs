@@ -34,6 +34,8 @@ public sealed class PluginPackageInstaller
 		Directory.CreateDirectory(_stagingRoot);
 		Directory.CreateDirectory(_inboxRoot);
 		EnsureNoReparsePoints(_root);
+		EnsureNoReparsePoints(_stagingRoot);
+		EnsureNoReparsePoints(_inboxRoot);
 	}
 
 	public string RootDirectory => _root;
@@ -200,8 +202,8 @@ public sealed class PluginPackageInstaller
 		string fullPath = Path.GetFullPath(packagePath);
 		if (!fullPath.EndsWith(PluginPackageInstaller.PackageExtension, StringComparison.OrdinalIgnoreCase))
 			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包扩展名必须为 .noripack");
-		EnsureNoReparsePoints(Path.GetDirectoryName(fullPath) ?? fullPath);
 		if (!File.Exists(fullPath)) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包不存在");
+		EnsureNoReparsePoints(fullPath);
 		return fullPath;
 	}
 
@@ -228,22 +230,12 @@ public sealed class PluginPackageInstaller
 		}
 	}
 
-	private static void EnsureNoReparsePoints(string path)
-	{
-		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-		string root = Path.GetPathRoot(fullPath) ?? fullPath;
-		string relative = Path.GetRelativePath(root, fullPath);
-		string current = root;
-		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
-		{
-			current = Path.Combine(current, segment);
-			if (File.Exists(current) || Directory.Exists(current))
-			{
-				if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-					throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件包路径包含符号链接");
-			}
-		}
-	}
+	/// <summary>
+	/// 只检查宿主管理的目标节点本身，不检查其系统级祖先目录。
+	/// 插件目录树内部的链接由 PluginLoadContext 的锚定扫描负责拒绝。
+	/// </summary>
+	private static void EnsureNoReparsePoints(string path) =>
+		PluginPathSafety.EnsureNoReparsePoint(path, PluginErrorCodes.PackagePathDenied, "插件包路径包含符号链接");
 
 	private static void TryDelete(string path)
 	{

@@ -58,14 +58,17 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 			: IntPtr.Zero;
 	}
 
-	/// <summary>预扫描插件目录，拒绝宿主内部引用与重复 contract DLL。</summary>
+	/// <summary>预扫描插件目录，拒绝宿主内部引用、重复 contract DLL 与插件树内链接。</summary>
 	public static void EnsureReferencesAllowed(string pluginDirectory)
 	{
 		if (!Directory.Exists(pluginDirectory)) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件目录不存在");
-		EnsureNoReparsePoints(pluginDirectory);
-		foreach (string path in Directory.EnumerateFiles(pluginDirectory, "*.dll", SearchOption.AllDirectories))
+		IReadOnlyList<string> dlls = PluginPathSafety.EnumerateDllFilesWithoutReparsePoints(
+			pluginDirectory,
+			PluginErrorCodes.PackagePathDenied,
+			"插件目录包含符号链接");
+		foreach (string path in dlls)
 		{
-			if (ContractAssemblyNames.Contains(Path.GetFileName(path)))
+			if (ContractAssemblyNames.Contains(Path.GetFileNameWithoutExtension(path)))
 				throw new PluginException(PluginErrorCodes.ContractAssemblyDenied, "插件包不得携带宿主 contract 程序集");
 			EnsureAssemblyReferencesAllowed(path);
 		}
@@ -77,7 +80,9 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 		{
 			using FileStream stream = File.OpenRead(assemblyPath);
 			using PEReader reader = new(stream);
-			if (!reader.HasMetadata) throw new BadImageFormatException();
+			// runtimes/win-* 中的原生 DLL 是合法插件依赖。只有托管程序集才有
+			// AssemblyReference 元数据可供宿主做禁止引用扫描。
+			if (!reader.HasMetadata) return;
 			MetadataReader metadata = reader.GetMetadataReader();
 			foreach (AssemblyReferenceHandle handle in metadata.AssemblyReferences)
 			{
@@ -92,20 +97,6 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 		catch (Exception exception) when (exception is BadImageFormatException or FileLoadException or IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
 			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件程序集格式无效", exception);
-		}
-	}
-
-	private static void EnsureNoReparsePoints(string path)
-	{
-		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-		string root = Path.GetPathRoot(fullPath) ?? fullPath;
-		string relative = Path.GetRelativePath(root, fullPath);
-		string current = root;
-		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
-		{
-			current = Path.Combine(current, segment);
-			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-				throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件目录包含符号链接");
 		}
 	}
 
