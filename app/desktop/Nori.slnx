@@ -3,13 +3,9 @@
   <Project Path="Live2DCSharpSDK.App/Live2DCSharpSDK.App.csproj" />
   <Project Path="Live2DCSharpSDK.OpenGL/Live2DCSharpSDK.OpenGL.csproj" />
   <Project Path="Nori.Core.Tests/Nori.Core.Tests.csproj" />
-  <Project Path="Nori.Plugin.Abstractions/Nori.Plugin.Abstractions.csproj" />
-  <Project Path="Nori.Plugin.Games.Abstractions/Nori.Plugin.Games.Abstractions.csproj" />
-  <Project Path="Nori.Plugin.Arcade.Abstractions/Nori.Plugin.Arcade.Abstractions.csproj" />
-  <Project Path="Nori.Plugin.Harness.Abstractions/Nori.Plugin.Harness.Abstractions.csproj" />
-  <Project Path="Nori.Plugin.Runtime/Nori.Plugin.Runtime.csproj" />
-  <Project Path="Nori.Plugin.TestPlugin/Nori.Plugin.TestPlugin.csproj" />
-  <Project Path="Nori.Plugin.Runtime.Tests/Nori.Plugin.Runtime.Tests.csproj" />
+  <Project Path="Nori.PluginRuntime/Nori.PluginRuntime.csproj" />
+  <Project Path="Nori.PluginRuntime.TestPlugin/Nori.PluginRuntime.TestPlugin.csproj" />
+  <Project Path="Nori.PluginRuntime.Tests/Nori.PluginRuntime.Tests.csproj" />
   <Project Path="Nori.Core/Nori.Core.csproj" />
   <Project Path="Nori.Desktop/Nori.Desktop.csproj" />
   <Project Path="Nori.Desktop.Tests/Nori.Desktop.Tests.csproj" />

@@ -1,0 +1,87 @@
+using System.Text.Json;
+using Nori.Core.Assets;
+using Nori.Core.Logging;
+
+namespace Nori.PluginRuntime;
+
+/// <summary>插件运行时的统一宿主入口。</summary>
+internal sealed class PluginRuntimeHost : IAsyncDisposable
+{
+	private readonly PluginWindowHost _windows;
+	private readonly PluginManagementCommands _management;
+	private readonly PluginManager _manager;
+	private int _disposed;
+
+	public PluginRuntimeHost(PluginRuntimeHostOptions options)
+	{
+		ArgumentNullException.ThrowIfNull(options);
+		ArgumentException.ThrowIfNullOrWhiteSpace(options.DataDirectory);
+		if (options.HostApiVersion.Major < 0 || options.HostApiVersion.Minor < 0)
+			throw new ArgumentOutOfRangeException(nameof(options), "插件 API 版本无效");
+
+		string dataDirectory = Path.GetFullPath(options.DataDirectory);
+		string pluginsDirectory = Path.Combine(dataDirectory, "plugins");
+		string pluginDataDirectory = Path.Combine(dataDirectory, "plugin-data");
+		string webViewDataDirectory = Path.Combine(dataDirectory, "webview_plugins");
+		Directory.CreateDirectory(dataDirectory);
+
+		_windows = new PluginWindowHost(options.Logger, webViewDataDirectory);
+		_manager = new PluginManager(new PluginRuntimeOptions
+		{
+			PluginsDirectory = pluginsDirectory,
+			DataDirectory = pluginDataDirectory,
+			HostApiVersion = options.HostApiVersion,
+			HostVersion = options.HostVersion,
+			DevelopmentHost = options.DevelopmentHost,
+			SafeMode = options.SafeMode,
+			AssetUriFactory = options.AssetUriFactory,
+			ClosePluginWindowsAsync = (pluginId, cancellationToken) => _windows.CloseAllWindowsForPluginAsync(pluginId, cancellationToken),
+			CapabilityFactory = (descriptor, stoppingToken) =>
+			[
+				new PluginWebViewCapability(
+					PluginDescriptorSummary.From(descriptor),
+					(summary, windowOptions, cancellationToken) => _windows.CreateWindowAsync(summary, windowOptions, stoppingToken, cancellationToken)),
+			],
+			OnError = options.OnError,
+			OnLog = options.OnLog,
+		});
+		AssetRoute = new PluginAssetRoute(_manager);
+		_management = new PluginManagementCommands(_manager, options.MainWindowLabel, options.AssetUriFactory, options.PackagePicker);
+	}
+
+	public IAssetRoute AssetRoute { get; }
+
+	public IReadOnlyCollection<PluginInfo> Discover() => _manager.Discover();
+
+	public Task StartAllAsync(CancellationToken cancellationToken = default) => _manager.StartAllAsync(cancellationToken);
+
+	public Task<object?> InvokeManagementAsync(
+		PluginManagementSource source,
+		string command,
+		JsonElement args,
+		CancellationToken cancellationToken = default) =>
+		_management.InvokeAsync(source, command, args, cancellationToken);
+
+	public async ValueTask DisposeAsync()
+	{
+		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+		try { await _manager.DisposeAsync().ConfigureAwait(false); }
+		finally { await _windows.DisposeAsync().ConfigureAwait(false); }
+	}
+}
+
+/// <summary>插件运行时宿主配置。</summary>
+internal sealed record PluginRuntimeHostOptions
+{
+	public required string DataDirectory { get; init; }
+	public PluginApiVersion HostApiVersion { get; init; } = new(2, 0);
+	public PluginVersion HostVersion { get; init; } = new(1, 0, 0);
+	public bool DevelopmentHost { get; init; }
+	public bool SafeMode { get; init; }
+	public string MainWindowLabel { get; init; } = "main";
+	public FileLogger? Logger { get; init; }
+	public Func<string, string, Uri>? AssetUriFactory { get; init; }
+	public IPluginPackagePicker? PackagePicker { get; init; }
+	public Action<PluginException>? OnError { get; init; }
+	public Action<PluginDescriptor, string, Exception?>? OnLog { get; init; }
+}

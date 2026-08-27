@@ -11,7 +11,7 @@ using Nori.Desktop.Automation;
 using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Live2D;
 using Nori.Desktop.Windows;
-using Nori.Plugin.Runtime;
+using Nori.PluginRuntime;
 
 namespace Nori.Desktop.Bridge;
 
@@ -59,14 +59,8 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>回环资源服务</summary>
 	public AssetServer? Assets { get; init; }
 
-	/// <summary>第三方插件运行时；安全模式下仅发现并标记禁用插件。</summary>
-	public PluginManager? Plugins { get; init; }
-
-	/// <summary>插件动态 WebView 窗口宿主。</summary>
-	public Nori.Desktop.Plugins.PluginWindowHost? PluginWindows { get; set; }
-
-	/// <summary>插件包文件选择器。生产默认走 Avalonia StorageProvider，测试可注入取消/固定结果。</summary>
-	public IPluginPackagePicker? PluginPackagePicker { get; set; }
+	/// <summary>统一插件运行时；安全模式下仅发现并标记禁用插件。</summary>
+	internal PluginRuntimeHost? PluginRuntime { get; set; }
 
 	/// <summary>本地/模型 HTTP 客户端 (测试可在装配后替换)</summary>
 	public HttpClient Http { get; set; } = null!;
@@ -146,8 +140,7 @@ public sealed class AppServices : IAsyncDisposable
 		await DisposeStep(() => Bridge?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Runtime?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Automation?.DisposeAsync() ?? ValueTask.CompletedTask);
-		await DisposeStep(() => Plugins?.DisposeAsync() ?? ValueTask.CompletedTask);
-		await DisposeStep(() => PluginWindows?.DisposeAsync() ?? ValueTask.CompletedTask);
+		await DisposeStep(() => PluginRuntime?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Mcp.DisposeAsync());
 		await DisposeStep(() => Assets?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() =>

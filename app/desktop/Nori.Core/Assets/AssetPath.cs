@@ -175,7 +175,7 @@ public static class AssetPath
 
 	/// <summary>
 	/// 在根目录内精确解析一个文件，不尝试 PathCandidates。
-	/// 插件公开资源使用这个入口，避免一个 URL 因候选删段而命中另一个文件。
+	/// 附加公开资源使用这个入口，避免一个 URL 因候选删段而命中另一个文件。
 	/// </summary>
 	public static string? ResolveExact(string root, string relative)
 	{

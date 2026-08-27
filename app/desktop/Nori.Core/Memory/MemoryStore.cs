@@ -54,7 +54,7 @@ public sealed record MemorySearchResult
 
 /// <summary>
 /// SQLite 记忆存储兼容层。
-/// 旧的 MemoryStore API 保留给桥接和插件；所有新增聚合写入在这里统一维护 Atom、Source 与 FTS。
+/// 旧的 MemoryStore API 保留给桥接等调用方；所有新增聚合写入在这里统一维护 Atom、Source 与 FTS。
 /// </summary>
 public sealed class MemoryStore
 {

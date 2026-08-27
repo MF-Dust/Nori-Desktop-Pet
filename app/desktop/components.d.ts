@@ -55,6 +55,7 @@ declare module 'vue' {
     NSelect: typeof import('naive-ui')['NSelect']
     NSlider: typeof import('naive-ui')['NSlider']
     OperationDrawer: typeof import('./src/components/automation/OperationDrawer.vue')['default']
+    PluginsSettings: typeof import('./src/components/settings/PluginsSettings.vue')['default']
     ProactiveSettings: typeof import('./src/components/settings/ProactiveSettings.vue')['default']
     Ready: typeof import('./src/components/firstRun/Ready.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

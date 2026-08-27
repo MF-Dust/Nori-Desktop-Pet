@@ -11,7 +11,7 @@ public class AssetServerTests : IAsyncLifetime
 	private readonly string _root = Path.Combine(Path.GetTempPath(), $"nori-srv-{Guid.NewGuid():N}");
 	private string _appRoot = "";
 	private string _resourcesRoot = "";
-	private string _pluginsRoot = "";
+	private string _extraRoot = "";
 	private AssetServer _server = null!;
 	private readonly HttpClient _client = new();
 
@@ -19,9 +19,9 @@ public class AssetServerTests : IAsyncLifetime
 	{
 		_appRoot = Path.Combine(_root, "dist");
 		_resourcesRoot = Path.Combine(_root, "resources");
-		_pluginsRoot = Path.Combine(_root, "plugins", "demo.plugin");
+		_extraRoot = Path.Combine(_root, "extra", "demo");
 		Directory.CreateDirectory(_appRoot);
-		Directory.CreateDirectory(Path.Combine(_pluginsRoot, "web"));
+		Directory.CreateDirectory(Path.Combine(_extraRoot, "web"));
 		// 正常布局: 解压后是平的
 		Directory.CreateDirectory(Path.Combine(_resourcesRoot, "live2d", "arg-nori"));
 		// 异常布局: 资源包多包了一层同名目录
@@ -30,9 +30,9 @@ public class AssetServerTests : IAsyncLifetime
 		await File.WriteAllTextAsync(Path.Combine(_appRoot, "index.html"), "<!doctype html><title>nori</title>");
 		await File.WriteAllTextAsync(Path.Combine(_resourcesRoot, "live2d", "arg-nori", "ARGNori.model3.json"), """{"Version":3}""");
 		await File.WriteAllTextAsync(Path.Combine(_resourcesRoot, "live2d", "nested", "nested", "Deep.model3.json"), """{"Version":3}""");
-		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "web", "index.html"), "plugin");
-		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "plugin.json"), "private");
-		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "manifest.json"), "private manifest");
+		await File.WriteAllTextAsync(Path.Combine(_extraRoot, "web", "index.html"), "plugin");
+		await File.WriteAllTextAsync(Path.Combine(_extraRoot, "plugin.json"), "private");
+		await File.WriteAllTextAsync(Path.Combine(_extraRoot, "manifest.json"), "private manifest");
 		// 根目录之外的"机密"文件, 用来验证穿越被挡住
 		await File.WriteAllTextAsync(Path.Combine(_root, "secret.txt"), "TOP SECRET");
 
@@ -40,7 +40,7 @@ public class AssetServerTests : IAsyncLifetime
 		{
 			AppRoot = _appRoot,
 			ResourcesRoot = _resourcesRoot,
-			PluginRootResolver = pluginId => pluginId == "demo.plugin" ? _pluginsRoot : null,
+			AdditionalRoutes = [new TestFileRoute(_extraRoot)],
 		});
 	}
 
@@ -69,22 +69,22 @@ public class AssetServerTests : IAsyncLifetime
 	}
 
 	[Fact]
-	public async Task 插件公开资源可取但清单不可取()
+	public async Task 附加资源可取但私有清单不可取()
 	{
-		HttpResponseMessage asset = await _client.GetAsync(new Uri(_server.PluginAssetUrl("demo.plugin", "web/index.html")));
+		HttpResponseMessage asset = await _client.GetAsync(new Uri(_server.PublicUrl("extra", "demo/web/index.html")));
 		Assert.Equal(HttpStatusCode.OK, asset.StatusCode);
 		Assert.Equal("plugin", await asset.Content.ReadAsStringAsync());
 
-		HttpResponseMessage manifest = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/plugins/demo.plugin/manifest.json"));
+		HttpResponseMessage manifest = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/extra/demo/manifest.json"));
 		Assert.Equal(HttpStatusCode.NotFound, manifest.StatusCode);
 	}
 
 	[Theory]
 	[InlineData("%2e%2e/manifest.json")]
 	[InlineData("web/../manifest.json")]
-	public async Task 插件资源路径穿越被挡住(string relativePath)
+	public async Task 附加资源路径穿越被挡住(string relativePath)
 	{
-		HttpResponseMessage response = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/plugins/demo.plugin/{relativePath}"));
+		HttpResponseMessage response = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/extra/demo/{relativePath}"));
 		Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
 		Assert.DoesNotContain("private manifest", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 	}
@@ -228,5 +228,23 @@ public class AssetServerTests : IAsyncLifetime
 		// 上面两次都没消耗掉 token, 正常请求仍能取到
 		HttpResponseMessage ok = await _client.GetAsync(new Uri(_server.MediaUrl(token)));
 		Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+	}
+
+	private sealed class TestFileRoute(string root) : IAssetRoute
+	{
+		public string Segment => "extra";
+
+		public AssetRouteFile? Resolve(string relativePath)
+		{
+			string[] parts = relativePath.Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length != 2 || parts[0] != "demo") return null;
+			string path = parts[1];
+			if (!path.Equals("icon.png", StringComparison.OrdinalIgnoreCase) &&
+				!path.StartsWith("web/", StringComparison.OrdinalIgnoreCase) &&
+				!path.StartsWith("assets/", StringComparison.OrdinalIgnoreCase) &&
+				!path.StartsWith("locales/", StringComparison.OrdinalIgnoreCase)) return null;
+			string? resolved = AssetPath.ResolveExact(root, path);
+			return resolved is null ? null : new AssetRouteFile(resolved, AssetPath.MimeFor(path));
+		}
 	}
 }

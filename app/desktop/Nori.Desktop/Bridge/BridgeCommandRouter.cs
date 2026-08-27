@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Nori.Desktop.Automation.Browser;
+using Nori.PluginRuntime;
 
 namespace Nori.Desktop.Bridge;
 
@@ -30,7 +31,6 @@ public enum BridgeCommandDomain
 public sealed class BridgeCommandRouter(AppServices services)
 {
 	private readonly AppServices _services = services;
-	private readonly PluginManagementBridgeCommands _pluginCommands = new(services);
 
 	public async Task<object?> InvokeAsync(
 		IBridgeSource source,
@@ -42,7 +42,15 @@ public sealed class BridgeCommandRouter(AppServices services)
 		BridgeCommandDomain domain = Classify(command);
 
 		if (domain == BridgeCommandDomain.Plugins)
-			return await _pluginCommands.InvokeAsync(source, command, args, cancellationToken).ConfigureAwait(false);
+		{
+			PluginRuntimeHost runtime = _services.PluginRuntime
+				?? throw new InvalidOperationException("插件运行时尚未就绪");
+			return await runtime.InvokeManagementAsync(
+				new PluginManagementSource(source.Label, source.IsVisible, source.Self),
+				command,
+				args,
+				cancellationToken).ConfigureAwait(false);
+		}
 
 		// Browser Automation 是可选 feature pack。发布瘦身包不携带 driver 时，
 		// 在路由边界就明确 fail-closed，而不是让传输层或 Playwright 内部报路径错误。

@@ -34,8 +34,8 @@ public sealed record AssetServerOptions
 	/// </summary>
 	public Nori.Core.Voice.MediaExchange? Media { get; init; }
 
-	/// <summary>插件公开资源根目录解析回调。回调只应返回插件目录，不得返回宿主内部目录。</summary>
-	public Func<string, string?>? PluginRootResolver { get; init; }
+	/// <summary>由扩展模块提供的附加资源路由。</summary>
+	public IReadOnlyList<IAssetRoute> AdditionalRoutes { get; init; } = [];
 }
 
 /// <summary>
@@ -65,12 +65,13 @@ public sealed class AssetServer : IAsyncDisposable
 		? $"/{MediaSegment}/{token}"
 		: $"{Origin}{Prefix}/{MediaSegment}/{token}";
 
-	/// <summary>拼出插件公开资源 URL。</summary>
-	public string PluginAssetUrl(string pluginId, string relativePath)
+	/// <summary>拼出附加资源路由的公开 URL。</summary>
+	public string PublicUrl(string routeSegment, string relativePath)
 	{
-		if (!IsSafePluginId(pluginId) || !IsPublicPluginAsset(relativePath)) throw new ArgumentException("插件资源路径无效", nameof(relativePath));
+		if (!IsSafeRouteSegment(routeSegment) || IsReservedRouteSegment(routeSegment) || !IsSafeRoutePath(relativePath))
+			throw new ArgumentException("资源路由路径无效", nameof(relativePath));
 		string escapedPath = string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString));
-		string route = $"/plugins/{Uri.EscapeDataString(pluginId)}/{escapedPath}";
+		string route = $"/{routeSegment}/{escapedPath}";
 		return _options.DevMode ? route : $"{Origin}{Prefix}{route}";
 	}
 
@@ -101,6 +102,8 @@ public sealed class AssetServer : IAsyncDisposable
 		PhysicalFileProvider resourceProvider = new(options.ResourcesRoot, Microsoft.Extensions.FileProviders.Physical.ExclusionFilters.None);
 		PathString appPath = new($"{prefix}/{AppSegment}");
 		PathString resourcePath = new($"{prefix}/{AssetSegment}");
+		IReadOnlyList<IAssetRoute> additionalRoutes = options.AdditionalRoutes?.ToArray() ?? [];
+		ValidateAdditionalRoutes(additionalRoutes);
 
 		// 主机过滤拒绝未知 Host，并返回旧回环服务约定的 403，避免泄露框架诊断正文。
 		HashSet<string> allowedHosts = new(StringComparer.OrdinalIgnoreCase)
@@ -117,38 +120,32 @@ public sealed class AssetServer : IAsyncDisposable
 			await next();
 		});
 
-		// 插件公开资源端点排在静态文件之前。插件运行时回调只提供插件根目录,
-		// 此处仍执行公开 allowlist、路径和符号链接校验, 不信任回调返回的请求路径。
-		PathString pluginPath = new($"{prefix}/plugins");
+		// 扩展资源路由排在静态文件之前。Core 只负责通用 Host、前缀和文件响应，
+		// 路径身份、公开 allowlist 与文件边界由各路由自行决定。
 		app.Use(async (context, next) =>
 		{
 			string requestPath = context.Request.Path.Value ?? string.Empty;
-			string pluginPathValue = pluginPath.Value ?? string.Empty;
-			if (!IsPathUnder(requestPath, pluginPathValue))
+			foreach (IAssetRoute route in additionalRoutes)
 			{
-				await next();
+				string routePath = $"{prefix}/{route.Segment}";
+				if (!IsPathUnder(requestPath, routePath)) continue;
+
+				string relative = requestPath[routePath.Length..].Trim('/');
+				string? decoded = AssetPath.PercentDecode(relative);
+				AssetRouteFile? file = decoded is null ? null : route.Resolve(decoded);
+				if (file is null || !File.Exists(file.FilePath))
+				{
+					await Fail(context);
+					return;
+				}
+
+				context.Response.ContentType = file.ContentType;
+				context.Response.ContentLength = new FileInfo(file.FilePath).Length;
+				context.Response.Headers.CacheControl = file.CacheControl;
+				await context.Response.SendFileAsync(file.FilePath, context.RequestAborted);
 				return;
 			}
-			string relative = requestPath[pluginPathValue.Length..].Trim('/');
-			string[] parts = relative.Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
-			string? pluginId = parts.Length == 2 ? AssetPath.PercentDecode(parts[0]) : null;
-			string? assetPath = parts.Length == 2 ? AssetPath.PercentDecode(parts[1]) : null;
-			if (pluginId is null || assetPath is null || pluginId.Length is 0 or > 128 || !IsSafePluginId(pluginId) || !IsPublicPluginAsset(assetPath))
-			{
-				await Fail(context);
-				return;
-			}
-			string? root = options.PluginRootResolver?.Invoke(pluginId);
-			string? resolved = root is null ? null : AssetPath.ResolveExact(root, assetPath);
-			if (resolved is null)
-			{
-				await Fail(context);
-				return;
-			}
-			context.Response.ContentType = AssetPath.MimeFor(assetPath);
-			context.Response.ContentLength = new FileInfo(resolved).Length;
-			context.Response.Headers.CacheControl = "public, max-age=3600";
-			await context.Response.SendFileAsync(resolved, context.RequestAborted);
+			await next();
 		});
 
 		// 一次性媒体端点: GET 取走待播音频, POST 接收前端录音
@@ -350,21 +347,28 @@ public sealed class AssetServer : IAsyncDisposable
 		await context.Response.WriteAsync("资源不存在", context.RequestAborted);
 	}
 
-	private static bool IsSafePluginId(string value)
+	private static void ValidateAdditionalRoutes(IReadOnlyList<IAssetRoute> routes)
 	{
-		if (value.Length > 128) return false;
-		string[] parts = value.Split('.');
-		return parts.Length >= 2 && parts.All(part => part.Length > 0 && part.All(character => character is >= 'a' and <= 'z' || char.IsAsciiDigit(character) || character is '_' or '-'));
+		HashSet<string> segments = new(StringComparer.OrdinalIgnoreCase);
+		foreach (IAssetRoute route in routes)
+		{
+			ArgumentNullException.ThrowIfNull(route);
+			if (!IsSafeRouteSegment(route.Segment) || IsReservedRouteSegment(route.Segment) || !segments.Add(route.Segment))
+				throw new ArgumentException("附加资源路由段无效或重复", nameof(routes));
+		}
 	}
 
-	private static bool IsPublicPluginAsset(string path)
-	{
-		if (!AssetPath.IsSafeRelativePath(path) || path.Contains('\\') || path.Split('/').Any(segment => segment.Length == 0 || segment is "." or "..")) return false;
-		return path.Equals("icon.png", StringComparison.OrdinalIgnoreCase)
-			|| path.StartsWith("web/", StringComparison.OrdinalIgnoreCase)
-			|| path.StartsWith("assets/", StringComparison.OrdinalIgnoreCase)
-			|| path.StartsWith("locales/", StringComparison.OrdinalIgnoreCase);
-	}
+	private static bool IsSafeRouteSegment(string value) =>
+		!string.IsNullOrWhiteSpace(value) && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
+
+	private static bool IsReservedRouteSegment(string value) =>
+		value.Equals(AppSegment, StringComparison.OrdinalIgnoreCase) ||
+		value.Equals(AssetSegment, StringComparison.OrdinalIgnoreCase) ||
+		value.Equals(MediaSegment, StringComparison.OrdinalIgnoreCase);
+
+	private static bool IsSafeRoutePath(string path) =>
+		!string.IsNullOrWhiteSpace(path) && !path.Contains('\\') && !path.Any(char.IsControl) &&
+		path.Split('/').All(segment => segment.Length > 0 && segment is not "." and not "..");
 
 	private static bool IsPathUnder(string path, string root) =>
 		root.Length > 0 && (path.Equals(root, StringComparison.OrdinalIgnoreCase) ||

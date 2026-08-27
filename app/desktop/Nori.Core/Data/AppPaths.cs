@@ -64,12 +64,6 @@ public static class AppPaths
 	/// </summary>
 	public static string LogDir => Path.Combine(DataDir, "log");
 
-	/// <summary>插件安装目录: &lt;data&gt;/plugins</summary>
-	public static string PluginsDir => Path.Combine(DataDir, "plugins");
-
-	/// <summary>插件持久化数据目录: &lt;data&gt;/plugin-data</summary>
-	public static string PluginDataDir => Path.Combine(DataDir, "plugin-data");
-
 	/// <summary>ARG 知识库目录: &lt;data&gt;/knowledge</summary>
 	public static string KnowledgeDir => Path.Combine(DataDir, "knowledge");
 
@@ -84,8 +78,6 @@ public static class AppPaths
 		Directory.CreateDirectory(DataDir);
 		Directory.CreateDirectory(ResourcesDir);
 		Directory.CreateDirectory(LogDir);
-		Directory.CreateDirectory(PluginsDir);
-		Directory.CreateDirectory(PluginDataDir);
 		Directory.CreateDirectory(KnowledgeDir);
 	}
 

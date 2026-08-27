@@ -15,11 +15,10 @@ using Nori.Core.Telemetry;
 using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Diagnostics;
-using Nori.Desktop.Plugins;
 using Nori.Desktop.Telemetry;
 using Nori.Desktop.Tray;
 using Nori.Desktop.Windows;
-using Nori.Plugin.Runtime;
+using Nori.PluginRuntime;
 
 namespace Nori.Desktop;
 
@@ -36,7 +35,7 @@ public sealed class App : Application
 	private NoriHttpClients? _startupHttpClients;
 	private AssetServer? _startupAssets;
 	private Nori.Core.Mcp.McpManager? _startupMcp;
-	private PluginManager? _startupPlugins;
+	private PluginRuntimeHost? _startupPluginRuntime;
 	private Task? _shutdownTask;
 	private readonly CancellationTokenSource _shutdownCts = new();
 	private int _shutdownStarted;
@@ -175,46 +174,32 @@ public sealed class App : Application
 			logger.Write(LogSource.Backend, "warn", "已启用 allow_insecure_tls: 出站 HTTPS 不再校验服务器证书, 仅建议对本地/自签名端点使用");
 		}
 		cancellationToken.ThrowIfCancellationRequested();
-		PluginWindowHost pluginWindows = new(logger);
 		AssetServer? assetServer = null;
-		PluginManager plugins = new(new PluginRuntimeOptions
+		PluginRuntimeHost pluginRuntime = new(new PluginRuntimeHostOptions
 		{
-			PluginsDirectory = AppPaths.PluginsDir,
-			DataDirectory = AppPaths.PluginDataDir,
+			DataDirectory = AppPaths.DataDir,
 			HostVersion = PluginHostVersion(),
 			DevelopmentHost = string.Equals(Nori.Core.ProductVersion.Current, "Dev", StringComparison.Ordinal),
 			SafeMode = safeMode,
+			Logger = logger,
 			AssetUriFactory = (pluginId, path) => assetServer is { } server
-				? new Uri(server.PluginAssetUrl(pluginId, path), UriKind.RelativeOrAbsolute)
+				? new Uri(server.PublicUrl("plugins", $"{pluginId}/{path}"), UriKind.RelativeOrAbsolute)
 				: throw new InvalidOperationException("插件资源服务尚未启动"),
-			ClosePluginWindowsAsync = (pluginId, cancellation) => pluginWindows.CloseAllWindowsForPluginAsync(pluginId, cancellation),
-			CapabilityFactory = (descriptor, stoppingToken) =>
-			[
-				new PluginWebViewCapability(
-					new PluginDescriptorSummary
-					{
-						Id = descriptor.Id,
-						Name = descriptor.Name,
-						Version = descriptor.Version,
-						Description = descriptor.Description,
-					},
-					(summary, options, cancellation) => pluginWindows.CreateWindowAsync(summary, options, stoppingToken, cancellation)),
-			],
 			OnError = exception => logger.Write(LogSource.Backend, "error", $"插件 {exception.Code}: {exception.Message}"),
 			OnLog = (descriptor, message, exception) => logger.Write(LogSource.Backend, "info", $"插件 [{descriptor.Id}@{descriptor.Version}] {message}"),
 		});
-		_startupPlugins = plugins;
+		_startupPluginRuntime = pluginRuntime;
 		assetServer = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),
 			ResourcesRoot = AppPaths.ResourcesDir,
 			DevMode = devMode,
-			PluginRootResolver = pluginId => plugins.ResolveAssetRoot(pluginId),
+			AdditionalRoutes = [pluginRuntime.AssetRoute],
 		});
 		AssetServer assets = assetServer ?? throw new InvalidOperationException("资源服务启动失败");
 		_startupAssets = assets;
 		logger.Write(LogSource.Backend, "info", $"资源服务已启动: {assets.Origin} (dev={devMode})");
-		plugins.Discover();
+		pluginRuntime.Discover();
 
 		Nori.Core.Mcp.McpManager mcp = new(http, config);
 		_startupMcp = mcp;
@@ -234,8 +219,7 @@ public sealed class App : Application
 			Llm = new LlmClient(http),
 			Mcp = mcp,
 			Assets = assets,
-			Plugins = plugins,
-			PluginWindows = pluginWindows,
+			PluginRuntime = pluginRuntime,
 			Http = http,
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
@@ -257,7 +241,7 @@ public sealed class App : Application
 		_startupHttpClients = null;
 		_startupAssets = null;
 		_startupMcp = null;
-		_startupPlugins = null;
+		_startupPluginRuntime = null;
 
 		// 安全模式不自动连接 MCP, 便于用户进入界面修复配置。
 		if (!safeMode)
@@ -308,7 +292,7 @@ public sealed class App : Application
 
 		// 固定窗口与插件窗口宿主都就绪后再执行第三方入口。
 		// 单个插件失败只记录状态，不阻断桌面宿主启动。
-		if (!safeMode) CrashReporter.Forget(plugins.StartAllAsync(cancellationToken), "插件启动");
+		if (!safeMode) CrashReporter.Forget(pluginRuntime.StartAllAsync(cancellationToken), "插件启动");
 	}
 
 	/// <summary>
@@ -347,10 +331,10 @@ public sealed class App : Application
 		}
 		finally
 		{
-			if (_startupPlugins is not null)
+			if (_startupPluginRuntime is not null)
 			{
-				try { await _startupPlugins.DisposeAsync().ConfigureAwait(false); } catch { }
-				_startupPlugins = null;
+				try { await _startupPluginRuntime.DisposeAsync().ConfigureAwait(false); } catch { }
+				_startupPluginRuntime = null;
 			}
 			if (_startupMcp is not null)
 			{

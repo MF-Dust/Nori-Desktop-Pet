@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<RootNamespace>Nori.PluginRuntime.TestPlugin</RootNamespace>
+		<AssemblyName>Nori.PluginRuntime.TestPlugin</AssemblyName>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="../Nori.PluginRuntime/Nori.PluginRuntime.csproj" />
+	</ItemGroup>
+</Project>

@@ -1,0 +1,202 @@
+using System.Text.Json.Nodes;
+
+namespace Nori.PluginRuntime;
+
+/// <summary>插件描述符。身份、版本与入口信息来自已验证的 manifest.json。</summary>
+public sealed record PluginDescriptor
+{
+	/// <summary>插件唯一 ID。</summary>
+	public required string Id { get; init; }
+
+	/// <summary>插件名称。</summary>
+	public required string Name { get; init; }
+
+	/// <summary>插件描述。</summary>
+	public required string Description { get; init; }
+
+	/// <summary>插件语义化版本。</summary>
+	public required string Version { get; init; }
+
+	/// <summary>插件 API 版本。</summary>
+	public required string ApiVersion { get; init; }
+
+	/// <summary>插件 manifest 声明的能力。</summary>
+	public IReadOnlyList<string> Capabilities { get; init; } = [];
+}
+
+/// <summary>受信任的进程内插件入口。AssemblyLoadContext 不是安全沙箱。</summary>
+public interface INoriPlugin
+{
+	/// <summary>激活插件并注册贡献。</summary>
+	ValueTask ActivateAsync(IPluginContext context, CancellationToken cancellationToken);
+
+	/// <summary>停用插件并释放自身资源。</summary>
+	ValueTask DeactivateAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>插件可见的最小宿主上下文。</summary>
+public interface IPluginContext
+{
+	PluginDescriptor Plugin { get; }
+	IPluginLogger Logger { get; }
+	IPluginStorage Storage { get; }
+	IPluginAssets Assets { get; }
+	IContributionRegistry Contributions { get; }
+	IPluginCapabilities Capabilities { get; }
+	CancellationToken StoppingToken { get; }
+}
+
+/// <summary>插件日志接口，不暴露宿主日志实现。</summary>
+public interface IPluginLogger
+{
+	void Debug(string message);
+	void Info(string message);
+	void Warn(string message);
+	void Error(string message, Exception? exception = null);
+}
+
+/// <summary>插件逻辑 KV/JSON 存储。</summary>
+public interface IPluginStorage
+{
+	ValueTask<JsonNode?> GetAsync(string key, CancellationToken cancellationToken = default);
+	ValueTask SetAsync(string key, JsonNode? value, CancellationToken cancellationToken = default);
+	ValueTask DeleteAsync(string key, CancellationToken cancellationToken = default);
+}
+
+/// <summary>插件包公开资源。</summary>
+public interface IPluginAssets
+{
+	Stream OpenRead(string relativePath);
+	Uri GetUri(string relativePath);
+}
+
+/// <summary>插件提供的贡献标记。</summary>
+public interface IPluginContribution
+{
+}
+
+/// <summary>一个插件贡献注册项的可撤销句柄。</summary>
+public interface IPluginRegistration : IDisposable
+{
+}
+
+/// <summary>插件贡献注册表。注册项的所有权属于当前插件上下文。</summary>
+public interface IContributionRegistry
+{
+	IPluginRegistration Register<T>(T contribution)
+		where T : class, IPluginContribution;
+}
+
+/// <summary>插件声明、授权与宿主实现的独立状态。</summary>
+public sealed record PluginCapabilityStatus(
+	string Id,
+	bool Declared,
+	bool Granted,
+	bool Available);
+
+/// <summary>宿主向插件提供的能力标记。</summary>
+public interface IPluginCapability
+{
+}
+
+/// <summary>插件能力查询。</summary>
+public interface IPluginCapabilities
+{
+	bool TryGet<T>(out T? capability)
+		where T : class, IPluginCapability;
+
+	T GetRequired<T>()
+		where T : class, IPluginCapability;
+
+	IReadOnlyList<PluginCapabilityStatus> Statuses { get; }
+}
+
+/// <summary>能力接口或实现的 manifest 能力标识。</summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, AllowMultiple = false, Inherited = false)]
+public sealed class PluginCapabilityAttribute(string id) : Attribute
+{
+	/// <summary>能力 ID。</summary>
+	public string Id { get; } = string.IsNullOrWhiteSpace(id)
+		? throw new ArgumentException("能力 ID 不能为空", nameof(id))
+		: id;
+}
+
+/// <summary>第一阶段预留的能力 ID。</summary>
+public static class PluginCapabilityIds
+{
+	public const string WebView = "ui.webview";
+}
+
+/// <summary>插件边界错误，Code 是稳定的机器可读错误码。</summary>
+public class PluginException : Exception
+{
+	public PluginException(string code, string message)
+		: base(message)
+	{
+		Code = code;
+	}
+
+	public PluginException(string code, string message, Exception innerException)
+		: base(message, innerException)
+	{
+		Code = code;
+	}
+
+	public string Code { get; }
+}
+
+/// <summary>插件 WebView 能力。</summary>
+[PluginCapability(PluginCapabilityIds.WebView)]
+public interface IWebViewCapability : IPluginCapability
+{
+	Task<IPluginWebViewWindow> CreateWindowAsync(
+		PluginWebViewOptions options,
+		CancellationToken cancellationToken = default);
+}
+
+/// <summary>插件 WebView 创建参数。</summary>
+public sealed record PluginWebViewOptions
+{
+	/// <summary>插件内窗口 ID。</summary>
+	public required string Id { get; init; }
+
+	/// <summary>窗口标题。</summary>
+	public required string Title { get; init; }
+
+	/// <summary>相对插件 webRoot 的入口路径或由宿主生成的同源 URL。</summary>
+	public required string EntryPoint { get; init; }
+
+	/// <summary>窗口宽度 (DIP)。</summary>
+	public double Width { get; init; } = 800;
+
+	/// <summary>窗口高度 (DIP)。</summary>
+	public double Height { get; init; } = 600;
+
+	/// <summary>最小宽度。</summary>
+	public double? MinWidth { get; init; }
+
+	/// <summary>最小高度。</summary>
+	public double? MinHeight { get; init; }
+
+	/// <summary>是否允许调整尺寸。</summary>
+	public bool CanResize { get; init; } = true;
+
+	/// <summary>是否置顶。</summary>
+	public bool Topmost { get; init; }
+
+	/// <summary>是否显示在任务栏。</summary>
+	public bool ShowInTaskbar { get; init; } = true;
+}
+
+/// <summary>插件 WebView 的生命周期句柄。</summary>
+public interface IPluginWebViewWindow : IAsyncDisposable
+{
+	string PluginId { get; }
+	string Id { get; }
+	string Label { get; }
+	string? Title { get; }
+	bool IsVisible { get; }
+	Task ShowAsync(CancellationToken cancellationToken = default);
+	Task HideAsync(CancellationToken cancellationToken = default);
+	Task CloseAsync(CancellationToken cancellationToken = default);
+}
