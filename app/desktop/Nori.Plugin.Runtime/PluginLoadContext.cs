@@ -62,6 +62,7 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 	public static void EnsureReferencesAllowed(string pluginDirectory)
 	{
 		if (!Directory.Exists(pluginDirectory)) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件目录不存在");
+		EnsureNoReparsePoints(pluginDirectory);
 		foreach (string path in Directory.EnumerateFiles(pluginDirectory, "*.dll", SearchOption.AllDirectories))
 		{
 			if (ContractAssemblyNames.Contains(Path.GetFileName(path)))
@@ -91,6 +92,20 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 		catch (Exception exception) when (exception is BadImageFormatException or FileLoadException or IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
 			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件程序集格式无效", exception);
+		}
+	}
+
+	private static void EnsureNoReparsePoints(string path)
+	{
+		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+		string root = Path.GetPathRoot(fullPath) ?? fullPath;
+		string relative = Path.GetRelativePath(root, fullPath);
+		string current = root;
+		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+		{
+			current = Path.Combine(current, segment);
+			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件目录包含符号链接");
 		}
 	}
 

@@ -1,5 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Nori.Plugin.Abstractions;
 using Nori.Plugin.Harness.Abstractions;
 
@@ -60,8 +59,7 @@ public sealed class PluginManager : IAsyncDisposable
 	private readonly Dictionary<string, PluginHandle> _plugins = new(StringComparer.Ordinal);
 	private readonly CancellationTokenSource _shutdownSource = new();
 	private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
-	private readonly string _startupStatePath;
-	private readonly Dictionary<string, StartupState> _startupStates;
+	private readonly PluginStartupRecoveryStore _startupRecovery;
 	private int _disposed;
 
 	public PluginManager(PluginRuntimeOptions options)
@@ -76,8 +74,7 @@ public sealed class PluginManager : IAsyncDisposable
 		Directory.CreateDirectory(options.DataDirectory);
 		string runtimeDirectory = Path.Combine(options.DataDirectory, "runtime");
 		Directory.CreateDirectory(runtimeDirectory);
-		_startupStatePath = Path.Combine(runtimeDirectory, "plugin-startup.json");
-		_startupStates = LoadStartupStates(_startupStatePath);
+		_startupRecovery = new PluginStartupRecoveryStore(Path.Combine(runtimeDirectory, "plugin-startup.json"));
 		_installer = new PluginPackageInstaller(options.PluginsDirectory);
 	}
 
@@ -100,7 +97,7 @@ public sealed class PluginManager : IAsyncDisposable
 					throw new PluginException(PluginErrorCodes.InvalidManifest, "插件目录 ID 与 manifest.json 不一致");
 				PluginLifecycleState state = _options.SafeMode ? PluginLifecycleState.Disabled : PluginLifecycleState.Discovered;
 				string? errorCode = _options.SafeMode ? PluginErrorCodes.SafeModeDisabled : null;
-				if (!_options.SafeMode && _startupStates.TryGetValue(manifest.Id, out StartupState? startupState) && startupState.Disabled)
+				if (!_options.SafeMode && _startupRecovery.IsDisabled(manifest.Id))
 				{
 					state = PluginLifecycleState.Disabled;
 					errorCode = PluginErrorCodes.StartupRecoveryDisabled;
@@ -600,11 +597,8 @@ public sealed class PluginManager : IAsyncDisposable
 
 	private void RecordStartupFailure(PluginHandle handle)
 	{
-		if (!_startupStates.TryGetValue(handle.Manifest.Id, out StartupState? state)) state = new StartupState();
-		state = state with { Failures = state.Failures + 1, Disabled = state.Failures + 1 >= 2 };
-		_startupStates[handle.Manifest.Id] = state;
-		PersistStartupStates();
-		if (state.Disabled)
+		bool disabled = _startupRecovery.RecordFailure(handle.Manifest.Id);
+		if (disabled)
 		{
 			handle.State = PluginLifecycleState.Disabled;
 			handle.ErrorCode = PluginErrorCodes.StartupRecoveryDisabled;
@@ -613,40 +607,7 @@ public sealed class PluginManager : IAsyncDisposable
 
 	private void ClearStartupFailure(string pluginId)
 	{
-		if (!_startupStates.Remove(pluginId)) return;
-		PersistStartupStates();
-	}
-
-	private void PersistStartupStates()
-	{
-		string temporary = _startupStatePath + ".tmp-" + Guid.NewGuid().ToString("N");
-		try
-		{
-			File.WriteAllText(temporary, JsonSerializer.Serialize(_startupStates));
-			File.Move(temporary, _startupStatePath, true);
-		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-		{
-			// 启动恢复记录失败不能阻断宿主；本次进程仍会隔离插件故障。
-		}
-		finally
-		{
-			try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
-		}
-	}
-
-	private static Dictionary<string, StartupState> LoadStartupStates(string path)
-	{
-		if (!File.Exists(path)) return new(StringComparer.Ordinal);
-		try
-		{
-			Dictionary<string, StartupState>? states = JsonSerializer.Deserialize<Dictionary<string, StartupState>>(File.ReadAllText(path));
-			return states is null ? new(StringComparer.Ordinal) : new(states, StringComparer.Ordinal);
-		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
-		{
-			return new(StringComparer.Ordinal);
-		}
+		_startupRecovery.Clear(pluginId);
 	}
 
 	private void Report(PluginException exception)
@@ -658,8 +619,6 @@ public sealed class PluginManager : IAsyncDisposable
 	{
 		if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(nameof(PluginManager));
 	}
-
-	private sealed record StartupState(int Failures = 0, bool Disabled = false);
 
 	private sealed class PluginHandle
 	{

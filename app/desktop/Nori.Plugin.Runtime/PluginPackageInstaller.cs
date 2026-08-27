@@ -122,9 +122,11 @@ public sealed class PluginPackageInstaller
 		try
 		{
 			EnsureNoReparsePoints(pluginDirectory);
+			EnsureNoReparsePoints(pointerPath);
 			CurrentPointer? pointer = JsonSerializer.Deserialize<CurrentPointer>(File.ReadAllText(pointerPath));
 			if (pointer is null || !PluginVersion.TryParse(pointer.Version, out _)) return null;
 			string versionDirectory = VersionDirectory(id, pointer.Version);
+			EnsureNoReparsePoints(versionDirectory);
 			return Directory.Exists(versionDirectory) ? versionDirectory : null;
 		}
 		catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
