@@ -66,8 +66,13 @@ public sealed class AssetServer : IAsyncDisposable
 		: $"{Origin}{Prefix}/{MediaSegment}/{token}";
 
 	/// <summary>拼出插件公开资源 URL。</summary>
-	public string PluginAssetUrl(string pluginId, string relativePath) =>
-		$"{Origin}{Prefix}/plugins/{Uri.EscapeDataString(pluginId)}/{relativePath.TrimStart('/')}";
+	public string PluginAssetUrl(string pluginId, string relativePath)
+	{
+		if (!IsSafePluginId(pluginId) || !IsPublicPluginAsset(relativePath)) throw new ArgumentException("插件资源路径无效", nameof(relativePath));
+		string escapedPath = string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString));
+		string route = $"/plugins/{Uri.EscapeDataString(pluginId)}/{escapedPath}";
+		return _options.DevMode ? route : $"{Origin}{Prefix}{route}";
+	}
 
 	private AssetServer(WebApplication app, AssetServerOptions options, string prefix, string origin, Nori.Core.Voice.MediaExchange media)
 	{
@@ -134,7 +139,7 @@ public sealed class AssetServer : IAsyncDisposable
 				return;
 			}
 			string? root = options.PluginRootResolver?.Invoke(pluginId);
-			string? resolved = root is null ? null : AssetPath.Resolve(root, assetPath);
+			string? resolved = root is null ? null : AssetPath.ResolveExact(root, assetPath);
 			if (resolved is null)
 			{
 				await Fail(context);
@@ -345,11 +350,16 @@ public sealed class AssetServer : IAsyncDisposable
 		await context.Response.WriteAsync("资源不存在", context.RequestAborted);
 	}
 
-	private static bool IsSafePluginId(string value) => value.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_') && !value.Contains("..", StringComparison.Ordinal);
+	private static bool IsSafePluginId(string value)
+	{
+		if (value.Length > 128) return false;
+		string[] parts = value.Split('.');
+		return parts.Length >= 2 && parts.All(part => part.Length > 0 && part.All(character => character is >= 'a' and <= 'z' || char.IsAsciiDigit(character) || character is '_' or '-'));
+	}
 
 	private static bool IsPublicPluginAsset(string path)
 	{
-		if (!AssetPath.IsSafeRelativePath(path) || path.Contains('\\')) return false;
+		if (!AssetPath.IsSafeRelativePath(path) || path.Contains('\\') || path.Split('/').Any(segment => segment.Length == 0 || segment is "." or "..")) return false;
 		return path.Equals("icon.png", StringComparison.OrdinalIgnoreCase)
 			|| path.StartsWith("web/", StringComparison.OrdinalIgnoreCase)
 			|| path.StartsWith("assets/", StringComparison.OrdinalIgnoreCase)

@@ -1,132 +1,382 @@
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Nori.Plugin.Abstractions;
 
 namespace Nori.Plugin.Runtime;
 
-internal sealed class PluginContributionRegistry : IPluginContributionRegistry, IPluginContributions
+internal sealed class PluginLogger(Action<string, Exception?>? sink = null) : IPluginLogger
 {
-	private readonly object _gate = new();
-	private readonly Dictionary<string, PluginContribution> _items = new(StringComparer.Ordinal);
-	public IReadOnlyCollection<PluginContribution> Items { get { lock (_gate) return _items.Values.ToArray(); } }
-	void IPluginContributionRegistry.Register(PluginContribution contribution)
-	{
-		if (string.IsNullOrWhiteSpace(contribution.Id)) throw new ArgumentException("贡献 ID 不能为空", nameof(contribution));
-		lock (_gate) _items[contribution.Id] = contribution;
-	}
-	public bool Remove(string id) { lock (_gate) return _items.Remove(id); }
-}
+	private readonly Action<string, Exception?> _sink = sink ?? ((_, _) => { });
 
-internal sealed class PluginUiProviderRegistry : IPluginUiProviderRegistry
-{
-	private readonly object _gate = new();
-	private readonly Dictionary<string, object> _providers = new(StringComparer.Ordinal);
-	public void Register(string providerId, object provider)
+	public void Debug(string message) => Write("debug", message, null);
+	public void Info(string message) => Write("info", message, null);
+	public void Warn(string message) => Write("warn", message, null);
+	public void Error(string message, Exception? exception = null) => Write("error", message, exception);
+
+	private void Write(string level, string message, Exception? exception)
 	{
-		if (string.IsNullOrWhiteSpace(providerId)) throw new ArgumentException("provider ID 不能为空", nameof(providerId));
-		ArgumentNullException.ThrowIfNull(provider);
-		lock (_gate) _providers[providerId] = provider;
+		ArgumentNullException.ThrowIfNull(message);
+		_sink($"{level}: {message}", exception);
 	}
 }
 
-internal sealed class PluginCapabilityRegistry : IPluginCapabilityRegistry
+internal sealed class PluginRegistration(PluginContributionRegistry owner, IPluginContribution contribution) : IPluginRegistration
 {
-	private readonly object _gate = new();
-	private readonly Dictionary<string, PluginCapability> _items = new(StringComparer.Ordinal);
-	public IReadOnlyCollection<PluginCapability> Items { get { lock (_gate) return _items.Values.ToArray(); } }
-	public void Register(PluginCapability capability)
+	private int _disposed;
+
+	public void Dispose()
 	{
-		if (string.IsNullOrWhiteSpace(capability.Name)) throw new ArgumentException("能力名称不能为空", nameof(capability));
-		lock (_gate) _items[capability.Name] = capability;
+		if (Interlocked.Exchange(ref _disposed, 1) == 0) owner.Remove(contribution);
 	}
-	public bool Has(string name) { lock (_gate) return _items.ContainsKey(name); }
 }
 
-/// <summary>插件命名空间 JSON 存储，数据跨版本和卸载保留。</summary>
+internal sealed class PluginContributionRegistry : IContributionRegistry
+{
+	private readonly object _gate = new();
+	private readonly HashSet<IPluginContribution> _items = new(ReferenceEqualityComparer.Instance);
+
+	public IPluginRegistration Register<T>(T contribution)
+		where T : class, IPluginContribution
+	{
+		ArgumentNullException.ThrowIfNull(contribution);
+		lock (_gate)
+		{
+			if (!_items.Add(contribution))
+				throw new PluginException(PluginErrorCodes.DuplicateContribution, "插件重复注册了同一个贡献对象");
+		}
+		return new PluginRegistration(this, contribution);
+	}
+
+	internal void Remove(IPluginContribution contribution)
+	{
+		lock (_gate) _items.Remove(contribution);
+	}
+
+	internal void RevokeAll()
+	{
+		lock (_gate) _items.Clear();
+	}
+
+	internal IReadOnlyList<T> GetAll<T>()
+		where T : class, IPluginContribution
+	{
+		lock (_gate) return _items.OfType<T>().ToArray();
+	}
+
+	internal IReadOnlyList<IPluginContribution> Snapshot()
+	{
+		lock (_gate) return _items.ToArray();
+	}
+}
+
+internal sealed class PluginCapabilityRegistry : IPluginCapabilities, IDisposable
+{
+	private readonly object _gate = new();
+	private readonly Dictionary<string, PluginCapabilityStatus> _statuses = new(StringComparer.Ordinal);
+	private readonly Dictionary<string, IPluginCapability> _available = new(StringComparer.Ordinal);
+
+	internal PluginCapabilityRegistry(IEnumerable<string> declared, IEnumerable<string> known, IEnumerable<IPluginCapability> available)
+	{
+		HashSet<string> knownIds = new(known, StringComparer.Ordinal);
+		foreach (string id in declared.Distinct(StringComparer.Ordinal))
+		{
+			bool granted = knownIds.Contains(id);
+			_statuses[id] = new PluginCapabilityStatus(id, true, granted, false);
+		}
+		foreach (IPluginCapability capability in available)
+		{
+			ArgumentNullException.ThrowIfNull(capability);
+			string? id = GetCapabilityId(capability.GetType());
+			if (id is null || !_statuses.TryGetValue(id, out PluginCapabilityStatus? status) || !status.Granted) continue;
+			_available[id] = capability;
+			_statuses[id] = status with { Available = true };
+		}
+	}
+
+	public IReadOnlyList<PluginCapabilityStatus> Statuses
+	{
+		get
+		{
+			lock (_gate) return _statuses.Values.OrderBy(status => status.Id, StringComparer.Ordinal).ToArray();
+		}
+	}
+
+	public bool TryGet<T>(out T? capability)
+		where T : class, IPluginCapability
+	{
+		lock (_gate)
+		{
+			foreach (IPluginCapability item in _available.Values)
+			{
+				if (item is T typed)
+				{
+					capability = typed;
+					return true;
+				}
+			}
+		}
+		capability = null;
+		return false;
+	}
+
+	public T GetRequired<T>()
+		where T : class, IPluginCapability
+	{
+		if (TryGet(out T? capability) && capability is not null) return capability;
+		string id = GetCapabilityId(typeof(T)) ?? typeof(T).FullName ?? typeof(T).Name;
+		lock (_gate)
+		{
+			if (!_statuses.TryGetValue(id, out PluginCapabilityStatus? status) || !status.Declared)
+				throw new PluginException(PluginErrorCodes.CapabilityMissing, $"插件未声明能力: {id}");
+			if (!status.Granted)
+				throw new PluginException(PluginErrorCodes.CapabilityNotGranted, $"插件能力未获授权: {id}");
+		}
+		throw new PluginException(PluginErrorCodes.CapabilityUnavailable, $"插件能力当前不可用: {id}");
+	}
+
+	public void Dispose()
+	{
+		IPluginCapability[] capabilities;
+		lock (_gate)
+		{
+			capabilities = _available.Values.ToArray();
+			_available.Clear();
+			foreach (string id in _statuses.Keys.ToArray())
+			{
+				PluginCapabilityStatus status = _statuses[id];
+				_statuses[id] = status with { Available = false };
+			}
+		}
+		foreach (IPluginCapability capability in capabilities)
+		{
+			if (capability is IDisposable disposable) disposable.Dispose();
+		}
+	}
+
+	private static string? GetCapabilityId(Type type)
+	{
+		return type.GetCustomAttribute<PluginCapabilityAttribute>()?.Id
+			?? type.GetInterfaces().Select(interfaceType => interfaceType.GetCustomAttribute<PluginCapabilityAttribute>()?.Id).FirstOrDefault(id => id is not null);
+	}
+}
+
+/// <summary>插件独立 JSON 存储。</summary>
 public sealed class JsonPluginStorage : IPluginStorage
 {
+	private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 	private readonly object _gate = new();
 	private readonly string _path;
-	private Dictionary<string, string> _values;
+	private JsonObject _values;
 
 	public JsonPluginStorage(string directory)
 	{
-		Directory.CreateDirectory(directory);
-		_path = Path.Combine(directory, "storage.json");
+		ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+		string fullDirectory = Path.GetFullPath(directory);
+		Directory.CreateDirectory(fullDirectory);
+		EnsureNoReparsePoints(fullDirectory);
+		_path = Path.Combine(fullDirectory, "storage.json");
 		_values = Load();
 	}
 
-	public IReadOnlyCollection<string> Keys { get { lock (_gate) return _values.Keys.ToArray(); } }
-	public string? Get(string key) { ValidateKey(key); lock (_gate) return _values.GetValueOrDefault(key); }
-	public void Set(string key, string value)
+	public ValueTask<JsonNode?> GetAsync(string key, CancellationToken cancellationToken = default)
 	{
 		ValidateKey(key);
-		ArgumentNullException.ThrowIfNull(value);
-		lock (_gate) { _values[key] = value; Save(); }
-	}
-	public bool Remove(string key)
-	{
-		ValidateKey(key);
-		lock (_gate) { bool removed = _values.Remove(key); if (removed) Save(); return removed; }
+		cancellationToken.ThrowIfCancellationRequested();
+		lock (_gate) return ValueTask.FromResult(_values[key]?.DeepClone());
 	}
 
-	private Dictionary<string, string> Load()
+	public ValueTask SetAsync(string key, JsonNode? value, CancellationToken cancellationToken = default)
 	{
-		if (!File.Exists(_path)) return new(StringComparer.Ordinal);
+		ValidateKey(key);
+		cancellationToken.ThrowIfCancellationRequested();
+		lock (_gate)
+		{
+			JsonNode? previous = _values[key];
+			_values[key] = value?.DeepClone();
+			try { Save(); }
+			catch
+			{
+				_values[key] = previous;
+				throw;
+			}
+		}
+		return ValueTask.CompletedTask;
+	}
+
+	public ValueTask DeleteAsync(string key, CancellationToken cancellationToken = default)
+	{
+		ValidateKey(key);
+		cancellationToken.ThrowIfCancellationRequested();
+		lock (_gate)
+		{
+			JsonNode? previous = _values[key];
+			_values.Remove(key);
+			try { Save(); }
+			catch
+			{
+				_values[key] = previous;
+				throw;
+			}
+		}
+		return ValueTask.CompletedTask;
+	}
+
+	private JsonObject Load()
+	{
+		if (!File.Exists(_path)) return [];
 		try
 		{
-			Dictionary<string, string>? loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_path));
-			return loaded is null ? new(StringComparer.Ordinal) : new(loaded, StringComparer.Ordinal);
+			JsonNode? node = JsonNode.Parse(File.ReadAllText(_path));
+			return node as JsonObject ?? throw new JsonException("根节点不是对象");
 		}
-		catch (JsonException exception) { throw new PluginException(PluginErrorCodes.PackageInvalid, "插件存储 JSON 无效", exception); }
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+		{
+			throw new PluginException(PluginErrorCodes.StorageFailed, "插件存储无法读取", exception);
+		}
 	}
 
 	private void Save()
 	{
-		string temporary = _path + ".tmp";
-		File.WriteAllText(temporary, JsonSerializer.Serialize(_values));
-		File.Move(temporary, _path, true);
+		string temporary = _path + ".tmp-" + Guid.NewGuid().ToString("N");
+		try
+		{
+			File.WriteAllText(temporary, _values.ToJsonString(JsonOptions));
+			File.Move(temporary, _path, true);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			throw new PluginException(PluginErrorCodes.StorageFailed, "插件存储无法写入", exception);
+		}
+		finally
+		{
+			try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+		}
 	}
 
 	private static void ValidateKey(string key)
 	{
-		if (string.IsNullOrWhiteSpace(key) || key.Length > 256 || key.Contains('/') || key.Contains('\\') || key.Contains("..", StringComparison.Ordinal))
-			throw new ArgumentException("存储键无效", nameof(key));
+		if (string.IsNullOrWhiteSpace(key) || key.Length > 128 || key.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '_' or '-')))
+			throw new PluginException(PluginErrorCodes.StorageFailed, "插件存储键无效");
+	}
+
+	private static void EnsureNoReparsePoints(string path)
+	{
+		string fullPath = Path.GetFullPath(path);
+		string root = Path.GetPathRoot(fullPath) ?? fullPath;
+		string relative = Path.GetRelativePath(root, fullPath);
+		string current = root;
+		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+		{
+			current = Path.Combine(current, segment);
+			if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new PluginException(PluginErrorCodes.StorageFailed, "插件存储目录包含符号链接");
+		}
 	}
 }
 
-/// <summary>只允许读取插件公开的 web/assets/locales/icon.png 资源。</summary>
-public sealed class PluginAssetReader : IPluginAssetReader
+/// <summary>插件包公开资源读取器。</summary>
+public sealed class PluginAssetProvider : IPluginAssets
 {
 	private readonly string _root;
-	public PluginAssetReader(string root) => _root = Path.GetFullPath(root);
-	public bool Exists(string relativePath) => Resolve(relativePath) is { } path && File.Exists(path);
+	private readonly Func<string, Uri>? _uriFactory;
+
+	public PluginAssetProvider(string root, Func<string, Uri>? uriFactory = null)
+	{
+		_root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+		_uriFactory = uriFactory;
+	}
+
 	public Stream OpenRead(string relativePath)
 	{
 		string path = Resolve(relativePath) ?? throw new PluginException(PluginErrorCodes.AssetDenied, "插件资源路径不允许访问");
-		return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+		return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
 	}
-	public IReadOnlyList<string> List(string? relativeDirectory = null)
+
+	public Uri GetUri(string relativePath)
 	{
-		string path = ResolveDirectory(relativeDirectory);
-		if (!Directory.Exists(path)) return [];
-		return Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-			.Select(file => Path.GetRelativePath(_root, file).Replace(Path.DirectorySeparatorChar, '/'))
-			.Where(IsPublicAsset).Order().ToArray();
+		string path = Resolve(relativePath) ?? throw new PluginException(PluginErrorCodes.AssetDenied, "插件资源路径不允许访问");
+		return _uriFactory?.Invoke(relativePath) ?? new Uri(path, UriKind.Absolute);
 	}
-	private string? Resolve(string relativePath)
+
+	internal static bool IsPublicAsset(string? path)
 	{
-		if (!IsPublicAsset(relativePath)) return null;
-		string full = Path.GetFullPath(Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-		if (!full.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
-		return full;
-	}
-	private string ResolveDirectory(string? relativeDirectory) => relativeDirectory is null ? _root : Resolve(relativeDirectory + "/.directory") is { } path ? Path.GetDirectoryName(path)! : Path.Combine(_root, "__denied__");
-	public static bool IsPublicAsset(string? path)
-	{
-		if (string.IsNullOrWhiteSpace(path) || path.StartsWith('/') || path.Contains('\\') || path.Split('/').Any(part => part is "" or "." or "..")) return false;
+		if (string.IsNullOrWhiteSpace(path) || path.StartsWith('/') || path.StartsWith('\\') || path.Contains('\\') || path.Contains(':', StringComparison.Ordinal) || path.Any(char.IsControl)) return false;
+		string[] parts = path.Split('/');
+		if (parts.Any(part => part.Length == 0 || part is "." or "..")) return false;
 		return path.Equals("icon.png", StringComparison.OrdinalIgnoreCase)
 			|| path.StartsWith("web/", StringComparison.OrdinalIgnoreCase)
 			|| path.StartsWith("assets/", StringComparison.OrdinalIgnoreCase)
 			|| path.StartsWith("locales/", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private string? Resolve(string relativePath)
+	{
+		if (!IsPublicAsset(relativePath)) return null;
+		string fullPath;
+		try { fullPath = Path.GetFullPath(Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar))); }
+		catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException) { return null; }
+		if (!IsWithin(_root, fullPath) || !File.Exists(fullPath)) return null;
+		try
+		{
+			if ((File.GetAttributes(_root) & FileAttributes.ReparsePoint) != 0) return null;
+		}
+		catch (FileNotFoundException) { return null; }
+		catch (DirectoryNotFoundException) { return null; }
+		catch (UnauthorizedAccessException) { return null; }
+		catch (IOException) { return null; }
+		try
+		{
+			EnsureNoReparsePoints(_root, fullPath);
+			return fullPath;
+		}
+		catch (PluginException) { return null; }
+		catch (IOException) { return null; }
+		catch (UnauthorizedAccessException) { return null; }
+	}
+
+	private static bool IsWithin(string root, string path)
+	{
+		string separatorRoot = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+		return path.Equals(root, StringComparison.OrdinalIgnoreCase) || path.StartsWith(separatorRoot, StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static void EnsureNoReparsePoints(string root, string path)
+	{
+		string relative = Path.GetRelativePath(root, path);
+		string current = root;
+		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+		{
+			if (segment is "." or "..") throw new PluginException(PluginErrorCodes.AssetDenied, "插件资源路径无效");
+			current = Path.Combine(current, segment);
+			if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new PluginException(PluginErrorCodes.AssetDenied, "插件资源路径包含符号链接");
+		}
+	}
+}
+
+internal sealed class PluginContext : IPluginContext
+{
+	internal required PluginCapabilityRegistry CapabilityRegistry { get; init; }
+	internal required PluginContributionRegistry ContributionRegistry { get; init; }
+	internal required CancellationTokenSource StoppingSource { get; init; }
+
+	public required PluginDescriptor Plugin { get; init; }
+	public required IPluginLogger Logger { get; init; }
+	public required IPluginStorage Storage { get; init; }
+	public required IPluginAssets Assets { get; init; }
+	public required IContributionRegistry Contributions { get; init; }
+	public required IPluginCapabilities Capabilities { get; init; }
+	public CancellationToken StoppingToken => StoppingSource.Token;
+
+	internal void Revoke()
+	{
+		try { StoppingSource.Cancel(throwOnFirstException: false); } catch { }
+		try { ContributionRegistry.RevokeAll(); } catch { }
+		try { CapabilityRegistry.Dispose(); } catch { }
+	}
+
+	internal void Dispose()
+	{
+		StoppingSource.Dispose();
 	}
 }

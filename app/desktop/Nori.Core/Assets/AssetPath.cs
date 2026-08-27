@@ -174,6 +174,59 @@ public static class AssetPath
 	}
 
 	/// <summary>
+	/// 在根目录内精确解析一个文件，不尝试 PathCandidates。
+	/// 插件公开资源使用这个入口，避免一个 URL 因候选删段而命中另一个文件。
+	/// </summary>
+	public static string? ResolveExact(string root, string relative)
+	{
+		if (!IsSafeRelativePath(relative)) return null;
+		string canonicalRoot;
+		try
+		{
+			canonicalRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+		}
+		catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+		{
+			return null;
+		}
+		string full;
+		try
+		{
+			full = Path.GetFullPath(Path.Combine(canonicalRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
+		}
+		catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+		{
+			return null;
+		}
+		StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		if (!full.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, comparison) || !File.Exists(full)) return null;
+		try
+		{
+			if ((File.GetAttributes(canonicalRoot) & FileAttributes.ReparsePoint) != 0) return null;
+		}
+		catch (FileNotFoundException) { return null; }
+		catch (DirectoryNotFoundException) { return null; }
+		catch (UnauthorizedAccessException) { return null; }
+		catch (IOException) { return null; }
+		string current = canonicalRoot;
+		string relativeToRoot = Path.GetRelativePath(canonicalRoot, full);
+		foreach (string segment in relativeToRoot.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+		{
+			current = Path.Combine(current, segment);
+			try
+			{
+				FileAttributes attributes = File.GetAttributes(current);
+				if ((attributes & FileAttributes.ReparsePoint) != 0) return null;
+			}
+			catch (FileNotFoundException) { return null; }
+			catch (DirectoryNotFoundException) { return null; }
+			catch (UnauthorizedAccessException) { return null; }
+			catch (IOException) { return null; }
+		}
+		return full;
+	}
+
+	/// <summary>
 	/// HEX 字符转数值, 非法返回 -1
 	/// </summary>
 	private static int HexValue(char value) => value switch

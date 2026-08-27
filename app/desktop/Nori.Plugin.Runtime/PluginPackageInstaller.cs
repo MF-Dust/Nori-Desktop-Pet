@@ -1,157 +1,258 @@
 using System.IO.Compression;
 using System.Text.Json;
 using Nori.Core.Resources;
+using Nori.Plugin.Abstractions;
 
 namespace Nori.Plugin.Runtime;
 
-/// <summary>插件包目录布局与原子安装。</summary>
+/// <summary>本地 .noripack 安装器与版本指针管理。</summary>
 public sealed class PluginPackageInstaller
 {
-	public const string ManifestFileName = "plugin.json";
-	public const string LegacyManifestFileName = "manifest.json";
+	public const string PackageExtension = ".noripack";
+	public const string ManifestFileName = "manifest.json";
+	public const string CurrentFileName = "current.json";
+
+	private static readonly HashSet<string> ContractAssemblyNames = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"Nori.Plugin.Abstractions.dll",
+		"Nori.Plugin.Games.Abstractions.dll",
+		"Nori.Plugin.Arcade.Abstractions.dll",
+		"Nori.Plugin.Harness.Abstractions.dll",
+	};
+
 	private readonly string _root;
+	private readonly string _stagingRoot;
+	private readonly string _inboxRoot;
 
 	public PluginPackageInstaller(string root)
 	{
-		_root = Path.GetFullPath(root);
+		ArgumentException.ThrowIfNullOrWhiteSpace(root);
+		_root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+		_stagingRoot = Path.Combine(_root, ".staging");
+		_inboxRoot = Path.Combine(_root, "inbox");
 		Directory.CreateDirectory(_root);
-		Directory.CreateDirectory(Path.Combine(_root, "staging"));
-		Directory.CreateDirectory(Path.Combine(_root, "versions"));
+		Directory.CreateDirectory(_stagingRoot);
+		Directory.CreateDirectory(_inboxRoot);
+		EnsureNoReparsePoints(_root);
 	}
 
 	public string RootDirectory => _root;
-	public string CurrentDirectory(string pluginId) => Path.Combine(_root, "current", pluginId);
-	public string VersionDirectory(string pluginId, string version) => Path.Combine(_root, "versions", pluginId, version);
+	public string InboxDirectory => _inboxRoot;
+	public string CurrentRoot => _root;
+	public string CurrentDirectory(string id) => Path.Combine(_root, id);
+	public string VersionDirectory(string id, string version) => Path.Combine(_root, id, version);
+	public bool IsVersionInstalled(string id, string version) => Directory.Exists(VersionDirectory(id, version));
+	public IEnumerable<string> InstalledIds => Directory.EnumerateDirectories(_root)
+		.Where(path => !string.Equals(Path.GetFileName(path), ".staging", StringComparison.Ordinal))
+		.Where(path => File.Exists(Path.Combine(path, CurrentFileName)))
+		.Select(Path.GetFileName)
+		.Where(id => id is not null)
+		.Cast<string>();
 
+	/// <summary>只读取并校验包内 manifest，不写入文件。</summary>
 	public PluginManifest InspectPackage(string packagePath)
 	{
 		try
 		{
-			using ZipArchive archive = ZipFile.OpenRead(packagePath);
-			ValidateEntries(archive);
-			ZipArchiveEntry entry = FindManifestEntry(archive);
-			using Stream stream = entry.Open();
-			using StreamReader reader = new(stream);
+			string fullPath = ValidatePackagePath(packagePath);
+			using ZipArchive archive = ZipFile.OpenRead(fullPath);
+			(IReadOnlyList<PackageEntry> entries, _) = ValidateEntries(archive);
+			PackageEntry manifestEntry = entries.Single(entry => entry.Path.Equals(ManifestFileName, StringComparison.Ordinal));
+			using StreamReader reader = new(manifestEntry.Entry.Open());
 			return PluginManifestReader.ReadJson(reader.ReadToEnd());
 		}
-		catch (PluginException) { throw; }
-		catch (Exception exception) when (exception is InvalidDataException or IOException or InvalidOperationException or JsonException or ResourceException)
+		catch (PluginException)
 		{
-			throw new PluginException(PluginErrorCodes.PackageInvalid, "插件包无效", exception);
+			throw;
+		}
+		catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or ResourceException)
+		{
+			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包无效", exception);
 		}
 	}
 
+	/// <summary>先 staging 校验，再把完整版本目录移动到插件目录并更新 current.json。</summary>
 	public PluginManifest Install(string packagePath, CancellationToken cancellationToken = default)
 	{
 		PluginManifest manifest = InspectPackage(packagePath);
-		string staging = Path.Combine(_root, "staging", $"{manifest.PluginId}-{Guid.NewGuid():N}");
-		string versionDirectory = VersionDirectory(manifest.PluginId, manifest.Version);
-		string currentDirectory = CurrentDirectory(manifest.PluginId);
+		string staging = Path.Combine(_stagingRoot, $"{manifest.Id}-{Guid.NewGuid():N}");
+		string pluginDirectory = CurrentDirectory(manifest.Id);
+		string versionDirectory = VersionDirectory(manifest.Id, manifest.Version);
+		string pointerPath = Path.Combine(pluginDirectory, CurrentFileName);
 		try
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			Directory.CreateDirectory(staging);
 			ZipExtractor.Extract(packagePath, staging, cancellationToken);
-			string extractedManifest = File.Exists(Path.Combine(staging, ManifestFileName)) ? ManifestFileName : LegacyManifestFileName;
-			PluginManifest extracted = PluginManifestReader.Read(Path.Combine(staging, extractedManifest));
-			if (!string.Equals(extracted.PluginId, manifest.PluginId, StringComparison.Ordinal) || !string.Equals(extracted.Version, manifest.Version, StringComparison.Ordinal))
-				throw new PluginException(PluginErrorCodes.PackageInvalid, "安装前后插件清单不一致");
-			Directory.CreateDirectory(Path.GetDirectoryName(versionDirectory)!);
-			if (Directory.Exists(versionDirectory)) Directory.Delete(versionDirectory, true);
+			PluginManifest extracted = PluginManifestReader.Read(Path.Combine(staging, ManifestFileName));
+			if (!string.Equals(extracted.Id, manifest.Id, StringComparison.Ordinal) || !string.Equals(extracted.Version, manifest.Version, StringComparison.Ordinal))
+				throw new PluginException(PluginErrorCodes.InvalidPackage, "解压前后的 manifest 身份不一致");
+			string entryPath = Path.Combine(staging, extracted.Runtime.Assembly.Replace('/', Path.DirectorySeparatorChar));
+			if (!File.Exists(entryPath)) throw new PluginException(PluginErrorCodes.EntryAssemblyMissing, "插件包缺少 manifest 指定的入口程序集");
+			PluginLoadContext.EnsureReferencesAllowed(staging);
+			EnsureNoReparsePoints(staging);
+			cancellationToken.ThrowIfCancellationRequested();
+			EnsureNoReparsePoints(pluginDirectory);
+			Directory.CreateDirectory(pluginDirectory);
+			EnsureNoReparsePoints(pluginDirectory);
+			if (Directory.Exists(versionDirectory)) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件版本已经安装");
 			Directory.Move(staging, versionDirectory);
-			string currentStaging = Path.Combine(_root, "staging", $"current-{manifest.PluginId}-{Guid.NewGuid():N}");
-			CopyDirectory(versionDirectory, currentStaging);
-			AtomicReplaceCurrent(currentStaging, currentDirectory);
+			WriteCurrentPointer(pointerPath, extracted.Version);
 			return extracted;
 		}
-		catch (PluginException) { TryDelete(staging); throw; }
+		catch (PluginException)
+		{
+			TryDelete(staging);
+			throw;
+		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ResourceException)
 		{
 			TryDelete(staging);
-			throw new PluginException(PluginErrorCodes.PackageInvalid, "插件包安装失败", exception);
+			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包安装失败", exception);
 		}
 	}
 
-	private static ZipArchiveEntry FindEntry(ZipArchive archive, string fileName)
+	/// <summary>读取插件的 current.json 并返回对应的版本目录。</summary>
+	public string? ResolveCurrentDirectory(string id)
 	{
-		(List<ZipArchiveEntry> Entries, string? CommonTop) = PackageEntries(archive);
-		ZipArchiveEntry? entry = Entries.FirstOrDefault(item =>
+		if (!PluginManifestReader.IsValidPluginId(id)) return null;
+		string pluginDirectory = CurrentDirectory(id);
+		string pointerPath = Path.Combine(pluginDirectory, CurrentFileName);
+		if (!File.Exists(pointerPath)) return null;
+		try
 		{
-			string path = StripTop(ZipExtractor.SanitizePath(item.FullName), CommonTop);
-			return path.Equals(fileName, StringComparison.OrdinalIgnoreCase);
-		});
-		return entry ?? throw new PluginException(PluginErrorCodes.PackageInvalid, "插件包缺少 plugin.json");
+			EnsureNoReparsePoints(pluginDirectory);
+			CurrentPointer? pointer = JsonSerializer.Deserialize<CurrentPointer>(File.ReadAllText(pointerPath));
+			if (pointer is null || !PluginVersion.TryParse(pointer.Version, out _)) return null;
+			string versionDirectory = VersionDirectory(id, pointer.Version);
+			return Directory.Exists(versionDirectory) ? versionDirectory : null;
+		}
+		catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+		{
+			return null;
+		}
 	}
 
-	private static void ValidateEntries(ZipArchive archive)
+	private static (IReadOnlyList<PackageEntry> Entries, string? CommonTop) ValidateEntries(ZipArchive archive)
 	{
-		if (archive.Entries.Count == 0 || archive.Entries.Count > 2048) throw new PluginException(PluginErrorCodes.PackageInvalid, "插件包没有有效内容");
-		(List<ZipArchiveEntry> Entries, string? CommonTop) = PackageEntries(archive);
-		bool manifest = false;
-		foreach (ZipArchiveEntry entry in Entries)
+		if (archive.Entries.Count == 0 || archive.Entries.Count > 4096)
+			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包条目数量无效");
+
+		List<(ZipArchiveEntry Entry, string Path)> sanitized = [];
+		foreach (ZipArchiveEntry entry in archive.Entries)
 		{
-			string path = StripTop(ZipExtractor.SanitizePath(entry.FullName), CommonTop);
+			ValidateRawEntryName(entry.FullName);
+			string path;
+			try { path = ZipExtractor.SanitizePath(entry.FullName); }
+			catch (ResourceException exception) { throw new PluginException(PluginErrorCodes.PackagePathDenied, exception.Message, exception); }
 			if (path.Length == 0) continue;
-			if (IsManifest(path)) manifest = true;
-			if (entry.Name.Length == 0) continue;
-			bool allowed = path.StartsWith("lib/", StringComparison.OrdinalIgnoreCase)
-				|| path.StartsWith("runtimes/", StringComparison.OrdinalIgnoreCase)
-				|| PluginAssetReader.IsPublicAsset(path);
-			if (!allowed && !IsManifest(path))
-				throw new PluginException(PluginErrorCodes.AssetDenied, $"插件包包含不允许的文件: {path}");
+			if (!entry.IsDirectory() && (entry.Length < 0 || entry.Length > ZipExtractor.DefaultLimits.MaxSingleFileBytes))
+				throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包单文件过大");
+			sanitized.Add((entry, path));
 		}
-		if (!manifest) throw new PluginException(PluginErrorCodes.PackageInvalid, "插件包缺少 plugin.json");
-	}
 
-	private static ZipArchiveEntry FindManifestEntry(ZipArchive archive)
-	{
-		try { return FindEntry(archive, ManifestFileName); }
-		catch (PluginException) { return FindEntry(archive, LegacyManifestFileName); }
-	}
-
-	private static (List<ZipArchiveEntry> Entries, string? CommonTop) PackageEntries(ZipArchive archive)
-	{
-		List<ZipArchiveEntry> entries = archive.Entries.Where(entry => ZipExtractor.SanitizePath(entry.FullName).Length > 0).ToList();
-		string? commonTop = ZipExtractor.FindCommonTopDirectory(entries.Where(entry => entry.Name.Length > 0).Select(entry => ZipExtractor.SanitizePath(entry.FullName)));
+		string? commonTop = ZipExtractor.FindCommonTopDirectory(sanitized.Where(item => !item.Entry.IsDirectory()).Select(item => item.Path));
+		HashSet<string> paths = new(StringComparer.OrdinalIgnoreCase);
+		List<PackageEntry> entries = [];
+		bool hasManifest = false;
+		foreach ((ZipArchiveEntry entry, string rawPath) in sanitized)
+		{
+			string path = StripCommonTop(rawPath, commonTop);
+			if (path.Length == 0) continue;
+			if (!paths.Add(path)) throw new PluginException(PluginErrorCodes.InvalidPackage, $"插件包包含重复路径: {path}");
+			if (path.Equals(ManifestFileName, StringComparison.Ordinal)) hasManifest = true;
+			if (entry.IsDirectory()) continue;
+			if (ContractAssemblyNames.Contains(Path.GetFileName(path))) throw new PluginException(PluginErrorCodes.ContractAssemblyDenied, "插件包不得携带 contract DLL");
+			bool allowed = path.Equals(ManifestFileName, StringComparison.Ordinal) ||
+				path.Equals("README.md", StringComparison.OrdinalIgnoreCase) ||
+				path.Equals("LICENSE", StringComparison.OrdinalIgnoreCase) ||
+				path.Equals("icon.png", StringComparison.OrdinalIgnoreCase) ||
+				path.StartsWith("lib/", StringComparison.Ordinal) ||
+				path.StartsWith("web/", StringComparison.Ordinal) ||
+				path.StartsWith("assets/", StringComparison.Ordinal) ||
+				path.StartsWith("locales/", StringComparison.Ordinal) ||
+				path.StartsWith("runtimes/", StringComparison.Ordinal);
+			if (!allowed) throw new PluginException(PluginErrorCodes.AssetDenied, $"插件包文件不允许: {path}");
+			entries.Add(new PackageEntry(entry, path));
+		}
+		if (!hasManifest) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包缺少 manifest.json");
 		return (entries, commonTop);
 	}
 
-	private static bool IsManifest(string path) => path.Equals(ManifestFileName, StringComparison.OrdinalIgnoreCase) || path.Equals(LegacyManifestFileName, StringComparison.OrdinalIgnoreCase);
+	private static void ValidateRawEntryName(string raw)
+	{
+		if (raw.Contains('\\') || raw.Contains(':', StringComparison.Ordinal))
+			throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件包路径包含不允许的分隔符");
+		string[] parts = raw.Split('/');
+		for (int index = 0; index < parts.Length; index++)
+		{
+			if (parts[index] == ".") throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件包路径包含 . 段");
+			if (parts[index].Length == 0 && index < parts.Length - 1)
+				throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件包路径包含重复分隔符");
+		}
+	}
 
-	private static string StripTop(string path, string? commonTop)
+	private static string ValidatePackagePath(string packagePath)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(packagePath);
+		string fullPath = Path.GetFullPath(packagePath);
+		if (!fullPath.EndsWith(PluginPackageInstaller.PackageExtension, StringComparison.OrdinalIgnoreCase))
+			throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包扩展名必须为 .noripack");
+		EnsureNoReparsePoints(Path.GetDirectoryName(fullPath) ?? fullPath);
+		if (!File.Exists(fullPath)) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包不存在");
+		return fullPath;
+	}
+
+	private static string StripCommonTop(string path, string? commonTop)
 	{
 		if (commonTop is null) return path;
 		string prefix = commonTop + "/";
-		return path.StartsWith(prefix, StringComparison.Ordinal) ? path[prefix.Length..] : path;
+		if (path.Equals(commonTop, StringComparison.Ordinal)) return string.Empty;
+		if (!path.StartsWith(prefix, StringComparison.Ordinal)) throw new PluginException(PluginErrorCodes.InvalidPackage, "插件包顶层目录不一致");
+		return path[prefix.Length..];
 	}
 
-	private static void CopyDirectory(string source, string target)
+	private static void WriteCurrentPointer(string pointerPath, string version)
 	{
-		Directory.CreateDirectory(target);
-		foreach (string directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-			Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, directory)));
-		foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+		string temporary = pointerPath + ".tmp-" + Guid.NewGuid().ToString("N");
+		try
 		{
-			string destination = Path.Combine(target, Path.GetRelativePath(source, file));
-			Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-			File.Copy(file, destination);
+			File.WriteAllText(temporary, JsonSerializer.Serialize(new CurrentPointer(version)));
+			File.Move(temporary, pointerPath, true);
+		}
+		finally
+		{
+			try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
 		}
 	}
 
-	private static void AtomicReplaceCurrent(string source, string current)
+	private static void EnsureNoReparsePoints(string path)
 	{
-		string? parent = Path.GetDirectoryName(current);
-		if (parent is null) throw new IOException("当前插件目录没有父目录");
-		Directory.CreateDirectory(parent);
-		string backup = current + ".old-" + Guid.NewGuid().ToString("N");
-		if (Directory.Exists(current)) Directory.Move(current, backup);
-		try { Directory.Move(source, current); }
-		catch
+		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+		string root = Path.GetPathRoot(fullPath) ?? fullPath;
+		string relative = Path.GetRelativePath(root, fullPath);
+		string current = root;
+		foreach (string segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
 		{
-			if (Directory.Exists(backup) && !Directory.Exists(current)) Directory.Move(backup, current);
-			throw;
+			current = Path.Combine(current, segment);
+			if (File.Exists(current) || Directory.Exists(current))
+			{
+				if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+					throw new PluginException(PluginErrorCodes.PackagePathDenied, "插件包路径包含符号链接");
+			}
 		}
-		TryDelete(backup);
 	}
 
-	private static void TryDelete(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }
+	private static void TryDelete(string path)
+	{
+		try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { }
+	}
+
+	private sealed record PackageEntry(ZipArchiveEntry Entry, string Path);
+	private sealed record CurrentPointer(string Version);
+}
+
+internal static class ZipArchiveEntryExtensions
+{
+	public static bool IsDirectory(this ZipArchiveEntry entry) => entry.Name.Length == 0;
 }

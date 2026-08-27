@@ -32,6 +32,7 @@ public class AssetServerTests : IAsyncLifetime
 		await File.WriteAllTextAsync(Path.Combine(_resourcesRoot, "live2d", "nested", "nested", "Deep.model3.json"), """{"Version":3}""");
 		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "web", "index.html"), "plugin");
 		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "plugin.json"), "private");
+		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "manifest.json"), "private manifest");
 		// 根目录之外的"机密"文件, 用来验证穿越被挡住
 		await File.WriteAllTextAsync(Path.Combine(_root, "secret.txt"), "TOP SECRET");
 
@@ -74,8 +75,18 @@ public class AssetServerTests : IAsyncLifetime
 		Assert.Equal(HttpStatusCode.OK, asset.StatusCode);
 		Assert.Equal("plugin", await asset.Content.ReadAsStringAsync());
 
-		HttpResponseMessage manifest = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/plugins/demo.plugin/plugin.json"));
+		HttpResponseMessage manifest = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/plugins/demo.plugin/manifest.json"));
 		Assert.Equal(HttpStatusCode.NotFound, manifest.StatusCode);
+	}
+
+	[Theory]
+	[InlineData("%2e%2e/manifest.json")]
+	[InlineData("web/../manifest.json")]
+	public async Task 插件资源路径穿越被挡住(string relativePath)
+	{
+		HttpResponseMessage response = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/plugins/demo.plugin/{relativePath}"));
+		Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+		Assert.DoesNotContain("private manifest", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 	}
 
 	[Fact]

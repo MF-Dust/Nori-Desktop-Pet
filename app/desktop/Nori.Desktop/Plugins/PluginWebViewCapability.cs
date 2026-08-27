@@ -30,23 +30,24 @@ public sealed class PluginWebViewCapability : IWebViewCapability
 		ArgumentNullException.ThrowIfNull(options);
 
 		// 严格校验窗口 ID 命名规范
-		PluginWindowHost.ValidateId(options.WindowId, nameof(options.WindowId));
+		PluginWindowHost.ValidateId(options.Id, nameof(options.Id));
 
-		if (string.IsNullOrWhiteSpace(options.Title))
+		if (string.IsNullOrWhiteSpace(options.Title) || options.Title.Any(char.IsControl))
 		{
 			throw new ArgumentException("窗口标题不能为空。", nameof(options));
 		}
 
-		if (string.IsNullOrWhiteSpace(options.EntryUrl))
+		if (string.IsNullOrWhiteSpace(options.EntryPoint) || options.EntryPoint.Any(char.IsControl))
 		{
-			throw new ArgumentException("入口 URL 不能为空。", nameof(options));
+			throw new ArgumentException("入口路径不能为空且不能包含控制字符。", nameof(options));
 		}
 
-		if (options.Width <= 0 || options.Height <= 0)
+		if (double.IsNaN(options.Width) || double.IsInfinity(options.Width) || options.Width <= 0 || double.IsNaN(options.Height) || double.IsInfinity(options.Height) || options.Height <= 0)
 		{
 			throw new ArgumentException("窗口宽度和高度必须大于 0。", nameof(options));
 		}
 
+		cancellationToken.ThrowIfCancellationRequested();
 		return await _windowFactory(_descriptor, options, cancellationToken).ConfigureAwait(false);
 	}
 }

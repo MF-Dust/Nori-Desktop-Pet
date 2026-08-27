@@ -15,6 +15,7 @@ using Nori.Core.Telemetry;
 using Nori.Desktop.Automation.Desktop;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Diagnostics;
+using Nori.Desktop.Plugins;
 using Nori.Desktop.Telemetry;
 using Nori.Desktop.Tray;
 using Nori.Desktop.Windows;
@@ -174,27 +175,45 @@ public sealed class App : Application
 			logger.Write(LogSource.Backend, "warn", "已启用 allow_insecure_tls: 出站 HTTPS 不再校验服务器证书, 仅建议对本地/自签名端点使用");
 		}
 		cancellationToken.ThrowIfCancellationRequested();
+		PluginWindowHost pluginWindows = new(logger);
+		AssetServer? assetServer = null;
 		PluginManager plugins = new(new PluginRuntimeOptions
 		{
 			PluginsDirectory = AppPaths.PluginsDir,
 			DataDirectory = AppPaths.PluginDataDir,
+			HostVersion = PluginHostVersion(),
+			DevelopmentHost = string.Equals(Nori.Core.ProductVersion.Current, "Dev", StringComparison.Ordinal),
 			SafeMode = safeMode,
+			AssetUriFactory = (pluginId, path) => assetServer is { } server
+				? new Uri(server.PluginAssetUrl(pluginId, path), UriKind.RelativeOrAbsolute)
+				: throw new InvalidOperationException("插件资源服务尚未启动"),
+			CapabilityFactory = (descriptor, stoppingToken) =>
+			[
+				new PluginWebViewCapability(
+					new PluginDescriptorSummary
+					{
+						Id = descriptor.Id,
+						Name = descriptor.Name,
+						Version = descriptor.Version,
+						Description = descriptor.Description,
+					},
+					(summary, options, cancellation) => pluginWindows.CreateWindowAsync(summary, options, stoppingToken, cancellation)),
+			],
 			OnError = exception => logger.Write(LogSource.Backend, "error", $"插件 {exception.Code}: {exception.Message}"),
+			OnLog = (descriptor, message, exception) => logger.Write(LogSource.Backend, "info", $"插件 [{descriptor.Id}@{descriptor.Version}] {message}"),
 		});
 		_startupPlugins = plugins;
-		AssetServer assets = await AssetServer.StartAsync(new AssetServerOptions
+		assetServer = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),
 			ResourcesRoot = AppPaths.ResourcesDir,
 			DevMode = devMode,
-			PluginRootResolver = pluginId => pluginId.Length <= 64 && pluginId.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_')
-				&& !pluginId.Contains("..", StringComparison.Ordinal) && Directory.Exists(Path.Combine(AppPaths.PluginsDir, "current", pluginId))
-				? Path.Combine(AppPaths.PluginsDir, "current", pluginId) : null,
+			PluginRootResolver = pluginId => plugins.ResolveAssetRoot(pluginId),
 		});
+		AssetServer assets = assetServer ?? throw new InvalidOperationException("资源服务启动失败");
 		_startupAssets = assets;
 		logger.Write(LogSource.Backend, "info", $"资源服务已启动: {assets.Origin} (dev={devMode})");
 		plugins.Discover();
-		if (!safeMode) CrashReporter.Forget(plugins.StartAllAsync(cancellationToken), "插件启动");
 
 		Nori.Core.Mcp.McpManager mcp = new(http, config);
 		_startupMcp = mcp;
@@ -215,6 +234,7 @@ public sealed class App : Application
 			Mcp = mcp,
 			Assets = assets,
 			Plugins = plugins,
+			PluginWindows = pluginWindows,
 			Http = http,
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
@@ -284,6 +304,10 @@ public sealed class App : Application
 				SmokeTestRuntime.ScheduleBoundedExit(services.Windows);
 			}
 		});
+
+		// 固定窗口与插件窗口宿主都就绪后再执行第三方入口。
+		// 单个插件失败只记录状态，不阻断桌面宿主启动。
+		if (!safeMode) CrashReporter.Forget(plugins.StartAllAsync(cancellationToken), "插件启动");
 	}
 
 	/// <summary>
@@ -361,6 +385,14 @@ public sealed class App : Application
 	/// 应用版本, 写入 app_version 配置
 	/// </summary>
 	private static string AppVersion() => Nori.Core.ProductVersion.Current;
+
+	/// <summary>提取插件运行时使用的数字宿主版本。</summary>
+	private static PluginVersion PluginHostVersion()
+	{
+		string raw = Nori.Core.ProductVersion.Current.TrimStart('v', 'V');
+		string core = raw.Split(['-', '+'], 2, StringSplitOptions.None)[0];
+		return PluginVersion.TryParse(core, out PluginVersion version) ? version : new PluginVersion(1, 0, 0);
+	}
 
 	/// <summary>
 	/// 解析布尔配置文本, 与 PetRuntime.ParseBool 同口径

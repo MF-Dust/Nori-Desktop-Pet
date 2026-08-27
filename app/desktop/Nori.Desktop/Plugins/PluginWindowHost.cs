@@ -22,6 +22,9 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 	[GeneratedRegex(@"^[a-zA-Z0-9_\-\.]{1,64}$", RegexOptions.Compiled)]
 	private static partial Regex SafeIdPattern();
 
+	[GeneratedRegex(@"^[a-zA-Z0-9_\-\.]{1,128}$", RegexOptions.Compiled)]
+	private static partial Regex SafePluginIdPattern();
+
 	public PluginWindowHost(FileLogger? logger = null)
 	{
 		_logger = logger;
@@ -33,6 +36,9 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 	/// <summary>
 	/// 校验插件 ID 或窗口 ID 是否符合安全命名规范 (防路径遍历与非法字符注入)
 	/// </summary>
+	public static bool IsValidPluginId(string? id) =>
+		!string.IsNullOrWhiteSpace(id) && id.Length <= 128 && !id.Contains('/') && !id.Contains('\\') && !id.Contains(':') && !id.Contains("..") && SafePluginIdPattern().IsMatch(id);
+
 	public static bool IsValidId(string? id)
 	{
 		if (string.IsNullOrWhiteSpace(id)) return false;
@@ -47,9 +53,14 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 	public static void ValidateId(string id, string paramName)
 	{
 		if (!IsValidId(id))
-		{
 			throw new ArgumentException($"标识符 '{id}' 不合法: 仅允许 1-64 位字母、数字、下划线、短横线与点，且不得包含路径或冒号字符。", paramName);
-		}
+	}
+
+	/// <summary>校验插件 ID。manifest 负责更严格的规范 ID 校验，窗口标签允许最多 128 位。</summary>
+	public static void ValidatePluginId(string id, string paramName)
+	{
+		if (string.IsNullOrWhiteSpace(id) || id.Length > 128 || id.Contains('/') || id.Contains('\\') || id.Contains(':') || id.Contains("..") || !SafePluginIdPattern().IsMatch(id))
+			throw new ArgumentException($"插件标识符 '{id}' 不合法。", paramName);
 	}
 
 	/// <summary>
@@ -57,7 +68,7 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 	/// </summary>
 	public static string BuildLabel(string pluginId, string windowId)
 	{
-		ValidateId(pluginId, nameof(pluginId));
+		ValidatePluginId(pluginId, nameof(pluginId));
 		ValidateId(windowId, nameof(windowId));
 		return $"plugin:{pluginId}:{windowId}";
 	}
@@ -79,8 +90,7 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 		string[] parts = label.Split(':');
 		if (parts.Length != 3) return false;
 
-		if (!IsValidId(parts[1]) || !IsValidId(parts[2])) return false;
-
+		if (!IsValidPluginId(parts[1]) || !IsValidId(parts[2])) return false;
 		pluginId = parts[1];
 		windowId = parts[2];
 		return true;
@@ -95,13 +105,17 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 		CancellationToken revocationToken = default,
 		CancellationToken cancellationToken = default)
 	{
+		if (Volatile.Read(ref _disposed) != 0) throw new ObjectDisposedException(nameof(PluginWindowHost));
 		ArgumentNullException.ThrowIfNull(descriptor);
 		ArgumentNullException.ThrowIfNull(options);
 
-		ValidateId(descriptor.Id, nameof(descriptor.Id));
-		ValidateId(options.WindowId, nameof(options.WindowId));
+		ValidatePluginId(descriptor.Id, nameof(descriptor.Id));
+		ValidateId(options.Id, nameof(options.Id));
+		if (string.IsNullOrWhiteSpace(options.Title) || options.Title.Any(char.IsControl)) throw new ArgumentException("插件窗口标题无效", nameof(options));
+		if (string.IsNullOrWhiteSpace(options.EntryPoint) || options.EntryPoint.Any(char.IsControl)) throw new ArgumentException("插件窗口入口无效", nameof(options));
+		if (double.IsNaN(options.Width) || double.IsInfinity(options.Width) || options.Width <= 0 || double.IsNaN(options.Height) || double.IsInfinity(options.Height) || options.Height <= 0) throw new ArgumentException("插件窗口尺寸无效", nameof(options));
 
-		string label = BuildLabel(descriptor.Id, options.WindowId);
+		string label = BuildLabel(descriptor.Id, options.Id);
 
 		if (_windows.TryGetValue(label, out PluginWebViewWindow? existing))
 		{
@@ -139,7 +153,7 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 	/// </summary>
 	public PluginWebViewWindow? GetWindow(string pluginId, string windowId)
 	{
-		if (!IsValidId(pluginId) || !IsValidId(windowId)) return null;
+		if (!IsValidPluginId(pluginId) || !IsValidId(windowId)) return null;
 		string label = BuildLabel(pluginId, windowId);
 		return GetWindow(label);
 	}

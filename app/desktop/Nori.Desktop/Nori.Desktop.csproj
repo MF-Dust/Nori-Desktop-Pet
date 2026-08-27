@@ -10,7 +10,7 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<!-- OPENAI001/MEAI001: 预览版 AI SDK 的实验性 API 标记 -->
-		<NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
+		<NoWarn>$(NoWarn);OPENAI001;MEAI001;CS0436</NoWarn>
 		<!-- NativeControlHost 需要这份 manifest 声明受支持的 OS, 否则 WebView 启动即失败 (仅 Windows 有意义) -->
 		<ApplicationManifest Condition="'$(NoriIsWindowsBuild)' == 'true'">app.manifest</ApplicationManifest>
 		<ApplicationIcon Condition="'$(NoriIsWindowsBuild)' == 'true'">Assets/icon.ico</ApplicationIcon>

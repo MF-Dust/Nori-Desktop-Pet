@@ -375,16 +375,16 @@ public sealed class PluginHostTests
 			{
 				factoryCalled = true;
 				Assert.Equal("test-plugin", desc.Id);
-				Assert.Equal("win-view", opts.WindowId);
+				Assert.Equal("win-view", opts.Id);
 				Assert.Equal("My Tool Window", opts.Title);
 				return Task.FromResult<IPluginWebViewWindow>(fakeWindow);
 			});
 
 		PluginWebViewOptions options = new()
 		{
-			WindowId = "win-view",
+			Id = "win-view",
 			Title = "My Tool Window",
-			EntryUrl = "/plugins/test/index.html",
+			EntryPoint = "/plugins/test/index.html",
 			Width = 600,
 			Height = 400,
 		};
@@ -407,7 +407,7 @@ public sealed class PluginHostTests
 
 		PluginWebViewCapability capability = new(
 			descriptor,
-			(desc, opts, ct) => Task.FromResult<IPluginWebViewWindow>(new FakePluginWebViewWindow(desc.Id, opts.WindowId, opts.Title, opts.EntryUrl)));
+			(desc, opts, ct) => Task.FromResult<IPluginWebViewWindow>(new FakePluginWebViewWindow(desc.Id, opts.Id, opts.Title, opts.EntryPoint)));
 
 		// 1. null options
 		await Assert.ThrowsAsync<ArgumentNullException>(() => capability.CreateWindowAsync(null!));
@@ -415,33 +415,33 @@ public sealed class PluginHostTests
 		// 2. 非法 WindowId (路径穿越)
 		await Assert.ThrowsAsync<ArgumentException>(() => capability.CreateWindowAsync(new PluginWebViewOptions
 		{
-			WindowId = "../escape",
+			Id = "../escape",
 			Title = "Title",
-			EntryUrl = "/index.html",
+			EntryPoint = "/index.html",
 		}));
 
 		// 3. 空白标题
 		await Assert.ThrowsAsync<ArgumentException>(() => capability.CreateWindowAsync(new PluginWebViewOptions
 		{
-			WindowId = "win-1",
+			Id = "win-1",
 			Title = "",
-			EntryUrl = "/index.html",
+			EntryPoint = "/index.html",
 		}));
 
 		// 4. 空白 URL
 		await Assert.ThrowsAsync<ArgumentException>(() => capability.CreateWindowAsync(new PluginWebViewOptions
 		{
-			WindowId = "win-1",
+			Id = "win-1",
 			Title = "Title",
-			EntryUrl = "  ",
+			EntryPoint = "  ",
 		}));
 
 		// 5. 非法尺寸
 		await Assert.ThrowsAsync<ArgumentException>(() => capability.CreateWindowAsync(new PluginWebViewOptions
 		{
-			WindowId = "win-1",
+			Id = "win-1",
 			Title = "Title",
-			EntryUrl = "/index.html",
+			EntryPoint = "/index.html",
 			Width = -10,
 			Height = 400,
 		}));
@@ -539,6 +539,7 @@ public sealed class PluginHostTests
 	private sealed class FakePluginWebViewWindow(string pluginId, string windowId, string title, string entryUrl) : IPluginWebViewWindow
 	{
 		public string PluginId => pluginId;
+		public string Id => windowId;
 		public string WindowId => windowId;
 		public string Label => $"plugin:{pluginId}:{windowId}";
 		public string Title => title;

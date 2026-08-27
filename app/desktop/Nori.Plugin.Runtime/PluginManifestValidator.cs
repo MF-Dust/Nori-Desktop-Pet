@@ -4,9 +4,9 @@ namespace Nori.Plugin.Runtime;
 public static class PluginManifestValidator
 {
 	public static PluginManifest Validate(PluginManifest manifest) => PluginManifestReader.Validate(manifest);
-	public static bool IsCompatible(PluginVersion host, PluginVersion plugin) => PluginManifestReader.IsCompatible(host, plugin);
-	public static void EnsureCompatible(PluginVersion hostSchema, PluginVersion pluginSchema, PluginVersion hostApi, PluginVersion pluginApi) =>
-		PluginManifestReader.EnsureCompatible(hostSchema, pluginSchema, hostApi, pluginApi);
+	public static bool IsCompatible(PluginApiVersion host, PluginApiVersion plugin) => PluginManifestReader.IsCompatible(host, plugin);
+	public static void EnsureCompatible(PluginApiVersion host, PluginApiVersion plugin) => PluginManifestReader.EnsureCompatible(host, plugin);
+	public static bool IsHostVersionSupported(PluginVersion host, string minimum) => PluginManifestReader.IsHostVersionSupported(host, minimum);
 }
 
 /// <summary>清单读取器的别名入口。</summary>

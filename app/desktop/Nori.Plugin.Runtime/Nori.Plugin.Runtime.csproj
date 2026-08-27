@@ -5,6 +5,10 @@
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 	</PropertyGroup>
 	<ItemGroup>
+		<InternalsVisibleTo Include="Nori.Plugin.Runtime.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="../Nori.Plugin.Abstractions/Nori.Plugin.Abstractions.csproj" />
 		<ProjectReference Include="../Nori.Plugin.Games.Abstractions/Nori.Plugin.Games.Abstractions.csproj" />
 		<ProjectReference Include="../Nori.Plugin.Arcade.Abstractions/Nori.Plugin.Arcade.Abstractions.csproj" />

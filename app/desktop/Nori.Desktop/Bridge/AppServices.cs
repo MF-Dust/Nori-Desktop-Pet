@@ -62,6 +62,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>第三方插件运行时；安全模式下仅发现并标记禁用插件。</summary>
 	public PluginManager? Plugins { get; init; }
 
+	/// <summary>插件动态 WebView 窗口宿主。</summary>
+	public Nori.Desktop.Plugins.PluginWindowHost? PluginWindows { get; set; }
+
 	/// <summary>本地/模型 HTTP 客户端 (测试可在装配后替换)</summary>
 	public HttpClient Http { get; set; } = null!;
 
@@ -141,6 +144,7 @@ public sealed class AppServices : IAsyncDisposable
 		await DisposeStep(() => Runtime?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Automation?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Plugins?.DisposeAsync() ?? ValueTask.CompletedTask);
+		await DisposeStep(() => PluginWindows?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() => Mcp.DisposeAsync());
 		await DisposeStep(() => Assets?.DisposeAsync() ?? ValueTask.CompletedTask);
 		await DisposeStep(() =>

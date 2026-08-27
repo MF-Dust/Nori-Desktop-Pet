@@ -1,20 +1,37 @@
+using System.Text.Json;
+using Nori.Plugin.Abstractions;
+
 namespace Nori.Plugin.Games.Abstractions;
 
-/// <summary>游戏插件的只读描述。</summary>
-public sealed record GameDefinition(string Id, string DisplayName, string Version);
-
-/// <summary>游戏插件注册接口。</summary>
-public interface IGameRegistry
+/// <summary>游戏提供者描述。</summary>
+public sealed record GameDescriptor
 {
-	void Register(GameDefinition game);
-	bool Remove(string gameId);
-	IReadOnlyCollection<GameDefinition> Games { get; }
+	public required string Id { get; init; }
+	public required string Name { get; init; }
+	public required string Description { get; init; }
+	public string? IconPath { get; init; }
 }
 
-/// <summary>游戏插件提供的最小会话接口。</summary>
-public interface IGameSession
+/// <summary>宿主启动游戏会话时传递的上下文。</summary>
+public sealed record GameLaunchContext
 {
-	string GameId { get; }
-	ValueTask StartAsync(CancellationToken cancellationToken = default);
-	ValueTask StopAsync(CancellationToken cancellationToken = default);
+	public required string SessionId { get; init; }
+	public JsonElement Arguments { get; init; }
+}
+
+/// <summary>游戏插件贡献。</summary>
+public interface IGameProvider : IPluginContribution
+{
+	GameDescriptor Descriptor { get; }
+
+	ValueTask<IGameSession> CreateSessionAsync(
+		GameLaunchContext context,
+		CancellationToken cancellationToken);
+}
+
+/// <summary>游戏会话生命周期。</summary>
+public interface IGameSession : IAsyncDisposable
+{
+	ValueTask StartAsync(CancellationToken cancellationToken);
+	ValueTask StopAsync(CancellationToken cancellationToken);
 }

@@ -34,6 +34,7 @@ public sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPluginB
 	/// <summary>关联的独立插件通信桥</summary>
 	public PluginBridge Bridge { get; }
 
+	string IPluginWebViewWindow.Id => WindowId;
 	string? IPluginWebViewWindow.Title => Title;
 
 	private readonly NativeWebView _webView;
@@ -56,11 +57,11 @@ public sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPluginB
 		ArgumentNullException.ThrowIfNull(descriptor);
 		ArgumentNullException.ThrowIfNull(options);
 
-		PluginWindowHost.ValidateId(descriptor.Id, nameof(descriptor.Id));
-		PluginWindowHost.ValidateId(options.WindowId, nameof(options.WindowId));
+		PluginWindowHost.ValidatePluginId(descriptor.Id, nameof(descriptor.Id));
+		PluginWindowHost.ValidateId(options.Id, nameof(options.Id));
 
 		PluginId = descriptor.Id;
-		WindowId = options.WindowId;
+		WindowId = options.Id;
 		Label = PluginWindowHost.BuildLabel(PluginId, WindowId);
 		Descriptor = descriptor;
 
@@ -98,7 +99,7 @@ public sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPluginB
 		Content = _webView;
 
 		// 导航至插件入口 URL
-		_webView.Source = new Uri(options.EntryUrl, UriKind.RelativeOrAbsolute);
+		_webView.Source = new Uri(options.EntryPoint, UriKind.RelativeOrAbsolute);
 
 		Closed += OnClosed;
 

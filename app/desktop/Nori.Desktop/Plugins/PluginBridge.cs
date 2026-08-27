@@ -128,7 +128,7 @@ public sealed class PluginBridge : IAsyncDisposable
 		Func<CancellationToken, Task>? closeSelfHandler = null,
 		FileLogger? logger = null)
 	{
-		PluginWindowHost.ValidateId(pluginId, nameof(pluginId));
+		PluginWindowHost.ValidatePluginId(pluginId, nameof(pluginId));
 		PluginWindowHost.ValidateId(windowId, nameof(windowId));
 		ArgumentNullException.ThrowIfNull(descriptor);
 
@@ -220,8 +220,9 @@ public sealed class PluginBridge : IAsyncDisposable
 		}
 		catch (Exception exception)
 		{
+			string code = exception is PluginException pluginException ? pluginException.Code : "plugin.bridge_failed";
 			string error = SensitiveDataRedactor.Redact(exception.Message);
-			_logger?.Write(LogSource.Backend, "warn", $"插件命令执行失败 [{_pluginId}:{_windowId}] '{cmd}': {error}");
+			_logger?.Write(LogSource.Backend, "warn", $"插件命令执行失败 [{_pluginId}:{_windowId}] stage=bridge code={code} '{cmd}': {error}");
 			source.PostResult(message.Id, null, error);
 		}
 	}
@@ -235,6 +236,11 @@ public sealed class PluginBridge : IAsyncDisposable
 		JsonElement args,
 		CancellationToken cancellationToken)
 	{
+		if (!string.Equals(source.PluginId, _pluginId, StringComparison.Ordinal) ||
+			!string.Equals(source.WindowId, _windowId, StringComparison.Ordinal) ||
+			!string.Equals(source.Label, PluginWindowHost.BuildLabel(_pluginId, _windowId), StringComparison.Ordinal))
+			throw new PluginException("plugin.bridge_denied", "插件桥接来源身份无效。");
+
 		switch (cmd)
 		{
 			case "plugin_get_info":
@@ -266,7 +272,7 @@ public sealed class PluginBridge : IAsyncDisposable
 				{
 					pluginId = _pluginId,
 					windowId = _windowId,
-					label = source.Label,
+					label = PluginWindowHost.BuildLabel(_pluginId, _windowId),
 					isVisible = source.IsVisible,
 				};
 
@@ -292,7 +298,7 @@ public sealed class PluginBridge : IAsyncDisposable
 				};
 
 			default:
-				throw new PluginException($"命令 '{cmd}' 未被允许或不在插件 Web 视图安全白名单中。");
+				throw new PluginException("plugin.bridge_denied", $"命令 '{cmd}' 未被允许或不在插件 Web 视图安全白名单中。");
 		}
 	}
 
