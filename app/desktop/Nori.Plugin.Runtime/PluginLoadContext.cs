@@ -65,7 +65,7 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 		EnsureNoReparsePoints(pluginDirectory);
 		foreach (string path in Directory.EnumerateFiles(pluginDirectory, "*.dll", SearchOption.AllDirectories))
 		{
-			if (ContractAssemblyNames.Contains(Path.GetFileName(path)))
+			if (ContractAssemblyNames.Contains(Path.GetFileNameWithoutExtension(path)))
 				throw new PluginException(PluginErrorCodes.ContractAssemblyDenied, "插件包不得携带宿主 contract 程序集");
 			EnsureAssemblyReferencesAllowed(path);
 		}
@@ -77,7 +77,9 @@ public sealed class PluginLoadContext : AssemblyLoadContext
 		{
 			using FileStream stream = File.OpenRead(assemblyPath);
 			using PEReader reader = new(stream);
-			if (!reader.HasMetadata) throw new BadImageFormatException();
+			// runtimes/win-* 中的原生 DLL 是合法插件依赖。只有托管程序集才有
+			// AssemblyReference 元数据可供宿主做禁止引用扫描。
+			if (!reader.HasMetadata) return;
 			MetadataReader metadata = reader.GetMetadataReader();
 			foreach (AssemblyReferenceHandle handle in metadata.AssemblyReferences)
 			{
