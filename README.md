@@ -86,6 +86,7 @@
 - **多模型智能 Agent 与生态扩展**：支持 OpenAI / Claude / Gemini / DeepSeek / Ollama 等多平台 LLM，具备流式打字机输出与实时情感/动作标签驱动；内置 SQLite 键值存储与长期记忆体系（Memory.md），支持 Model Context Protocol (MCP) 插件工具扩展。
 - **全链路多模态语音交互**：C# `VoiceService` 驱动（支持 Whisper 离线/在线语音识别、GPT-SoVITS / Custom HTTP / OpenAI TTS）；`main` 控制台作为唯一常驻音频宿主，通过 WebAudio 播放并提取 RMS 振幅实时驱动桌宠嘴形。
 - **高可靠安全模式与隐私保护**：内置 `--safe-mode` 命令行排障模式，跳过外部联网与重型模型加载，保留 UI 与手动修复入口；脱敏诊断导出（`export_diagnostics`）严格排除数据库、对话记忆、提示词、凭据与敏感路径；敏感配置采用 AES-256-GCM (`nsec1:`) 结合系统安全密钥库加密存储。
+- **插件系统扩展体系 (NPS 1.0)**：基于受信任进程内架构与能力隔离设计，通过 `PluginWindowHost`、`PluginWebViewCapability` (`ui.webview`) 与独立安全总线 `PluginBridge` 提供低开销、跨平台透明 Web 视图扩展支持。
 - **本地模型自由管理与热调节**：支持本地 Live2D ZIP/文件夹安全导入与沙盒解压校验；设置面板内嵌 PixiJS 提供实时 2D/3D 视口双重渲染与参数热调。
 - **完备的国际化支持**：全界面中英文双语支持（i18n），多语言键集严格对齐与纯净渲染。
 
@@ -257,6 +258,7 @@ publish.bat
 
 - [DeepWiki 知识库](https://deepwiki.ai/MF-Dust/Nori-Desktop-Pet)
 - [技术架构设计 (docs/技术.md)](./docs/技术.md)
+- [插件系统规范 (docs/plugin-system.md)](./docs/plugin-system.md)
 - [编码与开发规范 (docs/规范.md)](./docs/规范.md)
 - [跨平台支持与验收口径 (docs/跨平台.md)](./docs/跨平台.md)
 - [窗口属性与透明度参考 (docs/windows.md)](./docs/windows.md)

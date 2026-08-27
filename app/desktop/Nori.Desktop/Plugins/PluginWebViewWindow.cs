@@ -1,0 +1,266 @@
+using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Avalonia.Platform;
+using Avalonia.Threading;
+using Nori.Core.Data;
+using Nori.Core.Platform;
+using Nori.Desktop.Bridge;
+using Nori.Plugin.Abstractions;
+
+namespace Nori.Desktop.Plugins;
+
+/// <summary>
+/// 承载插件 Web 视图的独立窗口
+///
+/// 独立于 WindowDefinition.All 与 NoriWindow, 专为动态插件页面设计.
+/// 提供原生透明度、跨平台标题栏适配与隔离的 NativeWebView 运行环境.
+/// </summary>
+public sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPluginBridgeSource
+{
+	/// <summary>所属插件 ID</summary>
+	public string PluginId { get; }
+
+	/// <summary>窗口 ID</summary>
+	public string WindowId { get; }
+
+	/// <summary>窗口全局标签 (plugin:{pluginId}:{windowId})</summary>
+	public string Label { get; }
+
+	/// <summary>脱敏的插件描述符摘要</summary>
+	public PluginDescriptorSummary Descriptor { get; }
+
+	/// <summary>关联的独立插件通信桥</summary>
+	public PluginBridge Bridge { get; }
+
+	string? IPluginWebViewWindow.Title => Title;
+
+	private readonly NativeWebView _webView;
+	private readonly List<string> _pendingScripts = [];
+	private bool _ready;
+	private CancellationTokenRegistration _revocationRegistration;
+	private int _isClosingOrClosed;
+
+	/// <summary>
+	/// 当窗口被关闭时触发通知 (供 PluginWindowHost 从活动窗口字典中移除)
+	/// </summary>
+	public event Action<PluginWebViewWindow>? WindowClosed;
+
+	public PluginWebViewWindow(
+		PluginDescriptorSummary descriptor,
+		PluginWebViewOptions options,
+		PluginBridge? bridge = null,
+		CancellationToken revocationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(descriptor);
+		ArgumentNullException.ThrowIfNull(options);
+
+		PluginWindowHost.ValidateId(descriptor.Id, nameof(descriptor.Id));
+		PluginWindowHost.ValidateId(options.WindowId, nameof(options.WindowId));
+
+		PluginId = descriptor.Id;
+		WindowId = options.WindowId;
+		Label = PluginWindowHost.BuildLabel(PluginId, WindowId);
+		Descriptor = descriptor;
+
+		Title = options.Title;
+		Width = options.Width;
+		Height = options.Height;
+		if (options.MinWidth is { } minWidth) MinWidth = minWidth;
+		if (options.MinHeight is { } minHeight) MinHeight = minHeight;
+		CanResize = options.CanResize;
+		Topmost = options.Topmost;
+		ShowInTaskbar = options.ShowInTaskbar;
+
+		// 标题栏与边框策略: 与主程序保持一致, 支持原生拖动时使用无边框透明
+		WindowDecorations = PlatformServices.Current.Capabilities.SupportsWindowDrag
+			? WindowDecorations.None
+			: WindowDecorations.Full;
+		Background = Brushes.Transparent;
+		TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
+		WindowStartupLocation = WindowStartupLocation.CenterScreen;
+		Icon = LoadIcon();
+
+		Bridge = bridge ?? new PluginBridge(
+			PluginId,
+			WindowId,
+			descriptor,
+			closeSelfHandler: ct => CloseAsync(ct));
+
+		_webView = new NativeWebView
+		{
+			Background = Brushes.Transparent,
+		};
+		_webView.EnvironmentRequested += OnEnvironmentRequested;
+		_webView.WebMessageReceived += OnWebMessageReceived;
+		_webView.NavigationCompleted += OnNavigationCompleted;
+		Content = _webView;
+
+		// 导航至插件入口 URL
+		_webView.Source = new Uri(options.EntryUrl, UriKind.RelativeOrAbsolute);
+
+		Closed += OnClosed;
+
+		// 绑定插件租约撤销令牌: 当插件卸载或上下文销毁时，自动关闭该插件名下的全部窗口
+		if (revocationToken.CanBeCanceled)
+		{
+			_revocationRegistration = revocationToken.Register(() =>
+			{
+				Dispatcher.UIThread.Post(() => _ = CloseAsync());
+			});
+		}
+	}
+
+	/// <summary>
+	/// 显示并聚焦窗口 (确保在 UI 线程执行)
+	/// </summary>
+	public async Task ShowAsync(CancellationToken cancellationToken = default)
+	{
+		if (Dispatcher.UIThread.CheckAccess())
+		{
+			Show();
+			Activate();
+			return;
+		}
+
+		await Dispatcher.UIThread.InvokeAsync(() =>
+		{
+			Show();
+			Activate();
+		});
+	}
+
+	/// <summary>
+	/// 隐藏窗口 (确保在 UI 线程执行)
+	/// </summary>
+	public async Task HideAsync(CancellationToken cancellationToken = default)
+	{
+		if (Dispatcher.UIThread.CheckAccess())
+		{
+			Hide();
+			return;
+		}
+
+		await Dispatcher.UIThread.InvokeAsync(Hide);
+	}
+
+	/// <summary>
+	/// 关闭窗口并释放关联资源
+	/// </summary>
+	public async Task CloseAsync(CancellationToken cancellationToken = default)
+	{
+		if (Interlocked.Exchange(ref _isClosingOrClosed, 1) != 0) return;
+
+		_revocationRegistration.Dispose();
+		await Bridge.DisposeAsync().ConfigureAwait(false);
+
+		if (Dispatcher.UIThread.CheckAccess())
+		{
+			Close();
+			return;
+		}
+
+		await Dispatcher.UIThread.InvokeAsync(Close);
+	}
+
+	public async ValueTask DisposeAsync()
+	{
+		await CloseAsync().ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// 向插件页面回推调用结果
+	/// </summary>
+	public void PostResult(long id, object? value, string? error)
+	{
+		string envelope = JsonSerializer.Serialize(error is null
+			? new PluginBridgeResult { Kind = "resolve", Id = id, Value = value }
+			: new PluginBridgeResult { Kind = "reject", Id = id, Error = error }, BridgeJson.Options);
+		Dispatch(envelope);
+	}
+
+	/// <summary>
+	/// 向插件页面推送事件
+	/// </summary>
+	public void PostEvent(string name, object? payload)
+	{
+		string envelope = JsonSerializer.Serialize(new
+		{
+			kind = "event",
+			@event = name,
+			payload,
+		}, BridgeJson.Options);
+		Dispatch(envelope);
+	}
+
+	/// <summary>
+	/// 将 JSON 信封发送至插件 Web 视图的 __noriPlugin 命名空间
+	/// </summary>
+	private void Dispatch(string envelopeJson)
+	{
+		string script = $"window.__noriPlugin&&window.__noriPlugin.dispatch({JsonSerializer.Serialize(envelopeJson, BridgeJson.Options)})";
+		if (!Dispatcher.UIThread.CheckAccess())
+		{
+			Dispatcher.UIThread.Post(() => Dispatch(envelopeJson));
+			return;
+		}
+
+		if (!_ready)
+		{
+			_pendingScripts.Add(script);
+			return;
+		}
+
+		_ = _webView.InvokeScript(script);
+	}
+
+	private void OnEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
+	{
+		if (e is not WindowsWebView2EnvironmentRequestedEventArgs wv2) return;
+		// 每个插件使用独立子目录隔离 WebView 存储
+		wv2.UserDataFolder = Path.Combine(AppPaths.DataDir, "webview_plugins", PluginId);
+	}
+
+	private void OnWebMessageReceived(object? sender, WebMessageReceivedEventArgs e)
+	{
+		if (e.Body is not { Length: > 0 } body) return;
+		Bridge.Handle(this, body);
+	}
+
+	private void OnNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
+	{
+		if (!e.IsSuccess) return;
+		if (!Dispatcher.UIThread.CheckAccess())
+		{
+			Dispatcher.UIThread.Post(() => OnNavigationCompleted(sender, e));
+			return;
+		}
+
+		_ready = true;
+		foreach (string script in _pendingScripts)
+		{
+			_ = _webView.InvokeScript(script);
+		}
+		_pendingScripts.Clear();
+	}
+
+	private void OnClosed(object? sender, EventArgs e)
+	{
+		Closed -= OnClosed;
+		_revocationRegistration.Dispose();
+		WindowClosed?.Invoke(this);
+	}
+
+	private static WindowIcon? LoadIcon()
+	{
+		try
+		{
+			return new WindowIcon(AssetLoader.Open(new Uri("avares://Nori.Desktop/Assets/icon.ico")));
+		}
+		catch (Exception exception) when (exception is FileNotFoundException or ArgumentException)
+		{
+			return null;
+		}
+	}
+}
