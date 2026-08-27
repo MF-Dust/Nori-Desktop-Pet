@@ -221,11 +221,20 @@ public sealed class PluginRuntimeTests
 
 			await manager.DeactivateAsync("test.plugin");
 			Assert.Empty(manager.GetContributions<IPluginContribution>());
-			Assert.Contains(Assert.Single(manager.Plugins).State, new[] { PluginLifecycleState.Installed, PluginLifecycleState.PendingRestart });
+			PluginInfo deactivated = Assert.Single(manager.Plugins);
+			Assert.Contains(deactivated.State, new[] { PluginLifecycleState.Installed, PluginLifecycleState.PendingRestart });
 			Assert.True(File.Exists(Path.Combine(root, "plugin-data", "test.plugin", "storage.json")));
-			await manager.ActivateAsync("test.plugin");
-			await manager.UnloadAsync("test.plugin");
-			Assert.Contains(Assert.Single(manager.Plugins).State, new[] { PluginLifecycleState.Installed, PluginLifecycleState.PendingRestart });
+			if (deactivated.State == PluginLifecycleState.Installed)
+			{
+				await manager.ActivateAsync("test.plugin");
+				await manager.UnloadAsync("test.plugin");
+				Assert.Contains(Assert.Single(manager.Plugins).State, new[] { PluginLifecycleState.Installed, PluginLifecycleState.PendingRestart });
+			}
+			else
+			{
+				PluginException pending = await Assert.ThrowsAsync<PluginException>(() => manager.ActivateAsync("test.plugin"));
+				Assert.Equal(PluginErrorCodes.UnloadPendingRestart, pending.Code);
+			}
 			await manager.DisposeAsync();
 		}
 		finally { DeleteDirectory(root); }
