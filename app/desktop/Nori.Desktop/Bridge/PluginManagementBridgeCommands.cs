@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Avalonia.Platform.Storage;
 using Nori.Desktop.Windows;
+using Nori.Plugin.Abstractions;
 using Nori.Plugin.Runtime;
 
 namespace Nori.Desktop.Bridge;
@@ -117,7 +118,7 @@ public sealed class PluginManagementBridgeCommands
 		return new PluginUninstallResultDto(result.Success, result.RequiresRestart, result.Plugin is null ? null : ToDto(result.Plugin));
 	}
 
-	private PluginListItemDto Find(PluginManager manager, string id) =>
+	private static PluginInfo Find(PluginManager manager, string id) =>
 		manager.Plugins.Single(item => string.Equals(item.Id, id, StringComparison.Ordinal));
 
 	private PluginListItemDto ToDto(PluginInfo info)
