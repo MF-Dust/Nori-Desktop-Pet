@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Text.Json.Nodes;
 using Nori.Plugin.Abstractions;
 using Nori.Plugin.Runtime;
 
@@ -60,6 +61,37 @@ public sealed class PluginRuntimeReviewTests
 			File.Copy(systemDll, Path.Combine(runtime, "plugin-native.dll"));
 
 			PluginLoadContext.EnsureReferencesAllowed(root);
+		}
+		finally { DeleteDirectory(root); }
+	}
+
+	[Fact]
+	public async Task Unix允许系统级符号链接祖先但仍拒绝插件根本身是链接()
+	{
+		if (OperatingSystem.IsWindows()) return;
+
+		string root = CreateTemp();
+		try
+		{
+			string realParent = Path.Combine(root, "real-parent");
+			Directory.CreateDirectory(realParent);
+			string linkedParent = Path.Combine(root, "linked-parent");
+			Directory.CreateSymbolicLink(linkedParent, realParent);
+
+			PluginPackageInstaller installer = new(Path.Combine(linkedParent, "plugins"));
+			Assert.True(Directory.Exists(installer.RootDirectory));
+
+			JsonPluginStorage storage = new(Path.Combine(linkedParent, "plugin-data", "demo.plugin"));
+			await storage.SetAsync("state", new JsonObject { ["ok"] = true });
+			Assert.True((await storage.GetAsync("state"))!["ok"]!.GetValue<bool>());
+
+			string realPluginRoot = Path.Combine(root, "real-plugin-root");
+			Directory.CreateDirectory(realPluginRoot);
+			string linkedPluginRoot = Path.Combine(root, "linked-plugin-root");
+			Directory.CreateSymbolicLink(linkedPluginRoot, realPluginRoot);
+
+			PluginException exception = Assert.Throws<PluginException>(() => new PluginPackageInstaller(linkedPluginRoot));
+			Assert.Equal(PluginErrorCodes.PackagePathDenied, exception.Code);
 		}
 		finally { DeleteDirectory(root); }
 	}
