@@ -23,6 +23,7 @@ import type {
 	UiSnapshot,
 	VisionProbeResult,
 } from "../runtime/types"
+import type {PluginInfo, PluginInstallResult, PluginUninstallResult} from "../plugins"
 
 export type CommandArgs = Record<string, unknown>
 export type EmptyCommandArgs = undefined
@@ -135,6 +136,12 @@ export interface BridgeCommandMap {
 	mcp_call_tool: {args: {serverId: string; toolName: string; arguments: CommandArgs}; result: unknown}
 	mcp_import_url: {args: {url: string}; result: unknown}
 
+	plugin_list: {args: EmptyCommandArgs; result: {plugins: PluginInfo[]}}
+	plugin_install_local: {args: EmptyCommandArgs; result: PluginInstallResult}
+	plugin_enable: {args: {id: string}; result: PluginInfo}
+	plugin_disable: {args: {id: string}; result: PluginInfo}
+	plugin_uninstall: {args: {id: string; deleteData: boolean}; result: PluginUninstallResult}
+
 	reminder_add: {args: {content: string; delayMinutes: number}; result: unknown}
 	reminder_cancel: {args: {id: string}; result: boolean}
 	tts_test: {args: {text?: string}; result: void}
@@ -146,8 +153,8 @@ export interface BridgeCommandMap {
 	audio_playback_finished: {args: {token: string; error?: string}; result: void}
 	audio_level: {args: {level: number}; result: void}
 	audio_record_ready: {args: {token: string}; result: void}
-	audio_record_failed: {args: {token: string; error?: string}; result: void}
-	audio_upload_failed: {args: {token: string; error?: string}; result: void}
+	audio_record_failed: {args: {token: string; error: string}; result: void}
+	audio_upload_failed: {args: {token: string; error: string}; result: void}
 
 	window_show: {args: {label: string}; result: void}
 	window_hide: {args: {label: string}; result: void}
