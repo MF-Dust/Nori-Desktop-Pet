@@ -260,10 +260,11 @@ public sealed class VoiceService : IDisposable
 	{
 		if (RetiredProviders.Contains(name))
 		{
-			throw new InvalidOperationException($"语音提供商 {name} 依赖浏览器能力, 已在纯后端版本中停用, 请改用 OpenAI / MiniMax / 自定义 HTTP / GPT-SoVITS");
+			throw new InvalidOperationException($"语音提供商 {name} 依赖浏览器能力, 已在纯后端版本中停用, 请改用 OpenAI / Gemini / MiniMax / 自定义 HTTP / GPT-SoVITS");
 		}
 		return name switch
 		{
+			"gemini" => new GeminiTtsProvider(_httpClient, _config),
 			"minimax" => new MiniMaxTtsProvider(_httpClient, _config),
 			"gpt_sovits" => new GptSoVitsTtsProvider(_httpClient, _config),
 			"custom" => new CustomHttpTtsProvider(_httpClient, _config),

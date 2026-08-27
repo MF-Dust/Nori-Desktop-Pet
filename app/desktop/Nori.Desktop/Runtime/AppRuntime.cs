@@ -1219,6 +1219,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				volume = Voice.GetVolume(),
 				ttsProvider = Voice.ResolveProviderName(),
 				ttsBaseUrl = config.GetStringOr("tts_base_url", ""),
+				ttsModel = config.GetStringOr("tts_model", "tts-1"),
 				hasTtsApiKey = config.GetStringOr("tts_api_key", "").Length > 0,
 				ttsVoice = config.GetStringOr("tts_voice", ""),
 				ttsSpeed = ReadFloat(config, "tts_speed") ?? 1.0,

@@ -321,6 +321,7 @@ export const RUNTIME = {
 		volume: string
 		ttsProvider: string
 		ttsBaseUrl: string
+		ttsModel: string
 		ttsApiKey: string
 		ttsVoice: string
 		ttsSpeed: string

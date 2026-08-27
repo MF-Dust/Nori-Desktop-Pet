@@ -16,11 +16,13 @@ public sealed class OpenAiTtsProvider(HttpClient httpClient, ConfigStore config)
 	{
 		string baseUrl = (config.GetStringOr("tts_base_url", "") is {Length: > 0} saved ? saved : "https://api.openai.com/v1").Trim().TrimEnd('/');
 		string apiKey = config.GetStringOr("tts_api_key", "");
+		string model = config.GetStringOr("tts_model", "tts-1").Trim();
+		if (model.Length == 0) model = "tts-1";
 		if (!baseUrl.EndsWith("/audio/speech", StringComparison.OrdinalIgnoreCase)) baseUrl += "/audio/speech";
 
 		JsonObject payload = new()
 		{
-			["model"] = "tts-1",
+			["model"] = model,
 			["input"] = text,
 			["voice"] = options.Voice is {Length: > 0} ? options.Voice : "nova",
 			["speed"] = options.Speed,
