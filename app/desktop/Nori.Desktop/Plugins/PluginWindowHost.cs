@@ -163,7 +163,7 @@ public sealed partial class PluginWindowHost : IAsyncDisposable
 	/// </summary>
 	public IReadOnlyList<PluginWebViewWindow> GetWindowsForPlugin(string pluginId)
 	{
-		if (!IsValidId(pluginId)) return [];
+		if (!IsValidPluginId(pluginId)) return [];
 		return _windows.Values.Where(w => string.Equals(w.PluginId, pluginId, StringComparison.Ordinal)).ToArray();
 	}
 
