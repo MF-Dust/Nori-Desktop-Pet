@@ -18,6 +18,7 @@ using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Telemetry;
 using Nori.Desktop.Tray;
 using Nori.Desktop.Windows;
+using Nori.Plugin.Runtime;
 
 namespace Nori.Desktop;
 
@@ -34,6 +35,7 @@ public sealed class App : Application
 	private NoriHttpClients? _startupHttpClients;
 	private AssetServer? _startupAssets;
 	private Nori.Core.Mcp.McpManager? _startupMcp;
+	private PluginManager? _startupPlugins;
 	private Task? _shutdownTask;
 	private readonly CancellationTokenSource _shutdownCts = new();
 	private int _shutdownStarted;
@@ -172,14 +174,27 @@ public sealed class App : Application
 			logger.Write(LogSource.Backend, "warn", "已启用 allow_insecure_tls: 出站 HTTPS 不再校验服务器证书, 仅建议对本地/自签名端点使用");
 		}
 		cancellationToken.ThrowIfCancellationRequested();
+		PluginManager plugins = new(new PluginRuntimeOptions
+		{
+			PluginsDirectory = AppPaths.PluginsDir,
+			DataDirectory = AppPaths.PluginDataDir,
+			SafeMode = safeMode,
+			OnError = exception => logger.Write(LogSource.Backend, "error", $"插件 {exception.Code}: {exception.Message}"),
+		});
+		_startupPlugins = plugins;
 		AssetServer assets = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),
 			ResourcesRoot = AppPaths.ResourcesDir,
 			DevMode = devMode,
+			PluginRootResolver = pluginId => pluginId.Length <= 64 && pluginId.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_')
+				&& !pluginId.Contains("..", StringComparison.Ordinal) && Directory.Exists(Path.Combine(AppPaths.PluginsDir, "current", pluginId))
+				? Path.Combine(AppPaths.PluginsDir, "current", pluginId) : null,
 		});
 		_startupAssets = assets;
 		logger.Write(LogSource.Backend, "info", $"资源服务已启动: {assets.Origin} (dev={devMode})");
+		plugins.Discover();
+		if (!safeMode) CrashReporter.Forget(plugins.StartAllAsync(cancellationToken), "插件启动");
 
 		Nori.Core.Mcp.McpManager mcp = new(http, config);
 		_startupMcp = mcp;
@@ -199,6 +214,7 @@ public sealed class App : Application
 			Llm = new LlmClient(http),
 			Mcp = mcp,
 			Assets = assets,
+			Plugins = plugins,
 			Http = http,
 			PublicHttp = publicHttp,
 			AgentOperations = new Bridge.AgentOperationRegistry(),
@@ -220,6 +236,7 @@ public sealed class App : Application
 		_startupHttpClients = null;
 		_startupAssets = null;
 		_startupMcp = null;
+		_startupPlugins = null;
 
 		// 安全模式不自动连接 MCP, 便于用户进入界面修复配置。
 		if (!safeMode)
@@ -305,6 +322,11 @@ public sealed class App : Application
 		}
 		finally
 		{
+			if (_startupPlugins is not null)
+			{
+				try { await _startupPlugins.DisposeAsync().ConfigureAwait(false); } catch { }
+				_startupPlugins = null;
+			}
 			if (_startupMcp is not null)
 			{
 				try { await _startupMcp.DisposeAsync().ConfigureAwait(false); } catch { }

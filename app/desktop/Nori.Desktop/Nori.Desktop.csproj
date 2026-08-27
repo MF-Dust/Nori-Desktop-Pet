@@ -36,6 +36,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="../Nori.Core/Nori.Core.csproj" />
+		<ProjectReference Include="../Nori.Plugin.Runtime/Nori.Plugin.Runtime.csproj" />
 		<ProjectReference Include="../Live2DCSharpSDK.OpenGL/Live2DCSharpSDK.OpenGL.csproj" />
 	</ItemGroup>
 

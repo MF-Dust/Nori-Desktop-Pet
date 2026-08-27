@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<RootNamespace>Nori.Plugin.Abstractions</RootNamespace>
+		<AssemblyName>Nori.Plugin.Abstractions</AssemblyName>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	</PropertyGroup>
+</Project>
