@@ -6,6 +6,11 @@ namespace Nori.Plugin.Runtime;
 /// <summary>持久化用户对插件的启用意图与需要重启后完成的卸载请求。</summary>
 internal sealed class PluginStateStore
 {
+	// 该键不可能通过插件 ID 正则，因此不会与真实插件冲突。
+	// 一旦状态文件损坏，保留该哨兵使“无记录插件”在后续重启中继续 fail-closed，
+	// 直到用户显式重新启用对应插件并写入独立状态。
+	private const string FailClosedSentinel = "__fail_closed__";
+
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{
 		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -24,12 +29,18 @@ internal sealed class PluginStateStore
 		_states = Load(_path);
 	}
 
-	/// <summary>既有插件没有记录时保持 1.0 兼容语义，默认视为启用。</summary>
+	/// <summary>
+	/// 正常状态文件中，既有插件没有记录时保持 1.0 兼容语义，默认视为启用。
+	/// 如果状态文件曾损坏，则未知插件默认禁用，避免用户明确禁用过的代码被静默重新执行。
+	/// </summary>
 	public bool IsEnabled(string pluginId)
 	{
 		ValidateId(pluginId);
 		lock (_gate)
-			return !_states.TryGetValue(pluginId, out PluginRuntimeState? state) || state.Enabled;
+		{
+			if (_states.TryGetValue(pluginId, out PluginRuntimeState? state)) return state.Enabled;
+			return !_states.ContainsKey(FailClosedSentinel);
+		}
 	}
 
 	public void SetEnabled(string pluginId, bool enabled)
@@ -127,13 +138,21 @@ internal sealed class PluginStateStore
 		try
 		{
 			Dictionary<string, PluginRuntimeState>? states = JsonSerializer.Deserialize<Dictionary<string, PluginRuntimeState>>(File.ReadAllText(path), JsonOptions);
-			return states is null ? new(StringComparer.Ordinal) : new(states, StringComparer.Ordinal);
+			if (states is null || states.Values.Any(state => state is null)) return FailClosedState();
+			return new(states, StringComparer.Ordinal);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
 		{
-			return new(StringComparer.Ordinal);
+			// 状态损坏时绝不能退化为“所有未知插件默认启用”。保留一个不可伪造的
+			// 哨兵；后续任意成功写入都会把它持久化，从而跨重启维持 fail-closed。
+			return FailClosedState();
 		}
 	}
+
+	private static Dictionary<string, PluginRuntimeState> FailClosedState() => new(StringComparer.Ordinal)
+	{
+		[FailClosedSentinel] = new PluginRuntimeState { Enabled = false },
+	};
 
 	private static void ValidateId(string pluginId)
 	{

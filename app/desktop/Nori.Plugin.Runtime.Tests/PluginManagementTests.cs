@@ -60,6 +60,48 @@ public sealed class PluginManagementTests
 	}
 
 	[Fact]
+	public async Task 损坏的插件状态文件会FailClosed且显式重新启用可跨重启恢复()
+	{
+		string root = CreateTemp();
+		try
+		{
+			string plugins = Path.Combine(root, "plugins");
+			PluginPackageInstaller installer = new(plugins);
+			installer.Install(CreateTestPackage(root, "first.plugin", "1.0.0"));
+			installer.Install(CreateTestPackage(root, "second.plugin", "1.0.0"));
+
+			string runtime = Path.Combine(root, "plugin-data", "runtime");
+			Directory.CreateDirectory(runtime);
+			File.WriteAllText(Path.Combine(runtime, "plugin-state.json"), "{ broken json");
+
+			PluginManager first = CreateManager(root);
+			PluginInfo[] failedClosed = first.Discover().OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
+			Assert.Equal(2, failedClosed.Length);
+			Assert.All(failedClosed, item =>
+			{
+				Assert.False(item.UserEnabled);
+				Assert.Equal(PluginLifecycleState.Disabled, item.State);
+			});
+			Assert.Empty(first.GetContributions<IPluginContribution>());
+
+			await first.EnableAsync("first.plugin");
+			PluginInfo enabled = Assert.Single(first.Plugins, item => item.Id == "first.plugin");
+			Assert.True(enabled.UserEnabled);
+			Assert.Equal(PluginLifecycleState.Active, enabled.State);
+			await first.DisposeAsync();
+
+			PluginManager rebuilt = CreateManager(root);
+			PluginInfo[] restored = rebuilt.Discover().OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
+			Assert.True(Assert.Single(restored, item => item.Id == "first.plugin").UserEnabled);
+			PluginInfo stillClosed = Assert.Single(restored, item => item.Id == "second.plugin");
+			Assert.False(stillClosed.UserEnabled);
+			Assert.Equal(PluginLifecycleState.Disabled, stillClosed.State);
+			await rebuilt.DisposeAsync();
+		}
+		finally { DeleteDirectory(root); }
+	}
+
+	[Fact]
 	public async Task 激活失败后仍可重试并保持用户启用意图()
 	{
 		string root = CreateTemp();
@@ -130,6 +172,54 @@ public sealed class PluginManagementTests
 			await manager.ActivateAsync("dependent.plugin");
 			PluginException inUse = await Assert.ThrowsAsync<PluginException>(() => manager.UninstallAsync("base.plugin"));
 			Assert.Equal(PluginManagementErrorCodes.DependencyInUse, inUse.Code);
+			await manager.DisposeAsync();
+		}
+		finally { DeleteDirectory(root); }
+	}
+
+	[Fact]
+	public async Task 活动必需依赖会拒绝Disable且保持双方Active()
+	{
+		string root = CreateTemp();
+		try
+		{
+			PluginManager manager = CreateManager(root);
+			manager.Installer.Install(CreateTestPackage(root, "base.plugin", "1.0.0"));
+			manager.Installer.Install(CreateTestPackage(root, "dependent.plugin", "1.0.0", dependencies: "[{\"id\":\"base.plugin\",\"version\":\">=1.0.0 <2.0.0\",\"optional\":false}]"));
+			manager.Discover();
+			await manager.ActivateAsync("base.plugin");
+			await manager.ActivateAsync("dependent.plugin");
+
+			PluginException inUse = await Assert.ThrowsAsync<PluginException>(() => manager.DisableAsync("base.plugin"));
+			Assert.Equal(PluginManagementErrorCodes.DependencyInUse, inUse.Code);
+			PluginInfo baseInfo = Assert.Single(manager.Plugins, item => item.Id == "base.plugin");
+			PluginInfo dependentInfo = Assert.Single(manager.Plugins, item => item.Id == "dependent.plugin");
+			Assert.True(baseInfo.UserEnabled);
+			Assert.Equal(PluginLifecycleState.Active, baseInfo.State);
+			Assert.Equal(PluginLifecycleState.Active, dependentInfo.State);
+			await manager.DisposeAsync();
+		}
+		finally { DeleteDirectory(root); }
+	}
+
+	[Fact]
+	public async Task 活动插件安装新版本后保持Active贡献并单独标记需要重启()
+	{
+		string root = CreateTemp();
+		try
+		{
+			PluginManager manager = CreateManager(root);
+			await manager.InstallAsync(CreateTestPackage(root, "update.plugin", "1.0.0"));
+			await manager.EnableAsync("update.plugin");
+			Assert.NotEmpty(manager.GetContributions<IPluginContribution>());
+
+			await manager.InstallAsync(CreateTestPackage(root, "update.plugin", "1.1.0"));
+
+			PluginInfo running = Assert.Single(manager.Plugins);
+			Assert.Equal(PluginLifecycleState.Active, running.State);
+			Assert.True(running.RequiresRestart);
+			Assert.Equal("1.0.0", running.Manifest.Version);
+			Assert.NotEmpty(manager.GetContributions<IPluginContribution>());
 			await manager.DisposeAsync();
 		}
 		finally { DeleteDirectory(root); }
