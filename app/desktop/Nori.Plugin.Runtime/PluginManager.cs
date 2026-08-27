@@ -34,18 +34,27 @@ public sealed record PluginRuntimeOptions
 	];
 	public Func<PluginDescriptor, CancellationToken, IEnumerable<IPluginCapability>>? CapabilityFactory { get; init; }
 	public Func<string, string, Uri>? AssetUriFactory { get; init; }
+	public Func<string, CancellationToken, Task>? ClosePluginWindowsAsync { get; init; }
 	public Action<PluginException>? OnError { get; init; }
 	public Action<PluginDescriptor, string, Exception?>? OnLog { get; init; }
 	public TimeSpan ActivationTimeout { get; init; } = TimeSpan.FromSeconds(15);
 	public TimeSpan DeactivationTimeout { get; init; } = TimeSpan.FromSeconds(5);
 }
 
-/// <summary>插件当前状态快照。</summary>
+/// <summary>插件当前状态快照。只包含可安全暴露给宿主 UI 的运行时信息。</summary>
 public sealed record PluginInfo(
 	string Id,
 	PluginManifest Manifest,
 	PluginLifecycleState State,
-	string? ErrorCode);
+	string? ErrorCode)
+{
+	public bool UserEnabled { get; init; } = true;
+	public string? ErrorMessage { get; init; }
+	public bool RequiresRestart { get; init; }
+	public IReadOnlyList<PluginCapabilityStatus> CapabilityStatuses { get; init; } = [];
+}
+
+public sealed record PluginUninstallResult(bool Success, bool RequiresRestart, PluginInfo? Plugin);
 
 /// <summary>一个带全局 ID 的 Harness 工具。</summary>
 public sealed record PluginHarnessTool(string Id, IHarnessTool Tool);
@@ -60,6 +69,7 @@ public sealed class PluginManager : IAsyncDisposable
 	private readonly CancellationTokenSource _shutdownSource = new();
 	private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
 	private readonly PluginStartupRecoveryStore _startupRecovery;
+	private readonly PluginStateStore _stateStore;
 	private int _disposed;
 
 	public PluginManager(PluginRuntimeOptions options)
@@ -75,65 +85,95 @@ public sealed class PluginManager : IAsyncDisposable
 		string runtimeDirectory = Path.Combine(options.DataDirectory, "runtime");
 		Directory.CreateDirectory(runtimeDirectory);
 		_startupRecovery = new PluginStartupRecoveryStore(Path.Combine(runtimeDirectory, "plugin-startup.json"));
+		_stateStore = new PluginStateStore(Path.Combine(runtimeDirectory, "plugin-state.json"));
 		_installer = new PluginPackageInstaller(options.PluginsDirectory);
+		CompletePendingUninstalls();
 	}
 
-	public IReadOnlyCollection<PluginInfo> Plugins => _plugins.Values.Select(handle => handle.Info).ToArray();
+	public IReadOnlyCollection<PluginInfo> Plugins => _plugins.Values.Select(CreateInfo).ToArray();
 	public PluginPackageInstaller Installer => _installer;
+	public bool SafeMode => _options.SafeMode;
 
 	/// <summary>读取当前版本的 manifest。发现阶段不会创建插件 ALC。</summary>
 	public IReadOnlyCollection<PluginInfo> Discover()
 	{
 		EnsureNotDisposed();
+		CompletePendingUninstalls();
 		if (!_options.SafeMode) InstallInboxPackages();
+		HashSet<string> seen = new(StringComparer.Ordinal);
 		foreach (string id in _installer.InstalledIds.Order(StringComparer.Ordinal))
 		{
 			try
 			{
+				if (!PluginManifestReader.IsValidPluginId(id)) continue;
+				seen.Add(id);
 				string? directory = _installer.ResolveCurrentDirectory(id);
 				if (directory is null) throw new PluginException(PluginErrorCodes.InvalidPackage, "current.json 指向的版本不存在");
 				PluginManifest manifest = PluginManifestReader.Read(Path.Combine(directory, PluginPackageInstaller.ManifestFileName));
 				if (!string.Equals(id, manifest.Id, StringComparison.Ordinal))
 					throw new PluginException(PluginErrorCodes.InvalidManifest, "插件目录 ID 与 manifest.json 不一致");
-				PluginLifecycleState state = _options.SafeMode ? PluginLifecycleState.Disabled : PluginLifecycleState.Discovered;
-				string? errorCode = _options.SafeMode ? PluginErrorCodes.SafeModeDisabled : null;
-				if (!_options.SafeMode && _startupRecovery.IsDisabled(manifest.Id))
+
+				(bool compatible, string? compatibilityCode) = Compatibility(manifest);
+				bool userEnabled = _stateStore.IsEnabled(manifest.Id);
+				PluginLifecycleState state;
+				string? errorCode;
+				string? errorMessage;
+
+				if (!compatible)
+				{
+					state = PluginLifecycleState.Incompatible;
+					errorCode = compatibilityCode;
+					errorMessage = FriendlyMessage(compatibilityCode);
+				}
+				else if (_stateStore.TryGetPendingUninstall(manifest.Id, out _))
+				{
+					state = PluginLifecycleState.PendingRestart;
+					errorCode = PluginManagementErrorCodes.UninstallPendingRestart;
+					errorMessage = "插件将在重启后完成卸载";
+				}
+				else if (_options.SafeMode)
+				{
+					state = PluginLifecycleState.Disabled;
+					errorCode = PluginErrorCodes.SafeModeDisabled;
+					errorMessage = "安全模式临时禁用了第三方插件";
+				}
+				else if (!userEnabled)
+				{
+					state = PluginLifecycleState.Disabled;
+					errorCode = PluginManagementErrorCodes.UserDisabled;
+					errorMessage = "插件已由用户禁用";
+				}
+				else if (_startupRecovery.IsDisabled(manifest.Id))
 				{
 					state = PluginLifecycleState.Disabled;
 					errorCode = PluginErrorCodes.StartupRecoveryDisabled;
+					errorMessage = "插件因连续启动失败被保护性禁用";
 				}
-				if (!PluginManifestReader.IsPlatformSupported(manifest.Platforms))
+				else
 				{
-					state = PluginLifecycleState.Incompatible;
-					errorCode = PluginErrorCodes.UnsupportedPlatform;
+					state = PluginLifecycleState.Discovered;
+					errorCode = null;
+					errorMessage = null;
 				}
-				else if (!PluginManifestReader.IsCompatible(_options.HostApiVersion, manifest.Api))
-				{
-					state = PluginLifecycleState.Incompatible;
-					errorCode = PluginErrorCodes.IncompatibleApi;
-				}
-				else if (!_options.DevelopmentHost && !PluginManifestReader.IsHostVersionSupported(_options.HostVersion, manifest.MinHostVersion))
-				{
-					state = PluginLifecycleState.Incompatible;
-					errorCode = PluginErrorCodes.IncompatibleHost;
-				}
-				else if (manifest.Capabilities.Any(capability => !_options.KnownCapabilityIds.Contains(capability, StringComparer.Ordinal)))
-				{
-					state = PluginLifecycleState.Incompatible;
-					errorCode = PluginErrorCodes.UnknownCapability;
-				}
-				Register(directory, manifest, state, errorCode);
+
+				Register(directory, manifest, state, errorCode, errorMessage);
 			}
 			catch (PluginException exception)
 			{
 				Report(exception);
 			}
 		}
+
+		foreach (string stale in _plugins.Keys.Where(id => !seen.Contains(id)).ToArray())
+		{
+			PluginHandle handle = _plugins[stale];
+			if (handle.Instance is null && handle.LoadContext is null) _plugins.Remove(stale);
+		}
 		ValidateDependencies();
 		return Plugins;
 	}
 
-	/// <summary>安装本地 .noripack。安全模式拒绝执行安装。</summary>
+	/// <summary>安装本地 .noripack。新安装默认禁用，安全模式拒绝执行安装。</summary>
 	public async Task<PluginManifest> InstallAsync(string packagePath, CancellationToken cancellationToken = default)
 	{
 		EnsureNotDisposed();
@@ -141,7 +181,10 @@ public sealed class PluginManager : IAsyncDisposable
 		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
+			PluginManifest inspected = _installer.InspectPackage(packagePath);
+			bool existed = _installer.ResolveCurrentDirectory(inspected.Id) is not null;
 			PluginManifest manifest = await Task.Run(() => _installer.Install(packagePath, cancellationToken), cancellationToken).ConfigureAwait(false);
+			if (!existed) _stateStore.SetEnabled(manifest.Id, false);
 			Discover();
 			return manifest;
 		}
@@ -151,8 +194,17 @@ public sealed class PluginManager : IAsyncDisposable
 		}
 	}
 
-	/// <summary>同步安装入口，供安装命令之外的本地调用使用。</summary>
-	public PluginManifest Install(string packagePath) => InstallAsync(packagePath).GetAwaiter().GetResult();
+	/// <summary>
+	/// 兼容宿主内部与既有测试的同步安装入口。该入口代表宿主已显式信任包，保持旧行为并启用插件。
+	/// UI 的本地安装只使用 InstallAsync，因此仍然默认不执行第三方 DLL。
+	/// </summary>
+	public PluginManifest Install(string packagePath)
+	{
+		PluginManifest manifest = InstallAsync(packagePath).GetAwaiter().GetResult();
+		_stateStore.SetEnabled(manifest.Id, true);
+		Discover();
+		return manifest;
+	}
 
 	/// <summary>返回依赖优先的插件快照顺序。</summary>
 	public IReadOnlyList<PluginInfo> DependencyOrder()
@@ -194,25 +246,28 @@ public sealed class PluginManager : IAsyncDisposable
 		}
 	}
 
-	/// <summary>加载并激活一个插件。</summary>
-	public async Task ActivateAsync(string pluginId, CancellationToken cancellationToken = default)
+	/// <summary>显式启用并热激活一个插件。</summary>
+	public async Task EnableAsync(string pluginId, CancellationToken cancellationToken = default)
 	{
 		EnsureNotDisposed();
-		if (_options.SafeMode)
-		{
-			DisableAllThirdPartyPlugins();
-			return;
-		}
+		ValidatePluginId(pluginId);
+		if (_options.SafeMode) throw new PluginException(PluginErrorCodes.SafeModeDisabled, "安全模式下不允许启用插件");
 		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			if (!_plugins.TryGetValue(pluginId, out PluginHandle? handle))
-				throw new PluginException(PluginErrorCodes.InvalidManifest, $"未发现插件: {pluginId}");
-			if (handle.State == PluginLifecycleState.Active) return;
+			Discover();
+			PluginHandle handle = GetRequiredHandle(pluginId);
+			if (_stateStore.TryGetPendingUninstall(pluginId, out _))
+				throw new PluginException(PluginManagementErrorCodes.UninstallPendingRestart, "插件正在等待重启后卸载");
 			if (handle.State == PluginLifecycleState.Incompatible)
 				throw new PluginException(handle.ErrorCode ?? PluginErrorCodes.IncompatibleHost, "插件与当前宿主不兼容");
-			if (handle.State == PluginLifecycleState.Disabled)
-				throw new PluginException(PluginErrorCodes.SafeModeDisabled, "插件已被禁用");
+
+			_stateStore.SetEnabled(pluginId, true);
+			_startupRecovery.Clear(pluginId);
+			if (handle.State == PluginLifecycleState.Active) return;
+			handle.State = PluginLifecycleState.Discovered;
+			handle.ErrorCode = null;
+			handle.ErrorMessage = null;
 			ValidateDependenciesFor(handle);
 			await ActivateCoreAsync(handle, cancellationToken).ConfigureAwait(false);
 		}
@@ -222,10 +277,43 @@ public sealed class PluginManager : IAsyncDisposable
 		}
 	}
 
-	/// <summary>停用一个插件并撤销所有贡献。</summary>
+	/// <summary>加载并激活一个已启用插件。宿主启动流程使用此入口。</summary>
+	public async Task ActivateAsync(string pluginId, CancellationToken cancellationToken = default)
+	{
+		EnsureNotDisposed();
+		ValidatePluginId(pluginId);
+		if (_options.SafeMode)
+		{
+			DisableAllThirdPartyPlugins();
+			return;
+		}
+		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			PluginHandle handle = GetRequiredHandle(pluginId);
+			if (!_stateStore.IsEnabled(pluginId))
+				throw new PluginException(PluginManagementErrorCodes.UserDisabled, "插件已由用户禁用");
+			if (_startupRecovery.IsDisabled(pluginId))
+				throw new PluginException(PluginErrorCodes.StartupRecoveryDisabled, "插件已被启动失败保护禁用");
+			if (handle.State == PluginLifecycleState.Active) return;
+			if (handle.State == PluginLifecycleState.Incompatible)
+				throw new PluginException(handle.ErrorCode ?? PluginErrorCodes.IncompatibleHost, "插件与当前宿主不兼容");
+			if (handle.State == PluginLifecycleState.PendingRestart)
+				throw new PluginException(handle.ErrorCode ?? PluginErrorCodes.UnloadPendingRestart, "插件需要重启后继续操作");
+			ValidateDependenciesFor(handle);
+			await ActivateCoreAsync(handle, cancellationToken).ConfigureAwait(false);
+		}
+		finally
+		{
+			_lifecycleGate.Release();
+		}
+	}
+
+	/// <summary>停用一个插件并撤销所有贡献，不改变用户启用意图。</summary>
 	public async Task DeactivateAsync(string pluginId, CancellationToken cancellationToken = default)
 	{
 		EnsureNotDisposed();
+		ValidatePluginId(pluginId);
 		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
@@ -238,10 +326,11 @@ public sealed class PluginManager : IAsyncDisposable
 		finally { _lifecycleGate.Release(); }
 	}
 
-	/// <summary>停用并卸载一个插件。</summary>
+	/// <summary>停用并卸载一个插件，不改变用户启用意图。</summary>
 	public async Task UnloadAsync(string pluginId, CancellationToken cancellationToken = default)
 	{
 		EnsureNotDisposed();
+		ValidatePluginId(pluginId);
 		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
@@ -252,17 +341,82 @@ public sealed class PluginManager : IAsyncDisposable
 		finally { _lifecycleGate.Release(); }
 	}
 
-	/// <summary>禁用插件并保留安装文件与用户数据。</summary>
+	/// <summary>显式禁用插件并保留安装文件与用户数据。</summary>
 	public async Task DisableAsync(string pluginId, CancellationToken cancellationToken = default)
 	{
 		EnsureNotDisposed();
+		ValidatePluginId(pluginId);
 		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			if (_plugins.TryGetValue(pluginId, out PluginHandle? handle))
+			Discover();
+			PluginHandle handle = GetRequiredHandle(pluginId);
+			_stateStore.SetEnabled(pluginId, false);
+			try
 			{
-				try { await DeactivateCoreAsync(pluginId, cancellationToken, disabled: true).ConfigureAwait(false); }
-				finally { UnloadContext(handle); }
+				await DeactivateCoreAsync(pluginId, cancellationToken, disabled: true).ConfigureAwait(false);
+			}
+			finally
+			{
+				bool unloaded = UnloadContext(handle);
+				if (unloaded)
+				{
+					handle.State = PluginLifecycleState.Disabled;
+					handle.ErrorCode = PluginManagementErrorCodes.UserDisabled;
+					handle.ErrorMessage = "插件已由用户禁用";
+				}
+				else
+				{
+					handle.State = PluginLifecycleState.PendingRestart;
+					handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
+					handle.ErrorMessage = "插件程序集仍被占用，重启后完成禁用";
+				}
+			}
+		}
+		finally { _lifecycleGate.Release(); }
+	}
+
+	/// <summary>禁用并安全删除插件安装目录；用户数据默认保留。</summary>
+	public async Task<PluginUninstallResult> UninstallAsync(string pluginId, bool deleteData = false, CancellationToken cancellationToken = default)
+	{
+		EnsureNotDisposed();
+		ValidatePluginId(pluginId);
+		await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			Discover();
+			PluginHandle handle = GetRequiredHandle(pluginId);
+			EnsureNoActiveDependents(pluginId);
+			_stateStore.SetEnabled(pluginId, false);
+
+			try { await DeactivateCoreAsync(pluginId, cancellationToken, disabled: true).ConfigureAwait(false); }
+			catch (PluginException) { /* cleanup still decides whether uninstall can continue */ }
+
+			if (!UnloadContext(handle))
+			{
+				_stateStore.SetPendingUninstall(pluginId, deleteData);
+				handle.State = PluginLifecycleState.PendingRestart;
+				handle.ErrorCode = PluginManagementErrorCodes.UninstallPendingRestart;
+				handle.ErrorMessage = "插件正在使用中，将在重启后完成卸载";
+				return new PluginUninstallResult(true, true, CreateInfo(handle));
+			}
+
+			try
+			{
+				_installer.Uninstall(pluginId);
+				if (deleteData) DeletePluginData(pluginId);
+				_plugins.Remove(pluginId);
+				_startupRecovery.Clear(pluginId);
+				_stateStore.Remove(pluginId);
+				return new PluginUninstallResult(true, false, null);
+			}
+			catch (PluginException exception) when (exception.Code == PluginErrorCodes.UnloadPendingRestart)
+			{
+				_stateStore.SetPendingUninstall(pluginId, deleteData);
+				handle.State = PluginLifecycleState.PendingRestart;
+				handle.ErrorCode = PluginManagementErrorCodes.UninstallPendingRestart;
+				handle.ErrorMessage = "插件文件当前被占用，将在重启后完成卸载";
+				return new PluginUninstallResult(true, true, CreateInfo(handle));
 			}
 		}
 		finally { _lifecycleGate.Release(); }
@@ -275,6 +429,7 @@ public sealed class PluginManager : IAsyncDisposable
 		{
 			handle.State = PluginLifecycleState.Disabled;
 			handle.ErrorCode = PluginErrorCodes.SafeModeDisabled;
+			handle.ErrorMessage = "安全模式临时禁用了第三方插件";
 		}
 	}
 
@@ -304,7 +459,12 @@ public sealed class PluginManager : IAsyncDisposable
 
 	public void MarkPendingRestart(string pluginId)
 	{
-		if (_plugins.TryGetValue(pluginId, out PluginHandle? handle)) handle.State = PluginLifecycleState.PendingRestart;
+		if (_plugins.TryGetValue(pluginId, out PluginHandle? handle))
+		{
+			handle.State = PluginLifecycleState.PendingRestart;
+			handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
+			handle.ErrorMessage = "插件需要重启后完成当前操作";
+		}
 	}
 
 	public async ValueTask DisposeAsync()
@@ -344,6 +504,7 @@ public sealed class PluginManager : IAsyncDisposable
 	private async Task ActivateCoreAsync(PluginHandle handle, CancellationToken cancellationToken)
 	{
 		handle.State = PluginLifecycleState.Loading;
+		handle.ErrorMessage = null;
 		PluginLoadContext? loadContext = null;
 		try
 		{
@@ -359,6 +520,7 @@ public sealed class PluginManager : IAsyncDisposable
 			await instance.ActivateAsync(handle.Context, cancellationToken).AsTask().WaitAsync(_options.ActivationTimeout, cancellationToken).ConfigureAwait(false);
 			handle.State = PluginLifecycleState.Active;
 			handle.ErrorCode = null;
+			handle.ErrorMessage = null;
 			ClearStartupFailure(handle.Manifest.Id);
 		}
 		catch (PluginException exception)
@@ -379,32 +541,54 @@ public sealed class PluginManager : IAsyncDisposable
 		if (!_plugins.TryGetValue(pluginId, out PluginHandle? handle)) return;
 		if (handle.Instance is null)
 		{
+			handle.Context?.Revoke();
+			handle.Context?.Dispose();
+			handle.Context = null;
+			handle.Contributions.RevokeAll();
 			if (disabled) handle.State = PluginLifecycleState.Disabled;
 			return;
 		}
+
 		handle.State = PluginLifecycleState.Stopping;
 		try { handle.StopSource?.Cancel(throwOnFirstException: false); } catch { }
+		try { handle.Contributions.RevokeAll(); } catch { }
+		try { handle.Context?.Revoke(); } catch { }
+
 		PluginException? failure = null;
+		if (_options.ClosePluginWindowsAsync is not null)
+		{
+			try
+			{
+				await _options.ClosePluginWindowsAsync(pluginId, cancellationToken).WaitAsync(_options.DeactivationTimeout, cancellationToken).ConfigureAwait(false);
+			}
+			catch (Exception exception)
+			{
+				failure = new PluginException(PluginErrorCodes.DeactivationFailed, "插件窗口关闭失败", exception);
+				Report(failure);
+			}
+		}
+
 		try
 		{
 			await handle.Instance.DeactivateAsync(cancellationToken).AsTask().WaitAsync(_options.DeactivationTimeout, cancellationToken).ConfigureAwait(false);
 		}
 		catch (Exception exception)
 		{
-			failure = exception is PluginException pluginException && pluginException.Code == PluginErrorCodes.DeactivationFailed
+			PluginException deactivateFailure = exception is PluginException pluginException && pluginException.Code == PluginErrorCodes.DeactivationFailed
 				? pluginException
 				: new PluginException(PluginErrorCodes.DeactivationFailed, $"插件停用失败: {handle.Manifest.Name}", exception);
-			Report(failure);
+			failure ??= deactivateFailure;
+			Report(deactivateFailure);
 		}
 		finally
 		{
-			handle.Context?.Revoke();
 			handle.Instance = null;
 			handle.Context?.Dispose();
 			handle.Context = null;
 			handle.StopSource = null;
 			handle.State = failure is null ? (disabled ? PluginLifecycleState.Disabled : PluginLifecycleState.Installed) : PluginLifecycleState.Failed;
 			handle.ErrorCode = failure?.Code;
+			handle.ErrorMessage = failure is null ? null : SanitizeMessage(failure.Message);
 		}
 		if (failure is not null) throw failure;
 	}
@@ -455,6 +639,7 @@ public sealed class PluginManager : IAsyncDisposable
 	private void FailActivation(PluginHandle handle, PluginException exception, PluginLoadContext? loadContext)
 	{
 		handle.ErrorCode = exception.Code;
+		handle.ErrorMessage = SanitizeMessage(exception.Message);
 		handle.State = PluginLifecycleState.Failed;
 		RecordStartupFailure(handle);
 		handle.Context?.Revoke();
@@ -468,19 +653,20 @@ public sealed class PluginManager : IAsyncDisposable
 		Report(exception);
 	}
 
-	private void UnloadContext(PluginHandle handle)
+	private bool UnloadContext(PluginHandle handle)
 	{
 		PluginLoadContext? context = handle.LoadContext;
 		handle.LoadContext = null;
-		if (context is null) return;
+		if (context is null) return true;
 		WeakReference weak;
 		try { weak = UnloadAndTrack(context); }
 		catch (Exception exception)
 		{
 			handle.State = PluginLifecycleState.PendingRestart;
 			handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
+			handle.ErrorMessage = "插件程序集无法卸载，需要重启";
 			Report(new PluginException(PluginErrorCodes.UnloadPendingRestart, "插件程序集无法卸载", exception));
-			return;
+			return false;
 		}
 		context = null;
 		for (int index = 0; index < 10 && weak.IsAlive; index++)
@@ -490,11 +676,11 @@ public sealed class PluginManager : IAsyncDisposable
 			GC.Collect();
 			if (weak.IsAlive) Thread.Sleep(10);
 		}
-		if (weak.IsAlive)
-		{
-			handle.State = PluginLifecycleState.PendingRestart;
-			handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
-		}
+		if (!weak.IsAlive) return true;
+		handle.State = PluginLifecycleState.PendingRestart;
+		handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
+		handle.ErrorMessage = "插件程序集仍被引用，需要重启";
+		return false;
 	}
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
@@ -505,15 +691,26 @@ public sealed class PluginManager : IAsyncDisposable
 		return weak;
 	}
 
-	private void Register(string directory, PluginManifest manifest, PluginLifecycleState state, string? errorCode)
+	private void Register(string directory, PluginManifest manifest, PluginLifecycleState state, string? errorCode, string? errorMessage)
 	{
-		if (_plugins.TryGetValue(manifest.Id, out PluginHandle? existing) && existing.State == PluginLifecycleState.Active)
+		if (_plugins.TryGetValue(manifest.Id, out PluginHandle? existing))
 		{
-			existing.State = PluginLifecycleState.PendingRestart;
-			existing.ErrorCode = null;
-			return;
+			bool sameDirectory = PathsEqual(existing.Directory, directory);
+			if (existing.State == PluginLifecycleState.Active)
+			{
+				if (!sameDirectory)
+				{
+					existing.State = PluginLifecycleState.PendingRestart;
+					existing.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
+					existing.ErrorMessage = "已安装新版本，重启后切换";
+				}
+				return;
+			}
+			if (sameDirectory && existing.State is PluginLifecycleState.Failed or PluginLifecycleState.PendingRestart
+				&& state is PluginLifecycleState.Discovered or PluginLifecycleState.Installed)
+				return;
 		}
-		_plugins[manifest.Id] = new PluginHandle(directory, manifest, state, errorCode);
+		_plugins[manifest.Id] = new PluginHandle(directory, manifest, state, errorCode, errorMessage);
 	}
 
 	private void InstallInboxPackages()
@@ -523,7 +720,12 @@ public sealed class PluginManager : IAsyncDisposable
 			try
 			{
 				PluginManifest manifest = _installer.InspectPackage(packagePath);
-				if (!_installer.IsVersionInstalled(manifest.Id, manifest.Version)) _installer.Install(packagePath);
+				if (!_installer.IsVersionInstalled(manifest.Id, manifest.Version))
+				{
+					bool existed = _installer.ResolveCurrentDirectory(manifest.Id) is not null;
+					_installer.Install(packagePath);
+					if (!existed) _stateStore.SetEnabled(manifest.Id, false);
+				}
 			}
 			catch (PluginException exception)
 			{
@@ -536,7 +738,7 @@ public sealed class PluginManager : IAsyncDisposable
 	{
 		foreach (PluginHandle handle in _plugins.Values)
 		{
-			if (handle.State is PluginLifecycleState.Disabled or PluginLifecycleState.Failed) continue;
+			if (handle.State is PluginLifecycleState.Disabled or PluginLifecycleState.Failed or PluginLifecycleState.PendingRestart) continue;
 			foreach (PluginDependency dependency in handle.Manifest.Dependencies)
 			{
 				if (!_plugins.TryGetValue(dependency.Id, out PluginHandle? target))
@@ -566,6 +768,15 @@ public sealed class PluginManager : IAsyncDisposable
 		}
 	}
 
+	private void EnsureNoActiveDependents(string pluginId)
+	{
+		PluginHandle? dependent = _plugins.Values.FirstOrDefault(handle =>
+			handle.State == PluginLifecycleState.Active &&
+			handle.Manifest.Dependencies.Any(dependency => !dependency.Optional && string.Equals(dependency.Id, pluginId, StringComparison.Ordinal)));
+		if (dependent is not null)
+			throw new PluginException(PluginManagementErrorCodes.DependencyInUse, $"插件仍被活动依赖使用: {dependent.Manifest.Id}");
+	}
+
 	private void Visit(PluginHandle handle, HashSet<string> visiting, HashSet<string> visited, List<PluginInfo> ordered)
 	{
 		if (visited.Contains(handle.Manifest.Id)) return;
@@ -577,7 +788,7 @@ public sealed class PluginManager : IAsyncDisposable
 		}
 		visiting.Remove(handle.Manifest.Id);
 		visited.Add(handle.Manifest.Id);
-		ordered.Add(handle.Info);
+		ordered.Add(CreateInfo(handle));
 	}
 
 	private void SetIncompatible(PluginHandle handle, string code)
@@ -585,6 +796,16 @@ public sealed class PluginManager : IAsyncDisposable
 		if (handle.State is PluginLifecycleState.Active or PluginLifecycleState.Loading) return;
 		handle.State = PluginLifecycleState.Incompatible;
 		handle.ErrorCode = code;
+		handle.ErrorMessage = FriendlyMessage(code);
+	}
+
+	private (bool Compatible, string? ErrorCode) Compatibility(PluginManifest manifest)
+	{
+		if (!PluginManifestReader.IsPlatformSupported(manifest.Platforms)) return (false, PluginErrorCodes.UnsupportedPlatform);
+		if (!PluginManifestReader.IsCompatible(_options.HostApiVersion, manifest.Api)) return (false, PluginErrorCodes.IncompatibleApi);
+		if (!_options.DevelopmentHost && !PluginManifestReader.IsHostVersionSupported(_options.HostVersion, manifest.MinHostVersion)) return (false, PluginErrorCodes.IncompatibleHost);
+		if (manifest.Capabilities.Any(capability => !_options.KnownCapabilityIds.Contains(capability, StringComparer.Ordinal))) return (false, PluginErrorCodes.UnknownCapability);
+		return (true, null);
 	}
 
 	private void RecordStartupFailure(PluginHandle handle)
@@ -594,12 +815,99 @@ public sealed class PluginManager : IAsyncDisposable
 		{
 			handle.State = PluginLifecycleState.Disabled;
 			handle.ErrorCode = PluginErrorCodes.StartupRecoveryDisabled;
+			handle.ErrorMessage = "插件因连续启动失败被保护性禁用";
 		}
 	}
 
-	private void ClearStartupFailure(string pluginId)
+	private void ClearStartupFailure(string pluginId) => _startupRecovery.Clear(pluginId);
+
+	private void CompletePendingUninstalls()
 	{
-		_startupRecovery.Clear(pluginId);
+		foreach ((string pluginId, bool deleteData) in _stateStore.PendingUninstalls())
+		{
+			try
+			{
+				_installer.Uninstall(pluginId);
+				if (deleteData) DeletePluginData(pluginId);
+				_startupRecovery.Clear(pluginId);
+				_stateStore.Remove(pluginId);
+				_plugins.Remove(pluginId);
+			}
+			catch (PluginException exception)
+			{
+				Report(exception);
+			}
+		}
+	}
+
+	private void DeletePluginData(string pluginId)
+	{
+		ValidatePluginId(pluginId);
+		string dataRoot = Path.GetFullPath(_options.DataDirectory);
+		string pluginData = Path.GetFullPath(Path.Combine(dataRoot, pluginId));
+		PluginPathSafety.EnsureTreeNoReparsePoints(dataRoot, pluginData, PluginErrorCodes.StorageFailed, "插件数据目录越过宿主管理边界或包含符号链接");
+		if (!Directory.Exists(pluginData)) return;
+		try { Directory.Delete(pluginData, recursive: true); }
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			throw new PluginException(PluginErrorCodes.StorageFailed, "插件数据删除失败", exception);
+		}
+	}
+
+	private PluginInfo CreateInfo(PluginHandle handle)
+	{
+		IReadOnlyList<PluginCapabilityStatus> statuses = handle.Context?.CapabilityRegistry.Statuses ??
+			handle.Manifest.Capabilities.Concat(handle.Manifest.OptionalCapabilities)
+				.Distinct(StringComparer.Ordinal)
+				.OrderBy(id => id, StringComparer.Ordinal)
+				.Select(id => new PluginCapabilityStatus(id, true, _options.KnownCapabilityIds.Contains(id, StringComparer.Ordinal), false))
+				.ToArray();
+		return new PluginInfo(handle.Manifest.Id, handle.Manifest, handle.State, handle.ErrorCode)
+		{
+			UserEnabled = _stateStore.IsEnabled(handle.Manifest.Id),
+			ErrorMessage = handle.ErrorMessage,
+			RequiresRestart = handle.State == PluginLifecycleState.PendingRestart,
+			CapabilityStatuses = statuses,
+		};
+	}
+
+	private PluginHandle GetRequiredHandle(string pluginId)
+	{
+		if (_plugins.TryGetValue(pluginId, out PluginHandle? handle)) return handle;
+		throw new PluginException(PluginManagementErrorCodes.PluginNotFound, "插件不存在或尚未安装");
+	}
+
+	private static void ValidatePluginId(string pluginId)
+	{
+		if (!PluginManifestReader.IsValidPluginId(pluginId))
+			throw new PluginException(PluginManagementErrorCodes.InvalidPluginId, "插件 ID 无效");
+	}
+
+	private string SanitizeMessage(string? message)
+	{
+		if (string.IsNullOrWhiteSpace(message)) return "插件操作失败";
+		string sanitized = message.Replace('\r', ' ').Replace('\n', ' ')
+			.Replace(_options.PluginsDirectory, "<plugins>", StringComparison.OrdinalIgnoreCase)
+			.Replace(_options.DataDirectory, "<plugin-data>", StringComparison.OrdinalIgnoreCase);
+		while (sanitized.Contains("  ", StringComparison.Ordinal)) sanitized = sanitized.Replace("  ", " ", StringComparison.Ordinal);
+		sanitized = sanitized.Trim();
+		return sanitized.Length <= 512 ? sanitized : sanitized[..512];
+	}
+
+	private static string? FriendlyMessage(string? code) => code switch
+	{
+		PluginErrorCodes.UnsupportedPlatform => "插件不支持当前平台",
+		PluginErrorCodes.IncompatibleApi => "插件 API 与当前宿主不兼容",
+		PluginErrorCodes.IncompatibleHost => "当前 Nori 版本不满足插件要求",
+		PluginErrorCodes.UnknownCapability => "插件声明了宿主未知的必需权限",
+		PluginErrorCodes.MissingDependency => "插件缺少必需依赖",
+		_ => null,
+	};
+
+	private static bool PathsEqual(string left, string right)
+	{
+		StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		return Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)), comparison);
 	}
 
 	private void Report(PluginException exception)
@@ -614,23 +922,24 @@ public sealed class PluginManager : IAsyncDisposable
 
 	private sealed class PluginHandle
 	{
-		public PluginHandle(string directory, PluginManifest manifest, PluginLifecycleState state, string? errorCode)
+		public PluginHandle(string directory, PluginManifest manifest, PluginLifecycleState state, string? errorCode, string? errorMessage)
 		{
 			Directory = directory;
 			Manifest = manifest;
 			State = state;
 			ErrorCode = errorCode;
+			ErrorMessage = errorMessage;
 		}
 
 		public string Directory { get; }
 		public PluginManifest Manifest { get; }
 		public PluginLifecycleState State { get; set; }
 		public string? ErrorCode { get; set; }
+		public string? ErrorMessage { get; set; }
 		public INoriPlugin? Instance { get; set; }
 		public PluginLoadContext? LoadContext { get; set; }
 		public PluginContext? Context { get; set; }
 		public CancellationTokenSource? StopSource { get; set; }
 		public PluginContributionRegistry Contributions { get; } = new();
-		public PluginInfo Info => new(Manifest.Id, Manifest, State, ErrorCode);
 	}
 }
