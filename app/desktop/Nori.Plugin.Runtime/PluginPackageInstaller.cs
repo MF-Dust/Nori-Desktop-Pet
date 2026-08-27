@@ -114,6 +114,28 @@ public sealed class PluginPackageInstaller
 		}
 	}
 
+	/// <summary>
+	/// 删除宿主管理根下指定 manifest ID 的全部已安装版本和 current.json。
+	/// 只接受经过 manifest ID 规则校验的 ID，不接受任意路径。
+	/// </summary>
+	public void Uninstall(string id)
+	{
+		if (!PluginManifestReader.IsValidPluginId(id))
+			throw new PluginException(PluginErrorCodes.InvalidManifest, "插件 ID 无效");
+
+		string pluginDirectory = Path.GetFullPath(CurrentDirectory(id));
+		PluginPathSafety.EnsureTreeNoReparsePoints(_root, pluginDirectory, PluginErrorCodes.PackagePathDenied, "插件卸载目录越过宿主管理边界或包含符号链接");
+		if (!Directory.Exists(pluginDirectory)) return;
+		try
+		{
+			Directory.Delete(pluginDirectory, recursive: true);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			throw new PluginException(PluginErrorCodes.UnloadPendingRestart, "插件文件当前无法删除，需要重启后完成卸载", exception);
+		}
+	}
+
 	/// <summary>读取插件的 current.json 并返回对应的版本目录。</summary>
 	public string? ResolveCurrentDirectory(string id)
 	{
