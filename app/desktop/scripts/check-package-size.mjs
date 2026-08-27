@@ -1,5 +1,5 @@
-import {readdir, stat} from "node:fs/promises"
-import {resolve} from "node:path"
+import {appendFile, readdir, stat} from "node:fs/promises"
+import {relative, resolve} from "node:path"
 
 const args = process.argv.slice(2)
 const value = name => {
@@ -17,10 +17,14 @@ if (!targetArg || !Number.isFinite(maxMiB) || maxMiB <= 0) {
 }
 
 const target = resolve(targetArg)
+const files = []
 
 const sizeOf = async path => {
 	const info = await stat(path)
-	if (info.isFile()) return info.size
+	if (info.isFile()) {
+		files.push({path: relative(target, path) || path, size: info.size})
+		return info.size
+	}
 	if (!info.isDirectory()) return 0
 	let total = 0
 	for (const entry of await readdir(path, {withFileTypes: true})) {
@@ -36,11 +40,14 @@ try {
 	const summary = `${label}: ${mib.toFixed(2)} MiB / budget ${maxMiB.toFixed(2)} MiB`
 	console.log(`[package-size] ${summary}`)
 	if (process.env.GITHUB_STEP_SUMMARY) {
-		const {appendFile} = await import("node:fs/promises")
 		await appendFile(process.env.GITHUB_STEP_SUMMARY, `- ${summary}\n`, "utf8")
 	}
 	if (mib > maxMiB) {
 		console.error(`[package-size] 发布体积超过预算 ${maxMiB.toFixed(2)} MiB；请检查新增运行时、原生资源或重复产物。`)
+		console.error("[package-size] 最大文件:")
+		for (const file of files.sort((a, b) => b.size - a.size).slice(0, 12)) {
+			console.error(`  ${(file.size / 1024 / 1024).toFixed(2).padStart(8)} MiB  ${file.path}`)
+		}
 		process.exit(1)
 	}
 } catch (error) {
