@@ -37,7 +37,7 @@ public sealed record PlatformCapabilities
 	/// <summary>能否从 HTML 标题栏发起原生窗口拖动</summary>
 	public required bool SupportsWindowDrag { get; init; }
 
-	/// <summary>能否做逐像素点击穿透</summary>
+	/// <summary>能否按桌宠交互区域做点击穿透</summary>
 	public required bool SupportsHitThrough { get; init; }
 
 	/// <summary>能否置顶窗口</summary>
@@ -50,7 +50,7 @@ public sealed record PlatformCapabilities
 /// <summary>
 /// 平台相关能力
 ///
-/// 浏览器拿不到窗口外的光标, 也无法从 WebView 内部发起原生窗口拖动或做逐像素穿透,
+/// 浏览器拿不到窗口外的光标, 也无法从 WebView 内部发起原生窗口拖动或设置交互区域穿透,
 /// 这几件事必须由宿主用系统 API 完成. 各平台实现:
 /// - Windows: user32 (GetCursorPos / WM_NCLBUTTONDOWN / WM_NCHITTEST)
 /// - macOS:   ObjC runtime (NSEvent.mouseLocation / performWindowDragWithEvent: / setIgnoresMouseEvents:)
@@ -80,7 +80,7 @@ public interface IPlatformServices
 	/// <summary>
 	/// 设置窗口是否整体穿透点击
 	///
-	/// 逐像素穿透在 Windows 上由 WM_NCHITTEST 逐点判定, 不走这个入口;
+	/// 模型矩形穿透在 Windows 上由 WM_NCHITTEST 逐点判定, 不走这个入口;
 	/// macOS / Linux 则按 alpha 采样结果在「整窗可点」与「整窗穿透」之间切换。
 	/// </summary>
 	void SetClickThrough(nint windowHandle, bool through);

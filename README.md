@@ -76,12 +76,12 @@
 
 **Nori Desktop Pet** 是一款兼具高颜值与高智能的二次元桌面宠物与智能伴侣。
 
-底层宿主采用 **.NET 10 + Avalonia 12** 构建，桌宠渲染采用 **C# 原生 OpenGL ES (Live2DCSharpSDK)** 直接在透明无边框窗口中绘制，实现逐像素透明点击穿透与极度跟手的平滑拖拽；主控制台与配置面板采用现代化的 **Vue 3 + TypeScript + UnoCSS** SPA，由跨平台 **NativeWebView** 高性能承载，内置安全可靠的 Kestrel 回环服务与多模态智能 Agent 交互核心。
+底层宿主采用 **.NET 10 + Avalonia 12** 构建，桌宠渲染采用 **C# 原生 OpenGL ES (Live2DCSharpSDK)** 直接在透明无边框窗口中绘制，以动态 alpha 外接矩形实现贴近模型尺寸的透明点击穿透与极度跟手的平滑拖拽；主控制台与配置面板采用现代化的 **Vue 3 + TypeScript + UnoCSS** SPA，由跨平台 **NativeWebView** 高性能承载，内置安全可靠的 Kestrel 回环服务与多模态智能 Agent 交互核心。
 
 ### 核心特性
 
 - **原生 OpenGL Live2D 桌宠引擎**：基于 `Live2DCSharpSDK` 直接在 Avalonia `PetGlControl` (OpenGL ES 2.0) 上绘制，支持高精度 2048x2048 遮罩缓冲与 16x 各向异性过滤，原生支持物理摆动、自动眨眼、视线追踪、节拍同步与音频 RMS 口型同步。
-- **真·逐像素透明点击穿透**：Alpha 缓冲动态采样（~10Hz）结合 Win32 `WM_NCHITTEST` 钩子，实现透明区域鼠标事件零延迟真实穿透至桌面底层；4px 阈值原生平滑拖拽与坐标自动持久化；多平台能力感知驱动优雅降级。
+- **模型尺寸透明点击穿透**：Alpha 缓冲动态采样（~10Hz）生成可见模型的连续外接矩形，并结合 Win32 `WM_NCHITTEST` 钩子让矩形外区域穿透至桌面底层；4px 阈值原生平滑拖拽与坐标自动持久化；多平台能力感知驱动优雅降级。
 - **深海微光美学 UI 与四窗口隔离架构**：全界面采用 UnoCSS 精确控制的深海微光（Deep Ocean Glow）设计系统；调度四独立窗口生命周期（`first-run` 首次引导、`init` 初始化、`main` 控制台、`pet` 原生桌宠）；内置 Kestrel 回环 `AssetServer` 同源托管前端 SPA、本地资源与一次性音频传输 Token。
 - **多模型智能 Agent 与生态扩展**：支持 OpenAI / Claude / Gemini / DeepSeek / Ollama 等多平台 LLM，具备流式打字机输出与实时情感/动作标签驱动；内置 SQLite 键值存储与长期记忆体系（Memory.md），支持 Model Context Protocol (MCP) 插件工具扩展。
 - **全链路多模态语音交互**：C# `VoiceService` 驱动（支持 Whisper 离线/在线语音识别、GPT-SoVITS / Custom HTTP / OpenAI TTS）；`main` 控制台作为唯一常驻音频宿主，通过 WebAudio 播放并提取 RMS 振幅实时驱动桌宠嘴形。

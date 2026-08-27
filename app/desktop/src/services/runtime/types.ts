@@ -50,7 +50,7 @@ export interface PlatformState {
 	supportsGlobalCursor: boolean
 	/** 能否从 HTML 标题栏发起原生窗口拖动 */
 	supportsWindowDrag: boolean
-	/** 能否做逐像素点击空透 */
+	/** 能否按桌宠模型交互范围做点击空透 */
 	supportsHitThrough: boolean
 	/** 能否置顶窗口 */
 	supportsTopmost: boolean

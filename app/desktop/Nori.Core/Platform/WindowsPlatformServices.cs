@@ -6,7 +6,7 @@ namespace Nori.Core.Platform;
 /// <summary>
 /// Windows 实现
 ///
-/// 逐像素穿透在 Windows 上由 PetWindow 的 WM_NCHITTEST 钩子逐点判定 (精度最好),
+/// 模型交互矩形穿透在 Windows 上由 PetWindow 的 WM_NCHITTEST 钩子逐点判定,
 /// 因此 SetClickThrough 只在需要整窗穿透时兜底改 WS_EX_TRANSPARENT。
 /// </summary>
 [SupportedOSPlatform("windows")]

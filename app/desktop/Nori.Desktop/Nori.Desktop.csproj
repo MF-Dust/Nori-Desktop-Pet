@@ -35,6 +35,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="Nori.Desktop.Tests" />
 		<ProjectReference Include="../Nori.Core/Nori.Core.csproj" />
 		<ProjectReference Include="../Nori.PluginRuntime/Nori.PluginRuntime.csproj" />
 		<ProjectReference Include="../Live2DCSharpSDK.OpenGL/Live2DCSharpSDK.OpenGL.csproj" />

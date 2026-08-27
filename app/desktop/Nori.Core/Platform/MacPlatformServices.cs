@@ -74,7 +74,7 @@ public sealed class MacPlatformServices : IPlatformServices
 		SupportsGlobalCursor = true,
 		// performWindowDragWithEvent: 需要一个当前事件; 拿不到时退化为不支持, 前端会显示拖动手柄
 		SupportsWindowDrag = true,
-		// 逐像素靠 alpha 采样在「整窗可点」与「整窗穿透」之间切换, 精度略低于 Windows
+		// 按光标是否位于模型交互矩形内，在「整窗可点」与「整窗穿透」之间切换
 		SupportsHitThrough = true,
 		SupportsTopmost = true,
 		SupportsTray = true,

@@ -134,7 +134,7 @@ export class HostWindow {
 	}
 
 	async setInputMask(_mask: WindowInputMask): Promise<void> {
-		// 原生 Avalonia 窗口自管逐像素透明与命中，前端不再推送掩码
+		// 原生 Avalonia 窗口自管模型交互矩形与透明穿透，前端不再推送掩码
 	}
 }
 

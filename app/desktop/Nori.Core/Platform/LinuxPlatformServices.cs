@@ -212,9 +212,9 @@ public sealed class LinuxPlatformServices : IPlatformServices
 	}
 
 	/// <summary>
-	/// 用 alpha 掩码生成的矩形集合设置输入形状 (逐像素穿透的近似)
+	/// 用模型外接矩形设置输入形状
 	///
-	/// 矩形数量直接影响 X 服务器开销, 调用方应按网格量化后再传进来。
+	/// 当前调用方只传一个连续矩形；接口保留集合形式以匹配 XShape API。
 	/// </summary>
 	public void SetInputShape(nint windowHandle, IReadOnlyList<(int X, int Y, int Width, int Height)> regions)
 	{

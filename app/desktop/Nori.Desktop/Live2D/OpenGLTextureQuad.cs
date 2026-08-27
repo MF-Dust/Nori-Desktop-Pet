@@ -34,6 +34,24 @@ internal sealed class OpenGLTextureQuad : IDisposable
 		}
 		""";
 
+	// 每个输出掩码格内取中心和四个 20%/80% 位置，避免单点采样漏掉细部件。
+	// 命中 FBO 固定为 96x128，偏移保持在当前格内，不会把相邻透明格膨胀成可点击区域。
+	private const string HitMaskFragmentShaderSource = """
+		precision mediump float;
+		varying vec2 v_texCoord;
+		uniform sampler2D s_texture0;
+		void main()
+		{
+			vec2 sampleOffset = vec2(0.3 / 96.0, 0.3 / 128.0);
+			float alpha = texture2D(s_texture0, v_texCoord).a;
+			alpha = max(alpha, texture2D(s_texture0, v_texCoord + vec2(-sampleOffset.x, -sampleOffset.y)).a);
+			alpha = max(alpha, texture2D(s_texture0, v_texCoord + vec2(sampleOffset.x, -sampleOffset.y)).a);
+			alpha = max(alpha, texture2D(s_texture0, v_texCoord + vec2(-sampleOffset.x, sampleOffset.y)).a);
+			alpha = max(alpha, texture2D(s_texture0, v_texCoord + vec2(sampleOffset.x, sampleOffset.y)).a);
+			gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+		}
+		""";
+
 	private static readonly float[] Vertices =
 	[
 		-1.0f, -1.0f, 0.0f, 0.0f,
@@ -46,6 +64,7 @@ internal sealed class OpenGLTextureQuad : IDisposable
 
 	private readonly OpenGLApi _gl;
 	private int _program;
+	private int _hitMaskProgram;
 	private int _vertexBuffer;
 	private int _indexBuffer;
 	private int _vertexArray;
@@ -54,6 +73,10 @@ internal sealed class OpenGLTextureQuad : IDisposable
 	private int _textureLocation;
 	private int _offsetScaleLocation;
 	private int _tintLocation;
+	private int _hitMaskPositionLocation;
+	private int _hitMaskTexCoordLocation;
+	private int _hitMaskTextureLocation;
+	private int _hitMaskOffsetScaleLocation;
 
 	public OpenGLTextureQuad(OpenGLApi gl)
 	{
@@ -63,10 +86,67 @@ internal sealed class OpenGLTextureQuad : IDisposable
 
 	public bool IsAvailable => _program != 0 && _vertexBuffer != 0 && _indexBuffer != 0;
 
+	public bool IsHitMaskAvailable => IsAvailable && _hitMaskProgram != 0;
+
 	/// <summary>把纹理画到当前帧缓冲；纹理颜色默认已经是预乘 alpha。</summary>
 	public bool Draw(int texture, float tintR, float tintG, float tintB, float tintA, float offsetX = 0, float offsetY = 0)
 	{
-		if (!IsAvailable || texture == 0) return false;
+		return DrawTexture(
+			_program,
+			_positionLocation,
+			_texCoordLocation,
+			_textureLocation,
+			_offsetScaleLocation,
+			_tintLocation,
+			texture,
+			tintR,
+			tintG,
+			tintB,
+			tintA,
+			offsetX,
+			offsetY,
+			useBlend: true);
+	}
+
+	/// <summary>
+	/// 把纹理绘制为低分辨率命中掩码；每个输出格取五个纹理采样点的 alpha 最大值。
+	/// </summary>
+	public bool DrawHitMask(int texture)
+	{
+		return DrawTexture(
+			_hitMaskProgram,
+			_hitMaskPositionLocation,
+			_hitMaskTexCoordLocation,
+			_hitMaskTextureLocation,
+			_hitMaskOffsetScaleLocation,
+			-1,
+			texture,
+			1,
+			1,
+			1,
+			1,
+			0,
+			0,
+			useBlend: false);
+	}
+
+	private bool DrawTexture(
+		int program,
+		int positionLocation,
+		int texCoordLocation,
+		int textureLocation,
+		int offsetScaleLocation,
+		int tintLocation,
+		int texture,
+		float tintR,
+		float tintG,
+		float tintB,
+		float tintA,
+		float offsetX,
+		float offsetY,
+		bool useBlend)
+	{
+		if (!IsAvailable || program == 0 || texture == 0) return false;
 
 		_gl.GetIntegerv(_gl.GL_ARRAY_BUFFER_BINDING, out int oldArrayBuffer);
 		_gl.GetIntegerv(_gl.GL_ELEMENT_ARRAY_BUFFER_BINDING, out int oldElementBuffer);
@@ -86,28 +166,35 @@ internal sealed class OpenGLTextureQuad : IDisposable
 		{
 			_gl.Disable(_gl.GL_CULL_FACE);
 			_gl.Disable(_gl.GL_DEPTH_TEST);
-			_gl.Enable(_gl.GL_BLEND);
-			// Cubism 的颜色已经是预乘 alpha；否则合成会再次乘 alpha 造成透明部件变暗。
-			_gl.BlendFuncSeparate(_gl.GL_ONE, _gl.GL_ONE_MINUS_SRC_ALPHA, _gl.GL_ONE, _gl.GL_ONE_MINUS_SRC_ALPHA);
-			_gl.UseProgram(_program);
+			if (useBlend)
+			{
+				_gl.Enable(_gl.GL_BLEND);
+				// Cubism 的颜色已经是预乘 alpha；否则合成会再次乘 alpha 造成透明部件变暗。
+				_gl.BlendFuncSeparate(_gl.GL_ONE, _gl.GL_ONE_MINUS_SRC_ALPHA, _gl.GL_ONE, _gl.GL_ONE_MINUS_SRC_ALPHA);
+			}
+			else
+			{
+				_gl.Disable(_gl.GL_BLEND);
+			}
+			_gl.UseProgram(program);
 			_gl.BindVertexArray(_vertexArray);
 			_gl.BindBuffer(_gl.GL_ARRAY_BUFFER, _vertexBuffer);
 			_gl.BindBuffer(_gl.GL_ELEMENT_ARRAY_BUFFER, _indexBuffer);
-			_gl.EnableVertexAttribArray(_positionLocation);
-			_gl.EnableVertexAttribArray(_texCoordLocation);
-			_gl.VertexAttribPointer(_positionLocation, 2, _gl.GL_FLOAT, false, 4 * sizeof(float), 0);
-			_gl.VertexAttribPointer(_texCoordLocation, 2, _gl.GL_FLOAT, false, 4 * sizeof(float), 2 * sizeof(float));
+			_gl.EnableVertexAttribArray(positionLocation);
+			_gl.EnableVertexAttribArray(texCoordLocation);
+			_gl.VertexAttribPointer(positionLocation, 2, _gl.GL_FLOAT, false, 4 * sizeof(float), 0);
+			_gl.VertexAttribPointer(texCoordLocation, 2, _gl.GL_FLOAT, false, 4 * sizeof(float), 2 * sizeof(float));
 			_gl.ActiveTexture(_gl.GL_TEXTURE0);
 			_gl.BindTexture(_gl.GL_TEXTURE_2D, texture);
-			_gl.Uniform1i(_textureLocation, 0);
-			_gl.Uniform4f(_offsetScaleLocation, offsetX, offsetY, 1.0f, 1.0f);
-			_gl.Uniform4f(_tintLocation, tintR, tintG, tintB, tintA);
+			_gl.Uniform1i(textureLocation, 0);
+			_gl.Uniform4f(offsetScaleLocation, offsetX, offsetY, 1.0f, 1.0f);
+			if (tintLocation >= 0) _gl.Uniform4f(tintLocation, tintR, tintG, tintB, tintA);
 			_gl.DrawElements(_gl.GL_TRIANGLES, Indices.Length, _gl.GL_UNSIGNED_SHORT, 0);
 		}
 		finally
 		{
-			_gl.DisableVertexAttribArray(_positionLocation);
-			_gl.DisableVertexAttribArray(_texCoordLocation);
+			_gl.DisableVertexAttribArray(positionLocation);
+			_gl.DisableVertexAttribArray(texCoordLocation);
 			_gl.BindVertexArray(0);
 			_gl.BindBuffer(_gl.GL_ARRAY_BUFFER, oldArrayBuffer);
 			_gl.BindBuffer(_gl.GL_ELEMENT_ARRAY_BUFFER, oldElementBuffer);
@@ -138,6 +225,11 @@ internal sealed class OpenGLTextureQuad : IDisposable
 
 	public void Dispose()
 	{
+		if (_hitMaskProgram != 0)
+		{
+			_gl.DeleteProgram(_hitMaskProgram);
+			_hitMaskProgram = 0;
+		}
 		if (_program != 0)
 		{
 			_gl.DeleteProgram(_program);
@@ -172,6 +264,18 @@ internal sealed class OpenGLTextureQuad : IDisposable
 			_textureLocation = _gl.GetUniformLocation(_program, "s_texture0");
 			_offsetScaleLocation = _gl.GetUniformLocation(_program, "u_offsetScale");
 			_tintLocation = _gl.GetUniformLocation(_program, "u_tint");
+
+			// 命中掩码单独使用五点 alpha 覆盖采样；编译失败时仍可保留普通画面，
+			// PetGlControl 会退回场景纹理 CPU 采样路径。
+			_hitMaskProgram = CreateProgram(VertexShaderSource, HitMaskFragmentShaderSource);
+			if (_hitMaskProgram != 0)
+			{
+				_hitMaskPositionLocation = _gl.GetAttribLocation(_hitMaskProgram, "a_position");
+				_hitMaskTexCoordLocation = _gl.GetAttribLocation(_hitMaskProgram, "a_texCoord");
+				_hitMaskTextureLocation = _gl.GetUniformLocation(_hitMaskProgram, "s_texture0");
+				_hitMaskOffsetScaleLocation = _gl.GetUniformLocation(_hitMaskProgram, "u_offsetScale");
+			}
+
 			_vertexArray = _gl.GenVertexArray();
 			_vertexBuffer = _gl.GenBuffer();
 			_indexBuffer = _gl.GenBuffer();

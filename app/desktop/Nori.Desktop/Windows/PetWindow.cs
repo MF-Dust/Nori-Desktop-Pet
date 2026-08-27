@@ -18,8 +18,8 @@ namespace Nori.Desktop.Windows;
 /// 原生桌宠窗口
 ///
 /// 承载 PetGlControl 并接管桌宠的全部交互：
-/// - 逐像素 alpha 穿透: Windows 走 WM_NCHITTEST 逐点判定; macOS/Linux(X11) 用 alpha 掩码
-///   经 IPlatformWindowServices 设置输入形状/穿透开关; Wayland 无此能力, 降级为整窗可点
+/// - 模型外接矩形穿透: 约 10Hz 从 alpha 画面更新连续交互范围; Windows 走 WM_NCHITTEST,
+///   macOS/Linux(X11) 设置穿透开关/输入形状; Wayland 无此能力, 降级为整窗可点
 /// - 左键拖拽移动窗口 + 坐标持久化（阈值 4px）
 /// - 左键点击触发动作与表情判定
 /// - 深海微光配色原生右键菜单（打开主界面 / 随机动作 / 重置位置 / 隐藏桌宠 / 退出）
@@ -104,7 +104,7 @@ public sealed class PetWindow : Window
 		};
 		_cursorTrackingTimer.Tick += OnCursorTrackingTick;
 
-		// 非 Windows: 按 alpha 掩码 ~10Hz 同步一次输入形状 (与掩码采样频率同量级)
+		// 非 Windows: 按模型交互矩形 ~10Hz 同步一次输入形状 (与 alpha 采样频率同量级)
 		if (!OperatingSystem.IsWindows() && PlatformServices.Current.Capabilities.SupportsHitThrough)
 		{
 			_hitShapeTimer = new DispatcherTimer {Interval = TimeSpan.FromMilliseconds(100)};
@@ -193,10 +193,10 @@ public sealed class PetWindow : Window
 	}
 
 	/// <summary>
-	/// 非 Windows 的穿透同步: 用 alpha 掩码更新输入形状
+	/// 非 Windows 的穿透同步: 用模型外接矩形更新输入形状
 	///
-	/// X11 支持真正的输入形状 (逐像素近似); 其他平台退化为
-	/// 「光标在模型上就接收事件, 否则整窗穿透」。
+	/// X11 直接设置矩形输入形状; 其他平台退化为
+	/// 「光标在模型矩形内就接收事件, 否则整窗穿透」。
 	/// </summary>
 	private void OnHitShapeTick(object? sender, EventArgs e)
 	{

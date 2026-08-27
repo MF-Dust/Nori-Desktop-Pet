@@ -1339,7 +1339,7 @@ export default {
 			platform: {
 				dragHandle: "Drag window",
 				trayUnavailable: "System tray unavailable — manage Nori from here",
-				hitThroughDegraded: "This desktop can't do per-pixel click-through; the pet window is fully clickable",
+				hitThroughDegraded: "This desktop can't do model-bound click-through; the pet window is fully clickable",
 				cursorDegraded: "This desktop can't read the global cursor; eye tracking is window-local",
 			},
 		},

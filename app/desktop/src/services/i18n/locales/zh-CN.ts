@@ -245,7 +245,7 @@ export default {
 			placeholderPrefix: "此区域为",
 			placeholderSuffix: "页面占位, 功能将在此处实现。",
 			chat: {
-				title: "AI 伴侣对话",
+				title: "和 Nori 对话",
 				emptyTitle: "准备好与 Nori 对话了吗？",
 				emptyDesc: "在下方输入框中输入消息，或点击麦克风进行实时语音对话。",
 				clearHistory: "清空记录",
@@ -1339,7 +1339,7 @@ export default {
 			platform: {
 				dragHandle: "拖动窗口",
 				trayUnavailable: "系统托盘不可用, 请从这里管理 Nori",
-				hitThroughDegraded: "当前桌面环境不支持逐像素穿透, 桌宠整窗可点",
+				hitThroughDegraded: "当前桌面环境不支持模型范围穿透, 桌宠整窗可点",
 				cursorDegraded: "当前桌面环境不支持读取全局光标, 眼神只在窗口内跟随",
 			},
 		},

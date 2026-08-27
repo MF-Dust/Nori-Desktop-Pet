@@ -18,12 +18,11 @@ namespace Nori.Desktop.Live2D;
 /// - 基于 OpenGlControlBase，以物理像素（Bounds x RenderScaling）渲染
 /// - 开启 2048x2048 高精度裁剪蒙版缓冲与各向异性过滤
 /// - 后台定时驱动 RequestNextFrameRendering，按 l2d_max_fps 限帧
-/// - 约 10Hz 采样全视口 alpha 缓冲，提供高精度且无阻塞的 WM_NCHITTEST 命中测试
+/// - 约 10Hz 采样全视口 alpha 缓冲，生成贴近可见模型尺寸的连续交互矩形
 /// </summary>
 public sealed class PetGlControl : OpenGlControlBase
 {
-	private const int MaskWidth = 96;
-	private const int MaskHeight = 128;
+	private const double MaskSampleIntervalSeconds = 0.100;
 
 	private readonly PetRuntime _runtime;
 	private LAppDelegateOpenGL? _lapp;
@@ -38,8 +37,8 @@ public sealed class PetGlControl : OpenGlControlBase
 
 	// Alpha 命中掩码缓存
 	private readonly object _maskLock = new();
-	private readonly byte[] _maskBits = new byte[(MaskWidth * MaskHeight + 7) / 8];
-	private readonly byte[] _maskScratch = new byte[(MaskWidth * MaskHeight + 7) / 8];
+	private readonly byte[] _maskBits = new byte[PetHitMask.ByteLength];
+	private readonly byte[] _maskScratch = new byte[PetHitMask.ByteLength];
 	private double _lastMaskSampleTime;
 	private int _lastViewportW;
 	private int _lastViewportH;
@@ -169,7 +168,7 @@ public sealed class PetGlControl : OpenGlControlBase
 
 		// 命中掩码只在可见窗口采样；阴影从未写入模型纹理，因此不会扩大可点击区域。
 		double nowSec = (now - DateTime.UnixEpoch).TotalSeconds;
-		if (nowSec - _lastMaskSampleTime >= 0.200)
+		if (nowSec - _lastMaskSampleTime >= MaskSampleIntervalSeconds)
 		{
 			_lastMaskSampleTime = nowSec;
 			Stopwatch maskTimer = Stopwatch.StartNew();
@@ -193,15 +192,25 @@ public sealed class PetGlControl : OpenGlControlBase
 		{
 			readWidth = _sceneWidth;
 			readHeight = _sceneHeight;
-			if (_hitMaskSurface is { } hit && hit.IsValid() && _textureQuad is {IsAvailable: true} quad)
+			if (_hitMaskSurface is { } hit
+				&& hit.IsValid()
+				&& _textureQuad is {IsHitMaskAvailable: true} quad)
 			{
 				hit.BeginDraw(defaultFramebuffer);
-				_glApi.Viewport(0, 0, MaskWidth, MaskHeight);
+				_glApi.Viewport(0, 0, PetHitMask.Width, PetHitMask.Height);
 				hit.Clear(0, 0, 0, 0);
-				quad.Draw(scene.ColorBuffer, 1, 1, 1, 1);
-				readWidth = MaskWidth;
-				readHeight = MaskHeight;
-				hitMaskTarget = true;
+				if (quad.DrawHitMask(scene.ColorBuffer))
+				{
+					readWidth = PetHitMask.Width;
+					readHeight = PetHitMask.Height;
+					hitMaskTarget = true;
+				}
+				else
+				{
+					hit.EndDraw();
+					scene.BeginDraw(defaultFramebuffer);
+					_glApi.Viewport(0, 0, readWidth, readHeight);
+				}
 			}
 			else
 			{
@@ -234,39 +243,23 @@ public sealed class PetGlControl : OpenGlControlBase
 
 		_glApi.BindFramebuffer(_glApi.GL_FRAMEBUFFER, defaultFramebuffer);
 		_glApi.Viewport(0, 0, viewportW, viewportH);
-		PublishAlphaMask(_pixelBuffer, readWidth, readHeight);
+		PublishAlphaMask(_pixelBuffer, readWidth, readHeight, hitMaskTarget);
 	}
 
-	private void PublishAlphaMask(byte[] pixels, int width, int height)
+	private void PublishAlphaMask(byte[] pixels, int width, int height, bool reduced)
 	{
-		Array.Clear(_maskScratch, 0, _maskScratch.Length);
-		for (int row = 0; row < MaskHeight; row++)
+		if (reduced)
 		{
-			int sampleY = height - 1 - Math.Min(height - 1, (int)(row * (double)height / MaskHeight));
-			for (int col = 0; col < MaskWidth; col++)
-			{
-				int sampleX = Math.Min(width - 1, (int)(col * (double)width / MaskWidth));
-				int alphaOffset = (sampleY * width + sampleX) * 4 + 3;
-				if (pixels[alphaOffset] > 16)
-				{
-					int maskIndex = row * MaskWidth + col;
-					_maskScratch[maskIndex >> 3] |= (byte)(1 << (maskIndex & 7));
-				}
-			}
+			PetHitMask.BuildFromReducedPixels(pixels, width, height, _maskScratch);
+		}
+		else
+		{
+			PetHitMask.BuildFromSourcePixels(pixels, width, height, _maskScratch);
 		}
 
 		lock (_maskLock)
 		{
-			Array.Clear(_maskBits, 0, _maskBits.Length);
-			for (int row = 0; row < MaskHeight; row++)
-			{
-				for (int col = 0; col < MaskWidth; col++)
-				{
-					if (!ScratchHitNear(col, row)) continue;
-					int maskIndex = row * MaskWidth + col;
-					_maskBits[maskIndex >> 3] |= (byte)(1 << (maskIndex & 7));
-				}
-			}
+			Buffer.BlockCopy(_maskScratch, 0, _maskBits, 0, _maskBits.Length);
 		}
 	}
 
@@ -296,7 +289,7 @@ public sealed class PetGlControl : OpenGlControlBase
 		try
 		{
 			bool sceneCreated = _sceneSurface.CreateOffscreenSurface(targetWidth, targetHeight);
-			bool hitCreated = _hitMaskSurface.CreateOffscreenSurface(MaskWidth, MaskHeight);
+			bool hitCreated = _hitMaskSurface.CreateOffscreenSurface(PetHitMask.Width, PetHitMask.Height);
 			if (!sceneCreated)
 			{
 				DisposeRenderTargets();
@@ -332,92 +325,28 @@ public sealed class PetGlControl : OpenGlControlBase
 	}
 
 	/// <summary>
-	/// 原始掩码的 3x3 邻域内是否有命中 (膨胀用), 调用前需持有 _maskLock
-	/// </summary>
-	private bool ScratchHitNear(int col, int row)
-	{
-		for (int dr = -1; dr <= 1; dr++)
-		{
-			int r = row + dr;
-			if (r < 0 || r >= MaskHeight) continue;
-			for (int dc = -1; dc <= 1; dc++)
-			{
-				int c = col + dc;
-				if (c < 0 || c >= MaskWidth) continue;
-				int index = r * MaskWidth + c;
-				if ((_maskScratch[index >> 3] & (1 << (index & 7))) != 0) return true;
-			}
-		}
-		return false;
-	}
-
-	/// <summary>
 	/// 同步检查给定客户端坐标（DIP）是否落在模型非透明像素上
 	/// </summary>
 	public bool IsPointOnModel(double clientX, double clientY)
 	{
-		if (Bounds.Width <= 0 || Bounds.Height <= 0) return false;
-
-		int col = (int)(clientX / Bounds.Width * MaskWidth);
-		int row = (int)(clientY / Bounds.Height * MaskHeight);
-
-		if (col < 0 || col >= MaskWidth || row < 0 || row >= MaskHeight) return false;
-
-		bool result;
 		lock (_maskLock)
 		{
-			int index = row * MaskWidth + col;
-			result = (_maskBits[index >> 3] & (1 << (index & 7))) != 0;
+			return PetHitMask.IsPointOnModel(_maskBits, clientX, clientY, Bounds.Width, Bounds.Height);
 		}
-		return result;
 	}
 
 	/// <summary>
-	/// 把当前 alpha 掩码转成「可点击矩形集合」(客户端逻辑像素)
+	/// 把当前模型外接边界转成单个可点击矩形 (客户端逻辑像素)
 	///
-	/// Windows 走 WM_NCHITTEST 逐点判定, 不需要这个;
-	/// macOS / Linux 没有等价钩子, 只能把掩码整体交给系统 (X11 输入形状 / 行为切换)。
-	/// 按行做游程合并, 矩形数量因此可控 (掩码本身只有 96x128)。
+	/// Windows 走 WM_NCHITTEST 查询同一矩形; Linux X11 把矩形交给输入形状,
+	/// macOS 则按光标是否位于矩形内切换整窗穿透。
 	/// </summary>
 	public List<(int X, int Y, int Width, int Height)> BuildHitRegions(double clientWidth, double clientHeight)
 	{
-		List<(int X, int Y, int Width, int Height)> regions = [];
-		if (clientWidth <= 0 || clientHeight <= 0) return regions;
-
-		double cellWidth = clientWidth / MaskWidth;
-		double cellHeight = clientHeight / MaskHeight;
-
 		lock (_maskLock)
 		{
-			for (int row = 0; row < MaskHeight; row++)
-			{
-				int runStart = -1;
-				for (int col = 0; col <= MaskWidth; col++)
-				{
-					bool hit = false;
-					if (col < MaskWidth)
-					{
-						int index = row * MaskWidth + col;
-						hit = (_maskBits[index >> 3] & (1 << (index & 7))) != 0;
-					}
-
-					if (hit && runStart < 0)
-					{
-						runStart = col;
-					}
-					else if (!hit && runStart >= 0)
-					{
-						int x = (int)Math.Floor(runStart * cellWidth);
-						int y = (int)Math.Floor(row * cellHeight);
-						int width = (int)Math.Ceiling((col - runStart) * cellWidth);
-						int height = (int)Math.Ceiling(cellHeight);
-						regions.Add((x, y, Math.Max(1, width), Math.Max(1, height)));
-						runStart = -1;
-					}
-				}
-			}
+			return PetHitMask.BuildHitRegions(_maskBits, clientWidth, clientHeight);
 		}
-		return regions;
 	}
 
 	private void StartRenderLoop()
