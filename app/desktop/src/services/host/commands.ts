@@ -153,8 +153,8 @@ export interface BridgeCommandMap {
 	audio_playback_finished: {args: {token: string; error?: string}; result: void}
 	audio_level: {args: {level: number}; result: void}
 	audio_record_ready: {args: {token: string}; result: void}
-	audio_record_failed: {args: {token: string; error: string}; result: void}
-	audio_upload_failed: {args: {token: string; error: string}; result: void}
+	audio_record_failed: {args: {token: string; error?: string}; result: void}
+	audio_upload_failed: {args: {token: string; error?: string}; result: void}
 
 	window_show: {args: {label: string}; result: void}
 	window_hide: {args: {label: string}; result: void}
