@@ -351,6 +351,7 @@ public sealed class PluginManager : IAsyncDisposable
 		{
 			Discover();
 			PluginHandle handle = GetRequiredHandle(pluginId);
+			EnsureNoActiveDependents(pluginId);
 			_stateStore.SetEnabled(pluginId, false);
 			try
 			{
@@ -361,6 +362,7 @@ public sealed class PluginManager : IAsyncDisposable
 				bool unloaded = UnloadContext(handle);
 				if (unloaded)
 				{
+					handle.UpdatePendingRestart = false;
 					handle.State = PluginLifecycleState.Disabled;
 					handle.ErrorCode = PluginManagementErrorCodes.UserDisabled;
 					handle.ErrorMessage = "插件已由用户禁用";
@@ -519,6 +521,7 @@ public sealed class PluginManager : IAsyncDisposable
 			handle.Instance = instance;
 			await instance.ActivateAsync(handle.Context, cancellationToken).AsTask().WaitAsync(_options.ActivationTimeout, cancellationToken).ConfigureAwait(false);
 			handle.State = PluginLifecycleState.Active;
+			handle.UpdatePendingRestart = false;
 			handle.ErrorCode = null;
 			handle.ErrorMessage = null;
 			ClearStartupFailure(handle.Manifest.Id);
@@ -700,9 +703,19 @@ public sealed class PluginManager : IAsyncDisposable
 			{
 				if (!sameDirectory)
 				{
-					existing.State = PluginLifecycleState.PendingRestart;
-					existing.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
+					// current.json 已切到新版本，但旧版本实例仍在本进程运行。此时不能把
+					// LifecycleState 改成 PendingRestart，否则宿主会立刻停止枚举其贡献，
+					// 形成“代码仍运行但贡献消失”的半活动状态。保持 Active，并单独标记
+					// 重启需求；下次启动自然从 current.json 加载新版本。
+					existing.UpdatePendingRestart = true;
+					existing.ErrorCode = null;
 					existing.ErrorMessage = "已安装新版本，重启后切换";
+				}
+				else if (existing.UpdatePendingRestart)
+				{
+					existing.UpdatePendingRestart = false;
+					existing.ErrorCode = null;
+					existing.ErrorMessage = null;
 				}
 				return;
 			}
@@ -866,7 +879,7 @@ public sealed class PluginManager : IAsyncDisposable
 		{
 			UserEnabled = _stateStore.IsEnabled(handle.Manifest.Id),
 			ErrorMessage = handle.ErrorMessage,
-			RequiresRestart = handle.State == PluginLifecycleState.PendingRestart,
+			RequiresRestart = handle.State == PluginLifecycleState.PendingRestart || handle.UpdatePendingRestart,
 			CapabilityStatuses = statuses,
 		};
 	}
@@ -936,6 +949,7 @@ public sealed class PluginManager : IAsyncDisposable
 		public PluginLifecycleState State { get; set; }
 		public string? ErrorCode { get; set; }
 		public string? ErrorMessage { get; set; }
+		public bool UpdatePendingRestart { get; set; }
 		public INoriPlugin? Instance { get; set; }
 		public PluginLoadContext? LoadContext { get; set; }
 		public PluginContext? Context { get; set; }
