@@ -11,6 +11,7 @@ public class AssetServerTests : IAsyncLifetime
 	private readonly string _root = Path.Combine(Path.GetTempPath(), $"nori-srv-{Guid.NewGuid():N}");
 	private string _appRoot = "";
 	private string _resourcesRoot = "";
+	private string _pluginsRoot = "";
 	private AssetServer _server = null!;
 	private readonly HttpClient _client = new();
 
@@ -18,7 +19,9 @@ public class AssetServerTests : IAsyncLifetime
 	{
 		_appRoot = Path.Combine(_root, "dist");
 		_resourcesRoot = Path.Combine(_root, "resources");
+		_pluginsRoot = Path.Combine(_root, "plugins", "demo.plugin");
 		Directory.CreateDirectory(_appRoot);
+		Directory.CreateDirectory(Path.Combine(_pluginsRoot, "web"));
 		// 正常布局: 解压后是平的
 		Directory.CreateDirectory(Path.Combine(_resourcesRoot, "live2d", "arg-nori"));
 		// 异常布局: 资源包多包了一层同名目录
@@ -27,6 +30,8 @@ public class AssetServerTests : IAsyncLifetime
 		await File.WriteAllTextAsync(Path.Combine(_appRoot, "index.html"), "<!doctype html><title>nori</title>");
 		await File.WriteAllTextAsync(Path.Combine(_resourcesRoot, "live2d", "arg-nori", "ARGNori.model3.json"), """{"Version":3}""");
 		await File.WriteAllTextAsync(Path.Combine(_resourcesRoot, "live2d", "nested", "nested", "Deep.model3.json"), """{"Version":3}""");
+		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "web", "index.html"), "plugin");
+		await File.WriteAllTextAsync(Path.Combine(_pluginsRoot, "plugin.json"), "private");
 		// 根目录之外的"机密"文件, 用来验证穿越被挡住
 		await File.WriteAllTextAsync(Path.Combine(_root, "secret.txt"), "TOP SECRET");
 
@@ -34,6 +39,7 @@ public class AssetServerTests : IAsyncLifetime
 		{
 			AppRoot = _appRoot,
 			ResourcesRoot = _resourcesRoot,
+			PluginRootResolver = pluginId => pluginId == "demo.plugin" ? _pluginsRoot : null,
 		});
 	}
 
@@ -59,6 +65,17 @@ public class AssetServerTests : IAsyncLifetime
 		Assert.Equal("text/html; charset=utf-8", response.Content.Headers.ContentType?.ToString());
 		Assert.Contains("nori", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 		Assert.Contains("window=pet", _server.WindowUrl("pet"), StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task 插件公开资源可取但清单不可取()
+	{
+		HttpResponseMessage asset = await _client.GetAsync(new Uri(_server.PluginAssetUrl("demo.plugin", "web/index.html")));
+		Assert.Equal(HttpStatusCode.OK, asset.StatusCode);
+		Assert.Equal("plugin", await asset.Content.ReadAsStringAsync());
+
+		HttpResponseMessage manifest = await _client.GetAsync(new Uri($"{_server.Origin}{_server.Prefix}/plugins/demo.plugin/plugin.json"));
+		Assert.Equal(HttpStatusCode.NotFound, manifest.StatusCode);
 	}
 
 	[Fact]
