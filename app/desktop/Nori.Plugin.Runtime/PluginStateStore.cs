@@ -138,7 +138,8 @@ internal sealed class PluginStateStore
 		try
 		{
 			Dictionary<string, PluginRuntimeState>? states = JsonSerializer.Deserialize<Dictionary<string, PluginRuntimeState>>(File.ReadAllText(path), JsonOptions);
-			return states is null ? FailClosedState() : new(states, StringComparer.Ordinal);
+			if (states is null || states.Values.Any(state => state is null)) return FailClosedState();
+			return new(states, StringComparer.Ordinal);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
 		{
