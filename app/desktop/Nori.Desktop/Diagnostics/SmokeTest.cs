@@ -107,6 +107,8 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 /// <summary>冒烟模式的运行时检查点写入与有界退出。</summary>
 public static class SmokeTestRuntime
 {
+	private static readonly TimeSpan GracefulShutdownDelay = TimeSpan.FromMilliseconds(500);
+	private static readonly TimeSpan HardExitDelay = TimeSpan.FromSeconds(5);
 	private static SmokeTestOptions? _current;
 
 	/// <summary>当前冒烟配置; 普通启动时为 null。</summary>
@@ -154,9 +156,13 @@ public static class SmokeTestRuntime
 
 	private static async Task ExitAfterCheckpointAsync(IWindowManager windowManager)
 	{
-		await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
-		windowManager.Shutdown();
-		// 强制终止由外部 smoke-published.ps1 watchdog 负责；进程内必须让正常退出清理跑完。
+		await Task.Delay(GracefulShutdownDelay).ConfigureAwait(false);
+		try { windowManager.Shutdown(); } catch { }
+
+		// CI 的无头桌面环境可能卡住原生窗口退出; 冒烟 profile 是隔离的一次性目录,
+		// 因此在等待正常清理后保留进程内硬退出兜底, 外部脚本仍有更长的 watchdog。
+		await Task.Delay(HardExitDelay).ConfigureAwait(false);
+		Environment.Exit(0);
 	}
 }
 
