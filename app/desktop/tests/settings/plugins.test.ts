@@ -152,9 +152,12 @@ describe("PluginsSettings.vue", () => {
 			await settle()
 			const checkbox = document.body.querySelector("input[type='checkbox']") as HTMLInputElement
 			expect(checkbox).toBeTruthy()
+			const dialog = checkbox.closest("[role='dialog']") as HTMLElement
+			expect(dialog).toBeTruthy()
 			checkbox.click()
 			await nextTick()
-			button(document.body, "卸载").click()
+			expect(calls.some(call => call.cmd === "plugin_uninstall")).toBe(false)
+			button(dialog, "卸载").click()
 			await settle()
 			expect(calls.some(call => call.cmd === "plugin_uninstall" && call.args.id === target.id && call.args.deleteData === true)).toBe(true)
 		} finally {
