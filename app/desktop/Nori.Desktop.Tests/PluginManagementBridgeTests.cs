@@ -2,6 +2,7 @@ using System.Text.Json;
 using Avalonia.Controls;
 using Nori.Desktop.Bridge;
 using Nori.Desktop.Windows;
+using Nori.Plugin.Abstractions;
 using Nori.Plugin.Runtime;
 
 namespace Nori.Desktop.Tests;
