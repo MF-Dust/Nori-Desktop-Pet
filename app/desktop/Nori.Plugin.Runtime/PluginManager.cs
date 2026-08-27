@@ -472,11 +472,7 @@ public sealed class PluginManager : IAsyncDisposable
 	{
 		PluginLoadContext? context = handle.LoadContext;
 		handle.LoadContext = null;
-		if (context is null)
-		{
-			if (handle.State != PluginLifecycleState.Failed) handle.State = PluginLifecycleState.Installed;
-			return;
-		}
+		if (context is null) return;
 		WeakReference weak;
 		try { weak = UnloadAndTrack(context); }
 		catch (Exception exception)
@@ -498,10 +494,6 @@ public sealed class PluginManager : IAsyncDisposable
 		{
 			handle.State = PluginLifecycleState.PendingRestart;
 			handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
-		}
-		else if (handle.State != PluginLifecycleState.Failed)
-		{
-			handle.State = PluginLifecycleState.Installed;
 		}
 	}
 
