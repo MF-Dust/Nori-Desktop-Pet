@@ -138,18 +138,20 @@ internal sealed class PluginStateStore
 		try
 		{
 			Dictionary<string, PluginRuntimeState>? states = JsonSerializer.Deserialize<Dictionary<string, PluginRuntimeState>>(File.ReadAllText(path), JsonOptions);
-			return states is null ? new(StringComparer.Ordinal) : new(states, StringComparer.Ordinal);
+			return states is null ? FailClosedState() : new(states, StringComparer.Ordinal);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
 		{
 			// 状态损坏时绝不能退化为“所有未知插件默认启用”。保留一个不可伪造的
 			// 哨兵；后续任意成功写入都会把它持久化，从而跨重启维持 fail-closed。
-			return new(StringComparer.Ordinal)
-			{
-				[FailClosedSentinel] = new PluginRuntimeState { Enabled = false },
-			};
+			return FailClosedState();
 		}
 	}
+
+	private static Dictionary<string, PluginRuntimeState> FailClosedState() => new(StringComparer.Ordinal)
+	{
+		[FailClosedSentinel] = new PluginRuntimeState { Enabled = false },
+	};
 
 	private static void ValidateId(string pluginId)
 	{
