@@ -20,6 +20,7 @@ const eyeTracking = ref(true)
 const idleEyeAnimation = ref(true)
 const idleAnimation = ref(true)
 const clickInteraction = ref(true)
+const clickThrough = ref(false)
 const expressionEnabled = ref(true)
 const lipSync = ref(true)
 const shadow = ref(true)
@@ -31,6 +32,7 @@ const modelScale = ref(1)
 
 // 是否已配置 AI (未配置时禁用 AI 互动开关)
 const aiConfigured = computed(() => Boolean(RUNTIME.snapshot.value?.ai.configured))
+const clickThroughSupported = computed(() => RUNTIME.platform().supportsHitThrough)
 
 // 保存辅助: 每个字段独立防抖 timer + 卸载 flush (规范要求); 设置页统一走 useSnapshotSave
 const SAVE = useSnapshotSave({
@@ -54,6 +56,7 @@ const eyeTrackingToggle = makeToggle("eyeTracking", eyeTracking)
 const idleEyeToggle = makeToggle("idleEyeAnimation", idleEyeAnimation)
 const idleAnimToggle = makeToggle("idleAnimation", idleAnimation)
 const clickInteractionToggle = makeToggle("clickInteraction", clickInteraction)
+const clickThroughToggle = makeToggle("clickThrough", clickThrough)
 const expressionEnabledToggle = makeToggle("expressionEnabled", expressionEnabled)
 const lipSyncToggle = makeToggle("lipSync", lipSync)
 const shadowToggle = computed({
@@ -82,6 +85,7 @@ onMounted(async () => {
 		idleEyeAnimation.value = BEHAVIOR.idleEyeAnimation
 		idleAnimation.value = BEHAVIOR.idleAnimation
 		clickInteraction.value = BEHAVIOR.clickInteraction
+		clickThrough.value = BEHAVIOR.clickThrough ?? false
 		expressionEnabled.value = BEHAVIOR.expressionEnabled
 		lipSync.value = BEHAVIOR.lipSync
 		shadow.value = BEHAVIOR.shadow
@@ -143,6 +147,14 @@ const fpsOptions = computed(() => [
 				:title="I18N.clickInteraction"
 				:desc="I18N.clickInteractionDesc"
 				v-model="clickInteractionToggle"
+			/>
+
+			<AppSwitchRow
+				boxed
+				:title="I18N.clickThrough"
+				:desc="clickThroughSupported ? I18N.clickThroughDesc : I18N.clickThroughUnsupportedDesc"
+				:disabled="!clickThroughSupported"
+				v-model="clickThroughToggle"
 			/>
 
 			<AppSwitchRow

@@ -90,6 +90,7 @@ public sealed class PetRuntime
 	public bool LipSyncEnabled { get; set; } = true;
 	public bool BeatSyncEnabled { get; set; }
 	public bool ClickInteraction { get; set; } = true;
+	public bool ClickThroughEnabled { get; set; }
 	public float RenderScale { get; private set; } = Live2DRenderSettings.DefaultRenderScale;
 	public string QualityMode { get; private set; } = Live2DRenderSettings.DefaultQualityMode;
 	public int MaxFps { get; private set; }
@@ -309,6 +310,7 @@ public sealed class PetRuntime
 		LipSyncEnabled = ParseBoolConfig("l2d_lip_sync", true);
 		BeatSyncEnabled = ParseBoolConfig("l2d_beat_sync", false);
 		ClickInteraction = ParseBoolConfig("l2d_click_interaction", true);
+		ClickThroughEnabled = ParseBoolConfig("l2d_click_through", false);
 		LoadInteractionConfig();
 	}
 
@@ -944,6 +946,7 @@ public sealed class PetRuntime
 			case "l2d_lip_sync": LipSyncEnabled = true; break;
 			case "l2d_beat_sync": BeatSyncEnabled = false; break;
 			case "l2d_click_interaction": ClickInteraction = true; break;
+			case "l2d_click_through": ClickThroughEnabled = false; break;
 			default: break;
 		}
 
@@ -1035,6 +1038,7 @@ public sealed class PetRuntime
 			case "l2d_lip_sync" when ParseBool(value) is { } v: LipSyncEnabled = v; break;
 			case "l2d_beat_sync" when ParseBool(value) is { } v: BeatSyncEnabled = v; break;
 			case "l2d_click_interaction" when ParseBool(value) is { } v: ClickInteraction = v; break;
+			case "l2d_click_through" when ParseBool(value) is { } v: ClickThroughEnabled = v; break;
 			default: break;
 		}
 	}

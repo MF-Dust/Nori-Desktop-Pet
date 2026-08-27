@@ -116,6 +116,7 @@ export interface ModelsState {
 /** Live2D 行为开关 */
 export interface BehaviorsState {
 	clickInteraction: boolean
+	clickThrough?: boolean
 	autoBlink: boolean
 	eyeTracking: boolean
 	idleEyeAnimation: boolean
