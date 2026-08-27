@@ -1167,6 +1167,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			behaviors = new
 			{
 				clickInteraction = ParseBoolFlag(config.GetStringOr("l2d_click_interaction", "true")) ?? true,
+				clickThrough = ParseBoolFlag(config.GetStringOr("l2d_click_through", "")) ?? false,
 				autoBlink = ParseBoolFlag(config.GetStringOr("l2d_auto_blink", "true")) ?? true,
 				eyeTracking = ParseBoolFlag(config.GetStringOr("l2d_eye_tracking", "true")) ?? true,
 				idleEyeAnimation = ParseBoolFlag(config.GetStringOr("l2d_idle_eye_animation", "true")) ?? true,

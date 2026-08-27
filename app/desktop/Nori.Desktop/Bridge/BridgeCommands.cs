@@ -1429,6 +1429,7 @@ public sealed class BridgeCommands
 	{
 		RequireMainVoid(source);
 		SetBehaviorKey(args, "clickInteraction", "l2d_click_interaction");
+		SetBehaviorKey(args, "clickThrough", "l2d_click_through");
 		SetBehaviorKey(args, "autoBlink", "l2d_auto_blink");
 		SetBehaviorKey(args, "eyeTracking", "l2d_eye_tracking");
 		SetBehaviorKey(args, "idleEyeAnimation", "l2d_idle_eye_animation");

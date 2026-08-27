@@ -207,7 +207,7 @@ public sealed class PetWindow : Window
 		{
 			if (OperatingSystem.IsLinux() && PlatformServices.Current is LinuxPlatformServices linux)
 			{
-				linux.SetInputShape(handle, _glControl.BuildHitRegions(Bounds.Width, Bounds.Height));
+				linux.SetInputShape(handle, _runtime.ClickThroughEnabled ? [] : _glControl.BuildHitRegions(Bounds.Width, Bounds.Height));
 				return;
 			}
 
@@ -218,8 +218,8 @@ public sealed class PetWindow : Window
 			double clientX = (cursorX - Position.X) / scale;
 			double clientY = (cursorY - Position.Y) / scale;
 			bool inside = clientX >= 0 && clientX < Bounds.Width && clientY >= 0 && clientY < Bounds.Height;
-			bool through = !(inside && _glControl.IsPointOnModel(clientX, clientY));
-			if (_contextMenu is {IsOpen: true}) through = false;
+			bool through = _runtime.ClickThroughEnabled || !(inside && _glControl.IsPointOnModel(clientX, clientY));
+			if (!_runtime.ClickThroughEnabled && _contextMenu is {IsOpen: true}) through = false;
 
 			if (_lastClickThrough == through) return;
 			_lastClickThrough = through;
@@ -386,6 +386,12 @@ public sealed class PetWindow : Window
 	{
 		if (msg == WmNcHitTest)
 		{
+			if (_runtime.ClickThroughEnabled)
+			{
+				handled = true;
+				return HtTransparent;
+			}
+
 			if (_contextMenu is { IsOpen: true })
 			{
 				handled = true;
