@@ -37,9 +37,10 @@ if (Get-ChildItem -LiteralPath $publish -Recurse -File -Filter "*.map" -ErrorAct
 	throw "发布目录仍含 source map, 不能打包"
 }
 
-# 体积门禁按未压缩 publish 目录计数，避免不同 ZIP 实现/压缩率造成波动。
+# Windows FDD 的未压缩 publish 基线约 159 MiB（WebView/Avalonia/原生依赖占比较高）。
+# 预算留约 13% 余量，仍可拦截再次引入几十 MiB 级运行时（如 Playwright driver）。
 node (Join-Path $PSScriptRoot "check-package-size.mjs") `
-	--path $publish --label "windows publish" --max-mib 80
+	--path $publish --label "windows publish" --max-mib 180
 if ($LASTEXITCODE -ne 0) { throw "Windows 发布体积门禁失败" }
 
 $metadataOutput = Join-Path $output "metadata"
