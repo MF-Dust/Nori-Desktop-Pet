@@ -65,6 +65,9 @@ public sealed class AppServices : IAsyncDisposable
 	/// <summary>插件动态 WebView 窗口宿主。</summary>
 	public Nori.Desktop.Plugins.PluginWindowHost? PluginWindows { get; set; }
 
+	/// <summary>插件包文件选择器。生产默认走 Avalonia StorageProvider，测试可注入取消/固定结果。</summary>
+	public IPluginPackagePicker? PluginPackagePicker { get; set; }
+
 	/// <summary>本地/模型 HTTP 客户端 (测试可在装配后替换)</summary>
 	public HttpClient Http { get; set; } = null!;
 
