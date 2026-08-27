@@ -149,6 +149,7 @@ for rid in "${RIDS[@]}"; do
 	dotnet publish "$APP_NAME/$APP_NAME.csproj" "${publish_args[@]}" -o "$publish_dir"
 
 	if [ "$KEEP_SYMBOLS" != "1" ]; then find "$publish_dir" -name "*.pdb" -delete; fi
+	node scripts/check-package-size.mjs --path "$publish_dir" --label "$rid publish" --max-mib 80
 
 	case "$rid" in
 		osx-*) make_macos_bundle "$rid" "$publish_dir" ;;
