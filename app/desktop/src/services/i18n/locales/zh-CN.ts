@@ -531,6 +531,7 @@ export default {
 				skills: "技能工坊",
 				mcp: "工具与 MCP",
 				automation: "系统自动化",
+				plugins: "插件",
 				general: "系统常规",
 				debug: "调试",
 				about: "关于 Nori",

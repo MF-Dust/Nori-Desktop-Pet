@@ -1,6 +1,8 @@
 import {describe, expect, it, beforeEach} from "vitest"
 import {createApp, h, nextTick} from "vue"
 import {i18n} from "../../src/services/i18n"
+import ZH from "../../src/services/i18n/locales/zh-CN"
+import {mergePluginMessages} from "../../src/services/i18n/pluginMessages"
 import {RUNTIME} from "../../src/services/runtime"
 import Main from "../../src/views/Main.vue"
 import HomePanel from "../../src/components/home/HomePanel.vue"
@@ -168,6 +170,8 @@ describe("Views and Panels Mounting", () => {
 			dispatch: () => {},
 		}
 		RUNTIME.snapshot.value = mockSnapshot as any
+		i18n.global.setLocaleMessage("zh-CN", mergePluginMessages("zh-CN", ZH))
+		i18n.global.locale.value = "zh-CN"
 	})
 
 	const mountComponent = (component: any, props: any = {}) => {
@@ -226,11 +230,12 @@ describe("Views and Panels Mounting", () => {
 	it("switches all SettingsPanel tabs without leaving a blank panel", async () => {
 		const MOUNT = mountComponent(SettingsPanel)
 		// 设置面板包含 10 个子页
-		const SETTINGS_TABS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "plugins", "general", "debug", "about"]
+		const SETTINGS_TABS = ["ai", "voice", "proactive", "plugins", "skills", "mcp", "automation", "general", "debug", "about"]
 		try {
 			await settleView()
 			const NAV_BUTTONS = Array.from(MOUNT.container.querySelectorAll("nav button"))
 			expect(NAV_BUTTONS).toHaveLength(SETTINGS_TABS.length)
+			expect(NAV_BUTTONS.some(button => button.textContent?.includes("插件"))).toBe(true)
 			for (const [INDEX, TAB] of SETTINGS_TABS.entries()) {
 				click(NAV_BUTTONS[INDEX])
 				await settleView()

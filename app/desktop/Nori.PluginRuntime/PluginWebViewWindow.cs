@@ -34,11 +34,13 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 
 	string IPluginWebViewWindow.Id => WindowId;
 	string? IPluginWebViewWindow.Title => Title;
+	bool IPluginBridgeSource.IsVisible => Volatile.Read(ref _visible) == 1;
 
 	private readonly NativeWebView _webView;
 	private readonly string _webViewDataRoot;
 	private readonly List<string> _pendingScripts = [];
 	private bool _ready;
+	private int _visible;
 	private CancellationTokenRegistration _revocationRegistration;
 	private int _isClosingOrClosed;
 
@@ -104,6 +106,7 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 		// 导航至插件入口 URL
 		_webView.Source = new Uri(options.EntryPoint, UriKind.RelativeOrAbsolute);
 
+		PropertyChanged += OnPropertyChanged;
 		Closed += OnClosed;
 
 		// 绑定插件租约撤销令牌: 当插件卸载或上下文销毁时，自动关闭该插件名下的全部窗口
@@ -235,9 +238,17 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 		_pendingScripts.Clear();
 	}
 
+	private void OnPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs args)
+	{
+		if (args.Property == Visual.IsVisibleProperty)
+			Volatile.Write(ref _visible, base.IsVisible ? 1 : 0);
+	}
+
 	private void OnClosed(object? sender, EventArgs e)
 	{
 		Closed -= OnClosed;
+		PropertyChanged -= OnPropertyChanged;
+		Volatile.Write(ref _visible, 0);
 		_revocationRegistration.Dispose();
 		WindowClosed?.Invoke(this);
 	}

@@ -46,7 +46,7 @@ public sealed class BridgeCommandRouter(AppServices services)
 			PluginRuntimeHost runtime = _services.PluginRuntime
 				?? throw new InvalidOperationException("插件运行时尚未就绪");
 			return await runtime.InvokeManagementAsync(
-				new PluginManagementSource(source.Label, source.IsVisible, source.Self),
+				new PluginManagementSource(source.Label, _services.Windows.IsWindowVisible(source.Label), source.Self),
 				command,
 				args,
 				cancellationToken).ConfigureAwait(false);

@@ -9,7 +9,6 @@
  */
 import {computed, ref, watch} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
-import usePluginLanguages from "../../services/i18n/usePluginLanguages"
 import Icon from "../Icon.vue"
 import AppSearchField from "../ui/AppSearchField.vue"
 import type {IconName} from "../../services/icon"
@@ -39,7 +38,6 @@ const props = withDefaults(defineProps<{
 })
 
 const I18N = computed(() => useLanguages().views.main.settingsTabs)
-const PLUGIN_I18N = computed(() => usePluginLanguages())
 const GROUP_I18N = computed(() => useLanguages().views.main.settingsGroups)
 const SEARCH_I18N = computed(() => useLanguages().views.main.settingsSearch)
 
@@ -81,10 +79,10 @@ const TAB_GROUPS = computed<TabGroup[]>(() => [
 	{
 		title: GROUP_I18N.value.extend,
 		tabs: [
+			{key: "plugins", label: I18N.value.plugins, icon: "plug"},
 			{key: "skills", label: I18N.value.skills, icon: "sparkles"},
 			{key: "mcp", label: I18N.value.mcp, icon: "plug"},
 			{key: "automation", label: I18N.value.automation, icon: "bot"},
-			{key: "plugins", label: PLUGIN_I18N.value.settingsTab, icon: "plug"},
 		],
 	},
 	{

@@ -531,6 +531,7 @@ export default {
 				skills: "Skills Workshop",
 				mcp: "Tools & MCP",
 				automation: "Automation",
+				plugins: "Plugins",
 				general: "General System",
 				debug: "Debug",
 				about: "About Nori",

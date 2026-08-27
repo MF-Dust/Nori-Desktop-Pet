@@ -535,6 +535,7 @@ export default () => {
 					skills: t("views.main.settingsTabs.skills"),
 					mcp: t("views.main.settingsTabs.mcp"),
 					automation: t("views.main.settingsTabs.automation"),
+					plugins: t("views.main.settingsTabs.plugins"),
 					general: t("views.main.settingsTabs.general"),
 					debug: t("views.main.settingsTabs.debug"),
 					about: t("views.main.settingsTabs.about"),

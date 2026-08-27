@@ -3,7 +3,6 @@ import {i18n} from "./index"
 export default () => {
 	const t = i18n.global.t
 	return {
-		settingsTab: t("views.main.settingsTabs.plugins"),
 		plugins: {
 			title: t("views.main.plugins.title"),
 			subtitle: t("views.main.plugins.subtitle"),

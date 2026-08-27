@@ -1,5 +1,4 @@
 export interface PluginSettingsMessages {
-	settingsTabs: {plugins: string}
 	plugins: {
 		title: string
 		subtitle: string
@@ -36,7 +35,6 @@ export interface PluginSettingsMessages {
 
 export const PLUGIN_MESSAGES: Record<"zh-CN" | "en-US", PluginSettingsMessages> = {
 	"zh-CN": {
-		settingsTabs: {plugins: "插件"},
 		plugins: {
 			title: "插件管理",
 			subtitle: "管理本地插件、扩展、权限状态与 .noripack 安装包。第三方插件在 Nori 进程内运行，仅启用可信来源。",
@@ -54,7 +52,6 @@ export const PLUGIN_MESSAGES: Record<"zh-CN" | "en-US", PluginSettingsMessages> 
 		},
 	},
 	"en-US": {
-		settingsTabs: {plugins: "Plugins"},
 		plugins: {
 			title: "Plugin management",
 			subtitle: "Manage local plugins, extensions, capability status, and .noripack packages. Third-party plugins run in the Nori process, so only enable trusted sources.",
@@ -82,10 +79,6 @@ export const mergePluginMessages = (locale: string, source: any): any => {
 			...(source?.views ?? {}),
 			main: {
 				...(source?.views?.main ?? {}),
-				settingsTabs: {
-					...(source?.views?.main?.settingsTabs ?? {}),
-					plugins: additions.settingsTabs.plugins,
-				},
 				plugins: additions.plugins,
 			},
 		},
