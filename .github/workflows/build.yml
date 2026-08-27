@@ -97,8 +97,9 @@ jobs:
       - name: 后端门 · 构建
         run: dotnet build Nori.slnx --configuration Release
 
+      # Desktop 宿主测试包含短生命周期异步任务；限制 MSBuild 并行度，避免多个测试项目同时争用 runner 调度。
       - name: 后端门 · 单元测试
-        run: dotnet test Nori.slnx --configuration Release --no-build --no-restore
+        run: dotnet test Nori.slnx --configuration Release --no-build --no-restore -m:1
 
       # -----------------------------------------------------------------------
       # Linux / macOS
