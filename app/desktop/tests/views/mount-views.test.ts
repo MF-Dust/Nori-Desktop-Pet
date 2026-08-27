@@ -225,8 +225,8 @@ describe("Views and Panels Mounting", () => {
 
 	it("switches all SettingsPanel tabs without leaving a blank panel", async () => {
 		const MOUNT = mountComponent(SettingsPanel)
-		// 设置面板包含 9 个子页
-		const SETTINGS_TABS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "general", "debug", "about"]
+		// 设置面板包含 10 个子页
+		const SETTINGS_TABS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "plugins", "general", "debug", "about"]
 		try {
 			await settleView()
 			const NAV_BUTTONS = Array.from(MOUNT.container.querySelectorAll("nav button"))
@@ -240,7 +240,7 @@ describe("Views and Panels Mounting", () => {
 				expect(PANELS[0].textContent?.trim()).not.toBe("")
 			}
 
-			click(NAV_BUTTONS[7])
+			click(NAV_BUTTONS[8])
 			click(NAV_BUTTONS[3])
 			click(NAV_BUTTONS[0])
 			await settleView()
@@ -282,4 +282,3 @@ describe("Views and Panels Mounting", () => {
 		}
 	})
 })
-

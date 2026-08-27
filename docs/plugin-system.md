@@ -1,6 +1,6 @@
-# Nori Plugin Specification 1.0 第一阶段
+# Nori Plugin Specification 1.0
 
-本文记录 Nori Desktop 当前实现的 NPS 1.0 基础设施边界。插件是受信任的 .NET 进程内扩展；`AssemblyLoadContext` 只用于依赖隔离和卸载尝试，**不是安全沙箱**。
+本文记录 Nori Desktop 当前实现的 NPS 1.0 基础设施与本地插件管理边界。插件是受信任的 .NET 进程内扩展；`AssemblyLoadContext` 只用于依赖隔离和卸载尝试，**不是安全沙箱**。
 
 ## 核心合同
 
@@ -8,6 +8,7 @@
 - **Contribution** 表示插件向 Nori 提供的内容，例如 `IGameProvider`、`IArcadeCartridge` 和 `IHarnessTool`。
 - **Capability** 表示插件希望使用的宿主能力。当前只定义 `ui.webview` 与 `arcade`，并独立记录 `Declared`、`Granted`、`Available`。
 - 插件只引用 `Nori.Plugin.Abstractions` 及对应领域 Abstractions，不引用 `Nori.Core`、`Nori.Desktop`、`AppServices`、`IServiceProvider`、Bridge、窗口管理或业务运行时。
+- 插件管理只走 Host Vue → `NoriBridge` → Plugins command domain → `PluginManager`。插件自己的 `PluginBridge` 白名单不包含安装、启用、禁用或卸载命令。
 
 ## 程序集与依赖
 
@@ -91,12 +92,20 @@ runtimes/       (插件私有运行时依赖)
     ├── 1.0.0/
     └── 1.1.0/
 
-<data>/plugin-data/<pluginId>/storage.json
+<data>/plugin-data/
+├── runtime/
+│   ├── plugin-state.json
+│   └── plugin-startup.json
+└── <pluginId>/storage.json
 ```
 
 安装顺序是包预检、同卷 staging、安全解压、manifest/入口/引用复校验、版本目录原子移动、`current.json` 原子替换。旧 current 不会被失败安装覆盖，插件数据不放入版本目录。ZIP Slip、绝对路径、`..`、控制字符、重复规范化路径、符号链接、单文件/总展开大小及压缩比均拒绝。包中携带四个 contract DLL 也拒绝。
 
-当前没有联网 Marketplace、签名系统或自动更新；活动版本更新应在后续启动切换，避免覆盖正在使用的目录。
+设置页的“本地安装”只允许宿主 Avalonia `StorageProvider` 文件选择器产生 `.noripack` 路径。前端没有任意路径安装参数。首次继续安装前会提示插件属于 trusted in-process 扩展；确认只记录在主 WebView 的 localStorage。
+
+**新安装插件默认 `enabled=false`，安装完成后不会自动加载或执行第三方 DLL。** 用户需要在插件设置页显式点击启用。既有安装若没有 `plugin-state.json` 记录，则按兼容语义视为 enabled。
+
+当前没有联网 Marketplace、签名系统或自动更新；活动版本更新只切换 `current.json`，无法安全回收当前 ALC 时由重启完成切换或卸载。
 
 ## Runtime 生命周期
 
@@ -109,18 +118,61 @@ manifest/schema/API/platform/dependency/capability validation
   -> ActivateAsync
   -> Active / 可枚举 Contribution
 
-停用/退出
+显式停用/禁用
   -> Stopping
-  -> 取消 IPluginContext.StoppingToken
-  -> DeactivateAsync
-  -> 撤销全部 IPluginRegistration
-  -> 释放 capability lease、关闭插件窗口/session
-  -> 清除实例、类型和委托引用
+  -> revoke stopping token / contribution / capability lease
+  -> await PluginWindowHost 关闭该插件全部 WebView
+  -> DeactivateAsync / cleanup
+  -> 清除实例、context 与委托引用
   -> ALC.Unload + 有界 GC 检查
-      -> Installed/Disabled，或无法回收时 PendingRestart
+      -> Installed/Disabled
+      -> 无法回收时 PendingRestart
 ```
 
-激活、停用、贡献调用和桥接回调均在宿主边界包装。插件异常记录 `pluginId`、版本、阶段和稳定错误码，不把参数、结果、请求正文或异常敏感路径送入遥测。连续启动失败会记录在 `plugin-data/runtime/plugin-startup.json`，同一插件连续两次失败后自动标记禁用，避免每次启动反复执行坏插件。
+`PluginStateStore` 固定写入 `plugin-data/runtime/plugin-state.json`，保存用户启用意图以及需要重启后完成的卸载请求。用户禁用不会被 Safe Mode 或启动失败保护覆盖。`plugin-startup.json` 继续只承担启动失败恢复；连续启动失败会触发保护性禁用，显式重新启用时清除该保护后重试。
+
+`EnableAsync` 会校验插件 ID、安装状态、宿主兼容性和依赖，先持久化用户启用意图，再尝试热激活。失败状态保留稳定错误码与脱敏、截断后的用户可读错误，可再次重试。
+
+`DisableAsync` 会持久化 `enabled=false`，撤销 contribution、关闭插件窗口、调用停用清理并尝试回收 ALC。回收失败时保留用户禁用意图并返回 `PendingRestart`。
+
+`UninstallAsync` 只接收经过 manifest ID 规则校验的插件 ID，不接受任意路径。存在活动依赖时拒绝。正常卸载删除 `<plugins>/<pluginId>` 下所有版本和 `current.json`，默认保留 `<plugin-data>/<pluginId>`；用户显式勾选删除数据时才删除该精确目录。若 ALC 或文件仍被占用，运行时持久化 pending-uninstall 与 `deleteData`，下次启动创建任何插件 ALC 前再次尝试完成删除。
+
+重复 `Discover()` 对同一 current 版本的活动插件保持 Active，不会误标 `PendingRestart`。用户 disabled 插件在 discover/startup 阶段绝不创建 ALC。
+
+激活、停用、贡献调用和桥接回调均在宿主边界包装。插件异常记录 `pluginId`、版本、阶段和稳定错误码，不把参数、结果、请求正文、完整路径或 stack trace 暴露给前端 DTO。
+
+## 主设置页插件管理
+
+主设置页的 Extend 分组在 Automation 后提供 Plugins 页面。列表 DTO 已包含详情所需字段，因此没有额外 `plugin_get_details` 命令，也没有本阶段的轮询或 `nori:plugins-changed` 事件。
+
+宿主管理命令固定为：
+
+```text
+plugin_list
+plugin_install_local
+plugin_enable({ id })
+plugin_disable({ id })
+plugin_uninstall({ id, deleteData })
+```
+
+这些命令只允许**当前可见的 main WebView** 调用。`plugin_list` 只做无 ALC 的 refresh/discover；安装取消返回 `{ cancelled: true }`；启用、禁用和卸载优先返回最新稳定 DTO，让前端本地更新列表。
+
+列表 DTO 只暴露 manifest 的公开元数据、固定 state 字符串、用户 enabled 意图、capability status、稳定错误码、脱敏错误文本、requiresRestart 与由 AssetServer 提供的 `iconUrl`。不会序列化安装路径、插件数据路径、ALC、context 或异常对象。
+
+固定 state 字符串为：
+
+```text
+installed
+loading
+active
+stopping
+disabled
+failed
+incompatible
+pending_restart
+```
+
+插件页支持本地安装、显式启用/禁用、失败重试、卸载、可选删除数据、权限状态、错误状态和重启提示。安装、启用、禁用、卸载均不绕过 `PluginManager`。
 
 ## Plugin Abstractions
 
@@ -144,7 +196,7 @@ Storage 是异步 JSON KV，按插件目录隔离；Assets 只公开 `web/`、`a
 
 ### Harness
 
-Harness 层统一使用 `IHarnessTool`、`IHarnessResourceProvider` 与 `IHarnessEventSource`，不区分 Codex/Claude/OpenCode。工具风险等级为 `Safe`、`Sensitive`、`Destructive`；调用上下文包含 HarnessId、SessionId、TrustLevel 和 GrantedScopes。未来 adapter 负责把本地工具 ID导出成 `<pluginId>/<toolId>`，资源 URI 使用 `nori-plugin://<pluginId>/...`。
+Harness 层统一使用 `IHarnessTool`、`IHarnessResourceProvider` 与 `IHarnessEventSource`，不区分 Codex/Claude/OpenCode。工具风险等级为 `Safe`、`Sensitive`、`Destructive`；调用上下文包含 HarnessId、SessionId、TrustLevel 和 GrantedScopes。未来 adapter 负责把本地工具 ID 导出成 `<pluginId>/<toolId>`，资源 URI 使用 `nori-plugin://<pluginId>/...`。
 
 ## AssetServer 与 Plugin WebView
 
@@ -156,21 +208,35 @@ Harness 层统一使用 `IHarnessTool`、`IHarnessResourceProvider` 与 `IHarnes
 
 它复用相同的 Host/prefix 校验和精确路径安全检查，不启动第二个 static server。`IPluginAssets.GetUri()` 在生产返回带随机 prefix 的绝对同源 URL，开发模式返回 `/plugins/...`，由 Vite 代理到 14201。`vite.config.ts` 保留 `base: "./"`，新增 `/plugins` 代理。
 
-插件 WebView 位于 `Nori.Desktop/Plugins/`，由独立 `PluginWindowHost` 管理，不加入固定的 `WindowDefinition.All`。窗口标签固定为 `plugin:<pluginId>:<windowId>`；窗口创建时由宿主绑定 descriptor 和 revoke token，页面提交的 `pluginId` 永远不是权限依据。窗口停用时关闭并释放自己的 `PluginBridge`。
+插件 WebView 位于 `Nori.Desktop/Plugins/`，由独立 `PluginWindowHost` 管理，不加入固定的 `WindowDefinition.All`。窗口标签固定为 `plugin:<pluginId>:<windowId>`；窗口创建时由宿主绑定 descriptor 和 revoke token，页面提交的 `pluginId` 永远不是权限依据。Runtime 只依赖 `PluginRuntimeOptions.ClosePluginWindowsAsync` 回调，Desktop 装配层注入 `PluginWindowHost.CloseAllWindowsForPluginAsync`，因此 Runtime 不引用 Desktop 类型。
 
-`PluginBridge` 不转发到 `NoriBridge`，只保留插件摘要、能力状态、当前窗口信息、关闭自身和 ping 等最小命令，并使用独立的 `window.__noriPlugin.dispatch` 信封。当前没有通用 JS SDK、宿主 Vue 组件注入、Pinia/Router/DOM 访问或任意网络 capability。
+`PluginBridge` 不转发到 `NoriBridge`，只保留插件摘要、能力状态、当前窗口信息、关闭自身和 ping 等最小命令，并使用独立的 `window.__noriPlugin.dispatch` 信封。插件管理命令不会转发给插件 WebView。当前没有通用 JS SDK、宿主 Vue 组件注入、Pinia/Router/DOM 访问或任意网络 capability。
 
 ## Safe Mode
 
-`--safe-mode` 是人工命令行排障模式。PluginManager 仍可发现已安装 manifest，但会把第三方插件标记为 `Disabled`，跳过 inbox 安装、ALC 创建和任何 Activate 调用。Storage、日志、诊断和本地手动修复仍由宿主保留。ALC 无法回收时仅标记 `PendingRestart`，不会为了强制卸载而杀死线程或让应用崩溃。
+`--safe-mode` 采用 fail-closed。PluginManager 仍可发现已安装 manifest，列表仍展示 manifest、用户 enabled 意图和 Safe Mode 临时禁用原因，但不会创建 ALC 或执行任何第三方入口。
+
+Safe Mode 允许：
+
+- `plugin_list`
+- `plugin_disable`
+- `plugin_uninstall`
+
+Safe Mode 拒绝：
+
+- `plugin_install_local`
+- `plugin_enable`
+
+安全模式不会覆盖用户在 `plugin-state.json` 中保存的 enabled 意图。退出 Safe Mode 后，用户原本的启用选择仍然存在。
 
 ## 当前未实现
 
-- Marketplace、联网安装、签名/供应链验证、WASM 和 out-of-process 沙箱。
+- Marketplace、联网下载/安装、签名与供应链验证、自动更新。
+- WASM 与 out-of-process 插件沙箱。
 - Codex/MCP/HTTP/stdio adapter、完整 Harness 执行审批与工具运行时。
 - Arcade WebSocket/world/patch runtime，以及 cakeduel/chess/codenames/pictionary cartridge 移植。
 - ARG artifact runtime。
-- 插件管理 Vue 页面、完整前端 SDK、动态 Vue 注入、插件直接 Avalonia Control。
+- 完整插件前端 SDK、动态 Vue 注入、插件直接 Avalonia Control。
 - 任意 network/filesystem/shell/process/LLM/memory/MCP/automation/pet/chat capability。
 
-下一步 `io.nori.games` 应先只引用四个公开程序集中的 Abstractions：实现四个 `IGameProvider` 或 Arcade cartridge，使用 `IPluginStorage` 保存版本无关的存档，通过 `IPluginAssets.GetUri()` 读取自己的页面资源；宿主再单独实现游戏 session 生命周期、权限和 Harness adapter，不把游戏逻辑塞进 `BridgeCommands`。
+`io.nori.games`、Marketplace、签名、Nori.Web runtime 和完整 Arcade/Harness runtime 都不属于当前 Plugin Management Vertical Slice。在这一垂直切片通过构建、测试和审查前，不开始 `io.nori.games` 实现。

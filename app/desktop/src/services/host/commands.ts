@@ -23,6 +23,7 @@ import type {
 	UiSnapshot,
 	VisionProbeResult,
 } from "../runtime/types"
+import type {PluginInfo, PluginInstallResult, PluginUninstallResult} from "../plugins"
 
 export type CommandArgs = Record<string, unknown>
 export type EmptyCommandArgs = undefined
@@ -134,6 +135,12 @@ export interface BridgeCommandMap {
 	mcp_test_server: {args: CommandArgs; result: McpServerStatusInfo}
 	mcp_call_tool: {args: {serverId: string; toolName: string; arguments: CommandArgs}; result: unknown}
 	mcp_import_url: {args: {url: string}; result: unknown}
+
+	plugin_list: {args: EmptyCommandArgs; result: {plugins: PluginInfo[]}}
+	plugin_install_local: {args: EmptyCommandArgs; result: PluginInstallResult}
+	plugin_enable: {args: {id: string}; result: PluginInfo}
+	plugin_disable: {args: {id: string}; result: PluginInfo}
+	plugin_uninstall: {args: {id: string; deleteData: boolean}; result: PluginUninstallResult}
 
 	reminder_add: {args: {content: string; delayMinutes: number}; result: unknown}
 	reminder_cancel: {args: {id: string}; result: boolean}

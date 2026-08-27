@@ -187,6 +187,7 @@ public sealed class App : Application
 			AssetUriFactory = (pluginId, path) => assetServer is { } server
 				? new Uri(server.PluginAssetUrl(pluginId, path), UriKind.RelativeOrAbsolute)
 				: throw new InvalidOperationException("插件资源服务尚未启动"),
+			ClosePluginWindowsAsync = (pluginId, cancellation) => pluginWindows.CloseAllWindowsForPluginAsync(pluginId, cancellation),
 			CapabilityFactory = (descriptor, stoppingToken) =>
 			[
 				new PluginWebViewCapability(

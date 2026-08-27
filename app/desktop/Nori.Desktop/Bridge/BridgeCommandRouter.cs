@@ -16,6 +16,7 @@ public enum BridgeCommandDomain
 	Skills,
 	Mcp,
 	Tools,
+	Plugins,
 	Diagnostics,
 	Other,
 }
@@ -23,12 +24,13 @@ public enum BridgeCommandDomain
 /// <summary>
 /// Bridge 的领域路由边界。
 ///
-/// 当前具体业务实现仍由 BridgeCommands 承担；新路由先把 NoriBridge 的传输职责与
-/// 命令级运行组件策略隔离。后续领域 handler 可以逐个迁出，而不再修改 WebView 传输层。
+/// 当前具体业务实现仍由 BridgeCommands 承担；插件管理是第一个独立领域 handler，
+/// 只服务宿主主 WebView，不改变 PluginBridge 的插件侧白名单。
 /// </summary>
 public sealed class BridgeCommandRouter(AppServices services)
 {
 	private readonly AppServices _services = services;
+	private readonly PluginManagementBridgeCommands _pluginCommands = new(services);
 
 	public async Task<object?> InvokeAsync(
 		IBridgeSource source,
@@ -37,10 +39,14 @@ public sealed class BridgeCommandRouter(AppServices services)
 		CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		BridgeCommandDomain domain = Classify(command);
+
+		if (domain == BridgeCommandDomain.Plugins)
+			return await _pluginCommands.InvokeAsync(source, command, args, cancellationToken).ConfigureAwait(false);
 
 		// Browser Automation 是可选 feature pack。发布瘦身包不携带 driver 时，
 		// 在路由边界就明确 fail-closed，而不是让传输层或 Playwright 内部报路径错误。
-		if (Classify(command) == BridgeCommandDomain.Automation
+		if (domain == BridgeCommandDomain.Automation
 			&& command.StartsWith("automation_browser_", StringComparison.Ordinal))
 		{
 			bool available = PlaywrightRuntimeAvailability.IsAvailable();
@@ -89,6 +95,7 @@ public sealed class BridgeCommandRouter(AppServices services)
 		if (command.StartsWith("skills_", StringComparison.Ordinal)) return BridgeCommandDomain.Skills;
 		if (command.StartsWith("mcp_", StringComparison.Ordinal)) return BridgeCommandDomain.Mcp;
 		if (command.StartsWith("tools_", StringComparison.Ordinal)) return BridgeCommandDomain.Tools;
+		if (command.StartsWith("plugin_", StringComparison.Ordinal)) return BridgeCommandDomain.Plugins;
 		if (command is "get_recent_logs" or "clear_recent_logs" or "get_diagnostic_info" or "export_diagnostics" or "open_log_folder" or "run_gc_collect" or "debug_crash_test")
 			return BridgeCommandDomain.Diagnostics;
 		if (command.StartsWith("chat_", StringComparison.Ordinal)

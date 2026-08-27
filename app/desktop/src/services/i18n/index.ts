@@ -1,5 +1,6 @@
 import {createI18n} from "vue-i18n"
 import useLanguages from "./useLanguages.ts"
+import {mergePluginMessages} from "./pluginMessages"
 
 /**
  * 语言类型
@@ -48,7 +49,7 @@ const useLanguage = {
 			const LOADER = this.getLoader(lang)
 			if (LOADER) {
 				const MODULE = await LOADER()
-				i18n.global.setLocaleMessage(lang, MODULE.default)
+				i18n.global.setLocaleMessage(lang, mergePluginMessages(lang, MODULE.default))
 			}
 		}
 		i18n.global.locale.value = lang

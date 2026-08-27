@@ -1,12 +1,14 @@
 import {describe, expect, it} from "vitest"
 import ZH from "../../src/services/i18n/locales/zh-CN"
+import {mergePluginMessages} from "../../src/services/i18n/pluginMessages"
 import {buildSettingsSearchIndex, matchSettingsEntry} from "../../src/services/settings/searchIndex"
 import type {MessageTree} from "../../src/services/settings/searchIndex"
 
-const MAIN = (ZH as unknown as {views: {main: MessageTree}}).views.main
+const MERGED_ZH = mergePluginMessages("zh-CN", ZH)
+const MAIN = (MERGED_ZH as unknown as {views: {main: MessageTree}}).views.main
 
 /** 与 SettingsPanel 一致的二级页列表 (key 即语言包子树名) */
-const TAB_KEYS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "general", "debug", "about"] as const
+const TAB_KEYS = ["ai", "voice", "proactive", "skills", "mcp", "automation", "plugins", "general", "debug", "about"] as const
 
 const REAL_INDEX = buildSettingsSearchIndex(TAB_KEYS.map(key => ({key, label: key, page: MAIN[key]})))
 
@@ -60,7 +62,6 @@ describe("设置搜索索引", () => {
 		expect(matchSettingsEntry(undefined, "telemetry")).toBeNull()
 	})
 
-	// 回归: 手写 keywords 换成语言包生成后, 原来那批关键词必须照样能搜到
 	it("旧手写关键词仍然命中对应二级页", () => {
 		expect(hits("apikey")).toContain("ai")
 		expect(hits("人设")).toContain("ai")
@@ -77,6 +78,14 @@ describe("设置搜索索引", () => {
 		expect(hits("log")).toContain("debug")
 		expect(hits("license")).toContain("about")
 		expect(hits("协议")).toContain("about")
+	})
+
+	it("插件页通过真实语言包文案命中插件、扩展、安装和 noripack", () => {
+		expect(hits("插件")).toContain("plugins")
+		expect(hits("plugin")).toContain("plugins")
+		expect(hits("扩展")).toContain("plugins")
+		expect(hits("安装")).toContain("plugins")
+		expect(hits("noripack")).toContain("plugins")
 	})
 
 	it("每个二级页都有可检索文本", () => {

@@ -79,6 +79,34 @@ internal static class PluginPathSafety
 		}
 	}
 
+	/// <summary>扫描宿主管理目录树，拒绝任何链接或 reparse point。</summary>
+	public static void EnsureTreeNoReparsePoints(string trustedRoot, string path, string errorCode, string message)
+	{
+		string root = FullPath(trustedRoot);
+		string target = FullPath(path);
+		if (!IsSameOrWithin(root, target)) throw new PluginException(errorCode, message);
+		EnsureNoReparsePoints(root, target, errorCode, message);
+		if (!Directory.Exists(target)) return;
+
+		Stack<string> directories = new();
+		directories.Push(target);
+		while (directories.Count > 0)
+		{
+			string directory = directories.Pop();
+			foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
+			{
+				EnsureNoReparsePoint(entry, errorCode, message);
+				FileAttributes attributes;
+				try { attributes = File.GetAttributes(entry); }
+				catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+				{
+					throw new PluginException(errorCode, message, exception);
+				}
+				if ((attributes & FileAttributes.Directory) != 0) directories.Push(entry);
+			}
+		}
+	}
+
 	public static IReadOnlyList<string> EnumerateDllFilesWithoutReparsePoints(string root, string errorCode, string message)
 	{
 		string canonicalRoot = FullPath(root);
