@@ -133,7 +133,7 @@ public sealed class AssetServer : IAsyncDisposable
 			string[] parts = relative.Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
 			string? pluginId = parts.Length == 2 ? AssetPath.PercentDecode(parts[0]) : null;
 			string? assetPath = parts.Length == 2 ? AssetPath.PercentDecode(parts[1]) : null;
-			if (pluginId is null || assetPath is null || pluginId.Length is 0 or > 64 || !IsSafePluginId(pluginId) || !IsPublicPluginAsset(assetPath))
+			if (pluginId is null || assetPath is null || pluginId.Length is 0 or > 128 || !IsSafePluginId(pluginId) || !IsPublicPluginAsset(assetPath))
 			{
 				await Fail(context);
 				return;
