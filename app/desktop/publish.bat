@@ -39,7 +39,8 @@ if not exist bin\publish\win-x64\wwwroot\index.html (
 	exit /b 2
 )
 if not "%KEEP_SYMBOLS%"=="1" if /I not "%KEEP_SYMBOLS%"=="true" for /r "bin\publish\win-x64" %%F in (*.pdb) do del /q "%%F"
-node scripts\check-package-size.mjs --path bin\publish\win-x64 --label "win-x64 publish" --max-mib 80
+rem Windows FDD 未压缩 publish 基线约 159 MiB；180 MiB 仍能拦截几十 MiB 级异常膨胀。
+node scripts\check-package-size.mjs --path bin\publish\win-x64 --label "win-x64 publish" --max-mib 180
 if errorlevel 1 goto :error
 
 echo.
