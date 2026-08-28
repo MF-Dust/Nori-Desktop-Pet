@@ -93,6 +93,34 @@ public sealed record RecallDebugTrace
 	public IReadOnlyList<long> InjectedIds { get; init; } = [];
 }
 
+/// <summary>后台向量队列状态。</summary>
+public enum MemoryEmbeddingQueueState
+{
+	Stopped,
+	Waiting,
+	Processing,
+	Disabled,
+	Degraded,
+}
+
+/// <summary>
+/// 后台向量队列的脱敏运行摘要。
+/// 只包含队列计数和稳定失败原因，不包含记忆正文或 Provider 返回内容。
+/// </summary>
+public sealed record MemoryEmbeddingQueueStatus
+{
+	public MemoryEmbeddingQueueState State { get; init; } = MemoryEmbeddingQueueState.Stopped;
+	public int QueueDepth { get; init; }
+	public long EnqueuedCount { get; init; }
+	public long SaturatedCount { get; init; }
+	public long AttemptCount { get; init; }
+	public long CompletedCount { get; init; }
+	public long FailedBatchCount { get; init; }
+	public long CountMismatchCount { get; init; }
+	public long RecoveryBatchCount { get; init; }
+	public string? LastFailure { get; init; }
+}
+
 /// <summary>索引状态摘要。</summary>
 public sealed record MemoryIndexStatus
 {

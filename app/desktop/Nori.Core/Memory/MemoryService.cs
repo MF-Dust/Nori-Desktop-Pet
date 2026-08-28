@@ -15,24 +15,41 @@ namespace Nori.Core.Memory;
 public sealed class MemoryService : IAsyncDisposable
 {
 	public const int MaxCacheSize = 250;
+	private const int EmbeddingQueueCapacity = 128;
 	private const int EmbeddingBatchSize = 32;
+	private const int MaxEmbeddingAttempts = 3;
+	private const int MaxRecoveryBatchesPerWake = 4;
 	private const string ReembedFingerprintState = "embedding_reembed_fingerprint";
 	private const string ReembedCursorState = "embedding_reembed_cursor";
+	private static readonly TimeSpan EmbeddingRecoveryInterval = TimeSpan.FromSeconds(5);
 	private readonly MemoryStore _store;
 	private readonly IEmbeddingAdapter _embedding;
 	private readonly ConfigStore _config;
 	private readonly AiSettingsStore _aiSettings;
 	private readonly MemoryTransferService _transfer;
 	private readonly SemaphoreSlim _reembedGate = new(1, 1);
-	private readonly Channel<EmbeddingJob> _embeddingQueue = Channel.CreateBounded<EmbeddingJob>(new BoundedChannelOptions(128)
+	private readonly Channel<EmbeddingJob> _embeddingQueue = Channel.CreateBounded<EmbeddingJob>(new BoundedChannelOptions(EmbeddingQueueCapacity)
 	{
-		FullMode = BoundedChannelFullMode.DropWrite,
+		// TryWrite 在队列满时返回 false, 由数据库中的未嵌入记录承担补偿入口, 不丢写入.
+		FullMode = BoundedChannelFullMode.Wait,
 		SingleReader = true,
 		SingleWriter = false,
 	});
+	private readonly SemaphoreSlim _embeddingWakeup = new(0, 1);
 	private readonly CancellationTokenSource _embeddingCts = new();
 	private readonly Task _embeddingWorker;
 	private int _disposed;
+	private int _queueDepth;
+	private int _recoveryRequested;
+	private int _embeddingState = (int)MemoryEmbeddingQueueState.Stopped;
+	private long _enqueuedCount;
+	private long _saturatedCount;
+	private long _attemptCount;
+	private long _completedCount;
+	private long _failedBatchCount;
+	private long _countMismatchCount;
+	private long _recoveryBatchCount;
+	private string? _lastFailure;
 
 	public MemoryService(
 		MemoryStore store,
@@ -45,12 +62,33 @@ public sealed class MemoryService : IAsyncDisposable
 		_config = config;
 		_aiSettings = new AiSettingsStore(config);
 		_transfer = new MemoryTransferService(_store, queueEmbedding: QueueTransferEmbedding);
-		_embeddingWorker = startBackgroundWorker
-			? Task.Run(ProcessEmbeddingQueueAsync)
-			: Task.CompletedTask;
+		if (startBackgroundWorker)
+		{
+			SetEmbeddingState(MemoryEmbeddingQueueState.Waiting);
+			_embeddingWorker = Task.Run(ProcessEmbeddingQueueAsync);
+		}
+		else
+		{
+			_embeddingWorker = Task.CompletedTask;
+		}
 	}
 
 	public MemoryStore Store => _store;
+
+	/// <summary>读取后台向量队列的脱敏状态, 不包含记忆正文。</summary>
+	public MemoryEmbeddingQueueStatus EmbeddingQueueStatus => new()
+	{
+		State = (MemoryEmbeddingQueueState)Volatile.Read(ref _embeddingState),
+		QueueDepth = Math.Max(0, Volatile.Read(ref _queueDepth)),
+		EnqueuedCount = Volatile.Read(ref _enqueuedCount),
+		SaturatedCount = Volatile.Read(ref _saturatedCount),
+		AttemptCount = Volatile.Read(ref _attemptCount),
+		CompletedCount = Volatile.Read(ref _completedCount),
+		FailedBatchCount = Volatile.Read(ref _failedBatchCount),
+		CountMismatchCount = Volatile.Read(ref _countMismatchCount),
+		RecoveryBatchCount = Volatile.Read(ref _recoveryBatchCount),
+		LastFailure = Volatile.Read(ref _lastFailure),
+	};
 
 	/// <summary>记忆迁移内核；提交成功后才把新文本排入后台 Embedding 队列。</summary>
 	public MemoryTransferService Transfer => _transfer;
@@ -164,7 +202,7 @@ public sealed class MemoryService : IAsyncDisposable
 		double? ttl = DefaultTtl(resolvedKind);
 		MemoryItem item = _store.AddAggregate(type, content, importance, source, tags, null, resolvedKind,
 			canonicalSummary, personaSummary, confidence, ttl, null, null, sources);
-		QueueEmbedding(item.Id, embeddingText ?? canonicalSummary ?? content);
+		QueueEmbedding(item.Id, embeddingText ?? canonicalSummary ?? content, item.UpdatedAt);
 		return Task.FromResult(item);
 	}
 
@@ -203,7 +241,8 @@ public sealed class MemoryService : IAsyncDisposable
 			{
 				_store.UpdateAtom(defaultAtom.Id, canonicalSummary ?? content, resolvedKind, importance, confidence);
 			}
-			QueueEmbedding(id, canonicalSummary ?? content);
+			MemoryItem? current = _store.Get(id);
+			if (current is not null) QueueEmbedding(id, canonicalSummary ?? content, current.UpdatedAt);
 		}
 		return Task.FromResult(updated);
 	}
@@ -295,7 +334,11 @@ public sealed class MemoryService : IAsyncDisposable
 	/// <summary>按 fingerprint 批量重建向量，进度持久化后可取消并从游标恢复。</summary>
 	public async Task<int> ReembedAllAsync(CancellationToken cancellationToken = default, bool force = true)
 	{
-		if (!EmbeddingConfigured) return 0;
+		if (!EmbeddingConfigured)
+		{
+			SetEmbeddingState(MemoryEmbeddingQueueState.Disabled);
+			return 0;
+		}
 		await _reembedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
@@ -305,42 +348,22 @@ public sealed class MemoryService : IAsyncDisposable
 				? Math.Max(0, savedCursor)
 				: 0;
 			_store.SetEngineState(ReembedFingerprintState, fingerprint);
+			if (!string.Equals(savedFingerprint, fingerprint, StringComparison.Ordinal)) SaveReembedCursor(0);
+
 			int count = 0;
 			while (true)
 			{
 				cancellationToken.ThrowIfCancellationRequested();
 				IReadOnlyList<MemoryEmbeddingWorkItem> page = _store.GetReembedWork(fingerprint, EmbeddingBatchSize, afterId, force);
 				if (page.Count == 0) break;
-				IReadOnlyList<float[]> vectors;
-				try
+				EmbeddingJob[] batch = page.Select(item => new EmbeddingJob(item.Id, item.Text, item.UpdatedAt)).ToArray();
+				int? completed = await TryEmbedBatchWithRetryAsync(batch, cancellationToken, fingerprint).ConfigureAwait(false);
+				if (completed is null)
 				{
-					(string baseUrl, string apiKey, string model, int? dimensions) = ResolveConfig();
-					vectors = await _embedding.GetEmbeddingsAsync(baseUrl, apiKey, model,
-						page.Select(item => item.Text).ToArray(), dimensions, cancellationToken).ConfigureAwait(false);
+					// 游标停在上一页, 下次运行会重新补偿这一批, 不把失败项推进到永久盲区.
+					throw new InvalidOperationException("向量批处理失败, 待处理记忆将在下次重试");
 				}
-				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-				{
-					throw;
-				}
-				catch
-				{
-					// 单批失败不阻塞文本；推进游标并在下一次运行从头重试失败项。
-					SaveReembedCursor(page[^1].Id);
-					afterId = page[^1].Id;
-					continue;
-				}
-
-				if (vectors.Count == page.Count)
-			{
-					List<MemoryEmbeddingUpdate> updates = [];
-					for (int index = 0; index < page.Count; index++)
-					{
-						float[] vector = vectors[index];
-						if (vector.Length == 0 || vector.Any(value => !float.IsFinite(value))) continue;
-						updates.Add(new MemoryEmbeddingUpdate {Id = page[index].Id, UpdatedAt = page[index].UpdatedAt, Vector = vector});
-					}
-					count += _store.UpdateEmbeddings(updates, fingerprint);
-				}
+				count += completed.Value;
 				afterId = page[^1].Id;
 				SaveReembedCursor(afterId);
 			}
@@ -362,49 +385,210 @@ public sealed class MemoryService : IAsyncDisposable
 	public IReadOnlyList<MemorySource> GetSources(long memoryId) => _store.GetSources(memoryId);
 	public (int Active, int Atoms, int Archived, int Total) GetOverview() => _store.GetOverview();
 
-	private void QueueEmbedding(long id, string text)
+	private void QueueEmbedding(long id, string text, string updatedAt)
 	{
 		if (Volatile.Read(ref _disposed) != 0 || string.IsNullOrWhiteSpace(text)) return;
-		_embeddingQueue.Writer.TryWrite(new EmbeddingJob(id, text));
+		EmbeddingJob job = new(id, text, updatedAt);
+		Interlocked.Increment(ref _queueDepth);
+		bool accepted;
+		try { accepted = _embeddingQueue.Writer.TryWrite(job); }
+		catch { accepted = false; }
+		if (accepted)
+		{
+			Interlocked.Increment(ref _enqueuedCount);
+			SignalEmbeddingWorker();
+			return;
+		}
+
+		Interlocked.Decrement(ref _queueDepth);
+		if (Volatile.Read(ref _disposed) != 0) return;
+		Interlocked.Increment(ref _saturatedCount);
+		RequestEmbeddingRecovery();
 	}
 
-	private void QueueTransferEmbedding(MemoryEmbeddingWorkItem work) => QueueEmbedding(work.Id, work.Text);
+	private void QueueTransferEmbedding(MemoryEmbeddingWorkItem work) => QueueEmbedding(work.Id, work.Text, work.UpdatedAt);
+
+	private void RequestEmbeddingRecovery()
+	{
+		if (Volatile.Read(ref _disposed) != 0) return;
+		Interlocked.Exchange(ref _recoveryRequested, 1);
+		SignalEmbeddingWorker();
+	}
+
+	private void SignalEmbeddingWorker()
+	{
+		try { _embeddingWakeup.Release(); }
+		catch (SemaphoreFullException) { }
+		catch (ObjectDisposedException) { }
+	}
 
 	private async Task ProcessEmbeddingQueueAsync()
 	{
 		try
 		{
-			await foreach (EmbeddingJob first in _embeddingQueue.Reader.ReadAllAsync(_embeddingCts.Token).ConfigureAwait(false))
+			while (true)
 			{
-				List<EmbeddingJob> batch = [first];
-				while (batch.Count < EmbeddingBatchSize && _embeddingQueue.Reader.TryRead(out EmbeddingJob? next) && next is not null) batch.Add(next);
-				try { await EmbedAndStoreBatchAsync(batch, _embeddingCts.Token).ConfigureAwait(false); }
-				catch (OperationCanceledException) when (_embeddingCts.IsCancellationRequested) { return; }
-				catch { }
+				bool signaled = await _embeddingWakeup.WaitAsync(EmbeddingRecoveryInterval, _embeddingCts.Token).ConfigureAwait(false);
+				if (!signaled) Interlocked.Exchange(ref _recoveryRequested, 1);
+
+				do
+				{
+					while (TryTakeEmbeddingJob(out EmbeddingJob first))
+					{
+						List<EmbeddingJob> batch = [first];
+						while (batch.Count < EmbeddingBatchSize && TryTakeEmbeddingJob(out EmbeddingJob next)) batch.Add(next);
+						SetEmbeddingState(MemoryEmbeddingQueueState.Processing);
+						_ = await TryEmbedBatchWithRetryAsync(batch, _embeddingCts.Token).ConfigureAwait(false);
+					}
+
+					if (Volatile.Read(ref _queueDepth) == 0
+						&& Interlocked.Exchange(ref _recoveryRequested, 0) != 0)
+					{
+						await RecoverUnembeddedAsync(_embeddingCts.Token).ConfigureAwait(false);
+					}
+				}
+				while (Volatile.Read(ref _queueDepth) > 0 || Volatile.Read(ref _recoveryRequested) != 0);
+
+				MemoryEmbeddingQueueState state = (MemoryEmbeddingQueueState)Volatile.Read(ref _embeddingState);
+				if (state != MemoryEmbeddingQueueState.Degraded)
+				{
+					SetEmbeddingState(EmbeddingConfigured ? MemoryEmbeddingQueueState.Waiting : MemoryEmbeddingQueueState.Disabled);
+				}
 			}
 		}
 		catch (OperationCanceledException) when (_embeddingCts.IsCancellationRequested) { }
+		catch { RecordEmbeddingFailure("worker_failure"); }
+		finally { SetEmbeddingState(MemoryEmbeddingQueueState.Stopped); }
 	}
 
-	private async Task EmbedAndStoreBatchAsync(IReadOnlyList<EmbeddingJob> batch, CancellationToken cancellationToken)
+	private bool TryTakeEmbeddingJob(out EmbeddingJob job)
 	{
-		if (!EmbeddingConfigured || batch.Count == 0) return;
+		if (_embeddingQueue.Reader.TryRead(out EmbeddingJob? next) && next is not null)
+		{
+			Interlocked.Decrement(ref _queueDepth);
+			job = next;
+			return true;
+		}
+		job = null!;
+		return false;
+	}
+
+	private async Task RecoverUnembeddedAsync(CancellationToken cancellationToken)
+	{
+		if (!EmbeddingConfigured)
+		{
+			SetEmbeddingState(MemoryEmbeddingQueueState.Disabled);
+			return;
+		}
+
+		for (int index = 0; index < MaxRecoveryBatchesPerWake; index++)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			IReadOnlyList<MemoryItem> pending;
+			try { pending = _store.GetUnembedded(EmbeddingBatchSize); }
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+			catch
+			{
+				RecordEmbeddingFailure("database_failure");
+				return;
+			}
+			if (pending.Count == 0) return;
+
+			Interlocked.Increment(ref _recoveryBatchCount);
+			EmbeddingJob[] batch = pending
+				.Select(item => new EmbeddingJob(item.Id, item.CanonicalSummary ?? item.Content, item.UpdatedAt))
+			.ToArray();
+			int? completed = await TryEmbedBatchWithRetryAsync(batch, cancellationToken).ConfigureAwait(false);
+			if (completed is null || completed == 0) return;
+		}
+	}
+
+	private async Task<int?> TryEmbedBatchWithRetryAsync(
+		IReadOnlyList<EmbeddingJob> batch,
+		CancellationToken cancellationToken,
+		string? fingerprint = null)
+	{
+		if (batch.Count == 0) return 0;
+		if (!EmbeddingConfigured)
+		{
+			SetEmbeddingState(MemoryEmbeddingQueueState.Disabled);
+			return null;
+		}
+
+		for (int attempt = 0; attempt < MaxEmbeddingAttempts; attempt++)
+		{
+			if (!EmbeddingConfigured)
+			{
+				SetEmbeddingState(MemoryEmbeddingQueueState.Disabled);
+				return null;
+			}
+			Interlocked.Increment(ref _attemptCount);
+			try
+			{
+				SetEmbeddingState(MemoryEmbeddingQueueState.Processing);
+				int completed = await EmbedAndStoreBatchAsync(batch, cancellationToken, fingerprint).ConfigureAwait(false);
+				Interlocked.Add(ref _completedCount, completed);
+				SetEmbeddingState(MemoryEmbeddingQueueState.Waiting);
+				return completed;
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				throw;
+			}
+			catch (EmbeddingBatchException exception)
+			{
+				RecordEmbeddingFailure(exception.Reason);
+			}
+			catch
+			{
+				RecordEmbeddingFailure("provider_failure");
+			}
+
+			if (attempt + 1 < MaxEmbeddingAttempts)
+			{
+				await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)), cancellationToken).ConfigureAwait(false);
+			}
+		}
+
+		Interlocked.Increment(ref _failedBatchCount);
+		SetEmbeddingState(MemoryEmbeddingQueueState.Degraded);
+		return null;
+	}
+
+	private async Task<int> EmbedAndStoreBatchAsync(
+		IReadOnlyList<EmbeddingJob> batch,
+		CancellationToken cancellationToken,
+		string? fingerprint = null)
+	{
+		if (batch.Count == 0) return 0;
+		if (!EmbeddingConfigured) throw new EmbeddingBatchException("disabled");
+		cancellationToken.ThrowIfCancellationRequested();
 		(string baseUrl, string apiKey, string model, int? dimensions) = ResolveConfig();
 		IReadOnlyList<float[]> vectors = await _embedding.GetEmbeddingsAsync(baseUrl, apiKey, model,
 			batch.Select(job => job.Text).ToArray(), dimensions, cancellationToken).ConfigureAwait(false);
-		if (vectors.Count != batch.Count) return;
-		string fingerprint = ResolveEmbeddingFingerprint();
+		cancellationToken.ThrowIfCancellationRequested();
+		if (vectors is null || vectors.Count != batch.Count) throw new EmbeddingBatchException("count_mismatch");
+
 		List<MemoryEmbeddingUpdate> updates = [];
 		for (int index = 0; index < batch.Count; index++)
 		{
 			float[] vector = vectors[index];
-			if (vector.Length == 0 || vector.Any(value => !float.IsFinite(value))) continue;
-			MemoryItem? item = _store.Get(batch[index].Id);
-			if (item is null) continue;
-			updates.Add(new MemoryEmbeddingUpdate {Id = item.Id, UpdatedAt = item.UpdatedAt, Vector = vector});
+			if (vector.Length == 0 || vector.Any(value => !float.IsFinite(value)))
+				throw new EmbeddingBatchException("invalid_vector");
+			updates.Add(new MemoryEmbeddingUpdate {Id = batch[index].Id, UpdatedAt = batch[index].UpdatedAt, Vector = vector});
 		}
-		_store.UpdateEmbeddings(updates, fingerprint);
+		cancellationToken.ThrowIfCancellationRequested();
+		return _store.UpdateEmbeddings(updates, fingerprint ?? ResolveEmbeddingFingerprint());
 	}
+
+	private void RecordEmbeddingFailure(string reason)
+	{
+		if (reason == "count_mismatch") Interlocked.Increment(ref _countMismatchCount);
+		Volatile.Write(ref _lastFailure, reason);
+		SetEmbeddingState(MemoryEmbeddingQueueState.Degraded);
+	}
+
+	private void SetEmbeddingState(MemoryEmbeddingQueueState state) => Volatile.Write(ref _embeddingState, (int)state);
 
 	private void SaveReembedCursor(long cursor) => _store.SetEngineState(ReembedCursorState, cursor.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
@@ -417,11 +601,21 @@ public sealed class MemoryService : IAsyncDisposable
 		catch (OperationCanceledException) { }
 		catch (TimeoutException) { }
 		_transfer.Dispose();
-		_embeddingCts.Dispose();
+		if (_embeddingWorker.IsCompleted)
+		{
+			_embeddingWakeup.Dispose();
+			_embeddingCts.Dispose();
+		}
 		_reembedGate.Dispose();
 	}
 
-	private sealed record EmbeddingJob(long Id, string Text);
+	private sealed record EmbeddingJob(long Id, string Text, string UpdatedAt);
+
+	private sealed class EmbeddingBatchException : InvalidOperationException
+	{
+		public EmbeddingBatchException(string reason) : base(reason) => Reason = reason;
+		public string Reason { get; }
+	}
 
 	private static string Normalize(string value) => string.Join(' ', value.Trim().ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
