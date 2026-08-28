@@ -42,7 +42,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       informational: ${{ steps.version.outputs.informational }}
-      release: ${{ steps.version.outputs.release }}
+      sentry_release: ${{ steps.version.outputs.sentry_release }}
     env:
       # 法律/分发确认仍保留，但改成仓库级一次性 Variables，避免每次发布重复勾选。
       NORI_AVALONIA_WEBVIEW_DISTRIBUTION_LICENSE_CONFIRMED: ${{ vars.NORI_AVALONIA_WEBVIEW_DISTRIBUTION_LICENSE_CONFIRMED || 'false' }}
@@ -127,8 +127,10 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$stable_version" >> "$GITHUB_OUTPUT"
           echo "informational=$informational" >> "$GITHUB_OUTPUT"
-          echo "release=$stable_version" >> "$GITHUB_OUTPUT"
+          # Sentry 只按数字产品版本聚合事件；Codename 仅用于产品版本、标签和产物名。
+          echo "sentry_release=$version" >> "$GITHUB_OUTPUT"
           echo "目标版本: $stable_version"
+          echo "Sentry release: $version (不含 Codename)"
           echo "程序 informational version: $informational (标签将在所有测试通过后创建)"
 
   preflight:
@@ -141,7 +143,7 @@ jobs:
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       VITE_SENTRY_DSN_WEB: ${{ secrets.SENTRY_DSN_WEB }}
-      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
+      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.sentry_release }}
       NORI_PRODUCT_VERSION: ${{ needs.validate.outputs.version }}
       NORI_PRODUCT_INFORMATIONAL_VERSION: ${{ needs.validate.outputs.informational }}
       NORI_COMMIT_SHA: ${{ github.sha }}
@@ -237,7 +239,7 @@ jobs:
       NORI_PRODUCT_INFORMATIONAL_VERSION: ${{ needs.validate.outputs.informational }}
       NORI_COMMIT_SHA: ${{ github.sha }}
       NORI_SENTRY_DSN_NATIVE: ${{ secrets.SENTRY_DSN_NATIVE }}
-      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
+      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.sentry_release }}
       NORI_SENTRY_ENVIRONMENT: production
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
@@ -442,7 +444,7 @@ jobs:
     needs: [create_tag, validate]
     runs-on: ubuntu-latest
     env:
-      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.release }}
+      NORI_SENTRY_RELEASE: ${{ needs.validate.outputs.sentry_release }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT_NATIVE: ${{ secrets.SENTRY_PROJECT_NATIVE }}
