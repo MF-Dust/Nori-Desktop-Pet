@@ -32,7 +32,7 @@ public sealed class DiagnosticExporterTests : IDisposable
 		logger.Write(LogSource.Backend, "error", "api_key=secret-value /home/user/private.db");
 		string target = Path.Combine(_directory, "diagnostics.zip");
 
-		DiagnosticExporter.Result result = DiagnosticExporter.Export(target, logger, null, safeMode: true);
+		DiagnosticExporter.Result result = DiagnosticExporter.Export(target, logger, null, new AppStoragePaths(_directory), safeMode: true);
 
 		Assert.Equal("diagnostics.zip", result.FileName);
 		Assert.True(result.Bytes > 0);
@@ -60,7 +60,7 @@ public sealed class DiagnosticExporterTests : IDisposable
 		Assert.DoesNotContain("nori.db", archiveText, StringComparison.Ordinal);
 		Assert.DoesNotContain("secret-value", archiveText, StringComparison.Ordinal);
 		Assert.DoesNotContain("/home/user/private.db", archiveText, StringComparison.Ordinal);
-		Assert.DoesNotContain(AppPaths.DataDir, archiveText, StringComparison.Ordinal);
+		Assert.DoesNotContain(new AppStoragePaths(Environment.CurrentDirectory).DataRoot, archiveText, StringComparison.Ordinal);
 	}
 
 	[Fact]
@@ -75,7 +75,7 @@ public sealed class DiagnosticExporterTests : IDisposable
 		}
 
 		string target = Path.Combine(_directory, "large-diagnostics.zip");
-		DiagnosticExporter.Result result = DiagnosticExporter.Export(target, logger, null, safeMode: false);
+		DiagnosticExporter.Result result = DiagnosticExporter.Export(target, logger, null, new AppStoragePaths(_directory), safeMode: false);
 
 		Assert.InRange(result.Bytes, 1, 8L * 1024 * 1024);
 		using ZipArchive archive = ZipFile.OpenRead(target);
@@ -95,7 +95,7 @@ public sealed class DiagnosticExporterTests : IDisposable
 		cancellation.Cancel();
 
 		Assert.Throws<OperationCanceledException>(() =>
-			DiagnosticExporter.Export(target, logger, null, safeMode: false, cancellation.Token));
+			DiagnosticExporter.Export(target, logger, null, new AppStoragePaths(_directory), safeMode: false, cancellationToken: cancellation.Token));
 
 		Assert.False(File.Exists(target));
 		Assert.Empty(Directory.EnumerateFiles(_directory, "*.tmp", SearchOption.TopDirectoryOnly));

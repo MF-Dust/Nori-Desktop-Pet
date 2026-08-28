@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using Nori.Core.Assets;
+using Nori.Core.Data;
 using Nori.Desktop.Bridge;
 
 namespace Nori.Desktop.Windows;
@@ -14,9 +15,10 @@ namespace Nori.Desktop.Windows;
 /// 承接原来 Rust 侧 lib.rs setup / tray.rs 与前端 services/window/index.ts 的窗口调度职责.
 /// 包含三个 WebView2 窗口 (first-run, init, main) 与一个原生 OpenGL 桌宠窗口 (pet)。
 /// </summary>
-public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleApplicationLifetime lifetime) : IWindowManager
+public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleApplicationLifetime lifetime, AppStoragePaths storagePaths) : IWindowManager
 {
 	private readonly AssetServer _assetServer = assetServer;
+	private readonly AppStoragePaths _storagePaths = storagePaths ?? throw new ArgumentNullException(nameof(storagePaths));
 	private readonly IClassicDesktopStyleApplicationLifetime _lifetime = lifetime;
 	private readonly Dictionary<string, Window> _windows = [];
 	private readonly ConcurrentDictionary<string, bool> _visible = new();
@@ -47,7 +49,7 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 			}
 			else
 			{
-				NoriWindow window = new(definition, bridge, _assetServer.WindowUrl(definition.Label));
+				NoriWindow window = new(definition, bridge, _assetServer.WindowUrl(definition.Label), _storagePaths);
 				window.Closing += (_, args) =>
 				{
 					if (window.AllowClose) return;

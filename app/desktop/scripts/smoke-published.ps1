@@ -27,15 +27,26 @@ if ($ownsProfile) {
 	$Profile = Join-Path ([IO.Path]::GetTempPath()) ("nori-smoke-{0}" -f ([Guid]::NewGuid().ToString("N")))
 }
 $profile = [IO.Path]::GetFullPath($Profile)
-New-Item -ItemType Directory -Path $profile -Force | Out-Null
-$databasePath = Join-Path $profile "data\nori.db"
+$ancestor = [IO.Directory]::GetParent($profile)
+while ($null -ne $ancestor) {
+	if (($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "profile 祖先目录包含 reparse point: $($ancestor.FullName)" }
+	$ancestor = $ancestor.Parent
+}
+if (Test-Path -LiteralPath $profile) {
+	$item = Get-Item -LiteralPath $profile -Force
+	if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "profile 不能是文件或 reparse point: $profile" }
+	if (@(Get-ChildItem -LiteralPath $profile -Force).Count -ne 0) { throw "profile 必须是此前不存在或完全为空的目录, 不会删除已有内容: $profile" }
+} else {
+	New-Item -ItemType Directory -Path $profile -Force | Out-Null
+}
+$databasePath = Join-Path $profile "data\core\database\nori.db"
 if (Test-Path -LiteralPath $databasePath) {
 	throw "profile 不是隔离的临时目录, 已存在 nori.db: $databasePath"
 }
 $readinessPath = Join-Path $profile "readiness.json"
-Remove-Item -LiteralPath $readinessPath -Force -ErrorAction SilentlyContinue
-$stdoutPath = Join-Path $profile "smoke.stdout.log"
-$stderrPath = Join-Path $profile "smoke.stderr.log"
+$logToken = [Guid]::NewGuid().ToString("N")
+$stdoutPath = Join-Path ([IO.Path]::GetTempPath()) "nori-smoke-$logToken.stdout.log"
+$stderrPath = Join-Path ([IO.Path]::GetTempPath()) "nori-smoke-$logToken.stderr.log"
 Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 
 $process = $null
@@ -94,6 +105,7 @@ finally {
 	if ($null -ne $process -and -not $process.HasExited) {
 		Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
 	}
+	Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 	if ($ownsProfile -and (Test-Path -LiteralPath $profile)) {
 		Remove-Item -LiteralPath $profile -Recurse -Force -ErrorAction SilentlyContinue
 	}

@@ -1,5 +1,7 @@
 using System;
+using System.Runtime.InteropServices;
 using Avalonia;
+using Nori.Core;
 using Nori.Core.Data;
 using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Startup;
@@ -14,8 +16,60 @@ internal static class Program
 	private static int _activationPending;
 
 	internal static StartupOptions? Options { get; private set; }
+	internal static AppStoragePaths? StoragePaths { get; private set; }
+	internal static StorageBootstrapResult? StorageMigration { get; private set; }
 
 	internal static bool ConsumePendingActivation() => Interlocked.Exchange(ref _activationPending, 0) == 1;
+
+	private static string RuntimeRid()
+	{
+		string rid = RuntimeInformation.RuntimeIdentifier;
+		if (rid.StartsWith("win-", StringComparison.Ordinal) || rid.StartsWith("linux-", StringComparison.Ordinal) || rid.StartsWith("osx-", StringComparison.Ordinal)) return rid;
+		string os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
+		string architecture = RuntimeInformation.OSArchitecture switch
+		{
+			Architecture.X64 => "x64",
+			Architecture.Arm64 => "arm64",
+			_ => throw new InvalidOperationException("不支持的 CPU 架构"),
+		};
+		return $"{os}-{architecture}";
+	}
+
+	private static void ShowStartupError(string title, string message)
+	{
+		string safe = Nori.Core.Security.SensitiveDataRedactor.Redact(message);
+		if (OperatingSystem.IsWindows())
+		{
+			MessageBox(nint.Zero, safe, title, 0x10);
+			return;
+		}
+		if (OperatingSystem.IsMacOS())
+		{
+			try
+			{
+				System.Diagnostics.ProcessStartInfo alert = new("osascript") { UseShellExecute = false };
+				alert.ArgumentList.Add("-e");
+				alert.ArgumentList.Add($"display alert {AppleScriptString(title)} message {AppleScriptString(safe)}");
+				using System.Diagnostics.Process? process = System.Diagnostics.Process.Start(alert);
+				if (process is null) throw new InvalidOperationException("无法显示启动错误");
+				process.WaitForExit(5000);
+				return;
+			}
+			catch { }
+		}
+		Console.Error.WriteLine($"{title}: {safe}");
+	}
+
+	private static string AppleScriptString(string value) => "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", " ", StringComparison.Ordinal).Replace("\n", " ", StringComparison.Ordinal) + "\"";
+
+	[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)]
+	private static extern int MessageBox(nint hWnd, string text, string caption, uint type);
+
+	private static bool IsDevelopmentProcess() =>
+		string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal)
+		&& (Environment.GetEnvironmentVariable("NORI_DEV") == "1"
+			|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"))
+			|| Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase));
 
 	private static void ActivateFirstInstance()
 	{
@@ -28,7 +82,7 @@ internal static class Program
 	{
 		if (!StartupOptions.TryParse(args, out StartupOptions? startup, out string parseError))
 		{
-			Console.Error.WriteLine($"启动参数错误: {parseError}");
+			ShowStartupError("启动参数错误", parseError);
 			Environment.ExitCode = 2;
 			return;
 		}
@@ -36,19 +90,23 @@ internal static class Program
 		Options = startup;
 		bool safeMode = startup?.SafeMode == true;
 		SmokeTestOptions? smokeTest = startup?.SmokeTest;
-		if (smokeTest is not null)
+		try
 		{
-			try
+			StoragePaths = smokeTest is null
+				? AppStoragePathResolver.Resolve()
+				: new AppStoragePaths(smokeTest.Profile);
+			if (smokeTest is not null)
 			{
-				AppPaths.UseDiagnosticProfile(smokeTest.Profile);
 				SmokeTestRuntime.Configure(smokeTest);
 			}
-			catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
-			{
-				Console.Error.WriteLine($"冒烟 profile 不可用: {exception.Message}");
-				Environment.ExitCode = 2;
-				return;
-			}
+		}
+		catch (Exception exception)
+		{
+			string summary = Nori.Core.Security.SensitiveDataRedactor.ExceptionSummary(exception);
+			CrashReporter.LogEarlyStartupFailure("存储包根不可用", exception, StoragePaths?.LogsDirectory);
+			ShowStartupError("存储包根不可用", summary);
+			Environment.ExitCode = 2;
+			return;
 		}
 
 		// 在 Avalonia 启动前就挂上域级兜底, 尽早覆盖启动期异常 (参考 ClassIsland Program.cs)
@@ -66,7 +124,26 @@ internal static class Program
 			}
 			return;
 		}
-		BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+		try
+		{
+			AppStoragePaths paths = StoragePaths ?? throw new InvalidOperationException("存储路径尚未初始化");
+			bool development = IsDevelopmentProcess();
+			string? legacy = development || smokeTest is not null ? null : LegacyDataPathResolver.Resolve();
+			StorageMigration = StorageBootstrapper.Bootstrap(
+				paths,
+				ProductVersion.Current,
+				RuntimeRid(),
+				legacy,
+				allowLegacyMigration: !development && smokeTest is null);
+			BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+		}
+		catch (Exception exception)
+		{
+			string summary = Nori.Core.Security.SensitiveDataRedactor.ExceptionSummary(exception);
+			CrashReporter.LogEarlyStartupFailure("存储初始化失败", exception, StoragePaths?.LogsDirectory);
+			ShowStartupError("存储初始化失败", summary);
+			Environment.ExitCode = 1;
+		}
 	}
 
 	/// <summary>

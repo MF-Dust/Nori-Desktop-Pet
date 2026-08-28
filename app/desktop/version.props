@@ -3,6 +3,9 @@
 		<!-- 产品版本只由构建环境或 CI 注入; 未注入时开发构建明确标记为 Dev。 -->
 		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_PRODUCT_VERSION'))</NoriProductVersion>
 		<NoriProductVersion Condition="'$(NoriProductVersion)' == ''">Dev</NoriProductVersion>
+		<!-- 同一产品版本的部署槽修订号由构建环境控制。 -->
+		<NoriDeploymentRevision Condition="'$(NoriDeploymentRevision)' == ''">$([System.Environment]::GetEnvironmentVariable('NORI_DEPLOYMENT_REVISION'))</NoriDeploymentRevision>
+		<NoriDeploymentRevision Condition="'$(NoriDeploymentRevision)' == ''">0</NoriDeploymentRevision>
 
 		<!-- CLR、文件和 NuGet 元数据只能使用数字版本; Dev 构建使用合法的 0.0.0。
 		     允许直接传入 v1.0.3-Arona+hash, 但不把展示版本写入数字字段。 -->

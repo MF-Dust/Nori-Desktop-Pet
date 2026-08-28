@@ -135,9 +135,11 @@ flowchart TD
 ```
 Nori-Desktop-Pet/
 ├── app/desktop/                     # 桌宠主程序根目录
+│   ├── Nori.AppLauncher/            # 无 Avalonia 的稳定根入口（选择 app-* 部署槽）
+│   ├── Nori.AppLauncher.Tests/      # launcher 槽选择与 manifest 安全测试
 │   ├── Nori.Desktop/                # Avalonia 12 宿主（窗口调度/系统托盘/IPC 桥接/OpenGL 控制器）
 │   ├── Nori.Desktop.Tests/          # 宿主层集成与桥接测试套件
-│   ├── Nori.Core/                   # 核心逻辑层（SQLite/LLM/Agent/MCP/Voice/Memory/安全密钥）
+│   ├── Nori.Core/                   # 核心逻辑层（SQLite/LLM/Agent/MCP/Voice/Memory/安全密钥/存储迁移）
 │   ├── Nori.Core.Tests/             # 核心业务单元测试套件（xUnit）
 │   ├── Live2DCSharpSDK.Framework/   # Live2D Cubism Framework C# 实现
 │   ├── Live2DCSharpSDK.OpenGL/      # Live2D OpenGL ES 2.0 渲染器
@@ -222,13 +224,15 @@ NORI_DEV=1 dotnet run --project Nori.Desktop
 
 5. **独立打包发布**
 
+发布产物由根 `Nori` launcher、`.current` 和 `app-<numeric-version>-<revision>` 槽组成；槽内包含 `deployment.json` 与宿主，运行时数据严格创建在包根 `<PackageRoot>/data/`，绝不随包分发。`<PackageRoot>` 必须可写，整包可移动；直接运行已发布槽会在无法安全推断包根时明确报错。
+
 在 `app/desktop/` 下执行：
 
 ```cmd
 publish.bat
 ```
 
-产物将输出至 `app/desktop/bin/publish/win-x64/`。
+产物将输出至 `app/desktop/bin/publish/win-x64/`（根 launcher、隐藏的 `.current` 与完整槽目录）；Linux/macOS 使用同样的根目录结构，归档时包含整个 root。
 
 ---
 
@@ -270,8 +274,8 @@ publish.bat
 ## 当前稳定化口径
 
 - **版本规范**：普通构建产品版本精确为 `Dev`；GitHub Actions Release 必须手动输入唯一 codename，并由数字版本与短提交 hash 派生稳定标签、Sentry release 与 informational version。`ProductVersion.Current` 保留完整 informational 版本号并进入 snapshot、readiness、诊断与 MCP `clientInfo`。
-- **平台矩阵**：Windows x64 为发布 blocker 和首要验收平台；macOS/Linux 支持编译与单元测试，能力不支持时（如 Wayland 全局光标与穿透）由能力标志驱动优雅降级。
-- **发布产物**：发布包为 framework-dependent ZIP；Windows 目标机需具备 .NET 10 Runtime 与 WebView2 Evergreen Runtime；不提供自包含安装包。
+- **平台矩阵**：Windows x64 为发布 blocker 和首要验收平台；Release workflow 当前发布 `win-x64`、`linux-x64`、`osx-arm64`，macOS/Linux 能力不支持时（如 Wayland 全局光标与穿透）由能力标志驱动优雅降级。
+- **发布产物**：三平台均为 framework-dependent 槽式归档（Windows ZIP、Linux tar.gz、macOS ZIP），完整归档 root；目标机需具备 .NET 10 Runtime（Windows 另需 WebView2 Evergreen Runtime），不提供自包含安装包。
 - **模型管理**：仅支持本地模型（`arg-nori`、`nori`）与本地 ZIP/目录导入，不提供远程模型下载或 CDN 网关。
 - **排障与隐私**：提供 `--safe-mode` 人工排障模式；诊断日志导出严格经过白名单脱敏，绝不上传数据库、聊天记忆、提示词、录音或用户凭据。
 

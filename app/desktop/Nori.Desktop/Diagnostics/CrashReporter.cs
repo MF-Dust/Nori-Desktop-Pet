@@ -61,6 +61,18 @@ public static class CrashReporter
 	/// <summary>挂接遥测器; 未挂接时使用空实现。</summary>
 	public static void AttachTelemetry(ITelemetry telemetry) => _telemetry = telemetry ?? NoopTelemetry.Instance;
 
+	/// <summary>记录 Avalonia 启动前的异常，供原生启动错误提示复用脱敏日志。</summary>
+	public static void LogEarlyStartupFailure(string title, Exception exception, string? logDirectory = null)
+	{
+		string message = $"{SensitiveDataRedactor.Redact(title)}: {SensitiveDataRedactor.ExceptionSummary(exception)}";
+		if (!string.IsNullOrWhiteSpace(logDirectory))
+		{
+			try { new FileLogger(logDirectory).Write(LogSource.Backend, "error", message); return; }
+			catch { }
+		}
+		WriteLogSafe(message);
+	}
+
 	/// <summary>
 	/// 安全的 fire-and-forget: 后台任务失败只记日志, 不崩进程也不弹窗.
 	/// 取代裸的 <c>_ = SomeAsync()</c>, 让异常在发生当下就有上下文地落盘,
@@ -313,24 +325,36 @@ public static class CrashReporter
 
 		Button restartButton = CreateButton("重启应用", (_, _) =>
 		{
-			resolved = true;
 			try
 			{
-				string? exePath = Environment.ProcessPath;
-				if (!string.IsNullOrEmpty(exePath))
+				string launcher = ResolveTrustedLauncher();
+				ProcessStartInfo startInfo = new(launcher)
 				{
-					Process.Start(new ProcessStartInfo { FileName = exePath, UseShellExecute = false });
-				}
-				else
+					UseShellExecute = false,
+					WorkingDirectory = ResolveTrustedPackageRoot(),
+				};
+				startInfo.ArgumentList.Add("--launcher-wait-pid");
+				startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+				long startTicks;
+				try { startTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks; }
+				catch (Exception failure) when (failure is InvalidOperationException or System.ComponentModel.Win32Exception)
 				{
-					WriteLogSafe("重启应用失败: 无法获取可执行文件路径");
+					throw new InvalidOperationException("无法读取崩溃进程身份, 已拒绝无身份重启", failure);
 				}
+				startInfo.ArgumentList.Add("--launcher-wait-start-ticks");
+				startInfo.ArgumentList.Add(startTicks.ToString());
+				using Process child = Process.Start(startInfo) ?? throw new InvalidOperationException("启动器未返回进程");
+				// 启动器通常会持续等待新宿主；若它在短时间内带错误退出，不能关闭当前错误窗口。
+				if (child.WaitForExit(750) && child.ExitCode != 0)
+					throw new InvalidOperationException($"启动器退出码 {child.ExitCode}");
+				resolved = true;
+				ShutdownSafely(0);
 			}
 			catch (Exception failure)
 			{
-				WriteLogSafe($"重启应用失败: {failure.Message}");
+				WriteLogSafe($"重启应用失败: {SensitiveDataRedactor.ExceptionSummary(failure)}");
+				summary.Text = $"重启失败: {SensitiveDataRedactor.ExceptionSummary(failure)}。请手动退出或复制错误信息。";
 			}
-			ShutdownSafely(0);
 		});
 
 		Button exitButton = CreateButton("退出应用", (_, _) =>
@@ -438,6 +462,73 @@ public static class CrashReporter
 		Environment.Exit(code);
 	}
 
+	private static string ResolveTrustedPackageRoot()
+	{
+		string? value = Environment.GetEnvironmentVariable("NORI_PACKAGE_ROOT");
+		string? deploymentValue = Environment.GetEnvironmentVariable("NORI_DEPLOYMENT_ROOT");
+		string? launcherValue = Environment.GetEnvironmentVariable("NORI_LAUNCHER_PATH");
+		string? executableValue = Environment.GetEnvironmentVariable("NORI_EXECUTABLE_PATH");
+		if (string.IsNullOrWhiteSpace(value) || string.IsNullOrWhiteSpace(deploymentValue) || string.IsNullOrWhiteSpace(launcherValue) || string.IsNullOrWhiteSpace(executableValue))
+			throw new InvalidOperationException("缺少受信任的发布启动环境");
+		string root = Path.GetFullPath(value);
+		string deployment = Path.GetFullPath(deploymentValue);
+		string launcher = Path.GetFullPath(launcherValue);
+		string executable = Path.GetFullPath(executableValue);
+		string baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+		string process = Path.GetFullPath(Environment.ProcessPath ?? "");
+		EnsureCanonical(root, directory: true);
+		EnsureCanonical(deployment, directory: true);
+		EnsureCanonical(launcher, directory: false);
+		EnsureCanonical(executable, directory: false);
+		EnsureCanonical(baseDirectory, directory: true);
+		EnsureCanonical(process, directory: false);
+		if (!IsContained(deployment, root) || !string.Equals(Path.GetDirectoryName(deployment)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), PathComparison)
+			|| !IsContained(baseDirectory, deployment) || !IsContained(process, deployment) || !string.Equals(executable, process, PathComparison))
+			throw new InvalidOperationException("当前宿主不属于受信任的发布槽");
+		string expectedLauncher = OperatingSystem.IsMacOS()
+			? Path.Combine(root, "Nori.app", "Contents", "MacOS", "Nori")
+			: Path.Combine(root, OperatingSystem.IsWindows() ? "Nori.exe" : "Nori");
+		if (!string.Equals(launcher, Path.GetFullPath(expectedLauncher), PathComparison))
+			throw new InvalidOperationException("受信任的 launcher 路径不匹配");
+		return root;
+	}
+
+	private static void EnsureCanonical(string path, bool directory)
+	{
+		if (string.IsNullOrWhiteSpace(path) || (directory ? !Directory.Exists(path) : !File.Exists(path)))
+			throw new InvalidOperationException("受信任的启动路径不存在");
+		string? current = path;
+		while (current is not null && !string.IsNullOrEmpty(Path.GetPathRoot(current)))
+		{
+			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new InvalidOperationException("受信任的启动路径包含 reparse point");
+			string? parent = Path.GetDirectoryName(current);
+			if (parent is null || string.Equals(parent, current, PathComparison)) break;
+			current = parent;
+		}
+	}
+
+	private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+	private static string ResolveTrustedLauncher()
+	{
+		string root = ResolveTrustedPackageRoot();
+		string launcher = OperatingSystem.IsMacOS()
+			? Path.Combine(root, "Nori.app", "Contents", "MacOS", "Nori")
+			: Path.Combine(root, OperatingSystem.IsWindows() ? "Nori.exe" : "Nori");
+		if (!IsContained(launcher, root) || !File.Exists(launcher) || (File.GetAttributes(launcher) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException("受信任的发布启动器不存在");
+		return launcher;
+	}
+
+	private static bool IsContained(string path, string root)
+	{
+		StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+		string fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+		return fullPath.Equals(fullRoot, comparison) || fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison);
+	}
+
 	private static void ShutdownSafely(int code)
 	{
 		try { _lifetime?.Shutdown(code); }
@@ -457,8 +548,14 @@ public static class CrashReporter
 	{
 		try
 		{
-			FileLogger logger = _logger ??= new FileLogger();
-			logger.Write(LogSource.Backend, "error", message);
+			if (_logger is null)
+			{
+				string root = ResolveTrustedPackageRoot();
+				string logDirectory = Path.Combine(root, "data", "diagnostics", "logs");
+				if (!IsContained(logDirectory, root)) return;
+				_logger = new FileLogger(logDirectory);
+			}
+			_logger.Write(LogSource.Backend, "error", SensitiveDataRedactor.Redact(message));
 		}
 		catch
 		{

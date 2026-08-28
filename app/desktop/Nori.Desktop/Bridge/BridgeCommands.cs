@@ -619,7 +619,7 @@ public sealed class BridgeCommands
 			message = entry.Message,
 		}).ToArray()),
 		"clear_recent_logs" => RequireMain(source, () => Run(_services.Logger.ClearRecentLogs)),
-		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime, _services.SafeMode)),
+		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime, _services.Paths, _services.SafeMode)),
 		// invoke("export_diagnostics") → {fileName, bytes, skipped}
 		"export_diagnostics" => await ExportDiagnosticsAsync(source, cancellationToken),
 		"open_log_folder" => RequireMain(source, () => Run(OpenLogFolder)),
@@ -1053,7 +1053,7 @@ public sealed class BridgeCommands
 
 	private object? OpenKnowledgeFolder()
 	{
-		string directory = System.IO.Path.GetDirectoryName(Runtime.Knowledge.Path) ?? AppPaths.DataDir;
+		string directory = System.IO.Path.GetDirectoryName(Runtime.Knowledge.Path) ?? _services.Paths.DataRoot;
 		Process.Start(new ProcessStartInfo(directory) {UseShellExecute = true});
 		return null;
 	}
@@ -2133,10 +2133,10 @@ public sealed class BridgeCommands
 	// ===================================================================
 
 	/// <summary>在资源管理器中打开日志目录 (只开放固定目录)</summary>
-	private static void OpenLogFolder()
+	private void OpenLogFolder()
 	{
-		Directory.CreateDirectory(AppPaths.LogDir);
-		Process.Start(new ProcessStartInfo {FileName = AppPaths.LogDir, UseShellExecute = true});
+		Directory.CreateDirectory(_services.Paths.LogsDirectory);
+		Process.Start(new ProcessStartInfo {FileName = _services.Paths.LogsDirectory, UseShellExecute = true});
 	}
 
 	/// <summary>弹出保存位置并在后台生成脱敏诊断 ZIP。</summary>
@@ -2161,7 +2161,7 @@ public sealed class BridgeCommands
 
 		if (string.IsNullOrWhiteSpace(targetPath)) return null;
 		DiagnosticExporter.Result result = await Task.Run(
-			() => DiagnosticExporter.Export(targetPath, _services.Logger, _services.PetRuntime, _services.SafeMode, cancellationToken, _services.AgentTrace),
+			() => DiagnosticExporter.Export(targetPath, _services.Logger, _services.PetRuntime, _services.Paths, _services.SafeMode, cancellationToken, _services.AgentTrace),
 			cancellationToken);
 		return new {fileName = result.FileName, bytes = result.Bytes, skipped = result.Skipped};
 	}

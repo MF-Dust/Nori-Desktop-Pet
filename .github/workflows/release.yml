@@ -14,8 +14,8 @@ on:
         type: choice
         options: [patch, minor, major]
       codename:
-        description: "可选 Codename；留空则使用纯数字版本标签"
-        required: false
+        description: "必填唯一 Codename；用于产品版本与发布标签"
+        required: true
         default: ""
         type: string
       run_extra_checks:
@@ -79,8 +79,8 @@ jobs:
           tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
           codename_pattern='^[A-Za-z0-9][A-Za-z0-9.-]*$'
           codename="$CODENAME"
-          if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
-            echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
+          if [ -z "$codename" ] || [[ ! "$codename" =~ $codename_pattern ]]; then
+            echo "Release 必须提供唯一 Codename，且只能包含字母、数字、点和连字符: $codename" >&2
             exit 1
           fi
 
@@ -94,8 +94,8 @@ jobs:
             version="${version#V}"
           else
             if [ -z "$latest" ]; then
-              version="0.1.0"
-              echo "没有历史数字版本，使用初始版本 $version"
+              echo "没有历史数字版本；Release 必须显式提供版本，拒绝隐式初始版本。" >&2
+              exit 1
             else
               IFS=. read -r major minor patch <<< "${latest#v}"
               case "$BUMP" in
@@ -108,9 +108,18 @@ jobs:
             fi
           fi
 
+          node app/desktop/scripts/validate-publish-input.mjs "$version" 0 win-x64
           if [ -n "$codename" ]; then
             tag="v$version-$codename"
             stable_version="$version-$codename"
+            while IFS= read -r historical_tag; do
+              historical_codename="${historical_tag#v}"
+              historical_codename="${historical_codename#*-}"
+              if [ "$historical_codename" = "$codename" ] && [ "$historical_tag" != "$tag" ]; then
+                echo "Codename 已在历史标签中使用: $historical_tag" >&2
+                exit 1
+              fi
+            done < <(git tag --list 'v[0-9]*-*')
           else
             tag="v$version"
             stable_version="$version"
@@ -188,6 +197,8 @@ jobs:
         run: pnpm build
       - name: 前端门 · 单元测试
         run: pnpm test
+      - name: 发布结构 fixture 门
+        run: node scripts/validate-publish-structure.test.mjs
       # dotnet 调用不并行, 且 test 不再触发第二次 build, 避免 obj 锁冲突。
       - name: 后端门 · 构建
         run: dotnet build Nori.slnx --configuration Release
@@ -281,50 +292,47 @@ jobs:
       - name: Windows 发布目标还原
         if: matrix.name == 'windows'
         run: dotnet restore Nori.Desktop/Nori.Desktop.csproj --runtime win-x64
-      - name: Windows framework-dependent 发布
+      - name: Windows 槽式 framework-dependent 发布
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          $publish = "bin/release-publish/win-x64"
-          if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj --configuration Release --runtime win-x64 --self-contained false --no-restore `
-            -p:NoriProductVersion=$env:NORI_PRODUCT_VERSION -p:NoriSentryDsnNative=$env:NORI_SENTRY_DSN_NATIVE `
-            -p:NoriSentryRelease=$env:NORI_SENTRY_RELEASE -p:NoriSentryEnvironment=$env:NORI_SENTRY_ENVIRONMENT `
-            -p:PublishSingleFile=false -p:PublishReadyToRun=false -p:DebugType=portable -p:DebugSymbols=true -o $publish
+          $env:NORI_SKIP_FRONTEND = "1"
+          $env:NORI_KEEP_SYMBOLS = "1"
+          cmd /c publish.bat
       - name: 上传 Windows Native Sentry 符号（可选）
         if: matrix.name == 'windows' && env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != '' && env.SENTRY_PROJECT_NATIVE != ''
         shell: pwsh
         run: |
           $cli = Get-ChildItem "$env:USERPROFILE\.nuget\packages\sentry\6.9.0\tools\sentry-cli-Windows-*.exe" | Select-Object -First 1
           if ($null -eq $cli) { throw '找不到 Sentry CLI' }
-          & $cli.FullName debug-files upload --org $env:SENTRY_ORG --project $env:SENTRY_PROJECT_NATIVE --type portablepdb bin/release-publish/win-x64
+          & $cli.FullName debug-files upload --org $env:SENTRY_ORG --project $env:SENTRY_PROJECT_NATIVE --type portablepdb bin/publish/win-x64
           if ($LASTEXITCODE -ne 0) { throw "Sentry 符号上传失败: $LASTEXITCODE" }
       - name: 从 Windows 发布目录移除 PDB
         if: matrix.name == 'windows'
         shell: pwsh
-        run: Get-ChildItem bin/release-publish/win-x64 -Recurse -Filter *.pdb | Remove-Item -Force
+        run: Get-ChildItem bin/publish/win-x64 -Recurse -Filter *.pdb | Remove-Item -Force
       - name: Windows ZIP / checksum / SBOM / third-party notices
         if: matrix.name == 'windows'
         shell: pwsh
-        run: ./scripts/package-windows.ps1 -PublishDir bin/release-publish/win-x64 -Version $env:NORI_VERSION -OutputDir bin/release
+        run: ./scripts/package-windows.ps1 -PublishDir bin/publish/win-x64 -Version $env:NORI_VERSION -OutputDir bin/release
       - name: Windows first-run 启动冒烟
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-first-run-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode first-run -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION
+          ./scripts/smoke-published.ps1 -BinaryPath bin/publish/win-x64/Nori.exe -Mode first-run -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION
       - name: Windows initialized 启动冒烟（可选）
         if: matrix.name == 'windows' && inputs.run_extra_checks
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-initialized-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION
+          ./scripts/smoke-published.ps1 -BinaryPath bin/publish/win-x64/Nori.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION
       - name: Windows safe-mode 启动冒烟（可选）
         if: matrix.name == 'windows' && inputs.run_extra_checks
         shell: pwsh
         run: |
           $profile = Join-Path $env:RUNNER_TEMP "nori-release-smoke-safe-mode-$env:GITHUB_RUN_ID"
-          ./scripts/smoke-published.ps1 -BinaryPath bin/release-publish/win-x64/Nori.Desktop.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION -SafeMode
+          ./scripts/smoke-published.ps1 -BinaryPath bin/publish/win-x64/Nori.exe -Mode initialized -Profile $profile -ExpectedVersion $env:NORI_PRODUCT_INFORMATIONAL_VERSION -SafeMode
 
       - name: 上传待发布 Windows 产物
         if: matrix.name == 'windows'
@@ -338,6 +346,10 @@ jobs:
             app/desktop/bin/release/THIRD-PARTY-NOTICES.json
             app/desktop/bin/release/THIRD-PARTY-NOTICES.md
             app/desktop/bin/release/RELEASE-MANIFEST.json
+            app/desktop/bin/release/SBOM-win-x64.cdx.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-win-x64.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-win-x64.md
+            app/desktop/bin/release/RELEASE-MANIFEST-win-x64.json
           if-no-files-found: error
           retention-days: 2
 
@@ -374,21 +386,14 @@ jobs:
           rm -rf "$output"
           mkdir -p "$output"
 
+          publish="bin/publish/$rid"
+          node scripts/validate-publish-structure.mjs "$publish" "$rid"
           if [ "${{ matrix.name }}" = "linux" ]; then
-            publish="bin/publish/$rid/app"
-            test -x "$publish/Nori.Desktop"
-            test -f "$publish/wwwroot/index.html"
-            test -f "$publish/libLive2DCubismCore.so"
-            rm -f "bin/publish/$rid/nori-${NORI_VERSION}-${rid}.tar.gz"
             archive="$output/nori-${NORI_VERSION}-${rid}.tar.gz"
             tar -czf "$archive" -C "$publish" .
           else
-            app="bin/publish/$rid/Nori.app"
-            test -x "$app/Contents/MacOS/Nori.Desktop"
-            test -f "$app/Contents/Info.plist"
-            test -f "$app/Contents/MacOS/libLive2DCubismCore.dylib"
             archive="$output/nori-${NORI_VERSION}-${rid}.zip"
-            ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
+            (cd "$publish" && zip -qry "$GITHUB_WORKSPACE/app/desktop/$archive" .)
           fi
 
           if command -v sha256sum >/dev/null 2>&1; then
@@ -397,7 +402,15 @@ jobs:
             hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
           fi
           printf '%s  %s\\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
-          echo "已生成 $archive"
+          metadata="bin/release/.metadata-$rid"
+          rm -rf "$metadata"
+          node scripts/generate-release-metadata.mjs --publish-dir "$publish" --version "$NORI_VERSION" --rid "$rid" --output-dir "$metadata"
+          cp "$metadata/SBOM.cdx.json" "bin/release/SBOM-$rid.cdx.json"
+          cp "$metadata/THIRD-PARTY-NOTICES.json" "bin/release/THIRD-PARTY-NOTICES-$rid.json"
+          cp "$metadata/THIRD-PARTY-NOTICES.md" "bin/release/THIRD-PARTY-NOTICES-$rid.md"
+          cp "$metadata/RELEASE-MANIFEST.json" "bin/release/RELEASE-MANIFEST-$rid.json"
+          rm -rf "$metadata"
+          echo "已生成 $archive 及 $rid 发布元数据"
       - name: 上传待发布 Linux/macOS 产物
         if: matrix.name != 'windows'
         uses: actions/upload-artifact@v4
@@ -407,6 +420,10 @@ jobs:
             app/desktop/bin/release/*.zip
             app/desktop/bin/release/*.tar.gz
             app/desktop/bin/release/*.sha256
+            app/desktop/bin/release/SBOM-${{ matrix.rid }}.cdx.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-${{ matrix.rid }}.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-${{ matrix.rid }}.md
+            app/desktop/bin/release/RELEASE-MANIFEST-${{ matrix.rid }}.json
           if-no-files-found: error
           retention-days: 2
 
@@ -501,10 +518,18 @@ jobs:
             release-artifacts/nori-${VERSION}-linux-x64.tar.gz.sha256
             release-artifacts/nori-${VERSION}-osx-arm64.zip
             release-artifacts/nori-${VERSION}-osx-arm64.zip.sha256
-            release-artifacts/SBOM.cdx.json
-            release-artifacts/THIRD-PARTY-NOTICES.json
-            release-artifacts/THIRD-PARTY-NOTICES.md
-            release-artifacts/RELEASE-MANIFEST.json
+            release-artifacts/SBOM-win-x64.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES-win-x64.json
+            release-artifacts/THIRD-PARTY-NOTICES-win-x64.md
+            release-artifacts/RELEASE-MANIFEST-win-x64.json
+            release-artifacts/SBOM-linux-x64.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES-linux-x64.json
+            release-artifacts/THIRD-PARTY-NOTICES-linux-x64.md
+            release-artifacts/RELEASE-MANIFEST-linux-x64.json
+            release-artifacts/SBOM-osx-arm64.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES-osx-arm64.json
+            release-artifacts/THIRD-PARTY-NOTICES-osx-arm64.md
+            release-artifacts/RELEASE-MANIFEST-osx-arm64.json
           )
           for asset in "${assets[@]}"; do
             test -f "$asset"

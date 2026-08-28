@@ -20,9 +20,12 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 			throw new ArgumentOutOfRangeException(nameof(options), "插件 API 版本无效");
 
 		string dataDirectory = Path.GetFullPath(options.DataDirectory);
-		string pluginsDirectory = Path.Combine(dataDirectory, "plugins");
-		string pluginDataDirectory = Path.Combine(dataDirectory, "plugin-data");
-		string webViewDataDirectory = Path.Combine(dataDirectory, "webview_plugins");
+		// 可选项仅为核心测试/嵌入场景提供包内的确定性派生路径；绝不回退 cwd、AppData 或旧 Tauri 名称。
+		string pluginsDirectory = Path.GetFullPath(options.PluginsDirectory ?? Path.Combine(dataDirectory, "plugins"));
+		string pluginDataDirectory = Path.GetFullPath(options.PluginDataDirectory ?? Path.Combine(dataDirectory, "plugins", "data"));
+		string webViewDataDirectory = Path.GetFullPath(options.WebViewDataDirectory ?? Path.Combine(dataDirectory, "plugins", "cache", "webview"));
+		string packageInboxDirectory = Path.GetFullPath(options.PackageInboxDirectory ?? Path.Combine(dataDirectory, "plugins", "cache", "packages", "inbox"));
+		string stagingDirectory = Path.GetFullPath(options.StagingDirectory ?? Path.Combine(dataDirectory, "plugins", "temp", "staging"));
 		Directory.CreateDirectory(dataDirectory);
 
 		_windows = new PluginWindowHost(options.Logger, webViewDataDirectory);
@@ -30,6 +33,8 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 		{
 			PluginsDirectory = pluginsDirectory,
 			DataDirectory = pluginDataDirectory,
+			PackageInboxDirectory = packageInboxDirectory,
+			StagingDirectory = stagingDirectory,
 			HostApiVersion = options.HostApiVersion,
 			HostVersion = options.HostVersion,
 			DevelopmentHost = options.DevelopmentHost,
@@ -74,6 +79,11 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 internal sealed record PluginRuntimeHostOptions
 {
 	public required string DataDirectory { get; init; }
+	public string? PluginsDirectory { get; init; }
+	public string? PluginDataDirectory { get; init; }
+	public string? WebViewDataDirectory { get; init; }
+	public string? PackageInboxDirectory { get; init; }
+	public string? StagingDirectory { get; init; }
 	public PluginApiVersion HostApiVersion { get; init; } = new(2, 0);
 	public PluginVersion HostVersion { get; init; } = new(1, 0, 0);
 	public bool DevelopmentHost { get; init; }

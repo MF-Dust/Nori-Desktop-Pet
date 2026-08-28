@@ -1,58 +1,62 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "APP_VERSION=%NORI_VERSION%"
 if "%APP_VERSION%"=="" set "APP_VERSION=%NORI_PRODUCT_VERSION%"
 if "%APP_VERSION%"=="" set "APP_VERSION=Dev"
-if "%NORI_COMMIT_SHA%"=="" for /f "delims=" %%H in ('git rev-parse HEAD 2^>nul') do set "NORI_COMMIT_SHA=%%H"
 set "NORI_VERSION=%APP_VERSION%"
 set "NORI_PRODUCT_VERSION=%APP_VERSION%"
-set "KEEP_SYMBOLS=%NORI_KEEP_SYMBOLS%"
-if /I "%NORI_INCLUDE_RUNTIME%"=="1" (
-	echo [错误] Windows 发布固定为 framework-dependent, 不支持打包 .NET Runtime。
-	exit /b 2
+if "%NORI_COMMIT_SHA%"=="" for /f "delims=" %%H in ('git rev-parse HEAD 2^>nul') do set "NORI_COMMIT_SHA=%%H"
+set "REVISION=%NORI_DEPLOYMENT_REVISION%"
+if "%REVISION%"=="" set "REVISION=0"
+if /I "%APP_VERSION%"=="Dev" (
+	set "NUMERIC_VERSION=0.0.0"
+) else (
+	set "VERSION_FOR_NUMERIC=%APP_VERSION%"
+	if /I "!VERSION_FOR_NUMERIC:~0,1!"=="v" set "VERSION_FOR_NUMERIC=!VERSION_FOR_NUMERIC:~1!"
+	for /f "tokens=1 delims=-+" %%V in ("!VERSION_FOR_NUMERIC!") do set "NUMERIC_VERSION=%%V"
 )
-if /I "%NORI_INCLUDE_RUNTIME%"=="true" (
-	echo [错误] Windows 发布固定为 framework-dependent, 不支持打包 .NET Runtime。
-	exit /b 2
-)
+if "%NUMERIC_VERSION%"=="" set "NUMERIC_VERSION=0.0.0"
+node scripts\validate-publish-input.mjs "%APP_VERSION%" "%REVISION%" win-x64 || goto :error
+if "%NORI_INCLUDE_RUNTIME%"=="1" goto :runtime_error
+if /I "%NORI_INCLUDE_RUNTIME%"=="true" goto :runtime_error
 
 if /I "%NORI_SKIP_FRONTEND%"=="1" (
-	echo [1/2] 跳过前端构建; 使用现有 dist/...
 	if not exist dist\index.html (
-		echo [错误] NORI_SKIP_FRONTEND=1 但 dist\index.html 不存在。
+		echo [错误] 缺少 dist\index.html。
 		exit /b 2
 	)
 ) else (
-	echo [1/2] 构建前端 (pnpm build)...
-	call pnpm build
-	if errorlevel 1 goto :error
+	call pnpm build || goto :error
 )
 
-echo [2/2] 发布 Nori.Desktop (.NET 10, win-x64, framework-dependent)...
-if exist bin\publish\win-x64 rmdir /s /q bin\publish\win-x64
-dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r win-x64 --self-contained false -p:NoriProductVersion="%APP_VERSION%" -p:NoriSentryDsnNative="%NORI_SENTRY_DSN_NATIVE%" -p:NoriSentryRelease="%NORI_SENTRY_RELEASE%" -p:NoriSentryEnvironment="%NORI_SENTRY_ENVIRONMENT%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o bin/publish/win-x64
-if errorlevel 1 goto :error
-if not exist bin\publish\win-x64\wwwroot\index.html (
-	echo [错误] 发布目录缺少 wwwroot\index.html。
-	exit /b 2
-)
-if not "%KEEP_SYMBOLS%"=="1" if /I not "%KEEP_SYMBOLS%"=="true" for /r "bin\publish\win-x64" %%F in (*.pdb) do del /q "%%F"
-rem Windows FDD 未压缩 publish 基线约 159 MiB；180 MiB 仍能拦截几十 MiB 级异常膨胀。
-node scripts\check-package-size.mjs --path bin\publish\win-x64 --label "win-x64 publish" --max-mib 180
-if errorlevel 1 goto :error
+set "ROOT=bin\publish\win-x64"
+set "SLOT=app-%NUMERIC_VERSION%-%REVISION%"
+if exist "%ROOT%" rmdir /s /q "%ROOT%"
+mkdir "%ROOT%\%SLOT%" || goto :error
 
-echo.
-echo ========================================================
-echo Publish succeeded: app/desktop/bin/publish/win-x64/
-echo Mode: framework-dependent (requires .NET 10 Runtime + WebView2)
-echo ========================================================
-goto :end
+echo 发布 Nori.Desktop 槽...
+dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r win-x64 --self-contained false -p:NoriProductVersion="%APP_VERSION%" -p:NoriDeploymentRevision="%REVISION%" -p:NoriSentryDsnNative="%NORI_SENTRY_DSN_NATIVE%" -p:NoriSentryRelease="%NORI_SENTRY_RELEASE%" -p:NoriSentryEnvironment="%NORI_SENTRY_ENVIRONMENT%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "%ROOT%\%SLOT%" || goto :error
+if not "%NORI_KEEP_SYMBOLS%"=="1" if /I not "%NORI_KEEP_SYMBOLS%"=="true" for /r "%ROOT%\%SLOT%" %%F in (*.pdb) do del /q "%%F"
+node scripts\write-deployment-json.mjs "%ROOT%\%SLOT%\deployment.json" "%APP_VERSION%" "%NUMERIC_VERSION%" "%REVISION%" win-x64 Nori.Desktop.exe || goto :error
 
+rem 根入口只由 launcher 发布，发布包不创建 data。
+echo 发布稳定根入口...
+dotnet publish Nori.AppLauncher/Nori.AppLauncher.csproj -c Release -r win-x64 --self-contained false -p:NoriProductVersion="%APP_VERSION%" -p:NoriDeploymentRevision="%REVISION%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "%ROOT%" || goto :error
+>"%ROOT%\.current.tmp" echo %SLOT%
+move /y "%ROOT%\.current.tmp" "%ROOT%\.current" >nul
+if not exist "%ROOT%\Nori.exe" goto :error
+if not exist "%ROOT%\%SLOT%\wwwroot\index.html" goto :error
+node scripts\validate-publish-structure.mjs "%ROOT%" win-x64 || goto :error
+node scripts\check-package-size.mjs --path "%ROOT%" --label "win-x64 package" --max-mib 180 || goto :error
+
+echo 发布完成: %ROOT%
+exit /b 0
+
+:runtime_error
+echo [错误] Windows 发布固定为 framework-dependent, 不支持打包 .NET Runtime。
+exit /b 2
 :error
-echo Build or publish failed!
+echo [错误] 构建或发布失败。
 exit /b 1
-
-:end
-endlocal

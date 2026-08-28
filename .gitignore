@@ -11,4 +11,11 @@ node_modules/
 !.env.example
 app/desktop/dist/
 app/desktop/bin/
+# Nori 按槽发布的临时装配物和运行时数据
+app-*.partial/
+app-*.destroy/
+.current
+app/desktop/data/
+.nori-storage.json
+.legacy-cleanup-pending.json
 .rpiv/

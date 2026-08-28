@@ -12,9 +12,11 @@ namespace Nori.Core.Memory;
 /// <summary>独立于个人记忆的 Memory.md 知识服务。</summary>
 public sealed class KnowledgeService : IAsyncDisposable
 {
+	private const string DocumentIdentifier = "nori://knowledge/Memory.md";
 	private readonly NoriDatabase _database;
 	private readonly MemoryService _memory;
 	private readonly ConfigStore _config;
+	private readonly string? _defaultPath;
 	private readonly Lock _gate = new();
 	private FileSystemWatcher? _watcher;
 	private CancellationTokenSource? _watchDebounce;
@@ -22,11 +24,12 @@ public sealed class KnowledgeService : IAsyncDisposable
 	private MemoryIndexStatus _status = new();
 	private int _disposed;
 
-	public KnowledgeService(NoriDatabase database, MemoryService memory, ConfigStore config)
+	public KnowledgeService(NoriDatabase database, MemoryService memory, ConfigStore config, string? defaultPath = null)
 	{
 		_database = database;
 		_memory = memory;
 		_config = config;
+		_defaultPath = defaultPath;
 		EnsureKnowledgeFts();
 	}
 
@@ -68,7 +71,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 			throw;
 		}
 		string documentHash = Hash(content);
-		KnowledgeDocument? existing = GetDocument(path);
+		KnowledgeDocument? existing = GetDocument(DocumentIdentifier);
 		Dictionary<string, KnowledgeChunkRow> old = GetChunks(existing?.Id).ToDictionary(row => row.ChunkKey, StringComparer.Ordinal);
 		string fingerprint = _memory.ResolveEmbeddingFingerprint();
 		bool keysCurrent = old.Count == chunks.Count && chunks.All(chunk => old.ContainsKey(chunk.ChunkKey));
@@ -103,7 +106,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 			_database.Locked(connection =>
 			{
 				using SqliteTransaction transaction = connection.BeginTransaction();
-				long documentId = UpsertDocument(connection, transaction, path, documentHash);
+				long documentId = UpsertDocument(connection, transaction, DocumentIdentifier, documentHash);
 				HashSet<string> keys = chunks.Select(chunk => chunk.ChunkKey).ToHashSet(StringComparer.Ordinal);
 				foreach (KnowledgeChunkRow row in old.Values.Where(row => !keys.Contains(row.ChunkKey)))
 				{
@@ -232,7 +235,9 @@ public sealed class KnowledgeService : IAsyncDisposable
 	private string ResolvePath()
 	{
 		string configured = _config.GetStringOr("memory_knowledge_path", "").Trim();
-		return configured.Length == 0 ? AppPaths.MemoryMarkdownPath : System.IO.Path.GetFullPath(configured);
+		return configured.Length == 0 || configured.Equals("nori://knowledge/Memory.md", StringComparison.Ordinal)
+			? (_defaultPath ?? new AppStoragePaths(Environment.CurrentDirectory).KnowledgePath)
+			: System.IO.Path.GetFullPath(configured);
 	}
 
 	private void EnsureKnowledgeFts()

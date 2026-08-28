@@ -20,6 +20,8 @@ internal sealed record PluginRuntimeOptions
 {
 	public required string PluginsDirectory { get; init; }
 	public required string DataDirectory { get; init; }
+	public string? PackageInboxDirectory { get; init; }
+	public string? StagingDirectory { get; init; }
 	public PluginApiVersion HostApiVersion { get; init; } = new(2, 0);
 	public PluginVersion HostVersion { get; init; } = new(1, 0, 0);
 	public bool DevelopmentHost { get; init; }
@@ -79,7 +81,7 @@ internal sealed class PluginManager : IAsyncDisposable
 		Directory.CreateDirectory(runtimeDirectory);
 		_startupRecovery = new PluginStartupRecoveryStore(Path.Combine(runtimeDirectory, "plugin-startup.json"));
 		_stateStore = new PluginStateStore(Path.Combine(runtimeDirectory, "plugin-state.json"));
-		_installer = new PluginPackageInstaller(options.PluginsDirectory);
+		_installer = new PluginPackageInstaller(options.PluginsDirectory, options.PackageInboxDirectory, options.StagingDirectory);
 		CompletePendingUninstalls();
 	}
 

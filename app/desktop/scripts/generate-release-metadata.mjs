@@ -1,6 +1,7 @@
 import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
+import {validateProductVersion} from "./version-validation.mjs"
 
 const ROOT = process.cwd()
 const parseArgs = (argv) => {
@@ -92,6 +93,7 @@ const version = args.version
 const rid = args.rid ?? "win-x64"
 const outputDir = path.resolve(args["output-dir"] ?? "bin/release")
 if (!version || !args["publish-dir"]) throw new Error("需要 --publish-dir、--version")
+validateProductVersion(version)
 if (!fs.existsSync(publishDir)) throw new Error(`发布目录不存在: ${publishDir}`)
 fs.mkdirSync(outputDir, {recursive: true})
 
@@ -111,9 +113,10 @@ const ownComponent = {
 	notice: "LICENSE",
 }
 
+const packaging = rid.startsWith("linux-") ? "framework-dependent-linux-tar-gz" : rid.startsWith("osx-") ? "framework-dependent-macos-zip" : "framework-dependent-windows-zip"
 const notices = {
 	schemaVersion: 1,
-	generatedFor: {name: ownComponent.name, version, rid, packaging: "framework-dependent-windows-zip"},
+	generatedFor: {name: ownComponent.name, version, rid, packaging},
 	policy: declared.policy,
 	components: [
 		ownComponent,
@@ -169,9 +172,9 @@ const manifest = {
 	name: ownComponent.name,
 	version,
 	rid,
-	packaging: "framework-dependent",
-	prerequisites: [".NET 10 Runtime", "Microsoft Edge WebView2 Evergreen Runtime"],
-	bundledNativeLibraries: ["Live2DCubismCore.dll"],
+	packaging,
+	prerequisites: rid.startsWith("linux-") ? [".NET 10 Runtime", "WebKitGTK 4.x"] : rid.startsWith("osx-") ? [".NET 10 Runtime", "macOS WebKit"] : [".NET 10 Runtime", "Microsoft Edge WebView2 Evergreen Runtime"],
+	bundledNativeLibraries: [rid.startsWith("win-") ? "Live2DCubismCore.dll" : rid.startsWith("osx-") ? "libLive2DCubismCore.dylib" : "libLive2DCubismCore.so"],
 	files,
 	metadata: ["THIRD-PARTY-NOTICES.json", "SBOM.cdx.json"],
 }

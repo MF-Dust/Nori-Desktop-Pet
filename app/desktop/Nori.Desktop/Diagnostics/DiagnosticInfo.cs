@@ -16,14 +16,14 @@ public static class DiagnosticInfo
 	/// <summary>
 	/// 构建诊断信息字典 (键为英文 snake_case 便于检索, 值为可读文本)
 	/// </summary>
-	public static Dictionary<string, string> Build() => Build(null);
-
 	/// <summary>构建诊断信息并附带当前桌宠渲染指标。</summary>
-	public static Dictionary<string, string> Build(PetRuntime? pet, bool safeMode = false)
+	public static Dictionary<string, string> Build(PetRuntime? pet, AppStoragePaths paths, bool safeMode = false)
 	{
 		string version = Nori.Core.ProductVersion.Current;
 		PetRenderMetrics? render = pet?.RenderMetrics;
-		long dbBytes = FileSizeOrDefault(AppPaths.DatabasePath);
+		ArgumentNullException.ThrowIfNull(paths);
+		AppStoragePaths storage = paths;
+		long dbBytes = FileSizeOrDefault(storage.DatabasePath);
 		return new Dictionary<string, string>
 		{
 			["app_version"] = version,
@@ -33,10 +33,10 @@ public static class DiagnosticInfo
 			["os_arch"] = RuntimeInformation.OSArchitecture.ToString(),
 			["process_uptime"] = FormatDuration(Environment.TickCount64),
 			["process_bits"] = Environment.Is64BitProcess ? "64-bit" : "32-bit",
-			["data_dir"] = SensitiveDataRedactor.Redact(AppPaths.DataDir),
-			["resources_dir"] = SensitiveDataRedactor.Redact(AppPaths.ResourcesDir),
-			["log_dir"] = SensitiveDataRedactor.Redact(AppPaths.LogDir),
-			["database_path"] = SensitiveDataRedactor.Redact(AppPaths.DatabasePath),
+			["data_dir"] = SensitiveDataRedactor.Redact(storage.DataRoot),
+			["resources_dir"] = SensitiveDataRedactor.Redact(storage.ResourcesDirectory),
+			["log_dir"] = SensitiveDataRedactor.Redact(storage.LogsDirectory),
+			["database_path"] = SensitiveDataRedactor.Redact(storage.DatabasePath),
 			["database_size"] = dbBytes < 0 ? "不存在" : FormatSize(dbBytes),
 			["live2d_effective_quality"] = render?.EffectiveQuality ?? "unknown",
 			["live2d_effective_fps"] = render?.EffectiveFps.ToString() ?? "0",

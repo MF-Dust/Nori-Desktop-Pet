@@ -141,26 +141,19 @@ jobs:
         if: matrix.name != 'windows'
         run: dotnet restore Nori.Desktop/Nori.Desktop.csproj --runtime ${{ matrix.rid }}
 
-      - name: Linux / macOS FDD 发布
+      - name: Linux / macOS 槽式 FDD 发布
         if: matrix.name != 'windows'
-        run: >
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj
-          --configuration Release
-          --runtime ${{ matrix.rid }}
-          --self-contained false
-          --no-restore
-          -p:PublishSingleFile=false
-          -p:PublishReadyToRun=false
-          -p:DebugType=None
-          -p:DebugSymbols=false
-          -o bin/ci-publish/${{ matrix.rid }}
+        run: |
+          chmod +x publish.sh
+          NORI_SKIP_FRONTEND=1 NORI_KEEP_SYMBOLS=0 ./publish.sh "${{ matrix.rid }}"
 
       - name: 上传 Linux / macOS CI 产物
         if: matrix.name != 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: nori-${{ matrix.rid }}-ci-package
-          path: app/desktop/bin/ci-publish/${{ matrix.rid }}/*
+          path: app/desktop/bin/publish/${{ matrix.rid }}
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
@@ -172,45 +165,23 @@ jobs:
         if: matrix.name == 'windows'
         run: dotnet restore Nori.Desktop/Nori.Desktop.csproj --runtime win-x64
 
-      - name: Windows FDD 发布
+      - name: Windows 槽式 FDD 发布
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          $publish = "bin/ci-publish/win-x64"
-
-          if (Test-Path $publish) {
-            Remove-Item $publish -Recurse -Force
-          }
-
-          dotnet publish Nori.Desktop/Nori.Desktop.csproj `
-            --configuration Release `
-            --runtime win-x64 `
-            --self-contained false `
-            --no-restore `
-            -p:PublishSingleFile=false `
-            -p:PublishReadyToRun=false `
-            -p:DebugType=None `
-            -p:DebugSymbols=false `
-            -o $publish
-
-          if (-not (Test-Path "$publish/Nori.Desktop.exe")) {
-            throw "缺少 Windows 可执行文件"
-          }
-
-          if (-not (Test-Path "$publish/wwwroot/index.html")) {
-            throw "缺少打包后的 wwwroot/index.html"
-          }
-
-          if (-not (Test-Path "$publish/Live2DCubismCore.dll")) {
-            throw "缺少 Cubism Core 原生库"
-          }
+          $env:NORI_SKIP_FRONTEND = "1"
+          $env:NORI_PRODUCT_VERSION = "Dev"
+          $env:NORI_DEPLOYMENT_REVISION = "0"
+          cmd /c publish.bat
+          if (-not (Test-Path "bin/publish/win-x64/Nori.exe")) { throw "缺少稳定根入口 Nori.exe" }
+          if (-not (Test-Path "bin/publish/win-x64/.current")) { throw "缺少 .current" }
 
       - name: Windows ZIP / SBOM / notices 内容冒烟
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
           ./scripts/package-windows.ps1 `
-            -PublishDir bin/ci-publish/win-x64 `
+            -PublishDir bin/publish/win-x64 `
             -Version ci `
             -OutputDir bin/ci-release
 
@@ -222,7 +193,7 @@ jobs:
           $expectedVersion = "Dev"
 
           ./scripts/smoke-published.ps1 `
-            -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
+            -BinaryPath bin/publish/win-x64/Nori.exe `
             -Mode first-run `
             -Profile $profile `
             -ExpectedVersion $expectedVersion
@@ -235,7 +206,7 @@ jobs:
           $expectedVersion = "Dev"
 
           ./scripts/smoke-published.ps1 `
-            -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
+            -BinaryPath bin/publish/win-x64/Nori.exe `
             -Mode initialized `
             -Profile $profile `
             -ExpectedVersion $expectedVersion
@@ -248,7 +219,7 @@ jobs:
           $expectedVersion = "Dev"
 
           ./scripts/smoke-published.ps1 `
-            -BinaryPath bin/ci-publish/win-x64/Nori.Desktop.exe `
+            -BinaryPath bin/publish/win-x64/Nori.exe `
             -Mode initialized `
             -Profile $profile `
             -ExpectedVersion $expectedVersion `
@@ -259,6 +230,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nori-windows-ci-package
-          path: app/desktop/bin/ci-release/*
+          path: app/desktop/bin/ci-release
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

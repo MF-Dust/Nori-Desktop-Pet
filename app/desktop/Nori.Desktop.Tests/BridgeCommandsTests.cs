@@ -269,6 +269,7 @@ public class BridgeCommandsTests : IDisposable
 		ChatService chat = new(_http, _database, _config);
 		_services = new AppServices
 		{
+			Paths = new AppStoragePaths(_tempDir),
 			Database = _database,
 			Config = _config,
 			AiSettings = new AiSettingsStore(_config),

@@ -58,31 +58,31 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 		try
 		{
 			string fullProfile = Path.GetFullPath(profile);
-			if (Directory.Exists(fullProfile)
-				&& (File.GetAttributes(fullProfile) & FileAttributes.ReparsePoint) != 0)
-			{
-				error = "--profile 不能是符号链接、junction 或 reparse point";
-				return false;
-			}
-			if (Path.GetPathRoot(fullProfile)?.Equals(fullProfile, StringComparison.OrdinalIgnoreCase) == true)
+			if (Path.GetPathRoot(fullProfile)?.Equals(fullProfile, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) == true)
 			{
 				error = "--profile 不能指向文件系统根目录";
 				return false;
 			}
-
-			string databasePath = Path.Combine(fullProfile, "data", AppPaths.DatabaseFileName);
-			if (File.Exists(databasePath))
+			EnsureProfilePathSafe(fullProfile);
+			Directory.CreateDirectory(fullProfile);
+			EnsureProfilePathSafe(fullProfile);
+			if (Directory.EnumerateFileSystemEntries(fullProfile).Any())
 			{
-				error = "--profile 必须是隔离的临时目录, 不能包含已有 nori.db";
+				error = "--profile 必须是此前不存在或完全为空的隔离临时目录, 不会删除已有内容";
 				return false;
 			}
-			Directory.CreateDirectory(fullProfile);
-			string readinessPath = Path.Combine(fullProfile, "readiness.json");
-			if (File.Exists(readinessPath)) File.Delete(readinessPath);
+			AppStoragePaths profilePaths = new(fullProfile);
+			AppStoragePaths.EnsureNoReparsePoints(fullProfile, fullProfile);
+			string databasePath = profilePaths.DatabasePath;
+			if (File.Exists(databasePath))
+			{
+				error = "--profile 必须是隔离的临时目录, 不能包含已有 core/database/nori.db";
+				return false;
+			}
 			options = new SmokeTestOptions(mode, fullProfile);
 			return true;
 		}
-		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
+		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
 			error = $"--profile 不可用: {exception.Message}";
 			return false;
@@ -91,6 +91,21 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 
 	/// <summary>冒烟检查点文件路径。</summary>
 	public string ReadinessPath => Path.Combine(Profile, "readiness.json");
+
+	private static void EnsureProfilePathSafe(string path)
+	{
+		string comparisonRoot = Path.GetPathRoot(path) ?? path;
+		string? current = path;
+		StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		while (current is not null && !string.IsNullOrEmpty(comparisonRoot))
+		{
+			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new InvalidOperationException("--profile 路径链不能包含符号链接、junction 或 reparse point");
+			string? parent = Path.GetDirectoryName(current);
+			if (parent is null || string.Equals(parent, current, comparison)) break;
+			current = parent;
+		}
+	}
 
 	private static bool TryParseMode(string value, out SmokeTestMode mode)
 	{
@@ -126,7 +141,7 @@ public static class SmokeTestRuntime
 	///
 	/// 只有资源服务、窗口和配置数据库都已经装配后才会调用, 因此它代表宿主已就绪而非仅仅进程已启动。
 	/// </summary>
-	public static void WriteReady(SmokeTestOptions options, bool firstRun, bool safeMode = false)
+	public static void WriteReady(SmokeTestOptions options, bool firstRun, bool safeMode = false, AppStoragePaths? paths = null)
 	{
 		var checkpoint = new
 		{
@@ -139,7 +154,7 @@ public static class SmokeTestRuntime
 			safe_mode = safeMode,
 			first_run = firstRun,
 			initial_window = firstRun ? "first-run" : "init",
-			data_dir = AppPaths.DataDir,
+			data_dir = (paths ?? new AppStoragePaths(options.Profile)).DataRoot,
 			asset_server = "ready",
 		};
 		string temporaryPath = options.ReadinessPath + ".tmp";
