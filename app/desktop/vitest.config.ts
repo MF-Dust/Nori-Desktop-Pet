@@ -13,7 +13,7 @@ export default defineConfig({
 			reportsDirectory: "coverage",
 			include: ["src/**/*.ts", "src/**/*.vue"],
 			exclude: ["src/**/*.d.ts"],
-			// 以当前全量源码基线留出小幅波动空间，避免把未覆盖模块一次性变成硬阻塞。
+			// 本地全量基线 (44 个测试文件 / 228 个用例): statements 55.81%、branches 45.10%、functions 48.46%、lines 58.50%。阈值保留约 3 个百分点以上的波动空间。
 			thresholds: {
 				statements: 50,
 				branches: 40,

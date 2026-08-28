@@ -3,22 +3,39 @@ import globals from "globals"
 import tseslint from "typescript-eslint"
 import vue from "eslint-plugin-vue"
 
+const SOURCE_FILES = ["src/**/*.{ts,vue}"]
+const VUE_FILES = ["src/**/*.vue"]
+const SOURCE_CONFIG = (files) => (config) => ({...config, files})
+const SOURCE_RECOMMENDED_CONFIGS = [
+	{...eslint.configs.recommended, files: SOURCE_FILES},
+	...tseslint.configs.recommended.map(SOURCE_CONFIG(SOURCE_FILES)),
+	...vue.configs["flat/essential"].map(SOURCE_CONFIG(VUE_FILES)),
+]
+
 export default tseslint.config(
 	{
 		ignores: [
 			"coverage/**",
 			"dist/**",
 			"node_modules/**",
+			"public/**",
+			"scripts/**",
+			"tests/**",
+			"**/*.cjs",
+			"**/*.js",
+			"**/*.mjs",
+			"**/*.d.ts",
+			"components.d.ts",
 		],
+	},
+	{
 		linterOptions: {
 			reportUnusedDisableDirectives: "off",
 		},
 	},
-	eslint.configs.recommended,
-	...tseslint.configs.recommended,
-	...vue.configs["flat/essential"],
+	...SOURCE_RECOMMENDED_CONFIGS,
 	{
-		files: ["src/**/*.{ts,vue}"],
+		files: SOURCE_FILES,
 		languageOptions: {
 			globals: globals.browser,
 			parserOptions: {
