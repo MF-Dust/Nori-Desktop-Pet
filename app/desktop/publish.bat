@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "APP_VERSION=%NORI_VERSION%"
@@ -10,14 +10,22 @@ set "NORI_PRODUCT_VERSION=%APP_VERSION%"
 if "%NORI_COMMIT_SHA%"=="" for /f "delims=" %%H in ('git rev-parse HEAD 2^>nul') do set "NORI_COMMIT_SHA=%%H"
 set "REVISION=%NORI_DEPLOYMENT_REVISION%"
 if "%REVISION%"=="" set "REVISION=0"
-for /f "tokens=1 delims=-+" %%V in ("%APP_VERSION:v=%") do set "NUMERIC_VERSION=%%V"
-if /I "%NUMERIC_VERSION%"=="Dev" set "NUMERIC_VERSION=0.0.0"
+if /I "%APP_VERSION%"=="Dev" (
+	set "NUMERIC_VERSION=0.0.0"
+) else (
+	set "VERSION_FOR_NUMERIC=%APP_VERSION%"
+	if /I "!VERSION_FOR_NUMERIC:~0,1!"=="v" set "VERSION_FOR_NUMERIC=!VERSION_FOR_NUMERIC:~1!"
+	for /f "tokens=1 delims=-+" %%V in ("!VERSION_FOR_NUMERIC!") do set "NUMERIC_VERSION=%%V"
+)
 if "%NUMERIC_VERSION%"=="" set "NUMERIC_VERSION=0.0.0"
 if "%NORI_INCLUDE_RUNTIME%"=="1" goto :runtime_error
 if /I "%NORI_INCLUDE_RUNTIME%"=="true" goto :runtime_error
 
 if /I "%NORI_SKIP_FRONTEND%"=="1" (
-	if not exist dist\index.html echo [错误] 缺少 dist\index.html。& exit /b 2
+	if not exist dist\index.html (
+		echo [错误] 缺少 dist\index.html。
+		exit /b 2
+	)
 ) else (
 	call pnpm build || goto :error
 )
