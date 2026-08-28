@@ -2,7 +2,7 @@
 import {computed, onMounted, ref} from "vue"
 import useLanguages from "../../services/i18n/useLanguages.ts"
 import {feedback} from "../../services/feedback"
-import {RUNTIME, type McpServerStatusInfo, type ToolDto} from "../../services/runtime"
+import {RUNTIME, type JsonObject, type McpServerStatusInfo, type ToolDto} from "../../services/runtime"
 import Icon from "../Icon.vue"
 import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppButton from "../ui/AppButton.vue"
@@ -235,7 +235,7 @@ const executeTool = async () => {
 	TOOL_RUNNING.value = true
 	TOOL_OUTPUT.value = ""
 	try {
-		const ARGS = JSON.parse(TOOL_ARGS.value) as Record<string, unknown>
+		const ARGS = JSON.parse(TOOL_ARGS.value) as JsonObject
 		const RESULT = ACTIVE_TOOL.value.serverId
 			? await RUNTIME.mcpCallTool(ACTIVE_TOOL.value.serverId, ACTIVE_TOOL.value.name, ARGS)
 			: await RUNTIME.toolsExecuteManual(ACTIVE_TOOL.value.name, ARGS)

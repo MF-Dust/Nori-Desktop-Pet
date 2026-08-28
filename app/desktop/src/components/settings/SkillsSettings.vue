@@ -13,7 +13,7 @@ import AppSectionHeader from "../ui/AppSectionHeader.vue"
 import AppSegmented, {type SegmentItem} from "../ui/AppSegmented.vue"
 import AppSwitch from "../ui/AppSwitch.vue"
 import {feedback} from "../../services/feedback"
-import {RUNTIME, type SkillDto} from "../../services/runtime"
+import {RUNTIME, type SkillDto, type SkillMarketplaceDto} from "../../services/runtime"
 
 const I18N = computed(() => useLanguages().views.main.skills)
 const UI_I18N = computed(() => useLanguages().components.ui.state)
@@ -24,7 +24,7 @@ const activeTab = ref<SkillsTab>("installed")
 
 // 列表数据与加载状态
 const installedSkills = ref<SkillDto[]>([])
-const marketplaceSkills = ref<SkillDto[]>([])
+const marketplaceSkills = ref<SkillMarketplaceDto[]>([])
 const loading = ref(false)
 const searchQuery = ref("")
 const selectedCategory = ref<string>("all")
@@ -56,7 +56,7 @@ const toolsInput = ref("")
 
 // 技能详情查看弹窗
 const isDetailModalOpen = ref(false)
-const activeSkill = ref<SkillDto | null>(null)
+const activeSkill = ref<SkillDto | SkillMarketplaceDto | null>(null)
 
 // 刷新已安装列表
 const refresh = async () => {
@@ -85,7 +85,7 @@ onMounted(async () => {
 const installedSkillIds = computed<Set<string>>(() => new Set(installedSkills.value.map(s => s.id)))
 
 // 过滤器
-const matchesFilter = (s: SkillDto): boolean => {
+const matchesFilter = (s: SkillDto | SkillMarketplaceDto): boolean => {
 	const matchCategory = selectedCategory.value === "all" || s.category === selectedCategory.value
 	const matchSearch = !searchQuery.value.trim() ||
 		s.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
@@ -95,7 +95,7 @@ const matchesFilter = (s: SkillDto): boolean => {
 }
 
 const filteredInstalled = computed<SkillDto[]>(() => installedSkills.value.filter(matchesFilter))
-const filteredMarket = computed<SkillDto[]>(() => marketplaceSkills.value.filter(matchesFilter))
+const filteredMarket = computed<SkillMarketplaceDto[]>(() => marketplaceSkills.value.filter(matchesFilter))
 
 // 分类列表
 const CATEGORIES = computed<SegmentItem[]>(() => [
@@ -125,14 +125,10 @@ const toggleSkill = async (skill: SkillDto) => {
 }
 
 // 从市场安装
-const installFromMarket = async (item: SkillDto) => {
+const installFromMarket = async (item: SkillMarketplaceDto) => {
 	loading.value = true
 	try {
-		await RUNTIME.skillsSaveCustom({
-			...item,
-			enabled: true,
-			installedAt: Date.now(),
-		})
+		await RUNTIME.skillsInstallMarketplace(item.id)
 		await refresh()
 		feedback.success(`${I18N.value.toast.installed} ${item.name}`)
 	} catch (error) {
@@ -268,7 +264,7 @@ const confirmUninstall = async () => {
 }
 
 // 查看技能指令详情
-const viewSkillDetail = async (skill: SkillDto) => {
+const viewSkillDetail = async (skill: SkillDto | SkillMarketplaceDto) => {
 	let instructions = skill.instructions
 	try {
 		const EXPORTED = JSON.parse(await RUNTIME.skillsExport(skill.id)) as {instructions?: string}

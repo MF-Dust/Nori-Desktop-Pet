@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Nori.Desktop.Automation;
 using Nori.Desktop.Automation.Browser;
 using Nori.PluginRuntime;
 
@@ -64,19 +65,22 @@ public sealed class BridgeCommandRouter(AppServices services)
 			}
 			if (!available && command == "automation_browser_status")
 			{
-				return new
-				{
-					state = "Stopped",
-					enabled = false,
-					available = false,
-					unavailableReason = PlaywrightRuntimeAvailability.MissingReason,
-					running = false,
-				};
+				return BrowserUnavailableStatus();
 			}
 		}
 
 		return await _services.Commands.InvokeAsync(source, command, args, cancellationToken).ConfigureAwait(false);
 	}
+
+	/// <summary>构造缺少浏览器 feature pack 时的稳定降级状态。</summary>
+	internal static object BrowserUnavailableStatus() => new
+	{
+		state = AutomationBrowserState.Stopped,
+		enabled = false,
+		available = false,
+		unavailableReason = PlaywrightRuntimeAvailability.MissingReason,
+		running = false,
+	};
 
 	/// <summary>纯命令名分类，不读取用户状态或参数。</summary>
 	public static BridgeCommandDomain Classify(string command)

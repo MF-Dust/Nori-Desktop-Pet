@@ -26,7 +26,7 @@ const enabledField = defineField(
 	"enabled",
 	snapshot => snapshot.automation?.enabled ?? false,
 	false,
-	val => RUNTIME.updateAutomation({enabled: val}),
+	async val => { await RUNTIME.updateAutomation({enabled: val}) },
 )
 const enabled = enabledField.value
 
@@ -34,7 +34,7 @@ const desktopField = defineField(
 	"desktopEnabled",
 	snapshot => snapshot.automation?.desktopEnabled ?? false,
 	false,
-	val => RUNTIME.updateAutomation({desktopEnabled: val}),
+	async val => { await RUNTIME.updateAutomation({desktopEnabled: val}) },
 )
 const desktopEnabled = desktopField.value
 
@@ -42,7 +42,7 @@ const browserField = defineField(
 	"browserEnabled",
 	snapshot => snapshot.automation?.browserEnabled ?? false,
 	false,
-	val => RUNTIME.updateAutomation({browserEnabled: val}),
+	async val => { await RUNTIME.updateAutomation({browserEnabled: val}) },
 )
 const browserEnabled = browserField.value
 
@@ -96,7 +96,7 @@ const onProbeVision = async () => {
 		const res = await RUNTIME.probeVisionCapability()
 		probeResult.value = res
 		if (!res.available) {
-			feedback.warning(res.message || TEXT.value.vision.notReady)
+			feedback.warning(res.reason || TEXT.value.vision.notReady)
 		}
 	} catch (error) {
 		feedback.error(TEXT.value.vision.probeFailed, error)
@@ -170,8 +170,8 @@ onMounted(async () => {
 						>
 							{{ visionReady ? TEXT.vision.ready : TEXT.vision.notReady }}
 						</AppChip>
-						<span v-if="probeResult" class="text-xs text-text-faint">
-							{{ probeResult.message }}
+						<span v-if="probeResult?.reason" class="text-xs text-text-faint">
+							{{ probeResult.reason }}
 						</span>
 					</div>
 

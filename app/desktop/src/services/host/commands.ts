@@ -1,10 +1,24 @@
 import type {
 	AutomationAuditRecordDto,
+	AutomationBrowserStatusDto,
+	AutomationBrowserTaskStartDto,
+	AutomationDesktopTaskStartDto,
+	AutomationDesktopTaskArgs,
+	AutomationDesktopWindowDto,
+	AutomationSettingsDto,
 	BrowserActionDto,
 	BrowserTaskResultDto,
+	EmbeddingConnectionTestArgs,
 	HistoryMessage,
 	InteractionConfig,
+	JsonObject,
+	JsonValue,
+	McpServerConfigArgs,
+	McpToolListItem,
+	McpToolResultDto,
+	MemoryAddArgs,
 	MemoryAtom,
+	MemoryAtomListArgs,
 	MemoryExportResult,
 	MemoryImportCommitItem,
 	MemoryImportCommitResult,
@@ -16,16 +30,25 @@ import type {
 	MemoryRecallDebug,
 	MemorySettings,
 	MemorySource,
+	MemoryUpdateArgs,
 	ModelMeta,
 	McpServerStatusInfo,
 	ProviderConnectionTestResult,
+	ReminderItemDto,
+	ReminderSnoozeArgs,
+	ReminderUpdateArgs,
+	SettingsTestAiArgs,
+	SettingsTestAiResult,
 	SkillDto,
+	SkillMarketplaceDto,
+	SkillRecordDto,
+	SkillRecordInput,
 	UiSnapshot,
 	VisionProbeResult,
 } from "../runtime/types"
 import type {PluginInfo, PluginInstallResult, PluginUninstallResult} from "../plugins"
 
-export type CommandArgs = Record<string, unknown>
+export type CommandArgs = JsonObject
 export type EmptyCommandArgs = undefined
 
 /** 前端实际使用的宿主命令契约。C# 仍会再次校验参数和来源窗口。 */
@@ -55,19 +78,26 @@ export interface BridgeCommandMap {
 		embedding?: Partial<{model: string; baseUrl: string; apiKey: string; dimensions: string}>
 		persona?: string
 	}; result: void}
+	settings_test_ai: {args: SettingsTestAiArgs; result: SettingsTestAiResult}
+	settings_test_embedding: {args: EmbeddingConnectionTestArgs; result: ProviderConnectionTestResult}
 	settings_update_voice: {args: CommandArgs; result: void}
 	settings_update_general: {args: CommandArgs; result: void}
 	settings_update_proactive: {args: CommandArgs; result: void}
-	settings_update_automation: {args: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>; result: void}
+	settings_update_automation: {args: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>; result: AutomationSettingsDto}
 	automation_get_snapshot: {args: EmptyCommandArgs; result: UiSnapshot["automation"]}
-	automation_update_settings: {args: Partial<{enabled: boolean; allowPointer: boolean; allowKeyboard: boolean; allowScroll: boolean}>; result: void}
-	automation_probe_vision: {args: EmptyCommandArgs; result: VisionProbeResult}
-	automation_stop_task: {args: {taskId: string}; result: void}
-	automation_stop_all: {args: EmptyCommandArgs; result: void}
-	automation_browser_status: {args: EmptyCommandArgs; result: {state: string; enabled: boolean; available: boolean; unavailableReason?: string | null; running?: boolean}}
-	automation_browser_start_task: {args: {actions: BrowserActionDto[] | Record<string, unknown>[]}; result: {taskId: string; state?: string}}
+	automation_update_settings: {args: Partial<{enabled: boolean; allowPointer: boolean; allowKeyboard: boolean; allowScroll: boolean; browserEnabled: boolean}>; result: AutomationSettingsDto}
+	automation_browser_start: {args: EmptyCommandArgs; result: AutomationBrowserStatusDto}
+	automation_browser_stop: {args: EmptyCommandArgs; result: AutomationBrowserStatusDto}
+	automation_browser_status: {args: EmptyCommandArgs; result: AutomationBrowserStatusDto}
+	automation_browser_start_task: {args: {actions: BrowserActionDto[]}; result: AutomationBrowserTaskStartDto}
 	automation_browser_get_result: {args: {taskId: string}; result: BrowserTaskResultDto | null}
-	automation_browser_stop_task: {args: {taskId: string}; result: void}
+	automation_browser_stop_task: {args: {taskId: string}; result: boolean}
+	automation_desktop_list_windows: {args: EmptyCommandArgs; result: AutomationDesktopWindowDto[]}
+	automation_desktop_start: {args: AutomationDesktopTaskArgs; result: AutomationDesktopTaskStartDto}
+	automation_desktop_stop: {args: {taskId: string}; result: boolean}
+	automation_probe_vision: {args: EmptyCommandArgs; result: VisionProbeResult}
+	automation_stop_task: {args: {taskId: string}; result: boolean}
+	automation_stop_all: {args: EmptyCommandArgs; result: number}
 	automation_audit_list: {args: {limit?: number}; result: AutomationAuditRecordDto[]}
 	settings_ack_voice_notice: {args: EmptyCommandArgs; result: void}
 
@@ -93,19 +123,19 @@ export interface BridgeCommandMap {
 	pet_get_state: {args: EmptyCommandArgs; result: CommandArgs}
 
 	tools_set_enabled: {args: {name: string; enabled: boolean}; result: void}
-	tools_execute_manual: {args: {name: string; arguments: CommandArgs}; result: unknown}
+	tools_execute_manual: {args: {name: string; arguments?: CommandArgs | null}; result: JsonValue}
 
-	memory_add: {args: CommandArgs; result: MemoryItem}
+	memory_add: {args: MemoryAddArgs; result: MemoryItem}
 	memory_list: {args: {limit?: number}; result: MemoryItem[]}
 	memory_list_page: {args: {query?: string; kind?: string; status?: string; limit?: number; offset?: number}; result: {items: MemoryItem[]; total: number}}
 	memory_get: {args: {id: number}; result: {item: MemoryItem; atoms: MemoryAtom[]; sources: MemorySource[]}}
-	memory_update: {args: CommandArgs; result: boolean}
+	memory_update: {args: MemoryUpdateArgs; result: boolean}
 	memory_delete: {args: {id: number; confirmToken: string}; result: boolean}
 	memory_clear: {args: {confirmToken: string}; result: void}
 	memory_archive: {args: {id: number}; result: boolean}
 	memory_restore: {args: {id: number}; result: boolean}
 	memory_overview: {args: EmptyCommandArgs; result: MemoryOverview}
-	memory_atom_list: {args: CommandArgs; result: MemoryAtom[]}
+	memory_atom_list: {args: MemoryAtomListArgs; result: MemoryAtom[]}
 	memory_search_hybrid: {args: CommandArgs; result: MemoryItem[]}
 	memory_knowledge_status: {args: EmptyCommandArgs; result: MemoryIndexStatus}
 	memory_knowledge_reindex: {args: EmptyCommandArgs; result: MemoryIndexStatus}
@@ -118,23 +148,24 @@ export interface BridgeCommandMap {
 	memory_import_preview: {args: {fileContent: string; fileName?: string; fileSize?: number}; result: MemoryImportPreviewResult}
 	memory_import_commit: {args: {previewToken?: string; items?: MemoryImportCommitItem[]; conflictStrategy?: MemoryImportConflictStrategy}; result: MemoryImportCommitResult}
 
-	skills_marketplace: {args: EmptyCommandArgs; result: SkillDto[]}
+	skills_marketplace: {args: EmptyCommandArgs; result: SkillMarketplaceDto[]}
+	skills_install_marketplace: {args: {skillId: string}; result: SkillDto}
 	skills_toggle: {args: {id: string; enabled: boolean}; result: void}
-	skills_install_url: {args: {url: string}; result: unknown}
-	skills_save_custom: {args: {skill: CommandArgs}; result: unknown}
+	skills_install_url: {args: {url: string}; result: SkillRecordDto}
+	skills_save_custom: {args: {skill: SkillRecordInput}; result: SkillRecordDto}
 	skills_uninstall: {args: {id: string}; result: void}
 	skills_export: {args: {id: string}; result: string}
-	skills_import_json: {args: {json: string}; result: unknown}
+	skills_import_json: {args: {json: string}; result: void}
 
 	mcp_get_servers: {args: EmptyCommandArgs; result: McpServerStatusInfo[]}
-	mcp_save_server: {args: CommandArgs; result: McpServerStatusInfo}
+	mcp_save_server: {args: McpServerConfigArgs; result: McpServerStatusInfo}
 	mcp_delete_server: {args: {id: string}; result: boolean}
 	mcp_connect_server: {args: {id: string}; result: McpServerStatusInfo}
 	mcp_disconnect_server: {args: {id: string}; result: McpServerStatusInfo}
-	mcp_list_tools: {args: EmptyCommandArgs; result: unknown}
-	mcp_test_server: {args: CommandArgs; result: McpServerStatusInfo}
-	mcp_call_tool: {args: {serverId: string; toolName: string; arguments: CommandArgs}; result: unknown}
-	mcp_import_url: {args: {url: string}; result: unknown}
+	mcp_list_tools: {args: EmptyCommandArgs; result: McpToolListItem[]}
+	mcp_test_server: {args: McpServerConfigArgs; result: McpServerStatusInfo}
+	mcp_call_tool: {args: {serverId: string; toolName: string; arguments?: CommandArgs | null; sessionId?: string}; result: McpToolResultDto}
+	mcp_import_url: {args: {url: string}; result: McpServerStatusInfo[]}
 
 	plugin_list: {args: EmptyCommandArgs; result: {plugins: PluginInfo[]}}
 	plugin_install_local: {args: EmptyCommandArgs; result: PluginInstallResult}
@@ -142,8 +173,12 @@ export interface BridgeCommandMap {
 	plugin_disable: {args: {id: string}; result: PluginInfo}
 	plugin_uninstall: {args: {id: string; deleteData: boolean}; result: PluginUninstallResult}
 
-	reminder_add: {args: {content: string; delayMinutes: number}; result: unknown}
+	reminder_add: {args: {content: string; delayMinutes?: number}; result: ReminderItemDto}
 	reminder_cancel: {args: {id: string}; result: boolean}
+	reminder_update: {args: ReminderUpdateArgs; result: ReminderItemDto}
+	reminder_snooze: {args: ReminderSnoozeArgs; result: ReminderItemDto}
+	reminder_complete: {args: {id: string}; result: boolean}
+	reminder_list: {args: EmptyCommandArgs; result: ReminderItemDto[]}
 	tts_test: {args: {text?: string}; result: void}
 	tts_stop: {args: EmptyCommandArgs; result: void}
 	stt_start: {args: EmptyCommandArgs; result: void}

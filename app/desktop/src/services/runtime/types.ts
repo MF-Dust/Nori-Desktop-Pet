@@ -5,6 +5,14 @@
  * 前端不再持有业务真相: 这里全部是只读投影。
  */
 
+/** 可通过 Bridge 传输的 JSON 值；用于工具参数等本身由外部定义的结构。 */
+export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[]
+
+/** 可通过 Bridge 传输的 JSON 对象。 */
+export interface JsonObject {
+	[key: string]: JsonValue
+}
+
 // ===================================================================
 // 快照
 // ===================================================================
@@ -96,6 +104,26 @@ export interface ProviderConnectionTestResult {
 	latencyMs: number
 	category: string
 	message: string
+}
+
+/** Embedding 连接测试参数；dimensions 兼容数字和旧版字符串。 */
+export interface EmbeddingConnectionTestArgs {
+	baseUrl?: string
+	apiKey?: string
+	model?: string
+	dimensions?: string | number
+}
+
+/** 双 Provider 连接测试参数 (settings_test_ai) */
+export interface SettingsTestAiArgs extends EmbeddingConnectionTestArgs {
+	provider?: string
+	embedding?: EmbeddingConnectionTestArgs
+}
+
+/** 双 Provider 连接测试返回值 (settings_test_ai) */
+export interface SettingsTestAiResult {
+	llm: ProviderConnectionTestResult
+	embedding: ProviderConnectionTestResult
 }
 
 /** 模型目录条目 */
@@ -270,6 +298,45 @@ export interface ReminderDto {
 	snoozedUntil?: number | null
 }
 
+/** Bridge reminder 命令返回的完整记录状态。 */
+export type ReminderStatus = "pending" | "claimed" | "fired" | "completed" | "cancelled"
+
+/** Bridge reminder 命令返回的完整提醒记录 (对应 ReminderItem)。 */
+export interface ReminderItemDto {
+	id: string
+	content: string
+	triggerAt: number
+	repeatDaily: boolean
+	createdAt: string
+	status: ReminderStatus
+	timezone: string
+	recurrenceJson?: string | null
+	snoozedUntil?: number | null
+	claimedAt?: string | null
+	firedAt?: string | null
+	updatedAt: string
+}
+
+/** reminder_update 的参数；triggerTime/triggerAt 与 delayMinutes 互斥。 */
+export interface ReminderUpdateArgs {
+	id: string
+	content?: string
+	triggerTime?: number
+	triggerAt?: number
+	delayMinutes?: number
+	repeatDaily?: boolean
+	timezone?: string
+	recurrenceJson?: string | null
+}
+
+/** reminder_snooze 的参数；支持相对分钟和绝对 Unix 毫秒时间。 */
+export interface ReminderSnoozeArgs {
+	id: string
+	delayMinutes?: number
+	snoozedUntil?: number
+	snoozeUntil?: number
+}
+
 /** 主动交互状态 */
 export interface ProactiveState {
 	idleEnabled: boolean
@@ -291,6 +358,36 @@ export interface SkillDto {
 	instructions: string
 	enabled: boolean
 	source: "builtin" | "market" | "custom" | "url"
+}
+
+/** skills_marketplace 返回的市场目录条目 (不含 installedAt/enabled)。 */
+export interface SkillMarketplaceDto extends Omit<SkillDto, "enabled"> {
+	tools?: string[] | null
+}
+
+/** 保存或导入技能时宿主接受的技能数据。 */
+export interface SkillRecordInput {
+	id: string
+	name?: string
+	description?: string
+	author?: string
+	version?: string
+	icon?: string
+	tags?: string[]
+	category?: string
+	instructions?: string
+	tools?: string[] | null
+	enabled?: boolean
+	source?: string
+	installedAt?: number
+	url?: string | null
+}
+
+/** 保存或导入技能命令返回的完整记录。 */
+export interface SkillRecordDto extends SkillDto {
+	tools?: string[] | null
+	installedAt: number
+	url?: string | null
 }
 
 /** 工具条目 */
@@ -330,6 +427,77 @@ export interface BrowserTaskResultDto {
 	data?: unknown
 	error?: string | null
 	finishedAt?: string
+}
+
+/** 浏览器会话生命周期状态 (对应 AutomationBrowserStatusSnapshot) */
+export type AutomationBrowserState = "stopped" | "starting" | "running" | "failed"
+
+/** 浏览器生命周期命令返回值 (包含计算属性 running) */
+export interface AutomationBrowserStatusDto {
+	state: AutomationBrowserState
+	enabled: boolean
+	available: boolean
+	unavailableReason?: string | null
+	running: boolean
+}
+
+/** 自动化任务生命周期状态 (对应后端 AutomationTaskState 枚举) */
+export type AutomationTaskLifecycleState = "queued" | "running" | "paused" | "completed" | "cancelled" | "failed"
+
+/** 自动化审批动作名称 (对应后端 AutomationActionKind 枚举) */
+export type AutomationActionKindDto = "click" | "typeText" | "keyPress" | "scroll"
+
+/** 浏览器或桌面任务启动后返回的脱敏状态 (对应 AutomationTaskStatusSnapshot) */
+export interface AutomationTaskStatusDto {
+	id: string
+	state: AutomationTaskLifecycleState
+	step: number
+	progressCategory: string
+	errorCategory?: string | null
+	taskKind: "browser" | "desktop"
+	pauseReason?: string | null
+	currentStep: number
+	totalSteps?: number | null
+	hasResult: boolean
+	resultSummary?: string | null
+	actionKinds: AutomationActionKindDto[]
+	approvalRequestId?: string | null
+}
+
+/** 浏览器结构化任务启动结果 (对应 AutomationBrowserTaskStartSnapshot) */
+export interface AutomationBrowserTaskStartDto {
+	taskId: string
+	state: AutomationTaskLifecycleState
+}
+
+/** 桌面视觉可选窗口的脱敏信息 (对应 AutomationDesktopWindowSnapshot) */
+export interface AutomationDesktopWindowDto {
+	token: string
+	width: number
+	height: number
+	isForeground: boolean
+}
+
+/** 桌面视觉任务参数；task/targetToken 是当前字段，另两组是兼容别名。 */
+export type AutomationDesktopTaskArgs =
+	| {task: string; targetToken: string}
+	| {task: string; windowToken: string}
+	| {goal: string; targetToken: string}
+	| {goal: string; windowToken: string}
+
+/** 桌面视觉任务启动结果 (对应 AutomationDesktopTaskStartSnapshot) */
+export interface AutomationDesktopTaskStartDto {
+	taskId: string
+	status: AutomationTaskStatusDto
+}
+
+/** 自动化设置命令返回值 (对应 AutomationSettingsSnapshot) */
+export interface AutomationSettingsDto {
+	enabled: boolean
+	allowPointer: boolean
+	allowKeyboard: boolean
+	allowScroll: boolean
+	browserEnabled: boolean
 }
 
 /** 自动化审计日志条目 (脱敏, 仅包含时间、类型、动作分类与结果) */
@@ -404,11 +572,10 @@ export interface AutomationApprovalDto {
 	requestedAt: string
 }
 
-/** 视觉能力检测结果 */
+/** 视觉能力检测结果 (对应 AutomationVisionProbeSnapshot) */
 export interface VisionProbeResult {
 	available: boolean
-	latencyMs?: number
-	message: string
+	reason?: string | null
 }
 
 /** 自动化状态快照 */
@@ -534,6 +701,35 @@ export interface HistoryMessage {
 // ===================================================================
 // 领域对象
 // ===================================================================
+
+/** memory_add 的参数。 */
+export interface MemoryAddArgs {
+	content: string
+	type?: string
+	importance?: number
+	tags?: string
+	kind?: string
+}
+
+/** memory_update 的参数。 */
+export interface MemoryUpdateArgs {
+	id: number
+	content: string
+	importance?: number
+	tags?: string
+	kind?: string
+	canonicalSummary?: string
+	personaSummary?: string
+	confidence?: number
+}
+
+/** memory_atom_list 的参数。 */
+export interface MemoryAtomListArgs {
+	memoryId?: number
+	status?: string
+	limit?: number
+	offset?: number
+}
 
 /** 记忆条目 */
 export interface MemoryItem {
@@ -677,6 +873,43 @@ export interface McpServerStatusInfo {
 		inputSchema?: Record<string, unknown>
 	}[]
 	resources?: unknown[]
+}
+
+/** MCP 服务器保存与测试命令的参数。 */
+export interface McpServerConfigArgs {
+	id: string
+	name: string
+	transport?: "stdio" | "sse"
+	command?: string | null
+	args?: string[] | null
+	env?: Record<string, string> | null
+	url?: string | null
+	enabled?: boolean
+	autoConnect?: boolean
+}
+
+/** MCP 工具列表命令返回的带命名空间条目。 */
+export interface McpToolListItem {
+	serverId: string
+	serverName: string
+	toolName: string
+	fullName: string
+	description: string
+	inputSchema: Record<string, unknown>
+}
+
+/** MCP 工具执行结果内容项。 */
+export interface McpContentItemDto {
+	type: string
+	text?: string | null
+	data?: string | null
+	mimeType?: string | null
+}
+
+/** MCP 工具调用命令返回值。 */
+export interface McpToolResultDto {
+	content: McpContentItemDto[]
+	isError: boolean
 }
 
 /** 交互反应模式: 本地动作 / AI 大脑响应 */

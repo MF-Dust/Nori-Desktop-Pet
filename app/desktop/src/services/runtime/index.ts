@@ -11,13 +11,26 @@ import {feedback} from "../feedback"
 import type {
 	AgentEventPayload,
 	AutomationAuditRecordDto,
+	AutomationBrowserStatusDto,
+	AutomationBrowserTaskStartDto,
+	AutomationDesktopTaskStartDto,
+	AutomationDesktopTaskArgs,
+	AutomationDesktopWindowDto,
+	AutomationSettingsDto,
 	BehaviorsState,
 	BrowserActionDto,
 	BrowserTaskResultDto,
+	EmbeddingConnectionTestArgs,
 	HistoryMessage,
 	InteractionConfig,
+	JsonObject,
+	JsonValue,
+	McpServerConfigArgs,
 	McpServerStatusInfo,
+	McpToolResultDto,
+	MemoryAddArgs,
 	MemoryAtom,
+	MemoryAtomListArgs,
 	MemoryExportResult,
 	MemoryImportCommitItem,
 	MemoryImportCommitResult,
@@ -30,9 +43,19 @@ import type {
 	MemoryRecallDebug,
 	MemorySettings,
 	MemorySource,
+	MemoryUpdateArgs,
 	ModelMeta,
 	PlatformState,
 	ProviderConnectionTestResult,
+	ReminderItemDto,
+	ReminderSnoozeArgs,
+	ReminderUpdateArgs,
+	SettingsTestAiArgs,
+	SettingsTestAiResult,
+	SkillDto,
+	SkillMarketplaceDto,
+	SkillRecordDto,
+	SkillRecordInput,
 	UiSnapshot,
 	VisionProbeResult,
 } from "./types"
@@ -42,15 +65,26 @@ export type {
 	AgentState,
 	ApprovalRequestDto,
 	AppInfo,
+	AutomationActionKindDto,
 	AutomationApprovalDto,
 	AutomationAuditRecordDto,
+	AutomationBrowserState,
+	AutomationBrowserStatusDto,
+	AutomationBrowserTaskStartDto,
 	AutomationCapabilityDto,
+	AutomationDesktopTaskArgs,
+	AutomationDesktopTaskStartDto,
+	AutomationDesktopWindowDto,
+	AutomationSettingsDto,
 	AutomationState,
 	AutomationTaskDto,
+	AutomationTaskLifecycleState,
+	AutomationTaskStatusDto,
 	AutomationTaskStatus,
 	BehaviorsState,
 	BrowserActionDto,
 	BrowserTaskResultDto,
+	EmbeddingConnectionTestArgs,
 	EmbeddingState,
 	EmotionDto,
 	GeneralState,
@@ -61,8 +95,16 @@ export type {
 	InteractionReactionMode,
 	InteractionRect,
 	InteractionRegion,
+	JsonObject,
+	JsonValue,
+	McpContentItemDto,
+	McpServerConfigArgs,
 	McpServerStatusInfo,
+	McpToolListItem,
+	McpToolResultDto,
+	MemoryAddArgs,
 	MemoryAtom,
+	MemoryAtomListArgs,
 	MemoryExportResult,
 	MemoryImportCommitItem,
 	MemoryImportCommitResult,
@@ -77,6 +119,7 @@ export type {
 	MemorySettings,
 	MemorySource,
 	MemoryState,
+	MemoryUpdateArgs,
 	ModelItem,
 	ModelMeta,
 	ModelsState,
@@ -84,10 +127,19 @@ export type {
 	PlatformState,
 	ProviderConnectionTestResult,
 	ProactiveState,
-	TelemetryState,
 	ReminderDto,
-	SecretIssueDto,
+	ReminderItemDto,
+	ReminderSnoozeArgs,
+	ReminderStatus,
+	ReminderUpdateArgs,
+	SettingsTestAiArgs,
+	SettingsTestAiResult,
 	SkillDto,
+	SkillMarketplaceDto,
+	SkillRecordDto,
+	SkillRecordInput,
+	TelemetryState,
+	SecretIssueDto,
 	ToolDto,
 	UsageMetrics,
 	VisionProbeResult,
@@ -322,6 +374,12 @@ export const RUNTIME = {
 	}): Promise<ProviderConnectionTestResult> {
 		return invoke("ai_test_connection", args)
 	},
+	testAiProviders(args: SettingsTestAiArgs): Promise<SettingsTestAiResult> {
+		return invoke("settings_test_ai", args)
+	},
+	testEmbeddingSettings(args: EmbeddingConnectionTestArgs): Promise<ProviderConnectionTestResult> {
+		return invoke("settings_test_embedding", args)
+	},
 	updateVoice(patch: Partial<{
 		volume: string
 		ttsProvider: string
@@ -347,23 +405,38 @@ export const RUNTIME = {
 	updateProactive(patch: Partial<{idleEnabled: boolean; idleMinutes: number; dailyGreeting: boolean}>): Promise<void> {
 		return invoke("settings_update_proactive", patch)
 	},
-	updateAutomation(patch: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>): Promise<void> {
+	updateAutomation(patch: Partial<{enabled: boolean; desktopEnabled: boolean; browserEnabled: boolean}>): Promise<AutomationSettingsDto> {
 		return invoke("settings_update_automation", patch)
 	},
-	stopAutomationTask(taskId: string): Promise<void> {
+	stopAutomationTask(taskId: string): Promise<boolean> {
 		return invoke("automation_stop_task", {taskId})
 	},
-	stopAllAutomation(): Promise<void> {
+	stopAllAutomation(): Promise<number> {
 		return invoke("automation_stop_all")
 	},
-	automationBrowserStartTask(actions: BrowserActionDto[] | Record<string, unknown>[]): Promise<{taskId: string; state?: string}> {
+	automationBrowserStartTask(actions: BrowserActionDto[]): Promise<AutomationBrowserTaskStartDto> {
 		return invoke("automation_browser_start_task", {actions})
 	},
 	automationBrowserGetResult(taskId: string): Promise<BrowserTaskResultDto | null> {
 		return invoke("automation_browser_get_result", {taskId})
 	},
-	automationBrowserStopTask(taskId: string): Promise<void> {
+	automationBrowserStopTask(taskId: string): Promise<boolean> {
 		return invoke("automation_browser_stop_task", {taskId})
+	},
+	automationBrowserStart(): Promise<AutomationBrowserStatusDto> {
+		return invoke("automation_browser_start")
+	},
+	automationBrowserStop(): Promise<AutomationBrowserStatusDto> {
+		return invoke("automation_browser_stop")
+	},
+	automationDesktopListWindows(): Promise<AutomationDesktopWindowDto[]> {
+		return invoke("automation_desktop_list_windows")
+	},
+	automationDesktopStart(args: AutomationDesktopTaskArgs): Promise<AutomationDesktopTaskStartDto> {
+		return invoke("automation_desktop_start", args)
+	},
+	automationDesktopStop(taskId: string): Promise<boolean> {
+		return invoke("automation_desktop_stop", {taskId})
 	},
 	automationAuditList(limit = 50): Promise<AutomationAuditRecordDto[]> {
 		return invoke("automation_audit_list", {limit})
@@ -393,7 +466,7 @@ export const RUNTIME = {
 	toolsSetEnabled(name: string, enabled: boolean): Promise<void> {
 		return invoke("tools_set_enabled", {name, enabled})
 	},
-	toolsExecuteManual(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+	toolsExecuteManual(name: string, args: JsonObject = {}): Promise<JsonValue> {
 		return invoke("tools_execute_manual", {name, arguments: args})
 	},
 
@@ -453,7 +526,10 @@ export const RUNTIME = {
 	// ------------------------------------------------------------------
 
 	memoryAdd(content: string, importance = 0.8, tags?: string, kind?: string): Promise<MemoryItem> {
-		return invoke("memory_add", {content, importance, tags, kind})
+		const ARGS: MemoryAddArgs = {content, importance}
+		if (tags !== undefined) ARGS.tags = tags
+		if (kind !== undefined) ARGS.kind = kind
+		return invoke("memory_add", ARGS)
 	},
 	memoryList(limit = 50): Promise<MemoryItem[]> {
 		return invoke("memory_list", {limit})
@@ -465,7 +541,11 @@ export const RUNTIME = {
 		return invoke("memory_get", {id})
 	},
 	memoryUpdate(id: number, content: string, importance?: number, tags?: string, patch?: {kind?: string; canonicalSummary?: string; personaSummary?: string; confidence?: number}): Promise<boolean> {
-		return invoke("memory_update", {id, content, importance, tags, ...patch})
+		const ARGS: MemoryUpdateArgs = {id, content}
+		if (importance !== undefined) ARGS.importance = importance
+		if (tags !== undefined) ARGS.tags = tags
+		if (patch) Object.assign(ARGS, patch)
+		return invoke("memory_update", ARGS)
 	},
 	memoryArchive(id: number): Promise<boolean> {
 		return invoke("memory_archive", {id})
@@ -483,7 +563,10 @@ export const RUNTIME = {
 		return invoke("memory_overview")
 	},
 	memoryAtoms(memoryId?: number, status?: string, limit = 50, offset = 0): Promise<MemoryAtom[]> {
-		return invoke("memory_atom_list", {memoryId, status, limit, offset})
+		const ARGS: MemoryAtomListArgs = {limit, offset}
+		if (memoryId !== undefined) ARGS.memoryId = memoryId
+		if (status !== undefined) ARGS.status = status
+		return invoke("memory_atom_list", ARGS)
 	},
 	memorySearch(keyword: string, limit = 20): Promise<MemoryItem[]> {
 		return invoke("memory_search_hybrid", {keyword, limit})
@@ -523,16 +606,19 @@ export const RUNTIME = {
 	// 技能
 	// ------------------------------------------------------------------
 
-	skillsMarketplace() {
+	skillsMarketplace(): Promise<SkillMarketplaceDto[]> {
 		return invoke("skills_marketplace")
+	},
+	skillsInstallMarketplace(skillId: string): Promise<SkillDto> {
+		return invoke("skills_install_marketplace", {skillId})
 	},
 	skillsToggle(id: string, enabled: boolean): Promise<void> {
 		return invoke("skills_toggle", {id, enabled})
 	},
-	skillsInstallUrl(url: string): Promise<unknown> {
+	skillsInstallUrl(url: string): Promise<SkillRecordDto> {
 		return invoke("skills_install_url", {url})
 	},
-	skillsSaveCustom(skill: Record<string, unknown>): Promise<unknown> {
+	skillsSaveCustom(skill: SkillRecordInput): Promise<SkillRecordDto> {
 		return invoke("skills_save_custom", {skill})
 	},
 	skillsUninstall(id: string): Promise<void> {
@@ -541,7 +627,7 @@ export const RUNTIME = {
 	skillsExport(id: string): Promise<string> {
 		return invoke("skills_export", {id})
 	},
-	skillsImportJson(json: string): Promise<unknown> {
+	skillsImportJson(json: string): Promise<void> {
 		return invoke("skills_import_json", {json})
 	},
 
@@ -552,7 +638,7 @@ export const RUNTIME = {
 	mcpGetServers(): Promise<McpServerStatusInfo[]> {
 		return invoke("mcp_get_servers")
 	},
-	mcpSaveServer(config: Record<string, unknown>): Promise<McpServerStatusInfo> {
+	mcpSaveServer(config: McpServerConfigArgs): Promise<McpServerStatusInfo> {
 		return invoke("mcp_save_server", config)
 	},
 	mcpDeleteServer(id: string): Promise<boolean> {
@@ -564,13 +650,13 @@ export const RUNTIME = {
 	mcpDisconnect(id: string): Promise<McpServerStatusInfo> {
 		return invoke("mcp_disconnect_server", {id})
 	},
-	mcpTestServer(config: Record<string, unknown>): Promise<McpServerStatusInfo> {
+	mcpTestServer(config: McpServerConfigArgs): Promise<McpServerStatusInfo> {
 		return invoke("mcp_test_server", config)
 	},
-	mcpCallTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+	mcpCallTool(serverId: string, toolName: string, args: JsonObject = {}): Promise<McpToolResultDto> {
 		return invoke("mcp_call_tool", {serverId, toolName, arguments: args})
 	},
-	mcpImportUrl(url: string): Promise<unknown> {
+	mcpImportUrl(url: string): Promise<McpServerStatusInfo[]> {
 		return invoke("mcp_import_url", {url})
 	},
 
@@ -578,11 +664,23 @@ export const RUNTIME = {
 	// 提醒
 	// ------------------------------------------------------------------
 
-	reminderAdd(content: string, delayMinutes: number): Promise<unknown> {
+	reminderAdd(content: string, delayMinutes: number): Promise<ReminderItemDto> {
 		return invoke("reminder_add", {content, delayMinutes})
 	},
 	reminderCancel(id: string): Promise<boolean> {
 		return invoke("reminder_cancel", {id})
+	},
+	reminderUpdate(args: ReminderUpdateArgs): Promise<ReminderItemDto> {
+		return invoke("reminder_update", args)
+	},
+	reminderSnooze(args: ReminderSnoozeArgs): Promise<ReminderItemDto> {
+		return invoke("reminder_snooze", args)
+	},
+	reminderComplete(id: string): Promise<boolean> {
+		return invoke("reminder_complete", {id})
+	},
+	reminderList(): Promise<ReminderItemDto[]> {
+		return invoke("reminder_list")
 	},
 
 	// ------------------------------------------------------------------
