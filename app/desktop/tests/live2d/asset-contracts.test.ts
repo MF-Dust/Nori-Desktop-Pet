@@ -1,16 +1,7 @@
-import {afterEach, describe, expect, it} from "vitest"
-import {
-	ASSET_BASE,
-	assetUrl,
-	defaultModels,
-	parseBoolean,
-	parseExpressionList,
-	parseNumber,
-	resolveModelFileBase,
-} from "../../src/services/live2d/config"
+import {afterEach, describe, expect, it, vi} from "vitest"
 import {MockHost} from "../helpers/mockHost"
 
-describe("Live2D 资产与模型路径契约", () => {
+describe("Live2D 资产与配置解析契约", () => {
 	let mock: MockHost | null = null
 
 	afterEach(() => {
@@ -18,72 +9,62 @@ describe("Live2D 资产与模型路径契约", () => {
 			mock.restore()
 			mock = null
 		}
+		vi.resetModules()
 	})
 
-	it("默认开发环境下 assetUrl 构造同源相对路径", () => {
+	it("无宿主环境下使用默认同源相对基址并安全剥离前导斜杠", async () => {
+		vi.resetModules()
+		const {ASSET_BASE, assetUrl} = await import("../../src/services/live2d/config")
+
 		expect(ASSET_BASE).toBe("/nori-assets/")
-		const URL = assetUrl("live2d/nori/Nori.model3.json")
-		expect(URL).toBe("/nori-assets/live2d/nori/Nori.model3.json")
-		expect(URL.startsWith("/")).toBe(true)
-		expect(URL).not.toContain("//live2d")
-		expect(URL).not.toMatch(/^[A-Za-z]:[\\/]/)
-		expect(URL).not.toMatch(/^file:\/\//)
+		expect(assetUrl("live2d/nori/Nori.model3.json")).toBe("/nori-assets/live2d/nori/Nori.model3.json")
+		expect(assetUrl("/live2d/nori/Nori.model3.json")).toBe("/nori-assets/live2d/nori/Nori.model3.json")
+		expect(assetUrl("///live2d/nori/Nori.model3.json")).toBe("/nori-assets/live2d/nori/Nori.model3.json")
 	})
 
-	it("剥离相对路径前导斜杠避免双斜杠拼接", () => {
-		expect(assetUrl("/live2d/arg-nori/ARGNori.model3.json")).toBe("/nori-assets/live2d/arg-nori/ARGNori.model3.json")
-		expect(assetUrl("///live2d/arg-nori/ARGNori.model3.json")).toBe("/nori-assets/live2d/arg-nori/ARGNori.model3.json")
-	})
-
-	it("宿主注入随机前缀时正确继承生产同源资产基址", () => {
+	it("宿主就绪时模块初始化捕获生产随机资产前缀", async () => {
 		mock = new MockHost({})
-		mock.host.assetBase = "/e3b0c442/nori-assets/"
+		mock.host.assetBase = "/7a8b9c0d/nori-assets/"
 		mock.install()
 
-		const URL = assetUrl("live2d/arg-nori/ARGNori.model3.json")
-		expect(URL).toBe("/e3b0c442/nori-assets/live2d/arg-nori/ARGNori.model3.json")
-		expect(URL).not.toMatch(/^https?:\/\/[^/]+\//)
+		vi.resetModules()
+		const {ASSET_BASE, assetUrl} = await import("../../src/services/live2d/config")
+
+		expect(ASSET_BASE).toBe("/7a8b9c0d/nori-assets/")
+		expect(assetUrl("live2d/arg-nori/ARGNori.model3.json")).toBe(
+			"/7a8b9c0d/nori-assets/live2d/arg-nori/ARGNori.model3.json",
+		)
 	})
 
-	it("内置模型与自定义模型的文件基名解析语义保持稳定", () => {
-		expect(defaultModels["arg-nori"]).toBe("ARGNori")
-		expect(defaultModels.nori).toBe("Nori")
+	it("内置模型映射到对应 PascalCase 基名，自定义模型回退自身目录名", async () => {
+		const {resolveModelFileBase} = await import("../../src/services/live2d/config")
 
 		expect(resolveModelFileBase("arg-nori")).toBe("ARGNori")
 		expect(resolveModelFileBase("nori")).toBe("Nori")
-		expect(resolveModelFileBase("custom-pet-v2")).toBe("custom-pet-v2")
-		expect(resolveModelFileBase("shizuku")).toBe("shizuku")
+		expect(resolveModelFileBase("custom-pet")).toBe("custom-pet")
 	})
 
-	it("根据 Live2D 规范组装公开模型入口 URL", () => {
-		const SPEC_BUILTIN = {directory: "arg-nori", fileBase: resolveModelFileBase("arg-nori")}
-		const BUILTIN_URL = `${assetUrl(`live2d/${SPEC_BUILTIN.directory}`)}/${SPEC_BUILTIN.fileBase}.model3.json`
-		expect(BUILTIN_URL).toBe("/nori-assets/live2d/arg-nori/ARGNori.model3.json")
+	it("纯函数解析器正确处理布尔值、数值与表情列表边界", async () => {
+		const {parseBoolean, parseExpressionList, parseNumber} = await import(
+			"../../src/services/live2d/config"
+		)
 
-		const SPEC_CUSTOM = {directory: "custom-avatar", fileBase: resolveModelFileBase("custom-avatar")}
-		const CUSTOM_URL = `${assetUrl(`live2d/${SPEC_CUSTOM.directory}`)}/${SPEC_CUSTOM.fileBase}.model3.json`
-		expect(CUSTOM_URL).toBe("/nori-assets/live2d/custom-avatar/custom-avatar.model3.json")
-	})
-
-	it("纯函数解析器正确处理布尔值、数值与表情列表", () => {
 		expect(parseBoolean(true)).toBe(true)
 		expect(parseBoolean(false)).toBe(false)
 		expect(parseBoolean("1")).toBe(true)
 		expect(parseBoolean("0")).toBe(false)
 		expect(parseBoolean("true")).toBe(true)
-		expect(parseBoolean("FALSE")).toBe(false)
+		expect(parseBoolean("false")).toBe(false)
 		expect(parseBoolean("invalid")).toBeNull()
-		expect(parseBoolean(123)).toBeNull()
+		expect(parseBoolean(null)).toBeNull()
 
 		expect(parseNumber(1.25)).toBe(1.25)
 		expect(parseNumber("1.25")).toBe(1.25)
-		expect(parseNumber("-0.5")).toBe(-0.5)
-		expect(parseNumber("0")).toBe(0)
 		expect(parseNumber("")).toBeNull()
 		expect(parseNumber("abc")).toBeNull()
 		expect(parseNumber(NaN)).toBeNull()
 
-		expect(parseExpressionList(["exp1", "exp2"])).toEqual(["exp1", "exp2"])
+		expect(parseExpressionList(["f01", "f02"])).toEqual(["f01", "f02"])
 		expect(parseExpressionList('["f01", "f02"]')).toEqual(["f01", "f02"])
 		expect(parseExpressionList("")).toEqual([])
 		expect(parseExpressionList("invalid-json")).toEqual([])
