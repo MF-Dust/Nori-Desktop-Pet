@@ -15,7 +15,7 @@ app/desktop/bin/
 app-*.partial/
 app-*.destroy/
 .current
-data/
+app/desktop/data/
 .nori-storage.json
 .legacy-cleanup-pending.json
 .rpiv/
