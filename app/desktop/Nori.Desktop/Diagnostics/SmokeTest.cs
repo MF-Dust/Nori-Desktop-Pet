@@ -58,19 +58,19 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 		try
 		{
 			string fullProfile = Path.GetFullPath(profile);
-			if (Directory.Exists(fullProfile)
-				&& (File.GetAttributes(fullProfile) & FileAttributes.ReparsePoint) != 0)
-			{
-				error = "--profile 不能是符号链接、junction 或 reparse point";
-				return false;
-			}
-			if (Path.GetPathRoot(fullProfile)?.Equals(fullProfile, StringComparison.OrdinalIgnoreCase) == true)
+			if (Path.GetPathRoot(fullProfile)?.Equals(fullProfile, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) == true)
 			{
 				error = "--profile 不能指向文件系统根目录";
 				return false;
 			}
-
+			EnsureProfilePathSafe(fullProfile);
 			Directory.CreateDirectory(fullProfile);
+			EnsureProfilePathSafe(fullProfile);
+			if (Directory.EnumerateFileSystemEntries(fullProfile).Any())
+			{
+				error = "--profile 必须是此前不存在或完全为空的隔离临时目录, 不会删除已有内容";
+				return false;
+			}
 			AppStoragePaths profilePaths = new(fullProfile);
 			AppStoragePaths.EnsureNoReparsePoints(fullProfile, fullProfile);
 			string databasePath = profilePaths.DatabasePath;
@@ -79,8 +79,6 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 				error = "--profile 必须是隔离的临时目录, 不能包含已有 core/database/nori.db";
 				return false;
 			}
-			string readinessPath = Path.Combine(fullProfile, "readiness.json");
-			if (File.Exists(readinessPath)) File.Delete(readinessPath);
 			options = new SmokeTestOptions(mode, fullProfile);
 			return true;
 		}
@@ -93,6 +91,21 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 
 	/// <summary>冒烟检查点文件路径。</summary>
 	public string ReadinessPath => Path.Combine(Profile, "readiness.json");
+
+	private static void EnsureProfilePathSafe(string path)
+	{
+		string comparisonRoot = Path.GetPathRoot(path) ?? path;
+		string? current = path;
+		StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		while (current is not null && !string.IsNullOrEmpty(comparisonRoot))
+		{
+			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new InvalidOperationException("--profile 路径链不能包含符号链接、junction 或 reparse point");
+			string? parent = Path.GetDirectoryName(current);
+			if (parent is null || string.Equals(parent, current, comparison)) break;
+			current = parent;
+		}
+	}
 
 	private static bool TryParseMode(string value, out SmokeTestMode mode)
 	{

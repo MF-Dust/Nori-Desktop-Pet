@@ -28,7 +28,7 @@ body:
       value: |
         ### Bug 信息
 
-        描述您遇到的 Bug。您可以附上截图、录屏、堆栈跟踪、日志文件等材料，便于开发者追踪问题。**日志文件默认位于 `%APPDATA%/cn.erhio.noriDesktopPet/data/logs/` 目录下。**
+        描述您遇到的 Bug。您可以附上截图、录屏、堆栈跟踪、日志文件等材料，便于开发者追踪问题。**日志文件位于安装包根目录 `data/diagnostics/logs/`；若使用发布包，请在 `<PackageRoot>/data/diagnostics/logs/` 查找。**
 
         > [!note]
         > 上传附件时**请优先使用 GitHub 的附件系统上传附件**，将需要上传的附件粘贴或拖动到撰写区域即可上传。多个日志或崩溃文件可打包为 zip 格式后上传。**尽量避免使用需要登录或安装客户端才能接收附件的网盘（如\*度网盘、\*克网盘、1\*3网盘等）上传附件**，以避免开发者因不具有对应网盘客户端或账户而延误问题诊断。
@@ -68,7 +68,7 @@ body:
     id: stacktrace
     attributes:
       label: 崩溃日志 / 堆栈跟踪（可选）
-      description: 如果遇到闪退、崩溃弹窗或程序报错，请将控制台日志、堆栈跟踪信息或 `%APPDATA%/cn.erhio.noriDesktopPet/data/logs/` 中的错误日志粘贴在此处。
+      description: 如果遇到闪退、崩溃弹窗或程序报错，请将控制台日志、堆栈跟踪信息或 `<PackageRoot>/data/diagnostics/logs/` 中的错误日志粘贴在此处。
       render: shell
   - type: textarea
     id: environment

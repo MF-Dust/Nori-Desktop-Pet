@@ -61,6 +61,18 @@ public static class CrashReporter
 	/// <summary>挂接遥测器; 未挂接时使用空实现。</summary>
 	public static void AttachTelemetry(ITelemetry telemetry) => _telemetry = telemetry ?? NoopTelemetry.Instance;
 
+	/// <summary>记录 Avalonia 启动前的异常，供原生启动错误提示复用脱敏日志。</summary>
+	public static void LogEarlyStartupFailure(string title, Exception exception, string? logDirectory = null)
+	{
+		string message = $"{SensitiveDataRedactor.Redact(title)}: {SensitiveDataRedactor.ExceptionSummary(exception)}";
+		if (!string.IsNullOrWhiteSpace(logDirectory))
+		{
+			try { new FileLogger(logDirectory).Write(LogSource.Backend, "error", message); return; }
+			catch { }
+		}
+		WriteLogSafe(message);
+	}
+
 	/// <summary>
 	/// 安全的 fire-and-forget: 后台任务失败只记日志, 不崩进程也不弹窗.
 	/// 取代裸的 <c>_ = SomeAsync()</c>, 让异常在发生当下就有上下文地落盘,

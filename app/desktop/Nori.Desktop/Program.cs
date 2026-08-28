@@ -66,9 +66,10 @@ internal static class Program
 	private static extern int MessageBox(nint hWnd, string text, string caption, uint type);
 
 	private static bool IsDevelopmentProcess() =>
-		Environment.GetEnvironmentVariable("NORI_DEV") == "1"
-		|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"))
-		|| Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+		string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal)
+		&& (Environment.GetEnvironmentVariable("NORI_DEV") == "1"
+			|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"))
+			|| Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase));
 
 	private static void ActivateFirstInstance()
 	{
@@ -99,9 +100,11 @@ internal static class Program
 				SmokeTestRuntime.Configure(smokeTest);
 			}
 		}
-		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+		catch (Exception exception)
 		{
-			ShowStartupError("存储包根不可用", exception.Message);
+			string summary = Nori.Core.Security.SensitiveDataRedactor.ExceptionSummary(exception);
+			CrashReporter.LogEarlyStartupFailure("存储包根不可用", exception, StoragePaths?.LogsDirectory);
+			ShowStartupError("存储包根不可用", summary);
 			Environment.ExitCode = 2;
 			return;
 		}
@@ -134,9 +137,11 @@ internal static class Program
 				allowLegacyMigration: !development && smokeTest is null);
 			BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
+		catch (Exception exception)
 		{
-			ShowStartupError("存储初始化失败", exception.Message);
+			string summary = Nori.Core.Security.SensitiveDataRedactor.ExceptionSummary(exception);
+			CrashReporter.LogEarlyStartupFailure("存储初始化失败", exception, StoragePaths?.LogsDirectory);
+			ShowStartupError("存储初始化失败", summary);
 			Environment.ExitCode = 1;
 		}
 	}

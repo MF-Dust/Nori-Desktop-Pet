@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace Nori.Desktop.Startup;
 
@@ -52,29 +53,24 @@ internal static class WebViewAdapterInfo
 
 	private static DetailedWebViewAdapterInfo ProbeWebView2()
 	{
-		string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-		string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-		string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-		string[] roots = [
-			Path.Combine(programFiles, "Microsoft", "EdgeWebView", "Application"),
-			Path.Combine(programFilesX86, "Microsoft", "EdgeWebView", "Application"),
-			Path.Combine(localAppData, "Microsoft", "EdgeWebView", "Application"),
-		];
-		foreach (string root in roots)
+		if (!OperatingSystem.IsWindows()) return new DetailedWebViewAdapterInfo(false, "", "WebView2 仅支持 Windows");
+		const string clientKey = @"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+		foreach (RegistryView view in new[] {RegistryView.Registry64, RegistryView.Registry32})
 		{
 			try
 			{
-				if (!Directory.Exists(root)) continue;
-				foreach (string versionDirectory in Directory.EnumerateDirectories(root))
-				{
-					string runtime = Path.Combine(versionDirectory, "msedgewebview2.exe");
-					if (File.Exists(runtime) && (File.GetAttributes(runtime) & FileAttributes.ReparsePoint) == 0)
-						return new DetailedWebViewAdapterInfo(true, Path.GetFileName(versionDirectory), "");
-				}
+				using RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+				using RegistryKey? key = machine.OpenSubKey(clientKey);
+				if (key?.GetValue("pv") is string version && Version.TryParse(version, out _))
+					return new DetailedWebViewAdapterInfo(true, version, "");
+				using RegistryKey user = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, view);
+				using RegistryKey? userKey = user.OpenSubKey(clientKey);
+				if (userKey?.GetValue("pv") is string userVersion && Version.TryParse(userVersion, out _))
+					return new DetailedWebViewAdapterInfo(true, userVersion, "");
 			}
-			catch (IOException) { }
+			catch (System.Security.SecurityException) { }
 			catch (UnauthorizedAccessException) { }
 		}
-		return new DetailedWebViewAdapterInfo(false, "", "未找到 Microsoft Edge WebView2 Evergreen Runtime");
+		return new DetailedWebViewAdapterInfo(false, "", "未找到 Microsoft Edge WebView2 Evergreen Runtime 注册信息");
 	}
 }

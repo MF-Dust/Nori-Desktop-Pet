@@ -108,9 +108,18 @@ jobs:
             fi
           fi
 
+          node app/desktop/scripts/validate-publish-input.mjs "$version" 0 win-x64
           if [ -n "$codename" ]; then
             tag="v$version-$codename"
             stable_version="$version-$codename"
+            while IFS= read -r historical_tag; do
+              historical_codename="${historical_tag#v}"
+              historical_codename="${historical_codename#*-}"
+              if [ "$historical_codename" = "$codename" ] && [ "$historical_tag" != "$tag" ]; then
+                echo "Codename 已在历史标签中使用: $historical_tag" >&2
+                exit 1
+              fi
+            done < <(git tag --list 'v[0-9]*-*')
           else
             tag="v$version"
             stable_version="$version"
@@ -188,6 +197,8 @@ jobs:
         run: pnpm build
       - name: 前端门 · 单元测试
         run: pnpm test
+      - name: 发布结构 fixture 门
+        run: node scripts/validate-publish-structure.test.mjs
       # dotnet 调用不并行, 且 test 不再触发第二次 build, 避免 obj 锁冲突。
       - name: 后端门 · 构建
         run: dotnet build Nori.slnx --configuration Release
@@ -335,6 +346,10 @@ jobs:
             app/desktop/bin/release/THIRD-PARTY-NOTICES.json
             app/desktop/bin/release/THIRD-PARTY-NOTICES.md
             app/desktop/bin/release/RELEASE-MANIFEST.json
+            app/desktop/bin/release/SBOM-win-x64.cdx.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-win-x64.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-win-x64.md
+            app/desktop/bin/release/RELEASE-MANIFEST-win-x64.json
           if-no-files-found: error
           retention-days: 2
 
@@ -387,7 +402,15 @@ jobs:
             hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
           fi
           printf '%s  %s\\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
-          echo "已生成 $archive"
+          metadata="bin/release/.metadata-$rid"
+          rm -rf "$metadata"
+          node scripts/generate-release-metadata.mjs --publish-dir "$publish" --version "$NORI_VERSION" --rid "$rid" --output-dir "$metadata"
+          cp "$metadata/SBOM.cdx.json" "bin/release/SBOM-$rid.cdx.json"
+          cp "$metadata/THIRD-PARTY-NOTICES.json" "bin/release/THIRD-PARTY-NOTICES-$rid.json"
+          cp "$metadata/THIRD-PARTY-NOTICES.md" "bin/release/THIRD-PARTY-NOTICES-$rid.md"
+          cp "$metadata/RELEASE-MANIFEST.json" "bin/release/RELEASE-MANIFEST-$rid.json"
+          rm -rf "$metadata"
+          echo "已生成 $archive 及 $rid 发布元数据"
       - name: 上传待发布 Linux/macOS 产物
         if: matrix.name != 'windows'
         uses: actions/upload-artifact@v4
@@ -397,6 +420,10 @@ jobs:
             app/desktop/bin/release/*.zip
             app/desktop/bin/release/*.tar.gz
             app/desktop/bin/release/*.sha256
+            app/desktop/bin/release/SBOM-${{ matrix.rid }}.cdx.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-${{ matrix.rid }}.json
+            app/desktop/bin/release/THIRD-PARTY-NOTICES-${{ matrix.rid }}.md
+            app/desktop/bin/release/RELEASE-MANIFEST-${{ matrix.rid }}.json
           if-no-files-found: error
           retention-days: 2
 
@@ -491,10 +518,18 @@ jobs:
             release-artifacts/nori-${VERSION}-linux-x64.tar.gz.sha256
             release-artifacts/nori-${VERSION}-osx-arm64.zip
             release-artifacts/nori-${VERSION}-osx-arm64.zip.sha256
-            release-artifacts/SBOM.cdx.json
-            release-artifacts/THIRD-PARTY-NOTICES.json
-            release-artifacts/THIRD-PARTY-NOTICES.md
-            release-artifacts/RELEASE-MANIFEST.json
+            release-artifacts/SBOM-win-x64.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES-win-x64.json
+            release-artifacts/THIRD-PARTY-NOTICES-win-x64.md
+            release-artifacts/RELEASE-MANIFEST-win-x64.json
+            release-artifacts/SBOM-linux-x64.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES-linux-x64.json
+            release-artifacts/THIRD-PARTY-NOTICES-linux-x64.md
+            release-artifacts/RELEASE-MANIFEST-linux-x64.json
+            release-artifacts/SBOM-osx-arm64.cdx.json
+            release-artifacts/THIRD-PARTY-NOTICES-osx-arm64.json
+            release-artifacts/THIRD-PARTY-NOTICES-osx-arm64.md
+            release-artifacts/RELEASE-MANIFEST-osx-arm64.json
           )
           for asset in "${assets[@]}"; do
             test -f "$asset"

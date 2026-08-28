@@ -173,6 +173,24 @@ public sealed class SmokeTestTests
 	}
 
 	[Fact]
+	public void SmokeModeRejectsNonEmptyProfileWithoutDeletingIt()
+	{
+		string profile = Path.Combine(Path.GetTempPath(), $"nori-smoke-nonempty-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(profile);
+		string sentinel = Path.Combine(profile, "sentinel.txt");
+		File.WriteAllText(sentinel, "keep");
+		try
+		{
+			bool parsed = SmokeTestOptions.TryParse(["--smoke-test", "first-run", "--profile", profile], out SmokeTestOptions? options, out string error);
+			Assert.False(parsed);
+			Assert.Null(options);
+			Assert.Contains("完全为空", error, StringComparison.Ordinal);
+			Assert.Equal("keep", File.ReadAllText(sentinel));
+		}
+		finally { Directory.Delete(profile, true); }
+	}
+
+	[Fact]
 	public void SmokeModeRejectsExistingDatabase()
 	{
 		string profile = Path.Combine(Path.GetTempPath(), $"nori-smoke-test-{Guid.NewGuid():N}");
@@ -187,7 +205,7 @@ public sealed class SmokeTestTests
 
 			Assert.False(parsed);
 			Assert.Null(options);
-			Assert.Contains("nori.db", error, StringComparison.Ordinal);
+			Assert.Contains("完全为空", error, StringComparison.Ordinal);
 		}
 		finally
 		{

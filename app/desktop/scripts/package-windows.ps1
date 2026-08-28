@@ -69,6 +69,13 @@ foreach ($metadataFile in $metadataFiles) {
 	$metadataPath = Join-Path $metadataOutput $metadataFile
 	Copy-Item -LiteralPath $metadataPath -Destination $staging -Force
 	Copy-Item -LiteralPath $metadataPath -Destination $output -Force
+	$suffixed = switch ($metadataFile) {
+		"SBOM.cdx.json" { "SBOM-win-x64.cdx.json" }
+		"THIRD-PARTY-NOTICES.json" { "THIRD-PARTY-NOTICES-win-x64.json" }
+		"THIRD-PARTY-NOTICES.md" { "THIRD-PARTY-NOTICES-win-x64.md" }
+		"RELEASE-MANIFEST.json" { "RELEASE-MANIFEST-win-x64.json" }
+	}
+	Copy-Item -LiteralPath $metadataPath -Destination (Join-Path $output $suffixed) -Force
 }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($staging, $artifactPath, [IO.Compression.CompressionLevel]::Optimal, $false)

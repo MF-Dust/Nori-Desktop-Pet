@@ -48,13 +48,14 @@ const native = rid.startsWith("win-") ? "Live2DCubismCore.dll" : rid.startsWith(
 file(rid.startsWith("osx-")
 	? join(slot, "Nori.Desktop.app", "Contents", "MacOS", native)
 	: join(slot, native));
-const forbidden = new Set(["data", "map", "dotnet", "shared", "coreclr", "hostfxr", "hostpolicy"]);
+const forbidden = new Set(["data", "dotnet", "shared", "coreclr", "hostfxr", "hostpolicy"]);
 const lower = (value) => value.toLowerCase();
 const walkForbidden = (path) => {
 	for (const name of readdirSync(path)) {
 		const full = join(path, name);
 		const normalized = lower(name.replace(/\.[^.]+$/, ""));
-		if (forbidden.has(normalized) || lower(name).endsWith(".map")) fail(`FDD 发布目录包含禁止项: ${relative(root, full)}`);
+		const withoutLib = normalized.replace(/^lib/, "");
+		if (forbidden.has(normalized) || forbidden.has(withoutLib) || lower(name).endsWith(".map")) fail(`FDD 发布目录包含禁止项: ${relative(root, full)}`);
 		if (lstatSync(full).isDirectory()) walkForbidden(full);
 	}
 };

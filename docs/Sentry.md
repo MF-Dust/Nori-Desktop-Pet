@@ -31,7 +31,7 @@ NORI_SENTRY_RELEASE
 NORI_SENTRY_ENVIRONMENT
 ```
 
-`SENTRY_AUTH_TOKEN` 只用于构建期 source map/发布管理，不能进入 ZIP。DSN 是公开项目标识，不是鉴权令牌。普通构建的产品版本精确为 `Dev`；Release 由 GitHub Actions 通过 `NORI_PRODUCT_VERSION` 注入稳定版本、通过 `NORI_PRODUCT_INFORMATIONAL_VERSION` 注入带短提交 hash 的 informational version，Native 与 Web 使用不带 hash 的 `<version>-<codename>` Sentry release。
+`SENTRY_AUTH_TOKEN` 只用于构建期 source map/发布管理，不能进入 ZIP。DSN 是公开项目标识，不是鉴权令牌。普通构建的产品版本精确为 `Dev`；Release 由 GitHub Actions 通过 `NORI_PRODUCT_VERSION` 注入稳定版本、通过 `NORI_PRODUCT_INFORMATIONAL_VERSION` 注入带短提交 hash 的 informational version，Native 与 Web 使用不带 hash、仅数字的 `<version>` Sentry release；codename 只用于产品版本、标签和产物命名。
 
 ## GitHub Actions Secrets
 
@@ -64,7 +64,7 @@ release 是手动 workflow，顺序不可颠倒：
 → 创建 GitHub Release
 ```
 
-三平台 release 均生成槽式 framework-dependent 归档：Windows `win-x64` ZIP、Linux tar.gz、macOS ZIP，完整归档 root（包括隐藏 `.current`）。目标机必须安装 .NET 10 Runtime，Windows 另需 WebView2；不提供 self-contained、安装器、签名或自动更新。工作流不会再有 `include_runtime` 开关。
+Release workflow 当前为 `win-x64`、`linux-x64`、`osx-arm64` 生成槽式 framework-dependent 归档：Windows ZIP、Linux tar.gz、macOS ZIP，完整归档 root（包括隐藏 `.current`）。目标机必须安装 .NET 10 Runtime，Windows 另需 WebView2；不提供 self-contained、安装器、签名或自动更新。工作流不会再有 `include_runtime` 开关。
 
 发布输入还必须显式为 true：
 

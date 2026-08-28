@@ -22,7 +22,9 @@ public static class StorageBootstrapper
 		ArgumentNullException.ThrowIfNull(config);
 		string oldPath = Path.GetFullPath(oldDefaultPath);
 		if (!string.Equals(config.GetStringOr("memory_knowledge_path", "").Trim(), oldPath, PathComparison)) return;
-		config.Set("memory_knowledge_path", new ConfigValue.Text(newPath));
+		// 空间移动后由 KnowledgeService 按当前 AppStoragePaths 解析稳定逻辑 ID。
+		config.Set("memory_knowledge_path", new ConfigValue.Text("nori://knowledge/Memory.md"));
+		_ = newPath;
 		database.Locked(connection =>
 		{
 			using SqliteTransaction transaction = connection.BeginTransaction();
@@ -59,12 +61,12 @@ public static class StorageBootstrapper
 		ValidateExistingTarget(paths);
 		if (Directory.Exists(paths.DataRoot) && File.Exists(paths.MarkerPath))
 		{
-			bool migrated = ValidateMarker(paths.MarkerPath);
-			ValidateReceipt(paths);
-			if (migrated && !File.Exists(paths.CleanupReceiptPath))
-				throw new InvalidOperationException("已迁移的数据缺少旧源清理收据");
+			MigrationMarker marker = ValidateMarker(paths.MarkerPath);
+			ReceiptInfo? receipt = ValidateReceipt(paths, marker, legacyDataPath ?? LegacyDataPathResolver.Resolve());
+			if (marker.Status == "cleanup_pending" && receipt is null)
+				throw new InvalidOperationException("数据 marker 标记清理待完成但缺少收据");
 			paths.EnsureCreated();
-			return new StorageBootstrapResult(migrated, true, legacyDataPath, ReadMigrationId(paths));
+			return new StorageBootstrapResult(marker.Migrated, true, receipt?.Source, receipt?.MigrationId ?? marker.MigrationId);
 		}
 		if (Directory.Exists(paths.DataRoot) && Directory.EnumerateFileSystemEntries(paths.DataRoot).Any())
 			throw new InvalidOperationException($"新数据目录不是空目录且缺少有效 marker: {paths.DataRoot}");
@@ -86,7 +88,7 @@ public static class StorageBootstrapper
 			}
 			WriteMarker(staging, productVersion, rid, hasLegacyData, migrationId);
 			if (hasLegacyData)
-				WriteAtomicFile(Path.Combine(staging, AppStoragePaths.CleanupReceiptFileName), JsonSerializer.Serialize(new { schema_version = 1, status = "pending", migration_id = migrationId }) + Environment.NewLine);
+				WriteAtomicFile(Path.Combine(staging, AppStoragePaths.CleanupReceiptFileName), JsonSerializer.Serialize(new { schema_version = 1, status = "pending", migration_id = migrationId, source }) + Environment.NewLine);
 			ValidateStaging(staging, paths);
 			if (Directory.Exists(paths.DataRoot) && Directory.EnumerateFileSystemEntries(paths.DataRoot).Any())
 				throw new InvalidOperationException("迁移期间 data 目录发生变化，已拒绝覆盖");
@@ -102,14 +104,21 @@ public static class StorageBootstrapper
 	}
 
 	/// <summary>ready 后清理已迁移的旧数据；失败保留收据供下次重试。</summary>
-	public static void CleanupLegacy(StorageBootstrapResult result, AppStoragePaths paths)
+	public static void CleanupLegacy(StorageBootstrapResult result, AppStoragePaths paths, string expectedSource)
 	{
 		ArgumentNullException.ThrowIfNull(paths);
-		string source = Path.GetFullPath(LegacyDataPathResolver.Resolve());
+		string allowedSource = CanonicalLegacySource(expectedSource);
 		if (!result.Migrated && !File.Exists(paths.CleanupReceiptPath)) return;
-		if (result.Migrated && !string.IsNullOrWhiteSpace(result.LegacyDataPath)
-			&& !string.Equals(source, Path.GetFullPath(result.LegacyDataPath), PathComparison)) return;
-		if (!Directory.Exists(source)) { TryDeleteReceipt(paths.CleanupReceiptPath); return; }
+		MigrationMarker marker = ValidateMarker(paths.MarkerPath);
+		ReceiptInfo? receipt = ValidateReceipt(paths, marker, allowedSource);
+		if (receipt is null || !string.Equals(receipt.Source, allowedSource, PathComparison)) return;
+		string source = receipt.Source;
+		if (!Directory.Exists(source))
+		{
+			UpdateMarkerStatus(paths.MarkerPath, "ready");
+			TryDeleteReceipt(paths.CleanupReceiptPath);
+			return;
+		}
 		try
 		{
 			EnsureLegacySourceSafe(source);
@@ -127,15 +136,16 @@ public static class StorageBootstrapper
 				File.Delete(backup);
 			}
 			if (!Directory.EnumerateFileSystemEntries(source).Any()) Directory.Delete(source);
+			UpdateMarkerStatus(paths.MarkerPath, "ready");
 			TryDeleteReceipt(paths.CleanupReceiptPath);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
 			try
 			{
-				string? migrationId = result.MigrationId ?? ReadMigrationId(paths);
+				string? migrationId = result.MigrationId ?? receipt.MigrationId;
 				if (!string.IsNullOrWhiteSpace(migrationId))
-					WriteAtomicFile(paths.CleanupReceiptPath, JsonSerializer.Serialize(new { schema_version = 1, status = "pending", migration_id = migrationId, error_type = exception.GetType().FullName }) + Environment.NewLine);
+					WriteAtomicFile(paths.CleanupReceiptPath, JsonSerializer.Serialize(new { schema_version = 1, status = "pending", migration_id = migrationId, source, error_type = exception.GetType().FullName }) + Environment.NewLine);
 			}
 			catch { }
 		}
@@ -226,7 +236,10 @@ public static class StorageBootstrapper
 
 	private static void CopyMatchingFiles(string source, string staging, string prefix)
 	{
-		foreach (string path in Directory.EnumerateFiles(source, prefix + "*", SearchOption.TopDirectoryOnly))
+		string[] candidates = Directory.EnumerateFiles(source, prefix + "*", SearchOption.TopDirectoryOnly).ToArray();
+		// 即使旧备份不在最新三份内，也不能让超额文件绕过单文件限制。
+		foreach (string path in candidates) { EnsureRegularFile(path); if (new FileInfo(path).Length > MaxCopiedFileBytes) throw new InvalidOperationException($"迁移文件超过 64 MiB 限制: {path}"); }
+		foreach (string path in candidates.OrderByDescending(File.GetLastWriteTimeUtc).Take(3))
 			CopyFileChecked(path, Path.Combine(staging, "core", "database", Path.GetFileName(path)));
 	}
 
@@ -335,7 +348,7 @@ public static class StorageBootstrapper
 		string json = JsonSerializer.Serialize(new
 		{
 			schema_version = MarkerSchemaVersion,
-			status = "ready",
+			status = migrated ? "cleanup_pending" : "ready",
 			product_version = productVersion,
 			numeric_version = ExtractNumericVersion(productVersion),
 			rid,
@@ -366,9 +379,9 @@ public static class StorageBootstrapper
 		}
 	}
 
-	private static void ValidateReceipt(AppStoragePaths paths)
+	private static ReceiptInfo? ValidateReceipt(AppStoragePaths paths, MigrationMarker marker, string expectedSource)
 	{
-		if (!File.Exists(paths.CleanupReceiptPath)) return;
+		if (!File.Exists(paths.CleanupReceiptPath)) return null;
 		if ((File.GetAttributes(paths.CleanupReceiptPath) & FileAttributes.ReparsePoint) != 0)
 			throw new InvalidOperationException("旧数据清理收据不是普通文件");
 		using JsonDocument document = JsonDocument.Parse(File.ReadAllText(paths.CleanupReceiptPath));
@@ -376,39 +389,55 @@ public static class StorageBootstrapper
 		if (!root.TryGetProperty("schema_version", out JsonElement schema) || schema.ValueKind != JsonValueKind.Number || schema.GetInt32() != 1
 			|| !root.TryGetProperty("status", out JsonElement status) || status.ValueKind != JsonValueKind.String || status.GetString() != "pending"
 			|| !root.TryGetProperty("migration_id", out JsonElement id) || id.ValueKind != JsonValueKind.String
-			|| !Guid.TryParseExact(id.GetString(), "N", out _))
+			|| !Guid.TryParseExact(id.GetString(), "N", out _)
+			|| !root.TryGetProperty("source", out JsonElement sourceValue) || sourceValue.ValueKind != JsonValueKind.String)
 			throw new InvalidOperationException("旧数据清理收据无效");
-		using JsonDocument marker = JsonDocument.Parse(File.ReadAllText(paths.MarkerPath));
-		string? markerId = marker.RootElement.TryGetProperty("migration_id", out JsonElement markerValue) ? markerValue.GetString() : null;
-		if (!string.Equals(markerId, id.GetString(), StringComparison.Ordinal)) throw new InvalidOperationException("旧数据清理收据与 marker 不匹配");
+		string source = CanonicalLegacySource(sourceValue.GetString()!);
+		string allowed = CanonicalLegacySource(expectedSource);
+		if (!string.Equals(source, allowed, PathComparison)) throw new InvalidOperationException("旧数据清理收据来源不在调用方允许范围内");
+		if (!string.Equals(marker.MigrationId, id.GetString(), StringComparison.Ordinal)) throw new InvalidOperationException("旧数据清理收据与 marker 不匹配");
+		return new ReceiptInfo(id.GetString()!, source);
 	}
 
-	private static string? ReadMigrationId(AppStoragePaths paths)
+	private static void UpdateMarkerStatus(string markerPath, string status)
 	{
-		if (!File.Exists(paths.CleanupReceiptPath)) return null;
-		using JsonDocument document = JsonDocument.Parse(File.ReadAllText(paths.CleanupReceiptPath));
-		return document.RootElement.TryGetProperty("migration_id", out JsonElement id) && id.ValueKind == JsonValueKind.String
-			? id.GetString() : null;
+		if (status is not ("ready" or "cleanup_pending")) throw new ArgumentException("marker 状态无效", nameof(status));
+		using JsonDocument document = JsonDocument.Parse(File.ReadAllText(markerPath));
+		Dictionary<string, JsonElement> values = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(document.RootElement.GetRawText())
+			?? throw new InvalidOperationException("数据 marker 无效");
+		using JsonDocument state = JsonDocument.Parse(JsonSerializer.Serialize(status));
+		values["status"] = state.RootElement.Clone();
+		WriteAtomicFile(markerPath, JsonSerializer.Serialize(values) + Environment.NewLine);
 	}
 
-	private static bool ValidateMarker(string path)
+	private static string CanonicalLegacySource(string source)
+	{
+		string full = Path.GetFullPath(source);
+		EnsureLegacySourceAncestorsSafe(full);
+		if (Directory.Exists(full)) EnsureDirectoryTree(full);
+		return full;
+	}
+
+	private static MigrationMarker ValidateMarker(string path)
 	{
 		if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
 			throw new InvalidOperationException($"数据 marker 不是普通文件: {path}");
 		using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
 		JsonElement root = document.RootElement;
 		if (!root.TryGetProperty("schema_version", out JsonElement schema) || schema.ValueKind != JsonValueKind.Number || schema.GetInt32() != MarkerSchemaVersion
-			|| !root.TryGetProperty("status", out JsonElement status) || status.ValueKind != JsonValueKind.String || status.GetString() != "ready"
+			|| !root.TryGetProperty("status", out JsonElement status) || status.ValueKind != JsonValueKind.String || status.GetString() is not ("ready" or "cleanup_pending")
 			|| !root.TryGetProperty("product_version", out JsonElement product) || product.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(product.GetString())
 			|| !root.TryGetProperty("numeric_version", out JsonElement numeric) || numeric.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(numeric.GetString())
 			|| !root.TryGetProperty("rid", out JsonElement rid) || rid.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(rid.GetString()))
 			throw new InvalidOperationException($"数据 marker 无效: {path}");
+		if (!IsNumericVersionSupported(numeric.GetString()!)) throw new InvalidOperationException($"数据 marker 的 numeric_version 无效: {path}");
 		bool migrated = root.TryGetProperty("migrated", out JsonElement migratedValue) && migratedValue.ValueKind == JsonValueKind.True;
-		if (migrated && (!root.TryGetProperty("migration_id", out JsonElement id) || id.ValueKind != JsonValueKind.String || !Guid.TryParseExact(id.GetString(), "N", out _)))
+		string? migrationId = root.TryGetProperty("migration_id", out JsonElement id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
+		if (migrated && (migrationId is null || !Guid.TryParseExact(migrationId, "N", out _)))
 			throw new InvalidOperationException($"数据 marker 缺少有效迁移标识: {path}");
-		if (!migrated && root.TryGetProperty("migration_id", out JsonElement nonMigratedId) && nonMigratedId.ValueKind != JsonValueKind.Null)
-			throw new InvalidOperationException($"数据 marker 的迁移字段无效: {path}");
-		return migrated;
+		if (!migrated && migrationId is not null) throw new InvalidOperationException($"数据 marker 的迁移字段无效: {path}");
+		if (status.GetString() == "cleanup_pending" && !migrated) throw new InvalidOperationException($"未迁移数据不能处于清理待完成状态: {path}");
+		return new MigrationMarker(migrated, status.GetString()!, migrationId);
 	}
 
 	private static void ValidateStaging(string staging, AppStoragePaths paths)
@@ -419,9 +448,15 @@ public static class StorageBootstrapper
 
 	private static string ExtractNumericVersion(string version)
 	{
+		if (version.Equals("Dev", StringComparison.Ordinal)) return "0.0.0";
 		string value = version.TrimStart('v', 'V').Split(['-', '+'], 2)[0];
-		return System.Text.RegularExpressions.Regex.IsMatch(value, "^[0-9]+\\.[0-9]+\\.[0-9]+$") ? value : "0.0.0";
+		if (!IsNumericVersionSupported(value)) throw new InvalidOperationException("产品版本各段必须在 .NET Version、Int32 和 JS 安全整数范围内");
+		return value;
 	}
+
+	private static bool IsNumericVersionSupported(string value) =>
+		System.Text.RegularExpressions.Regex.IsMatch(value, "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+		&& value.Split('.').All(segment => ushort.TryParse(segment, out _));
 
 	private static void MoveStaging(string staging, string target)
 	{
@@ -439,16 +474,21 @@ public static class StorageBootstrapper
 	private static void EnsureLegacySourceSafe(string source)
 	{
 		string full = Path.GetFullPath(source);
+		EnsureLegacySourceAncestorsSafe(full);
+		EnsureDirectoryTree(full);
+	}
+
+	private static void EnsureLegacySourceAncestorsSafe(string full)
+	{
 		string? current = full;
 		while (current is not null && !string.IsNullOrEmpty(Path.GetPathRoot(current)))
 		{
-			if (Directory.Exists(current) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
 				throw new InvalidOperationException("旧数据路径包含符号链接或 reparse point");
 			string? parent = Path.GetDirectoryName(current);
 			if (parent is null || string.Equals(parent, current, PathComparison)) break;
 			current = parent;
 		}
-		EnsureDirectoryTree(full);
 	}
 
 	private static void EnsureLegacyEntrySafe(string path)
@@ -479,6 +519,9 @@ public static class StorageBootstrapper
 	{
 		try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { }
 	}
+
+	private sealed record MigrationMarker(bool Migrated, string Status, string? MigrationId);
+	private sealed record ReceiptInfo(string MigrationId, string Source);
 }
 
 /// <summary>存储 bootstrap 的结果，用于 ready 后进行旧源清理。</summary>

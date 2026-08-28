@@ -33,8 +33,9 @@ public static class AppStoragePathResolver
 
 	public static AppStoragePaths Resolve(string? launcherPath = null, string? baseDirectory = null)
 	{
-		bool devOverride = string.Equals(Environment.GetEnvironmentVariable("NORI_DEV"), "1", StringComparison.Ordinal)
-			|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"));
+		bool devOverride = string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal)
+			&& (string.Equals(Environment.GetEnvironmentVariable("NORI_DEV"), "1", StringComparison.Ordinal)
+				|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT")));
 		if (devOverride)
 			return new AppStoragePaths(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT") ?? Environment.CurrentDirectory);
 

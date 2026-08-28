@@ -69,7 +69,7 @@ public static class DeploymentSelector
 		int revision = RequiredInt(root, "revision");
 		string rid = RequiredString(root, "rid");
 		string entrypoint = RequiredString(root, "entrypoint");
-		if (schema != 1 || !Regex.IsMatch(numeric, "^[0-9]+\\.[0-9]+\\.[0-9]+$", RegexOptions.CultureInvariant)
+		if (schema != 1 || !IsSupportedNumericVersion(numeric)
 			|| revision < 0 || ContainsControl(product) || ContainsControl(numeric) || ContainsControl(rid) || ContainsControl(entrypoint)
 			|| Path.IsPathRooted(entrypoint) || entrypoint.Contains('\\') || entrypoint.Split('/').Any(part => part is "" or "." or ".."))
 			throw new InvalidOperationException($"部署 manifest 字段无效: {path}");
@@ -102,6 +102,10 @@ public static class DeploymentSelector
 	}
 
 	private static bool ContainsControl(string value) => value.Any(char.IsControl);
+
+	private static bool IsSupportedNumericVersion(string value) =>
+		Regex.IsMatch(value, "^[0-9]+\\.[0-9]+\\.[0-9]+$", RegexOptions.CultureInvariant)
+		&& value.Split('.').All(segment => ushort.TryParse(segment, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out _));
 
 	private static bool IsContained(string path, string root)
 	{
