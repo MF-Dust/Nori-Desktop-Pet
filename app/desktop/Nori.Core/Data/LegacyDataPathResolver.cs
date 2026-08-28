@@ -33,9 +33,9 @@ public static class AppStoragePathResolver
 
 	public static AppStoragePaths Resolve(string? launcherPath = null, string? baseDirectory = null)
 	{
-		string? explicitRoot = Environment.GetEnvironmentVariable("NORI_PACKAGE_ROOT");
-		if (!string.IsNullOrWhiteSpace(explicitRoot)) return new AppStoragePaths(explicitRoot);
-		if (string.Equals(Environment.GetEnvironmentVariable("NORI_DEV"), "1", StringComparison.Ordinal))
+		bool devOverride = string.Equals(Environment.GetEnvironmentVariable("NORI_DEV"), "1", StringComparison.Ordinal)
+			|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"));
+		if (devOverride)
 			return new AppStoragePaths(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT") ?? Environment.CurrentDirectory);
 
 		string supplied = launcherPath ?? baseDirectory ?? AppContext.BaseDirectory;
@@ -43,6 +43,11 @@ public static class AppStoragePathResolver
 		string directory = File.Exists(full) ? Path.GetDirectoryName(full)! : full;
 		string? packageRoot = ValidatePublishedSlot(directory);
 		if (packageRoot is not null) return new AppStoragePaths(packageRoot);
+
+		// dotnet run 没有稳定槽；它只能使用当前工作目录，避免误触真实用户数据目录。
+		string processName = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
+		if (processName.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+			return new AppStoragePaths(Environment.CurrentDirectory);
 		throw new InvalidOperationException("无法安全推断包根目录，请通过 Nori 启动器启动应用");
 	}
 

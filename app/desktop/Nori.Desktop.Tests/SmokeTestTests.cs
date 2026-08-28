@@ -178,7 +178,9 @@ public sealed class SmokeTestTests
 		string profile = Path.Combine(Path.GetTempPath(), $"nori-smoke-test-{Guid.NewGuid():N}");
 		string dataDir = Path.Combine(profile, "data");
 		Directory.CreateDirectory(dataDir);
-		File.WriteAllText(Path.Combine(dataDir, AppPaths.DatabaseFileName), "not a test database");
+		string databaseDirectory = Path.Combine(dataDir, "core", "database");
+		Directory.CreateDirectory(databaseDirectory);
+		File.WriteAllText(Path.Combine(databaseDirectory, AppPaths.DatabaseFileName), "not a test database");
 		try
 		{
 			bool parsed = SmokeTestOptions.TryParse(["--smoke-test", "first-run", "--profile", profile], out SmokeTestOptions? options, out string error);

@@ -127,6 +127,9 @@ public sealed class AppStoragePaths : IAppStoragePaths
 		string fullRoot = Normalize(root);
 		string fullPath = Normalize(path);
 		if (!IsContained(fullPath, fullRoot)) throw new InvalidOperationException("路径越出数据目录");
+		if ((File.Exists(fullRoot) || Directory.Exists(fullRoot))
+			&& (File.GetAttributes(fullRoot) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException($"不允许使用符号链接或 reparse point: {fullRoot}");
 		string relative = Path.GetRelativePath(fullRoot, fullPath);
 		string current = fullRoot;
 		foreach (string part in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))

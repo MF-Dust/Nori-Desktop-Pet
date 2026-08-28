@@ -16,14 +16,13 @@ public static class DiagnosticInfo
 	/// <summary>
 	/// 构建诊断信息字典 (键为英文 snake_case 便于检索, 值为可读文本)
 	/// </summary>
-	public static Dictionary<string, string> Build() => Build(null);
-
 	/// <summary>构建诊断信息并附带当前桌宠渲染指标。</summary>
-	public static Dictionary<string, string> Build(PetRuntime? pet, bool safeMode = false, AppStoragePaths? paths = null)
+	public static Dictionary<string, string> Build(PetRuntime? pet, AppStoragePaths paths, bool safeMode = false)
 	{
 		string version = Nori.Core.ProductVersion.Current;
 		PetRenderMetrics? render = pet?.RenderMetrics;
-		AppStoragePaths storage = paths ?? new AppStoragePaths(Environment.CurrentDirectory);
+		ArgumentNullException.ThrowIfNull(paths);
+		AppStoragePaths storage = paths;
 		long dbBytes = FileSizeOrDefault(storage.DatabasePath);
 		return new Dictionary<string, string>
 		{

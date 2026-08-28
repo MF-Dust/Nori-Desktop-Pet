@@ -14,8 +14,8 @@ internal static class Program
 	{
 		try
 		{
-			WaitPid(args, out int? waitPid, out List<string> forwarded);
-			if (waitPid is not null) WaitForProcess(waitPid.Value);
+			WaitPid(args, out int? waitPid, out long? waitStartTicks, out List<string> forwarded);
+			if (waitPid is not null) WaitForProcess(waitPid.Value, waitStartTicks);
 			string packageRoot = ResolvePackageRoot();
 			DeploymentSelection selection = DeploymentSelector.Select(packageRoot, RuntimeRid());
 			EnsureExecutable(selection.Entrypoint);
@@ -67,35 +67,47 @@ internal static class Program
 		return $"{os}-{architecture}";
 	}
 
-	private static void WaitPid(string[] args, out int? waitPid, out List<string> forwarded)
+	private static void WaitPid(string[] args, out int? waitPid, out long? waitStartTicks, out List<string> forwarded)
 	{
 		waitPid = null;
+		waitStartTicks = null;
 		forwarded = [];
 		for (int index = 0; index < args.Length; index++)
 		{
-			if (!args[index].Equals(WaitPidArgument, StringComparison.Ordinal))
+			if (args[index].Equals(WaitPidArgument, StringComparison.Ordinal))
 			{
-				forwarded.Add(args[index]);
+				if (waitPid is not null || index + 1 >= args.Length || !int.TryParse(args[++index], out int pid) || pid <= 0)
+					throw new ArgumentException("--launcher-wait-pid 必须带一个正整数 PID 且只能指定一次");
+				waitPid = pid;
 				continue;
 			}
-			if (waitPid is not null || index + 1 >= args.Length || !int.TryParse(args[++index], out int pid) || pid <= 0)
-				throw new ArgumentException("--launcher-wait-pid 必须带一个正整数 PID 且只能指定一次");
-			waitPid = pid;
+			if (args[index].Equals("--launcher-wait-start-ticks", StringComparison.Ordinal))
+			{
+				if (waitStartTicks is not null || index + 1 >= args.Length || !long.TryParse(args[++index], out long ticks) || ticks <= 0)
+					throw new ArgumentException("--launcher-wait-start-ticks 必须带一个正整数且只能指定一次");
+				waitStartTicks = ticks;
+				continue;
+			}
+			forwarded.Add(args[index]);
 		}
+		if (waitStartTicks is not null && waitPid is null) throw new ArgumentException("--launcher-wait-start-ticks 必须配合 --launcher-wait-pid");
 	}
 
-	private static void WaitForProcess(int pid)
+	private static void WaitForProcess(int pid, long? expectedStartTicks)
 	{
 		try
 		{
 			using Process process = Process.GetProcessById(pid);
-			if (!process.WaitForExit((int)WaitTimeout.TotalMilliseconds)) return;
+			if (expectedStartTicks is not null && process.StartTime.ToUniversalTime().Ticks != expectedStartTicks.Value)
+				throw new InvalidOperationException("等待的旧进程身份已变化，拒绝启动新实例");
+			if (!process.WaitForExit((int)WaitTimeout.TotalMilliseconds))
+				throw new TimeoutException("等待旧 Nori 进程退出超时，拒绝启动新实例");
 		}
 		catch (ArgumentException)
 		{
 			// 旧宿主已经退出。
 		}
-		catch (InvalidOperationException)
+		catch (InvalidOperationException exception) when (exception.Message.Contains("process", StringComparison.OrdinalIgnoreCase))
 		{
 			// 旧宿主已经退出。
 		}

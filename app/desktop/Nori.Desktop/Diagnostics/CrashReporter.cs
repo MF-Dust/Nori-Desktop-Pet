@@ -313,36 +313,36 @@ public static class CrashReporter
 
 		Button restartButton = CreateButton("重启应用", (_, _) =>
 		{
-			resolved = true;
 			try
 			{
-				string? launcher = Environment.GetEnvironmentVariable("NORI_LAUNCHER_PATH");
-				string? executable = Environment.ProcessPath;
-				if (!string.IsNullOrWhiteSpace(launcher) && File.Exists(launcher))
+				string launcher = ResolveTrustedLauncher();
+				ProcessStartInfo startInfo = new(launcher)
 				{
-					ProcessStartInfo startInfo = new(launcher)
-					{
-						UseShellExecute = false,
-						WorkingDirectory = Environment.GetEnvironmentVariable("NORI_PACKAGE_ROOT") ?? Environment.CurrentDirectory,
-					};
-					startInfo.ArgumentList.Add("--launcher-wait-pid");
-					startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
-					Process.Start(startInfo);
-				}
-				else if (Environment.GetEnvironmentVariable("NORI_DEV") == "1" && !string.IsNullOrWhiteSpace(executable))
+					UseShellExecute = false,
+					WorkingDirectory = ResolveTrustedPackageRoot(),
+				};
+				startInfo.ArgumentList.Add("--launcher-wait-pid");
+				startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+				try
 				{
-					Process.Start(new ProcessStartInfo { FileName = executable, UseShellExecute = false });
+					startInfo.ArgumentList.Add("--launcher-wait-start-ticks");
+					startInfo.ArgumentList.Add(Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks.ToString());
 				}
-				else
+				catch (Exception failure) when (failure is InvalidOperationException or System.ComponentModel.Win32Exception)
 				{
-					throw new InvalidOperationException("找不到发布启动器");
+					WriteLogSafe($"读取崩溃进程身份失败: {SensitiveDataRedactor.ExceptionSummary(failure)}");
 				}
+				Process? child = Process.Start(startInfo);
+				if (child is null) throw new InvalidOperationException("启动器未返回进程");
+				resolved = true;
+				child.Dispose();
+				ShutdownSafely(0);
 			}
 			catch (Exception failure)
 			{
-				WriteLogSafe($"重启应用失败: {failure.Message}");
+				WriteLogSafe($"重启应用失败: {SensitiveDataRedactor.ExceptionSummary(failure)}");
+				summary.Text = $"重启失败: {SensitiveDataRedactor.ExceptionSummary(failure)}。请手动退出或复制错误信息。";
 			}
-			ShutdownSafely(0);
 		});
 
 		Button exitButton = CreateButton("退出应用", (_, _) =>
@@ -450,6 +450,37 @@ public static class CrashReporter
 		Environment.Exit(code);
 	}
 
+	private static string ResolveTrustedPackageRoot()
+	{
+		string? value = Environment.GetEnvironmentVariable("NORI_PACKAGE_ROOT");
+		if (string.IsNullOrWhiteSpace(value)) throw new InvalidOperationException("缺少受信任的发布包根目录");
+		string root = Path.GetFullPath(value);
+		if (!Directory.Exists(root) || (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException("发布包根目录无效");
+		string baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+		if (!IsContained(baseDirectory, root)) throw new InvalidOperationException("当前宿主不属于受信任的发布包");
+		return root;
+	}
+
+	private static string ResolveTrustedLauncher()
+	{
+		string root = ResolveTrustedPackageRoot();
+		string launcher = OperatingSystem.IsMacOS()
+			? Path.Combine(root, "Nori.app", "Contents", "MacOS", "Nori")
+			: Path.Combine(root, OperatingSystem.IsWindows() ? "Nori.exe" : "Nori");
+		if (!IsContained(launcher, root) || !File.Exists(launcher) || (File.GetAttributes(launcher) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException("受信任的发布启动器不存在");
+		return launcher;
+	}
+
+	private static bool IsContained(string path, string root)
+	{
+		StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+		string fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+		return fullPath.Equals(fullRoot, comparison) || fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison);
+	}
+
 	private static void ShutdownSafely(int code)
 	{
 		try { _lifetime?.Shutdown(code); }
@@ -469,8 +500,14 @@ public static class CrashReporter
 	{
 		try
 		{
-			FileLogger logger = _logger ??= new FileLogger();
-			logger.Write(LogSource.Backend, "error", message);
+			if (_logger is null)
+			{
+				string root = ResolveTrustedPackageRoot();
+				string logDirectory = Path.Combine(root, "data", "diagnostics", "logs");
+				if (!IsContained(logDirectory, root)) return;
+				_logger = new FileLogger(logDirectory);
+			}
+			_logger.Write(LogSource.Backend, "error", SensitiveDataRedactor.Redact(message));
 		}
 		catch
 		{

@@ -7,8 +7,17 @@ APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-Dev}}"
 NUMERIC_VERSION="${APP_VERSION#v}"
 NUMERIC_VERSION="${NUMERIC_VERSION%%-*}"
 NUMERIC_VERSION="${NUMERIC_VERSION%%+*}"
-[[ "$NUMERIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || NUMERIC_VERSION="0.0.0"
+if [[ "$APP_VERSION" != "Dev" && ! "$NUMERIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+	echo "版本必须是数字 major.minor.patch 或 Dev。" >&2; exit 2
+fi
+if [[ "$APP_VERSION" == "Dev" ]]; then NUMERIC_VERSION="0.0.0"; fi
+CODENAME="${NORI_CODENAME:-}"
+if [[ "$APP_VERSION" != "Dev" ]]; then
+	if [[ -z "$CODENAME" ]]; then CODENAME="${APP_VERSION#*-}"; CODENAME="${CODENAME%%+*}"; fi
+	[[ "$CODENAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "Codename 无效。" >&2; exit 2; }
+fi
 REVISION="${NORI_DEPLOYMENT_REVISION:-0}"
+[[ "$REVISION" =~ ^[0-9]+$ ]] || { echo "部署 revision 必须是非负整数。" >&2; exit 2; }
 if [[ -z "${NORI_COMMIT_SHA:-}" ]]; then NORI_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"; fi
 export NORI_VERSION="$APP_VERSION" NORI_PRODUCT_VERSION="$APP_VERSION" NORI_COMMIT_SHA
 
@@ -28,15 +37,17 @@ runtime_rid() {
 
 make_manifest() {
 	local slot="$1" rid="$2" entry="$3"
-	printf '{"schema_version":1,"product_version":"%s","numeric_version":"%s","revision":%s,"rid":"%s","entrypoint":"%s"}\n' \
-		"$APP_VERSION" "$NUMERIC_VERSION" "$REVISION" "$rid" "$entry" > "$slot/deployment.json"
+	node scripts/write-deployment-json.mjs "$slot/deployment.json" "$APP_VERSION" "$NUMERIC_VERSION" "$REVISION" "$rid" "$entry"
 }
 
 make_macos_launcher() {
 	local root="$1" rid="$2" temp="bin/publish/$rid/launcher"
 	mkdir -p "$root/Nori.app/Contents/MacOS" "$root/Nori.app/Contents/Resources"
 	cp "$temp/Nori" "$root/Nori.app/Contents/MacOS/Nori"
-	cp "$temp"/Nori.{dll,deps.json,runtimeconfig.json} "$root/Nori.app/Contents/MacOS/" 2>/dev/null || true
+	for file in Nori.dll Nori.deps.json Nori.runtimeconfig.json; do
+		[[ -f "$temp/$file" ]] || { echo "macOS launcher 缺少 $file。" >&2; exit 2; }
+		cp "$temp/$file" "$root/Nori.app/Contents/MacOS/$file"
+	done
 	chmod +x "$root/Nori.app/Contents/MacOS/Nori"
 	cat > "$root/Nori.app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

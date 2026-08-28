@@ -35,6 +35,41 @@ internal static class Program
 		return $"{os}-{architecture}";
 	}
 
+	private static void ShowStartupError(string title, string message)
+	{
+		string safe = Nori.Core.Security.SensitiveDataRedactor.Redact(message);
+		if (OperatingSystem.IsWindows())
+		{
+			MessageBox(nint.Zero, safe, title, 0x10);
+			return;
+		}
+		if (OperatingSystem.IsMacOS())
+		{
+			try
+			{
+				System.Diagnostics.ProcessStartInfo alert = new("osascript") { UseShellExecute = false };
+				alert.ArgumentList.Add("-e");
+				alert.ArgumentList.Add($"display alert {AppleScriptString(title)} message {AppleScriptString(safe)}");
+				using System.Diagnostics.Process? process = System.Diagnostics.Process.Start(alert);
+				if (process is null) throw new InvalidOperationException("无法显示启动错误");
+				process.WaitForExit(5000);
+				return;
+			}
+			catch { }
+		}
+		Console.Error.WriteLine($"{title}: {safe}");
+	}
+
+	private static string AppleScriptString(string value) => "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", " ", StringComparison.Ordinal).Replace("\n", " ", StringComparison.Ordinal) + "\"";
+
+	[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = CharSet.Unicode)]
+	private static extern int MessageBox(nint hWnd, string text, string caption, uint type);
+
+	private static bool IsDevelopmentProcess() =>
+		Environment.GetEnvironmentVariable("NORI_DEV") == "1"
+		|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"))
+		|| Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+
 	private static void ActivateFirstInstance()
 	{
 		if (Application.Current is App app) app.ActivateMainWindow();
@@ -46,7 +81,7 @@ internal static class Program
 	{
 		if (!StartupOptions.TryParse(args, out StartupOptions? startup, out string parseError))
 		{
-			Console.Error.WriteLine($"启动参数错误: {parseError}");
+			ShowStartupError("启动参数错误", parseError);
 			Environment.ExitCode = 2;
 			return;
 		}
@@ -66,7 +101,7 @@ internal static class Program
 		}
 		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
-			Console.Error.WriteLine($"存储包根不可用: {exception.Message}");
+			ShowStartupError("存储包根不可用", exception.Message);
 			Environment.ExitCode = 2;
 			return;
 		}
@@ -89,13 +124,19 @@ internal static class Program
 		try
 		{
 			AppStoragePaths paths = StoragePaths ?? throw new InvalidOperationException("存储路径尚未初始化");
-			string legacy = smokeTest is null ? LegacyDataPathResolver.Resolve() : Path.Combine(paths.PackageRoot, "legacy-source");
-			StorageMigration = StorageBootstrapper.Bootstrap(paths, ProductVersion.Current, RuntimeRid(), legacy);
+			bool development = IsDevelopmentProcess();
+			string? legacy = development || smokeTest is not null ? null : LegacyDataPathResolver.Resolve();
+			StorageMigration = StorageBootstrapper.Bootstrap(
+				paths,
+				ProductVersion.Current,
+				RuntimeRid(),
+				legacy,
+				allowLegacyMigration: !development && smokeTest is null);
 			BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 		}
 		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
 		{
-			Console.Error.WriteLine($"存储初始化失败: {exception.Message}");
+			ShowStartupError("存储初始化失败", exception.Message);
 			Environment.ExitCode = 1;
 		}
 	}

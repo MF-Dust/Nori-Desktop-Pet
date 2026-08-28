@@ -51,7 +51,7 @@ public static class StorageBootstrapper
 	}
 
 	/// <summary>在新数据库打开前执行，目标有效 marker 优先；失败只清理 staging。</summary>
-	public static StorageBootstrapResult Bootstrap(AppStoragePaths paths, string productVersion, string rid, string? legacyDataPath = null)
+	public static StorageBootstrapResult Bootstrap(AppStoragePaths paths, string productVersion, string rid, string? legacyDataPath = null, bool allowLegacyMigration = true)
 	{
 		ArgumentNullException.ThrowIfNull(paths);
 		ArgumentException.ThrowIfNullOrWhiteSpace(productVersion);
@@ -60,6 +60,7 @@ public static class StorageBootstrapper
 		if (Directory.Exists(paths.DataRoot) && File.Exists(paths.MarkerPath))
 		{
 			ValidateMarker(paths.MarkerPath);
+			ValidateReceipt(paths);
 			paths.EnsureCreated();
 			return new StorageBootstrapResult(false, true, legacyDataPath);
 		}
@@ -67,21 +68,27 @@ public static class StorageBootstrapper
 			throw new InvalidOperationException($"新数据目录不是空目录且缺少有效 marker: {paths.DataRoot}");
 
 		string source = Path.GetFullPath(legacyDataPath ?? LegacyDataPathResolver.Resolve());
-		bool hasLegacyData = Directory.Exists(source) && Directory.EnumerateFileSystemEntries(source).Any();
-		string staging = paths.DataRoot + $".staging-{Guid.NewGuid():N}";
+		if (allowLegacyMigration && Directory.Exists(source)) EnsureLegacySourceSafe(source);
+		bool hasLegacyData = allowLegacyMigration && Directory.Exists(source) && Directory.EnumerateFileSystemEntries(source).Any();
+		string migrationId = Guid.NewGuid().ToString("N");
+		string staging = paths.DataRoot + $".staging-{migrationId}";
 		try
 		{
 			Directory.CreateDirectory(staging);
 			AppStoragePaths.EnsureNoReparsePoints(staging, paths.PackageRoot);
 			CreateLayout(staging);
-			if (hasLegacyData && !string.Equals(source, paths.DataRoot, PathComparison)) CopyLegacy(source, staging);
-			WriteMarker(staging, productVersion, rid, hasLegacyData);
-			FlushMarker(staging);
+			if (hasLegacyData && !string.Equals(source, paths.DataRoot, PathComparison))
+			{
+				EnsureLegacyDatabaseAvailable(source);
+				CopyLegacy(source, staging);
+			}
+			WriteMarker(staging, productVersion, rid, hasLegacyData, migrationId);
 			ValidateStaging(staging, paths);
 			if (Directory.Exists(paths.DataRoot) && Directory.EnumerateFileSystemEntries(paths.DataRoot).Any())
 				throw new InvalidOperationException("迁移期间 data 目录发生变化，已拒绝覆盖");
 			if (Directory.Exists(paths.DataRoot)) Directory.Delete(paths.DataRoot);
 			MoveStaging(staging, paths.DataRoot);
+			if (hasLegacyData) WriteAtomicFile(paths.CleanupReceiptPath, JsonSerializer.Serialize(new { schema_version = 1, status = "pending", migration_id = migrationId }) + Environment.NewLine);
 			return new StorageBootstrapResult(hasLegacyData, false, source);
 		}
 		catch
@@ -94,11 +101,16 @@ public static class StorageBootstrapper
 	/// <summary>ready 后清理已迁移的旧数据；失败保留收据供下次重试。</summary>
 	public static void CleanupLegacy(StorageBootstrapResult result, AppStoragePaths paths)
 	{
-		if (!result.Migrated || string.IsNullOrWhiteSpace(result.LegacyDataPath)) return;
-		string source = Path.GetFullPath(result.LegacyDataPath);
-		if (!Directory.Exists(source)) return;
+		ArgumentNullException.ThrowIfNull(paths);
+		string source = Path.GetFullPath(LegacyDataPathResolver.Resolve());
+		if (!result.Migrated && !File.Exists(paths.CleanupReceiptPath)) return;
+		if (result.Migrated && !string.IsNullOrWhiteSpace(result.LegacyDataPath)
+			&& !string.Equals(source, Path.GetFullPath(result.LegacyDataPath), PathComparison)) return;
+		if (!Directory.Exists(source)) { TryDeleteReceipt(paths.CleanupReceiptPath); return; }
 		try
 		{
+			EnsureLegacySourceSafe(source);
+			EnsureLegacyDatabaseAvailable(source);
 			foreach (string relative in KnownLegacyPaths)
 			{
 				string candidate = Path.Combine(source, relative);
@@ -106,15 +118,23 @@ public static class StorageBootstrapper
 				else if (Directory.Exists(candidate)) Directory.Delete(candidate, true);
 			}
 			foreach (string backup in Directory.EnumerateFiles(source, AppPaths.DatabaseFileName + "-pre-migration-*", SearchOption.TopDirectoryOnly)) File.Delete(backup);
-			foreach (string path in Directory.EnumerateFileSystemEntries(source))
-				if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path);
-			if (!Directory.EnumerateFileSystemEntries(source).Any()) Directory.Delete(source);
-			if (File.Exists(paths.CleanupReceiptPath)) File.Delete(paths.CleanupReceiptPath);
+			if (!Directory.EnumerateFileSystemEntries(source).Any())
+			{
+				DirectoryInfo? identifier = Directory.GetParent(source);
+				Directory.Delete(source);
+				if (identifier is not null && identifier.Exists && !Directory.EnumerateFileSystemEntries(identifier.FullName).Any()) identifier.Delete();
+			}
+			TryDeleteReceipt(paths.CleanupReceiptPath);
 		}
-		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
-			try { File.WriteAllText(paths.CleanupReceiptPath, JsonSerializer.Serialize(new { source, error = exception.Message })); } catch { }
+			try { WriteAtomicFile(paths.CleanupReceiptPath, JsonSerializer.Serialize(new { schema_version = 1, status = "pending", migration_id = result.LegacyDataPath ?? source, error_type = exception.GetType().FullName }) + Environment.NewLine); } catch { }
 		}
+	}
+
+	private static void TryDeleteReceipt(string path)
+	{
+		try { if (File.Exists(path)) File.Delete(path); } catch { }
 	}
 
 	private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -151,7 +171,7 @@ public static class StorageBootstrapper
 			else if (name.Equals("secret.key", StringComparison.OrdinalIgnoreCase)) CopyFileChecked(entry, Path.Combine(staging, "core", "security", name));
 			else if (name.Equals("knowledge", StringComparison.OrdinalIgnoreCase)) CopyKnowledge(entry, Path.Combine(staging, "knowledge", "documents"));
 			else if (name.Equals("resources", StringComparison.OrdinalIgnoreCase)) CopyResources(entry, staging);
-			else if (name.Equals("plugins", StringComparison.OrdinalIgnoreCase)) CopyTree(entry, Path.Combine(staging, "plugins", "installed"));
+			else if (name.Equals("plugins", StringComparison.OrdinalIgnoreCase)) CopyPlugins(entry, staging);
 			else if (name.Equals("plugin-data", StringComparison.OrdinalIgnoreCase)) CopyTree(entry, Path.Combine(staging, "plugins", "data"));
 			else if (name.Equals("log", StringComparison.OrdinalIgnoreCase)) CopyTree(entry, Path.Combine(staging, "diagnostics", "logs"));
 			else CopyTree(entry, Path.Combine(staging, "legacy", "unclassified", name));
@@ -198,18 +218,50 @@ public static class StorageBootstrapper
 
 	private static void CopyKnowledge(string source, string target)
 	{
+		// knowledge 下除明确临时项外全部保全，不能只复制默认 Memory.md。
 		EnsureDirectoryTree(source);
-		string file = Path.Combine(source, "Memory.md");
-		if (File.Exists(file)) CopyFileChecked(file, Path.Combine(target, "Memory.md"));
+		CopyTreeExcept(source, target, name => name is "cache" or "staging" or "temp");
 	}
 
 	private static void CopyResources(string source, string staging)
 	{
 		EnsureDirectoryTree(source);
-		string live2d = Path.Combine(source, "live2d");
-		if (Directory.Exists(live2d)) CopyTree(live2d, Path.Combine(staging, "resources", "installed", "live2d"));
-		string cache = Path.Combine(source, "cache");
-		if (Directory.Exists(cache)) CopyTree(cache, Path.Combine(staging, "resources", "cache"));
+		// cache/temp 是明确可丢弃项；installed 之外的持久资源归入 unclassified，避免静默丢失。
+		string installed = Path.Combine(staging, "resources", "installed");
+		foreach (string entry in Directory.EnumerateFileSystemEntries(source))
+		{
+			string name = Path.GetFileName(entry);
+			if (name is "cache" or "temp" or "staging") continue;
+			if (name.Equals("live2d", StringComparison.OrdinalIgnoreCase)) CopyTree(entry, Path.Combine(installed, "live2d"));
+			else CopyTree(entry, Path.Combine(staging, "legacy", "unclassified", "resources", name));
+		}
+	}
+
+	private static void CopyTreeExcept(string source, string target, Func<string, bool> skip)
+	{
+		EnsureRegularDirectory(source);
+		Directory.CreateDirectory(target);
+		foreach (string entry in Directory.EnumerateFileSystemEntries(source))
+		{
+			if (skip(Path.GetFileName(entry))) continue;
+			CopyTree(entry, Path.Combine(target, Path.GetFileName(entry)));
+		}
+	}
+
+	private static void CopyPlugins(string source, string staging)
+	{
+		EnsureDirectoryTree(source);
+		foreach (string entry in Directory.EnumerateFileSystemEntries(source))
+		{
+			string name = Path.GetFileName(entry);
+			string target = name.Equals("inbox", StringComparison.OrdinalIgnoreCase)
+				? Path.Combine(staging, "plugins", "cache", "packages", "inbox")
+				: name.Equals(".staging", StringComparison.OrdinalIgnoreCase) || name.Equals("staging", StringComparison.OrdinalIgnoreCase)
+					? Path.Combine(staging, "plugins", "temp", "staging")
+					: Path.Combine(staging, "plugins", "installed", name);
+			if (name is ".staging" or "staging") continue;
+			CopyTree(entry, target);
+		}
 	}
 
 	private static void CopyTree(string source, string target)
@@ -218,6 +270,12 @@ public static class StorageBootstrapper
 		EnsureDirectoryTree(source);
 		Directory.CreateDirectory(target);
 		foreach (string entry in Directory.EnumerateFileSystemEntries(source)) CopyTree(entry, Path.Combine(target, Path.GetFileName(entry)));
+	}
+
+	private static void EnsureRegularDirectory(string path)
+	{
+		if (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException($"迁移源目录无效: {path}");
 	}
 
 	private static void EnsureDirectoryTree(string path)
@@ -243,6 +301,7 @@ public static class StorageBootstrapper
 		if (info.Length > MaxCopiedFileBytes) throw new InvalidOperationException($"迁移文件超过 64 MiB 限制: {source}");
 		Directory.CreateDirectory(Path.GetDirectoryName(target)!);
 		File.Copy(source, target, false);
+		if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(target, File.GetUnixFileMode(source));
 		VerifyFile(target, info.Length, ComputeHash(source));
 	}
 
@@ -259,25 +318,67 @@ public static class StorageBootstrapper
 		return Convert.ToHexString(SHA256.HashData(stream));
 	}
 
-	private static void WriteMarker(string root, string productVersion, string rid, bool migrated)
+	private static void WriteMarker(string root, string productVersion, string rid, bool migrated, string migrationId)
 	{
 		string marker = Path.Combine(root, AppStoragePaths.MarkerFileName);
-		string json = JsonSerializer.Serialize(new { schema_version = MarkerSchemaVersion, product_version = productVersion, numeric_version = ExtractNumericVersion(productVersion), rid, migrated, created_at = DateTimeOffset.UtcNow });
-		File.WriteAllText(marker + ".tmp", json + Environment.NewLine);
-		File.Move(marker + ".tmp", marker, true);
+		string json = JsonSerializer.Serialize(new
+		{
+			schema_version = MarkerSchemaVersion,
+			status = "ready",
+			product_version = productVersion,
+			numeric_version = ExtractNumericVersion(productVersion),
+			rid,
+			migration_id = migrated ? migrationId : null,
+			migrated,
+			created_at = DateTimeOffset.UtcNow,
+		});
+		WriteAtomicFile(marker, json + Environment.NewLine);
 	}
 
-	private static void FlushMarker(string root)
+	private static void WriteAtomicFile(string path, string content)
 	{
-		using FileStream stream = new(Path.Combine(root, AppStoragePaths.MarkerFileName), FileMode.Open, FileAccess.Read, FileShare.Read);
-		stream.Flush(true);
+		string temporary = path + $".tmp-{Guid.NewGuid():N}";
+		try
+		{
+			using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+		using (StreamWriter writer = new(stream, new System.Text.UTF8Encoding(false), leaveOpen: true))
+		{
+			writer.Write(content);
+			writer.Flush();
+			stream.Flush(true);
+		}
+			File.Move(temporary, path, true);
+		}
+		finally
+		{
+			try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+		}
+	}
+
+	private static void ValidateReceipt(AppStoragePaths paths)
+	{
+		if (!File.Exists(paths.CleanupReceiptPath)) return;
+		if ((File.GetAttributes(paths.CleanupReceiptPath) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException("旧数据清理收据不是普通文件");
+		using JsonDocument document = JsonDocument.Parse(File.ReadAllText(paths.CleanupReceiptPath));
+		JsonElement root = document.RootElement;
+		if (!root.TryGetProperty("schema_version", out JsonElement schema) || schema.GetInt32() != 1
+			|| !root.TryGetProperty("status", out JsonElement status) || status.GetString() != "pending"
+			|| !root.TryGetProperty("migration_id", out JsonElement id) || string.IsNullOrWhiteSpace(id.GetString()))
+			throw new InvalidOperationException("旧数据清理收据无效");
+		using JsonDocument marker = JsonDocument.Parse(File.ReadAllText(paths.MarkerPath));
+		string? markerId = marker.RootElement.TryGetProperty("migration_id", out JsonElement markerValue) ? markerValue.GetString() : null;
+		if (!string.Equals(markerId, id.GetString(), StringComparison.Ordinal)) throw new InvalidOperationException("旧数据清理收据与 marker 不匹配");
 	}
 
 	private static void ValidateMarker(string path)
 	{
+		if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException($"数据 marker 不是普通文件: {path}");
 		using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
 		JsonElement root = document.RootElement;
 		if (!root.TryGetProperty("schema_version", out JsonElement schema) || schema.GetInt32() != MarkerSchemaVersion
+			|| !root.TryGetProperty("status", out JsonElement status) || status.GetString() != "ready"
 			|| !root.TryGetProperty("product_version", out JsonElement product) || string.IsNullOrWhiteSpace(product.GetString())
 			|| !root.TryGetProperty("numeric_version", out JsonElement numeric) || string.IsNullOrWhiteSpace(numeric.GetString())
 			|| !root.TryGetProperty("rid", out JsonElement rid) || string.IsNullOrWhiteSpace(rid.GetString()))
@@ -307,6 +408,37 @@ public static class StorageBootstrapper
 			catch (IOException exception) { last = exception; if (attempt < 9) Thread.Sleep(50); }
 		}
 		throw new IOException("无法提交 data staging", last);
+	}
+
+	private static void EnsureLegacySourceSafe(string source)
+	{
+		string full = Path.GetFullPath(source);
+		string? current = full;
+		while (current is not null && !string.IsNullOrEmpty(Path.GetPathRoot(current)))
+		{
+			if (Directory.Exists(current) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new InvalidOperationException("旧数据路径包含符号链接或 reparse point");
+			string? parent = Path.GetDirectoryName(current);
+			if (parent is null || string.Equals(parent, current, PathComparison)) break;
+			current = parent;
+		}
+		EnsureDirectoryTree(full);
+	}
+
+	private static void EnsureLegacyDatabaseAvailable(string source)
+	{
+		string database = Path.Combine(source, AppPaths.DatabaseFileName);
+		if (!File.Exists(database)) return;
+		EnsureRegularFile(database);
+		SqliteConnection.ClearAllPools();
+		try
+		{
+			using FileStream stream = new(database, FileMode.Open, FileAccess.Read, FileShare.None);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			throw new IOException("旧数据库仍被其它进程使用，已拒绝迁移", exception);
+		}
 	}
 
 	private static void TryDeleteDirectory(string path)

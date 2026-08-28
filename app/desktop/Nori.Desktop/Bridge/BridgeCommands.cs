@@ -619,7 +619,7 @@ public sealed class BridgeCommands
 			message = entry.Message,
 		}).ToArray()),
 		"clear_recent_logs" => RequireMain(source, () => Run(_services.Logger.ClearRecentLogs)),
-		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime, _services.SafeMode, _services.Paths)),
+		"get_diagnostic_info" => RequireMain(source, () => DiagnosticInfo.Build(_services.PetRuntime, _services.Paths, _services.SafeMode)),
 		// invoke("export_diagnostics") → {fileName, bytes, skipped}
 		"export_diagnostics" => await ExportDiagnosticsAsync(source, cancellationToken),
 		"open_log_folder" => RequireMain(source, () => Run(OpenLogFolder)),
@@ -2161,7 +2161,7 @@ public sealed class BridgeCommands
 
 		if (string.IsNullOrWhiteSpace(targetPath)) return null;
 		DiagnosticExporter.Result result = await Task.Run(
-			() => DiagnosticExporter.Export(targetPath, _services.Logger, _services.PetRuntime, _services.SafeMode, cancellationToken, _services.AgentTrace),
+			() => DiagnosticExporter.Export(targetPath, _services.Logger, _services.PetRuntime, _services.Paths, _services.SafeMode, cancellationToken, _services.AgentTrace),
 			cancellationToken);
 		return new {fileName = result.FileName, bytes = result.Bytes, skipped = result.Skipped};
 	}

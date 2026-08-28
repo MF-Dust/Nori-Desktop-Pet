@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace Nori.Desktop.Startup;
 
 /// <summary>宿主 WebView 运行时类型。</summary>
@@ -19,10 +21,33 @@ internal static class WebViewAdapterInfo
 		return adapterType switch
 		{
 			WebViewAdapterType.WebView2 => ProbeWebView2(),
-			WebViewAdapterType.WkWebView => new DetailedWebViewAdapterInfo(true, "系统 WebKit", ""),
-			WebViewAdapterType.WebKitGtk => new DetailedWebViewAdapterInfo(true, "系统 WebKitGTK", ""),
+			WebViewAdapterType.WkWebView => ProbeWkWebView(),
+			WebViewAdapterType.WebKitGtk => ProbeWebKitGtk(),
 			_ => new DetailedWebViewAdapterInfo(false, "", "未知 WebView 类型"),
 		};
+	}
+
+	private static DetailedWebViewAdapterInfo ProbeWkWebView()
+	{
+		if (!OperatingSystem.IsMacOS()) return new DetailedWebViewAdapterInfo(false, "", "WKWebView 仅支持 macOS");
+		return NativeLibrary.TryLoad("/System/Library/Frameworks/WebKit.framework/WebKit", out nint handle)
+			? ReleaseLoaded(handle, new DetailedWebViewAdapterInfo(true, "系统 WebKit", ""))
+			: new DetailedWebViewAdapterInfo(false, "", "未找到系统 WebKit.framework");
+	}
+
+	private static DetailedWebViewAdapterInfo ProbeWebKitGtk()
+	{
+		if (!OperatingSystem.IsLinux()) return new DetailedWebViewAdapterInfo(false, "", "WebKitGTK 仅支持 Linux");
+		string[] names = ["libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37", "libwebkit2gtk-4.0.so"];
+		foreach (string name in names)
+			if (NativeLibrary.TryLoad(name, out nint handle)) return ReleaseLoaded(handle, new DetailedWebViewAdapterInfo(true, name, ""));
+		return new DetailedWebViewAdapterInfo(false, "", "未找到 WebKitGTK 4.x 运行时");
+	}
+
+	private static DetailedWebViewAdapterInfo ReleaseLoaded(nint handle, DetailedWebViewAdapterInfo result)
+	{
+		NativeLibrary.Free(handle);
+		return result;
 	}
 
 	private static DetailedWebViewAdapterInfo ProbeWebView2()

@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using Nori.Core.Agent;
+using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Security;
 using Nori.Desktop.Live2D;
@@ -26,12 +27,14 @@ public static class DiagnosticExporter
 		string targetPath,
 		FileLogger logger,
 		PetRuntime? pet,
+		AppStoragePaths paths,
 		bool safeMode,
 		CancellationToken cancellationToken = default,
 		AgentTraceCollector? trace = null)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
 		ArgumentNullException.ThrowIfNull(logger);
+		ArgumentNullException.ThrowIfNull(paths);
 		cancellationToken.ThrowIfCancellationRequested();
 
 		string fullPath = Path.GetFullPath(targetPath);
@@ -43,7 +46,7 @@ public static class DiagnosticExporter
 		List<string> skipped = [];
 		try
 		{
-			Dictionary<string, string> diagnostics = DiagnosticInfo.Build(pet, safeMode);
+			Dictionary<string, string> diagnostics = DiagnosticInfo.Build(pet, paths, safeMode);
 			foreach (string key in new[] {"data_dir", "resources_dir", "log_dir", "database_path"})
 			{
 				if (diagnostics.Remove(key)) skipped.Add($"diagnostics.{key}");

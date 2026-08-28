@@ -14,18 +14,19 @@ internal sealed class PluginPackageInstaller
 	private readonly string _stagingRoot;
 	private readonly string _inboxRoot;
 
-	public PluginPackageInstaller(string root)
+	public PluginPackageInstaller(string root, string? inboxRoot = null, string? stagingRoot = null)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(root);
 		_root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-		_stagingRoot = Path.Combine(_root, ".staging");
-		_inboxRoot = Path.Combine(_root, "inbox");
+		_stagingRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stagingRoot ?? Path.Combine(_root, ".staging")));
+		_inboxRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(inboxRoot ?? Path.Combine(_root, "inbox")));
 		Directory.CreateDirectory(_root);
 		Directory.CreateDirectory(_stagingRoot);
 		Directory.CreateDirectory(_inboxRoot);
-		EnsureNoReparsePoints(_root);
-		EnsureNoReparsePoints(_stagingRoot);
-		EnsureNoReparsePoints(_inboxRoot);
+		string managementRoot = Directory.GetParent(_root)?.FullName ?? _root;
+		PluginPathSafety.EnsureNoReparsePoints(managementRoot, _root, PluginErrorCodes.PackagePathDenied, "插件管理路径越过宿主边界");
+		PluginPathSafety.EnsureNoReparsePoints(managementRoot, _stagingRoot, PluginErrorCodes.PackagePathDenied, "插件 staging 路径越过宿主边界");
+		PluginPathSafety.EnsureNoReparsePoints(managementRoot, _inboxRoot, PluginErrorCodes.PackagePathDenied, "插件 inbox 路径越过宿主边界");
 	}
 
 	public string RootDirectory => _root;

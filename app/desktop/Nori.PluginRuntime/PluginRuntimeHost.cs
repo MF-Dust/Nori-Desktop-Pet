@@ -23,6 +23,8 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 		string pluginsDirectory = Path.GetFullPath(options.PluginsDirectory ?? Path.Combine(dataDirectory, "plugins"));
 		string pluginDataDirectory = Path.GetFullPath(options.PluginDataDirectory ?? Path.Combine(dataDirectory, "plugin-data"));
 		string webViewDataDirectory = Path.GetFullPath(options.WebViewDataDirectory ?? Path.Combine(dataDirectory, "webview_plugins"));
+		string packageInboxDirectory = Path.GetFullPath(options.PackageInboxDirectory ?? Path.Combine(dataDirectory, "packages", "inbox"));
+		string stagingDirectory = Path.GetFullPath(options.StagingDirectory ?? Path.Combine(dataDirectory, "staging"));
 		Directory.CreateDirectory(dataDirectory);
 
 		_windows = new PluginWindowHost(options.Logger, webViewDataDirectory);
@@ -30,6 +32,8 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 		{
 			PluginsDirectory = pluginsDirectory,
 			DataDirectory = pluginDataDirectory,
+			PackageInboxDirectory = packageInboxDirectory,
+			StagingDirectory = stagingDirectory,
 			HostApiVersion = options.HostApiVersion,
 			HostVersion = options.HostVersion,
 			DevelopmentHost = options.DevelopmentHost,
@@ -77,6 +81,8 @@ internal sealed record PluginRuntimeHostOptions
 	public string? PluginsDirectory { get; init; }
 	public string? PluginDataDirectory { get; init; }
 	public string? WebViewDataDirectory { get; init; }
+	public string? PackageInboxDirectory { get; init; }
+	public string? StagingDirectory { get; init; }
 	public PluginApiVersion HostApiVersion { get; init; } = new(2, 0);
 	public PluginVersion HostVersion { get; init; } = new(1, 0, 0);
 	public bool DevelopmentHost { get; init; }

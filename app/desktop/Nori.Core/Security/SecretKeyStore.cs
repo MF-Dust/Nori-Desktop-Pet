@@ -43,9 +43,23 @@ public sealed class SecretKeyStore : ISecretKeyStore
 	private readonly string _keyPath;
 	private byte[]? _cached;
 
-	public SecretKeyStore(string? dataDir = null)
+	/// <summary>生产构造必须使用宿主已经解析并校验过的 secret.key 路径。</summary>
+	public SecretKeyStore(AppStoragePaths paths)
 	{
-		_keyPath = dataDir is null ? new AppStoragePaths(Environment.CurrentDirectory).SecretPath : Path.Combine(dataDir, "secret.key");
+		ArgumentNullException.ThrowIfNull(paths);
+		_keyPath = paths.SecretPath;
+	}
+
+	/// <summary>兼容纯核心测试的当前目录构造；宿主生产装配不得使用。</summary>
+	public SecretKeyStore() : this(Environment.CurrentDirectory) { }
+
+	/// <summary>测试用显式目录构造；不会推断或访问系统数据目录。</summary>
+	public SecretKeyStore(string directory)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+		_keyPath = Directory.Exists(directory) || string.IsNullOrEmpty(Path.GetExtension(directory))
+			? Path.Combine(directory, "secret.key")
+			: Path.GetFullPath(directory);
 	}
 
 	/// <inheritdoc />
@@ -81,6 +95,15 @@ public sealed class SecretKeyStore : ISecretKeyStore
 		if (!File.Exists(_keyPath)) return null;
 		try
 		{
+			if (!OperatingSystem.IsWindows())
+			{
+				UnixFileMode mode = File.GetUnixFileMode(_keyPath);
+				UnixFileMode allowed = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+				if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+					| UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute)) != 0
+					|| (mode & allowed) != allowed)
+					throw new SecretKeyStoreException("平台主密钥文件权限不安全, 请收紧为 0600");
+			}
 			byte[] stored = File.ReadAllBytes(_keyPath);
 			if (OperatingSystem.IsWindows())
 			{
@@ -108,18 +131,31 @@ public sealed class SecretKeyStore : ISecretKeyStore
 				? System.Security.Cryptography.ProtectedData.Protect(
 					key, null, System.Security.Cryptography.DataProtectionScope.CurrentUser)
 				: key;
-			File.WriteAllBytes(_keyPath, payload);
+			string temporary = _keyPath + $".tmp-{Guid.NewGuid():N}";
+			try
+			{
+				using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+				{
+					stream.Write(payload);
+					stream.Flush(true);
+				}
+				if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+				File.Move(temporary, _keyPath, true);
+			}
+			finally
+			{
+				try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+			}
+		}
+		catch (SecretKeyStoreException)
+		{
+			throw;
 		}
 		catch (Exception exception) when (exception is CryptographicException or IOException or UnauthorizedAccessException)
 		{
 			throw new SecretKeyStoreException("无法保存平台主密钥, 敏感配置将保持未写入", exception);
 		}
-		if (!OperatingSystem.IsWindows())
-		{
-			IsFileFallback = true;
-			// 0600: 只有本用户可读写
-			File.SetUnixFileMode(_keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-		}
+		if (!OperatingSystem.IsWindows()) IsFileFallback = true;
 	}
 
 	// ---- macOS Keychain ----
