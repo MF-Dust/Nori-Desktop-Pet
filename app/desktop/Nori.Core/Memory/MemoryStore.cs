@@ -424,12 +424,21 @@ public sealed class MemoryStore
 		return ReadItems(command);
 	});
 
-	/// <summary>按游标读取待嵌入记忆。</summary>
-	public IReadOnlyList<MemoryItem> GetUnembedded(int limit = 100, long afterId = 0) => _database.Locked(connection =>
+	/// <summary>按游标读取待嵌入记忆；传入 fingerprint 时也包含过期向量。</summary>
+	public IReadOnlyList<MemoryItem> GetUnembedded(int limit = 100, long afterId = 0, string? fingerprint = null) => _database.Locked(connection =>
 	{
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = BaseSelect + " WHERE id > $afterId AND embedding_blob IS NULL AND (embedding IS NULL OR embedding = '') AND status IN ('active', 'dormant') ORDER BY id ASC LIMIT $limit";
+		command.CommandText = BaseSelect + """
+			 WHERE id > $afterId
+			   AND status IN ('active', 'dormant')
+			   AND (
+					   (embedding_blob IS NULL AND (embedding IS NULL OR embedding = ''))
+					   OR ($fingerprint IS NOT NULL AND (embedding_fingerprint IS NULL OR embedding_fingerprint <> $fingerprint))
+				   )
+			 ORDER BY id ASC LIMIT $limit
+			""";
 		AddParameter(command, "$afterId", afterId);
+		AddParameter(command, "$fingerprint", fingerprint);
 		AddParameter(command, "$limit", Math.Max(1, limit));
 		return ReadItems(command);
 	});
@@ -699,9 +708,21 @@ public sealed class MemoryStore
 					confidence = COALESCE($confidence, confidence),
 					ttl_days = COALESCE($ttl, ttl_days),
 					expires_at = COALESCE($expires, expires_at),
-					embedding = CASE WHEN $embeddingProvided = 1 THEN $embedding WHEN content <> $content THEN NULL ELSE embedding END,
-					embedding_blob = CASE WHEN $embeddingProvided = 1 THEN $embedding_blob WHEN content <> $content THEN NULL ELSE embedding_blob END,
-					embedding_fingerprint = CASE WHEN $embeddingProvided = 1 THEN $embeddingFingerprint WHEN content <> $content THEN NULL ELSE embedding_fingerprint END,
+					embedding = CASE
+						WHEN $embeddingProvided = 1 THEN $embedding
+						WHEN content <> $content OR COALESCE(canonical_summary, content) <> COALESCE($canonical, canonical_summary, $content) THEN NULL
+						ELSE embedding
+					END,
+					embedding_blob = CASE
+						WHEN $embeddingProvided = 1 THEN $embedding_blob
+						WHEN content <> $content OR COALESCE(canonical_summary, content) <> COALESCE($canonical, canonical_summary, $content) THEN NULL
+						ELSE embedding_blob
+					END,
+					embedding_fingerprint = CASE
+						WHEN $embeddingProvided = 1 THEN $embeddingFingerprint
+						WHEN content <> $content OR COALESCE(canonical_summary, content) <> COALESCE($canonical, canonical_summary, $content) THEN NULL
+						ELSE embedding_fingerprint
+					END,
 					updated_at = $updated
 				WHERE id = $id
 				""";

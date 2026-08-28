@@ -39,6 +39,7 @@ public sealed class MemoryService : IAsyncDisposable
 	private readonly CancellationTokenSource _embeddingCts = new();
 	private readonly Task _embeddingWorker;
 	private int _disposed;
+	private int _embeddingResourcesDisposed;
 	private int _queueDepth;
 	private int _recoveryRequested;
 	private int _embeddingState = (int)MemoryEmbeddingQueueState.Stopped;
@@ -231,8 +232,8 @@ public sealed class MemoryService : IAsyncDisposable
 		MemoryItem? before = _store.Get(id);
 		if (before is null) return Task.FromResult(false);
 		MemoryKind resolvedKind = kind ?? MemoryKindExtensions.Parse(before.Kind);
-		bool updated = _store.Update(id, content, importance, tags, "", kind,
-			canonicalSummary, personaSummary, confidence, embeddingFingerprint: null);
+		bool updated = _store.Update(id, content, importance, tags, kind: kind,
+			canonicalSummary: canonicalSummary, personaSummary: personaSummary, confidence: confidence);
 		if (updated)
 		{
 			string oldSummary = before.CanonicalSummary ?? before.Content;
@@ -242,7 +243,7 @@ public sealed class MemoryService : IAsyncDisposable
 				_store.UpdateAtom(defaultAtom.Id, canonicalSummary ?? content, resolvedKind, importance, confidence);
 			}
 			MemoryItem? current = _store.Get(id);
-			if (current is not null) QueueEmbedding(id, canonicalSummary ?? content, current.UpdatedAt);
+			if (current is not null) QueueEmbedding(id, current.CanonicalSummary ?? current.Content, current.UpdatedAt);
 		}
 		return Task.FromResult(updated);
 	}
@@ -438,7 +439,8 @@ public sealed class MemoryService : IAsyncDisposable
 						List<EmbeddingJob> batch = [first];
 						while (batch.Count < EmbeddingBatchSize && TryTakeEmbeddingJob(out EmbeddingJob next)) batch.Add(next);
 						SetEmbeddingState(MemoryEmbeddingQueueState.Processing);
-						_ = await TryEmbedBatchWithRetryAsync(batch, _embeddingCts.Token).ConfigureAwait(false);
+						int? completed = await TryEmbedBatchWithRetryAsync(batch, _embeddingCts.Token).ConfigureAwait(false);
+						if (completed is null) RequestEmbeddingRecovery();
 					}
 
 					if (Volatile.Read(ref _queueDepth) == 0
@@ -481,11 +483,12 @@ public sealed class MemoryService : IAsyncDisposable
 			return;
 		}
 
+		string fingerprint = ResolveEmbeddingFingerprint();
 		for (int index = 0; index < MaxRecoveryBatchesPerWake; index++)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			IReadOnlyList<MemoryItem> pending;
-			try { pending = _store.GetUnembedded(EmbeddingBatchSize); }
+			try { pending = _store.GetUnembedded(EmbeddingBatchSize, fingerprint: fingerprint); }
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
 			catch
 			{
@@ -528,6 +531,7 @@ public sealed class MemoryService : IAsyncDisposable
 				SetEmbeddingState(MemoryEmbeddingQueueState.Processing);
 				int completed = await EmbedAndStoreBatchAsync(batch, cancellationToken, fingerprint).ConfigureAwait(false);
 				Interlocked.Add(ref _completedCount, completed);
+				Volatile.Write(ref _lastFailure, null);
 				SetEmbeddingState(MemoryEmbeddingQueueState.Waiting);
 				return completed;
 			}
@@ -601,12 +605,23 @@ public sealed class MemoryService : IAsyncDisposable
 		catch (OperationCanceledException) { }
 		catch (TimeoutException) { }
 		_transfer.Dispose();
-		if (_embeddingWorker.IsCompleted)
-		{
-			_embeddingWakeup.Dispose();
-			_embeddingCts.Dispose();
-		}
+		if (_embeddingWorker.IsCompleted) DisposeEmbeddingResources();
+		else _ = DisposeEmbeddingResourcesWhenWorkerStopsAsync(_embeddingWorker);
 		_reembedGate.Dispose();
+	}
+
+	private void DisposeEmbeddingResources()
+	{
+		if (Interlocked.Exchange(ref _embeddingResourcesDisposed, 1) != 0) return;
+		_embeddingWakeup.Dispose();
+		_embeddingCts.Dispose();
+	}
+
+	private async Task DisposeEmbeddingResourcesWhenWorkerStopsAsync(Task worker)
+	{
+		try { await worker.ConfigureAwait(false); }
+		catch { }
+		finally { DisposeEmbeddingResources(); }
 	}
 
 	private sealed record EmbeddingJob(long Id, string Text, string UpdatedAt);

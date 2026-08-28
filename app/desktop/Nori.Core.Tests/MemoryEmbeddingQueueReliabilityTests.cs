@@ -90,6 +90,61 @@ public sealed class MemoryEmbeddingQueueReliabilityTests
 		}
 	}
 
+	[Fact]
+	public void 恢复扫描包含过期指纹向量()
+	{
+		string path = TempPath("expired-fingerprint");
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			MemoryStore store = new(database);
+			MemoryItem item = store.Add("fact", "过期指纹记忆", embedding: "[1, 0]", embeddingFingerprint: "old");
+
+			Assert.Empty(store.GetUnembedded(10));
+			Assert.Contains(store.GetUnembedded(10, fingerprint: "current"), pending => pending.Id == item.Id);
+		}
+		finally
+		{
+			DeleteDatabaseFiles(path);
+		}
+	}
+
+	[Fact]
+	public async Task 仅更新摘要时首次批处理失败仍由补偿写入新向量()
+	{
+		string path = TempPath("canonical-summary-recovery");
+		try
+		{
+			using NoriDatabase database = NoriDatabase.Open(path);
+			ConfigStore config = CreateEmbeddingConfig(database);
+			MemoryStore store = new(database);
+			MemoryItem item = store.Add("fact", "固定正文", embedding: "[1, 0]", canonicalSummary: "旧摘要", embeddingFingerprint: "old");
+			CanonicalSummaryRecoveryEmbedding embedding = new();
+			await using MemoryService service = new(store, embedding, config);
+
+			Assert.True(await service.UpdateAsync(item.Id, "固定正文", canonicalSummary: "新摘要"));
+			await embedding.InitialAttemptsFailed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+			MemoryItem pending = service.Get(item.Id)!;
+			Assert.Null(pending.GetVector());
+			Assert.Null(pending.EmbeddingFingerprint);
+			Assert.Equal("新摘要", embedding.LastInput);
+			Assert.True(service.EmbeddingQueueStatus.FailedBatchCount >= 1);
+
+			embedding.ReleaseCompensation();
+			await embedding.CompensationCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+			await WaitUntilAsync(() => service.EmbeddingQueueStatus.CompletedCount == 1);
+
+			float[] vector = Assert.IsType<float[]>(service.Get(item.Id)!.GetVector());
+			Assert.Equal(new float[] {0, 1}, vector);
+			Assert.Null(service.EmbeddingQueueStatus.LastFailure);
+		}
+		finally
+		{
+			DeleteDatabaseFiles(path);
+		}
+	}
+
 	private static ConfigStore CreateEmbeddingConfig(NoriDatabase database)
 	{
 		ConfigStore config = new(database);
@@ -172,5 +227,35 @@ public sealed class MemoryEmbeddingQueueReliabilityTests
 			Recovered.TrySetResult();
 			return Task.FromResult<IReadOnlyList<float[]>>(inputs.Select(_ => new float[] {1, 0}).ToList());
 		}
+	}
+
+	private sealed class CanonicalSummaryRecoveryEmbedding : IEmbeddingAdapter
+	{
+		private readonly TaskCompletionSource _allowCompensation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		private string? _lastInput;
+		private int _calls;
+
+		public TaskCompletionSource InitialAttemptsFailed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource CompensationCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public string? LastInput => Volatile.Read(ref _lastInput);
+
+		public Task<float[]> GetEmbeddingAsync(string baseUrl, string apiKey, string model, string input, int? dimensions = null, CancellationToken cancellationToken = default) => Task.FromResult<float[]>([0, 1]);
+
+		public async Task<IReadOnlyList<float[]>> GetEmbeddingsAsync(string baseUrl, string apiKey, string model, IReadOnlyList<string> inputs, int? dimensions = null, CancellationToken cancellationToken = default)
+		{
+			Volatile.Write(ref _lastInput, inputs[0]);
+			int call = Interlocked.Increment(ref _calls);
+			if (call <= 3)
+			{
+				if (call == 3) InitialAttemptsFailed.TrySetResult();
+				throw new InvalidOperationException("测试 Provider 首批失败");
+			}
+
+			await _allowCompensation.Task.WaitAsync(cancellationToken);
+			CompensationCompleted.TrySetResult();
+			return inputs.Select(_ => new float[] {0, 1}).ToList();
+		}
+
+		public void ReleaseCompensation() => _allowCompensation.TrySetResult();
 	}
 }
