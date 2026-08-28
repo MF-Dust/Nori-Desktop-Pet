@@ -10,4 +10,5 @@ allowBuilds:
 # 两者均为构建期工具, 不参与运行时打包。
 overrides:
   gh-pages: "^5.0.0"
-  semver: "^6.3.1"
+  # 只修复 gh-pages 旧依赖声明的 6.x, 不覆盖 coverage 工具所需的 7.x。
+  "semver@6.0.0": "^6.3.1"

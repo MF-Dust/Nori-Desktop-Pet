@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 
-# CI 门禁: first-party TODO/FIXME 扫描 + pnpm build + pnpm test + dotnet build + dotnet test。
+# CI 门禁: first-party TODO/FIXME 扫描 + pnpm lint/build/test/coverage + dotnet build/test/coverage。
 # 每个 job 内的 dotnet 调用严格串行;
 # Windows 另做 FDD 发布、ZIP 内容与双启动分支冒烟。
 # Linux / macOS 做 FDD 发布并上传 publish 产物。
@@ -87,11 +87,27 @@ jobs:
       - name: 一方 TODO/FIXME 门禁
         run: pnpm check:todo
 
+      - name: 前端门 · 静态检查
+        run: pnpm lint
+
       - name: 前端门 · 类型检查与构建
         run: pnpm build
 
       - name: 前端门 · 单元测试
         run: pnpm test
+
+      - name: 前端门 · 覆盖率与阈值
+        if: matrix.name == 'windows'
+        run: pnpm coverage
+
+      - name: 上传前端覆盖率产物
+        if: matrix.name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-frontend-coverage
+          path: app/desktop/coverage/*
+          if-no-files-found: error
+          retention-days: 7
 
       # 不把 build/test/publish 合并成并行 matrix 或后台任务, 避免共享 obj 文件锁。
       - name: 后端门 · 构建
@@ -100,6 +116,19 @@ jobs:
       # Desktop 宿主测试包含短生命周期异步任务；限制 MSBuild 并行度，避免多个测试项目同时争用 runner 调度。
       - name: 后端门 · 单元测试
         run: dotnet test Nori.slnx --configuration Release --no-build --no-restore -m:1
+
+      - name: 后端门 · 覆盖率产物
+        if: matrix.name == 'windows'
+        run: pnpm coverage:dotnet
+
+      - name: 上传 .NET 覆盖率产物
+        if: matrix.name == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nori-dotnet-coverage
+          path: app/desktop/artifacts/dotnet-coverage/**
+          if-no-files-found: error
+          retention-days: 7
 
       # -----------------------------------------------------------------------
       # Linux / macOS

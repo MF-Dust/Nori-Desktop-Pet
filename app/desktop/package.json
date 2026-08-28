@@ -8,8 +8,11 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "vue-tsc --noEmit && vite build",
+		"lint": "eslint src --ext .ts,.vue --max-warnings=0",
 		"preview": "vite preview",
 		"test": "vitest run",
+		"coverage": "vitest run --coverage",
+		"coverage:dotnet": "node scripts/coverage-dotnet.mjs",
 		"check:todo": "node scripts/check-first-party-todos.mjs"
 	},
 	"dependencies": {
@@ -28,13 +31,19 @@
 		"vue-router": "^4.6.4"
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.39.4",
 		"@sentry/cli": "3.6.2",
 		"@sentry/core": "10.70.0",
 		"@sentry/vite-plugin": "5.4.0",
 		"@vitejs/plugin-vue": "^5.2.1",
+		"@vitest/coverage-v8": "^4.1.11",
+		"eslint": "^9.39.4",
+		"eslint-plugin-vue": "^10.10.0",
+		"globals": "^17.11.0",
 		"jsdom": "30.0.1",
 		"less": "^4.9.0",
 		"typescript": "~5.6.2",
+		"typescript-eslint": "^8.68.0",
 		"unocss": "66.8.1",
 		"unplugin-vue-components": "^32.1.0",
 		"vite": "^6.0.3",
