@@ -14,9 +14,7 @@ internal sealed class OfficialMcpConnection : IAsyncDisposable
 	private readonly ModelContextProtocol.Client.McpClient _client;
 	private bool _connected = true;
 
-	private OfficialMcpConnection(
-		McpServerConfig config,
-		ModelContextProtocol.Client.McpClient client)
+	private OfficialMcpConnection(ModelContextProtocol.Client.McpClient client)
 	{
 		_client = client;
 	}
@@ -44,7 +42,7 @@ internal sealed class OfficialMcpConnection : IAsyncDisposable
 				NullLoggerFactory.Instance,
 				cancellationToken);
 
-			return new OfficialMcpConnection(config, client);
+			return new OfficialMcpConnection(client);
 		}
 		catch
 		{

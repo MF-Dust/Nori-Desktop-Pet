@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
@@ -165,55 +164,4 @@ public sealed record McpServerStatusInfo
 	/// <summary>环境变量密钥问题分类, 不包含值。</summary>
 	[JsonPropertyName("secretIssue")]
 	public string? SecretIssue { get; init; }
-}
-
-/// <summary>
-/// JSON-RPC 2.0 请求
-/// </summary>
-public sealed record JsonRpcRequest
-{
-	[JsonPropertyName("jsonrpc")]
-	public string JsonRpc { get; init; } = "2.0";
-
-	[JsonPropertyName("id")]
-	public object? Id { get; init; }
-
-	[JsonPropertyName("method")]
-	public required string Method { get; init; }
-
-	[JsonPropertyName("params")]
-	public object? Params { get; init; }
-}
-
-/// <summary>
-/// JSON-RPC 2.0 响应
-/// </summary>
-public sealed record JsonRpcResponse
-{
-	[JsonPropertyName("jsonrpc")]
-	public string JsonRpc { get; init; } = "2.0";
-
-	[JsonPropertyName("id")]
-	public object? Id { get; init; }
-
-	[JsonPropertyName("result")]
-	public JsonNode? Result { get; init; }
-
-	[JsonPropertyName("error")]
-	public JsonRpcError? Error { get; init; }
-}
-
-/// <summary>
-/// JSON-RPC 2.0 错误
-/// </summary>
-public sealed record JsonRpcError
-{
-	[JsonPropertyName("code")]
-	public int Code { get; init; }
-
-	[JsonPropertyName("message")]
-	public required string Message { get; init; }
-
-	[JsonPropertyName("data")]
-	public JsonNode? Data { get; init; }
 }
