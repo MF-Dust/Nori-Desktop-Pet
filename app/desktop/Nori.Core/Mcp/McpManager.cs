@@ -308,6 +308,7 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 	{
 		if (_disposed) return;
 		List<McpServerConfig> configs = LoadConfigs();
+		List<Task> startupTasks = [];
 		foreach (McpServerConfig config in configs)
 		{
 			if (config.Enabled && config.AutoConnect)
@@ -335,9 +336,11 @@ public sealed class McpManager(HttpClient httpClient, ConfigStore configStore) :
 					}
 				}, _lifetimeCts.Token);
 				_backgroundTasks.Add(task);
+				startupTasks.Add(task);
 			}
 		}
-		await Task.CompletedTask;
+		try { await Task.WhenAll(startupTasks).ConfigureAwait(false); }
+		catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { }
 	}
 
 	public async ValueTask DisposeAsync()

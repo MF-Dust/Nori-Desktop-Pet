@@ -101,7 +101,7 @@ Blocking work (HTTP, zip extraction, SQLite) must stay off the UI thread; anythi
 There is no custom URI scheme any more — Avalonia's `WebResourceRequested` is read-only and cannot return a response. Instead `Nori.Core/Assets/AssetServer.cs` runs a **Kestrel server bound to `IPAddress.Loopback`** with a per-process random hex path prefix and a `Host`-header check. It mounts:
 
 - `/{secret}/app/*` → the built Vue bundle (`wwwroot`, copied from `dist/`)
-- `/{secret}/nori-assets/*` → `%APPDATA%/cn.erhio.noriDesktopPet/data/resources`
+- `/{secret}/nori-assets/*` → `<PackageRoot>/data/resources`
 - `/{secret}/media/{token}` → one-shot audio exchange (`MediaExchange`): `GET` takes the TTS bytes (removed on read, 2min TTL), `POST` delivers a microphone recording back. Same `Host`-header and prefix checks apply.
 
 App and assets are **same-origin**, so `assetUrl()` is a relative path and there is no CORS to configure. `vite.config.ts` sets `base: "./"` — with an absolute base the built `/assets/…` URLs skip the secret prefix and 404. In dev, `AssetServer` uses fixed port 14201 with no prefix and vite proxies `/nori-assets` to it, so frontend code is identical in both modes.
@@ -112,19 +112,19 @@ App and assets are **same-origin**, so `assetUrl()` is a relative path and there
 
 ### Config: SQLite key/value with inferred types
 
-`nori.db` lives in `%APPDATA%/cn.erhio.noriDesktopPet/data/` with two tables: `config(key TEXT PRIMARY KEY, value TEXT)` and `chat_messages`. Everything is stored as TEXT. **The path must match Tauri's `app_data_dir()` exactly** or existing users lose their data. Note `AppPaths` special-cases macOS: .NET's `SpecialFolder.ApplicationData` is `~/.config` there, while Tauri used `~/Library/Application Support`.
+`nori.db` lives in `<PackageRoot>/data/core/database/` with two tables: `config(key TEXT PRIMARY KEY, value TEXT)` and `chat_messages`. Everything is stored as TEXT. The old Tauri `app_data_dir()/data` is used only as a one-time migration source; package data is never redirected to system AppData. `<PackageRoot>` must remain writable and the complete package must be movable.
 
 The trap: `ConfigValue.FromStorage` **re-infers the type on read**. `"1"`/`"true"` → Boolean, digit strings → Integer, `{…}`/`[…]` → Json, everything else → String. A config you wrote as a string comes back as a number if it happens to look like one, so `invoke<string | null>("get_config", …)` is a lie for numeric-looking values — `parseNumber()` in `services/live2d/config.ts` exists for exactly this. `"1.25"` stays a String (i64 parse fails, not a JSON container) — `Nori.Core.Tests` pins all of this.
 
 `set_config` broadcasts `nori:config-changed` app-wide, which is how the pet window live-updates. Schema evolution goes through `config_schema_version` + `MigrateSchema()`; a DB newer than the binary is rejected outright.
 
-Secrets (`*_api_key`, `*_secret`, `*_token`, `*_password`) are encrypted with **AES-256-GCM** (`nsec1:` prefix) — no longer raw DPAPI. The master key lives in the platform keystore (`SecretKeyStore`): DPAPI-wrapped file on Windows, Keychain on macOS, libsecret on Linux, 0600 file as fallback. Old `enc:dpapi:` values still decrypt **on Windows only**; elsewhere `ConfigStore.IsUnreadableSecret` flags them so the UI asks the user to re-enter that one key — never silently wiping other config.
+Secrets (`*_api_key`, `*_secret`, `*_token`, `*_password`) are encrypted with **AES-256-GCM** (`nsec2:` prefix) — no longer raw DPAPI. The master key lives in the platform keystore (`SecretKeyStore`): DPAPI-wrapped file on Windows, Keychain on macOS, libsecret on Linux, 0600 file as fallback. Old `enc:dpapi:` values still decrypt **on Windows only**; elsewhere `ConfigStore.IsUnreadableSecret` flags them so the UI asks the user to re-enter that one key — never silently wiping other config.
 
 Live2D display settings are stored **per model** as `<base>_<modelId>` (e.g. `l2d_scale_arg-nori`) with fallback to the legacy global key — see `l2dModelKey()` / `readModelConfig()`. Keep both lookups when adding keys.
 
 ### Resource management (local only)
 
-Models are local resources under `data/resources/live2d/<name>/`; there is no remote download or gateway. The frontend calls `check_resource` to test install state and `import_local_resource` to add models from a local ZIP or folder. `ResourceManager` in `Nori.Core/Resources/` covers check/list/delete/import, and Live2D resources count as installed only when they contain a `.model3.json`.
+Models are local resources under `<PackageRoot>/data/resources/installed/live2d/<name>/`; there is no remote download or gateway. Runtime data is strictly under `<PackageRoot>/data`, which must be writable and movable as a whole package. The frontend calls `check_resource` to test install state and `import_local_resource` to add models from a local ZIP or folder. `ResourceManager` in `Nori.Core/Resources/` covers check/list/delete/import, and Live2D resources count as installed only when they contain a `.model3.json`.
 
 `ZipExtractor` is hardened — rejects absolute paths, UNC, drive letters, `..`, control chars and symlink entries, and re-canonicalizes each parent against the target. It also strips a single common top-level directory. Don't loosen it.
 

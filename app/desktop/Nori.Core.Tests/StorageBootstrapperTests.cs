@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
+using Nori.Core.Configuration;
 using Nori.Core.Data;
+using Nori.Core.Security;
 
 namespace Nori.Core.Tests;
 
@@ -45,6 +47,27 @@ public sealed class StorageBootstrapperTests : IDisposable
 	}
 
 	[Fact]
+	public void 迁移后旧加密配置仍可解密()
+	{
+		string legacy = Path.Combine(_root, "legacy");
+		string package = Path.Combine(_root, "package");
+		Directory.CreateDirectory(legacy);
+		using (NoriDatabase database = NoriDatabase.Open(Path.Combine(legacy, "nori.db")))
+		{
+			ConfigStore config = new(database, new SecretKeyStore(legacy));
+			config.InitDefaults("old");
+			config.Set("provider_api_key", new ConfigValue.Text("secret-value"));
+		}
+
+		AppStoragePaths paths = new(package);
+		StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
+		using NoriDatabase migrated = NoriDatabase.Open(paths: paths);
+		ConfigStore migratedConfig = new(migrated, new SecretKeyStore(paths));
+
+		Assert.Equal("secret-value", migratedConfig.GetStringOr("provider_api_key", ""));
+	}
+
+	[Fact]
 	public void 有效marker优先且不合并旧源()
 	{
 		string package = Path.Combine(_root, "package");
@@ -69,6 +92,26 @@ public sealed class StorageBootstrapperTests : IDisposable
 		File.WriteAllText(Path.Combine(paths.DataRoot, "unexpected"), "x");
 
 		Assert.Throws<InvalidOperationException>(() => StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", Path.Combine(_root, "none")));
+	}
+
+	[Fact]
+	public void 迁移保全未知持久文件并原子保留收据()
+	{
+		string legacy = Path.Combine(_root, "legacy");
+		string package = Path.Combine(_root, "package");
+		Directory.CreateDirectory(legacy);
+		File.WriteAllText(Path.Combine(legacy, "user-export.json"), "keep");
+		File.WriteAllText(Path.Combine(legacy, "cache.tmp"), "discard-or-classify");
+
+		AppStoragePaths paths = new(package);
+		StorageBootstrapResult result = StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
+
+		Assert.True(result.Migrated);
+		Assert.True(File.Exists(Path.Combine(paths.LegacyUnclassifiedDirectory, "user-export.json")));
+		Assert.True(File.Exists(paths.CleanupReceiptPath));
+		Assert.True(File.Exists(paths.MarkerPath));
+		StorageBootstrapResult reopened = StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
+		Assert.True(reopened.Migrated);
 	}
 
 	public void Dispose()

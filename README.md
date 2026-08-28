@@ -224,7 +224,7 @@ NORI_DEV=1 dotnet run --project Nori.Desktop
 
 5. **独立打包发布**
 
-发布产物由根 `Nori` launcher 和 `app-<numeric-version>-<revision>` 槽组成；槽内包含 `deployment.json` 与宿主，运行时数据单独创建在包根 `data/`，绝不随包分发。直接运行已发布槽会在无法安全推断包根时明确报错。
+发布产物由根 `Nori` launcher、`.current` 和 `app-<numeric-version>-<revision>` 槽组成；槽内包含 `deployment.json` 与宿主，运行时数据严格创建在包根 `<PackageRoot>/data/`，绝不随包分发。`<PackageRoot>` 必须可写，整包可移动；直接运行已发布槽会在无法安全推断包根时明确报错。
 
 在 `app/desktop/` 下执行：
 
@@ -232,7 +232,7 @@ NORI_DEV=1 dotnet run --project Nori.Desktop
 publish.bat
 ```
 
-产物将输出至 `app/desktop/bin/publish/win-x64/`。
+产物将输出至 `app/desktop/bin/publish/win-x64/`（根 launcher、隐藏的 `.current` 与完整槽目录）；Linux/macOS 使用同样的根目录结构，归档时包含整个 root。
 
 ---
 
@@ -275,7 +275,7 @@ publish.bat
 
 - **版本规范**：普通构建产品版本精确为 `Dev`；GitHub Actions Release 必须手动输入唯一 codename，并由数字版本与短提交 hash 派生稳定标签、Sentry release 与 informational version。`ProductVersion.Current` 保留完整 informational 版本号并进入 snapshot、readiness、诊断与 MCP `clientInfo`。
 - **平台矩阵**：Windows x64 为发布 blocker 和首要验收平台；macOS/Linux 支持编译与单元测试，能力不支持时（如 Wayland 全局光标与穿透）由能力标志驱动优雅降级。
-- **发布产物**：发布包为 framework-dependent ZIP；Windows 目标机需具备 .NET 10 Runtime 与 WebView2 Evergreen Runtime；不提供自包含安装包。
+- **发布产物**：三平台均为 framework-dependent 槽式归档（Windows ZIP、Linux tar.gz、macOS ZIP），完整归档 root；目标机需具备 .NET 10 Runtime（Windows 另需 WebView2 Evergreen Runtime），不提供自包含安装包。
 - **模型管理**：仅支持本地模型（`arg-nori`、`nori`）与本地 ZIP/目录导入，不提供远程模型下载或 CDN 网关。
 - **排障与隐私**：提供 `--safe-mode` 人工排障模式；诊断日志导出严格经过白名单脱敏，绝不上传数据库、聊天记忆、提示词、录音或用户凭据。
 

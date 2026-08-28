@@ -72,11 +72,13 @@ public sealed class NoriDatabase : IDisposable
 	}
 
 	/// <summary>
-	/// 打开数据库文件. 传 null 走默认数据目录, 测试可传临时路径.
+	/// 打开数据库文件。宿主必须注入包内路径；测试可传临时路径。
 	/// </summary>
 	public static NoriDatabase Open(string? databasePath = null, AppStoragePaths? paths = null)
 	{
-		string path = databasePath ?? paths?.DatabasePath ?? new AppStoragePaths(Environment.CurrentDirectory).DatabasePath;
+		if (databasePath is null && paths is null)
+			throw new InvalidOperationException("数据库路径必须由宿主显式注入");
+		string path = databasePath ?? paths!.DatabasePath;
 		bool databaseExisted = File.Exists(path);
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		SqliteConnection connection = new(new SqliteConnectionStringBuilder

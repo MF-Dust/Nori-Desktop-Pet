@@ -112,8 +112,8 @@ internal sealed class DesktopBootstrapper
 			or UnauthorizedAccessException
 			or Microsoft.Data.Sqlite.SqliteException)
 		{
-			logger.Write(LogSource.Backend, "error", $"数据库打开或迁移失败: {exception.Message}");
-			CrashReporter.ReportStartupFatal("数据库打开或迁移失败", exception.Message);
+			logger.Write(LogSource.Backend, "error", $"数据库打开或迁移失败: {SensitiveDataRedactor.ExceptionSummary(exception)}");
+			CrashReporter.ReportStartupFatal("数据库打开或迁移失败", SensitiveDataRedactor.ExceptionSummary(exception));
 			return;
 		}
 		_startupDatabase = database;
@@ -131,8 +131,8 @@ internal sealed class DesktopBootstrapper
 		}
 		catch (InvalidOperationException exception)
 		{
-			logger.Write(LogSource.Backend, "error", exception.Message);
-			CrashReporter.ReportStartupFatal("配置数据库版本过高", exception.Message);
+			logger.Write(LogSource.Backend, "error", SensitiveDataRedactor.ExceptionSummary(exception));
+			CrashReporter.ReportStartupFatal("配置数据库版本过高", SensitiveDataRedactor.ExceptionSummary(exception));
 			return;
 		}
 		if (Program.StorageMigration is { Migrated: true, LegacyDataPath: not null } migration)
@@ -304,18 +304,20 @@ internal sealed class DesktopBootstrapper
 
 	private async Task ShutdownAsync()
 	{
-		Task cleanup = ShutdownCoreAsync();
-		await Task.WhenAny(cleanup, Task.Delay(TimeSpan.FromSeconds(8))).ConfigureAwait(false);
+		try { await ShutdownCoreAsync().WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false); }
+		catch (TimeoutException) { }
+		catch (Exception exception) { WriteShutdownFailure(exception); }
 	}
 
 	private async Task ShutdownCoreAsync()
 	{
 		try
 		{
-			await AwaitBackgroundTask(_mcpAutoConnectTask).ConfigureAwait(false);
-			await AwaitBackgroundTask(_pluginStartTask).ConfigureAwait(false);
-			if (_services is not null) await _services.DisposeAsync().ConfigureAwait(false);
+			Task[] background = new Task?[] {_mcpAutoConnectTask, _pluginStartTask}.Where(task => task is not null).Cast<Task>().ToArray();
+			if (background.Length > 0) await Task.WhenAll(background).WaitAsync(TimeSpan.FromSeconds(7)).ConfigureAwait(false);
+			if (_services is not null) await _services.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(7)).ConfigureAwait(false);
 		}
+		catch (TimeoutException) { }
 		finally
 		{
 			if (_startupPluginRuntime is not null)
@@ -344,6 +346,11 @@ internal sealed class DesktopBootstrapper
 				_startupTelemetry = null;
 			}
 		}
+	}
+
+	private static void WriteShutdownFailure(Exception exception)
+	{
+		try { System.Diagnostics.Debug.WriteLine($"Nori 关闭流程失败: {SensitiveDataRedactor.ExceptionSummary(exception)}"); } catch { }
 	}
 
 	/// <summary>

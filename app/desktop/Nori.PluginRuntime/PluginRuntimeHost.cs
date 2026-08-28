@@ -20,11 +20,12 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 			throw new ArgumentOutOfRangeException(nameof(options), "插件 API 版本无效");
 
 		string dataDirectory = Path.GetFullPath(options.DataDirectory);
+		// 可选项仅为核心测试/嵌入场景提供包内的确定性派生路径；绝不回退 cwd、AppData 或旧 Tauri 名称。
 		string pluginsDirectory = Path.GetFullPath(options.PluginsDirectory ?? Path.Combine(dataDirectory, "plugins"));
-		string pluginDataDirectory = Path.GetFullPath(options.PluginDataDirectory ?? Path.Combine(dataDirectory, "plugin-data"));
-		string webViewDataDirectory = Path.GetFullPath(options.WebViewDataDirectory ?? Path.Combine(dataDirectory, "webview_plugins"));
-		string packageInboxDirectory = Path.GetFullPath(options.PackageInboxDirectory ?? Path.Combine(dataDirectory, "packages", "inbox"));
-		string stagingDirectory = Path.GetFullPath(options.StagingDirectory ?? Path.Combine(dataDirectory, "staging"));
+		string pluginDataDirectory = Path.GetFullPath(options.PluginDataDirectory ?? Path.Combine(dataDirectory, "plugins", "data"));
+		string webViewDataDirectory = Path.GetFullPath(options.WebViewDataDirectory ?? Path.Combine(dataDirectory, "plugins", "cache", "webview"));
+		string packageInboxDirectory = Path.GetFullPath(options.PackageInboxDirectory ?? Path.Combine(dataDirectory, "plugins", "cache", "packages", "inbox"));
+		string stagingDirectory = Path.GetFullPath(options.StagingDirectory ?? Path.Combine(dataDirectory, "plugins", "temp", "staging"));
 		Directory.CreateDirectory(dataDirectory);
 
 		_windows = new PluginWindowHost(options.Logger, webViewDataDirectory);

@@ -18,6 +18,7 @@ if /I "%APP_VERSION%"=="Dev" (
 	for /f "tokens=1 delims=-+" %%V in ("!VERSION_FOR_NUMERIC!") do set "NUMERIC_VERSION=%%V"
 )
 if "%NUMERIC_VERSION%"=="" set "NUMERIC_VERSION=0.0.0"
+node scripts\validate-publish-input.mjs "%APP_VERSION%" "%REVISION%" win-x64 || goto :error
 if "%NORI_INCLUDE_RUNTIME%"=="1" goto :runtime_error
 if /I "%NORI_INCLUDE_RUNTIME%"=="true" goto :runtime_error
 
@@ -38,7 +39,7 @@ mkdir "%ROOT%\%SLOT%" || goto :error
 echo 发布 Nori.Desktop 槽...
 dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r win-x64 --self-contained false -p:NoriProductVersion="%APP_VERSION%" -p:NoriDeploymentRevision="%REVISION%" -p:NoriSentryDsnNative="%NORI_SENTRY_DSN_NATIVE%" -p:NoriSentryRelease="%NORI_SENTRY_RELEASE%" -p:NoriSentryEnvironment="%NORI_SENTRY_ENVIRONMENT%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "%ROOT%\%SLOT%" || goto :error
 if not "%NORI_KEEP_SYMBOLS%"=="1" if /I not "%NORI_KEEP_SYMBOLS%"=="true" for /r "%ROOT%\%SLOT%" %%F in (*.pdb) do del /q "%%F"
->"%ROOT%\%SLOT%\deployment.json" echo {"schema_version":1,"product_version":"%APP_VERSION%","numeric_version":"%NUMERIC_VERSION%","revision":%REVISION%,"rid":"win-x64","entrypoint":"Nori.Desktop.exe"}
+node scripts\write-deployment-json.mjs "%ROOT%\%SLOT%\deployment.json" "%APP_VERSION%" "%NUMERIC_VERSION%" "%REVISION%" win-x64 Nori.Desktop.exe || goto :error
 
 rem 根入口只由 launcher 发布，发布包不创建 data。
 echo 发布稳定根入口...
@@ -47,6 +48,7 @@ dotnet publish Nori.AppLauncher/Nori.AppLauncher.csproj -c Release -r win-x64 --
 move /y "%ROOT%\.current.tmp" "%ROOT%\.current" >nul
 if not exist "%ROOT%\Nori.exe" goto :error
 if not exist "%ROOT%\%SLOT%\wwwroot\index.html" goto :error
+node scripts\validate-publish-structure.mjs "%ROOT%" win-x64 || goto :error
 node scripts\check-package-size.mjs --path "%ROOT%" --label "win-x64 package" --max-mib 180 || goto :error
 
 echo 发布完成: %ROOT%

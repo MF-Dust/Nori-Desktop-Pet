@@ -152,7 +152,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nori-${{ matrix.rid }}-ci-package
-          path: app/desktop/bin/publish/${{ matrix.rid }}/*
+          path: app/desktop/bin/publish/${{ matrix.rid }}
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
@@ -229,6 +230,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nori-windows-ci-package
-          path: app/desktop/bin/ci-release/*
+          path: app/desktop/bin/ci-release
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

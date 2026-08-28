@@ -64,7 +64,7 @@ release 是手动 workflow，顺序不可颠倒：
 → 创建 GitHub Release
 ```
 
-Windows 是正式发布 blocker。release 只生成 `win-x64` framework-dependent ZIP，目标机必须安装 .NET 10 Runtime 和 WebView2；不提供 self-contained、安装器、签名或 macOS/Linux 正式资产。工作流不会再有 `include_runtime` 开关。
+三平台 release 均生成槽式 framework-dependent 归档：Windows `win-x64` ZIP、Linux tar.gz、macOS ZIP，完整归档 root（包括隐藏 `.current`）。目标机必须安装 .NET 10 Runtime，Windows 另需 WebView2；不提供 self-contained、安装器、签名或自动更新。工作流不会再有 `include_runtime` 开关。
 
 发布输入还必须显式为 true：
 
@@ -80,11 +80,11 @@ confirm_cubism_core_distribution_license
 发布二进制支持：
 
 ```powershell
-Nori.Desktop.exe --smoke-test first-run --profile "$env:TEMP\nori-smoke-first-run"
-Nori.Desktop.exe --smoke-test initialized --profile "$env:TEMP\nori-smoke-initialized"
+Nori.exe --smoke-test first-run --profile "$env:TEMP\nori-smoke-first-run"
+Nori.exe --smoke-test initialized --profile "$env:TEMP\nori-smoke-initialized"
 ```
 
-`--profile` 是强制的隔离目录。宿主在数据库、AssetServer、窗口和托盘装配完成后原子写出 schema v2 `readiness.json`（包含版本、数据库/配置 schema 和 `safe_mode`），随后自动退出；`scripts/smoke-published.ps1` 还会校验这些字段、数据目录没有越界并设置等待/退出超时。CI 同时覆盖普通 initialized 与 `--safe-mode` initialized。该模式不会接触真实用户目录，也不改变普通启动路径。
+根 `Nori` launcher 会选择 `.current` 指向的槽并转发参数；`<PackageRoot>` 必须可写且整包可移动。`--profile` 是强制的隔离目录。宿主在数据库、AssetServer、窗口和托盘装配完成后原子写出 schema v2 `readiness.json`（包含版本、数据库/配置 schema 和 `safe_mode`），随后自动退出；`scripts/smoke-published.ps1` 还会校验这些字段、数据目录没有越界并设置等待/退出超时。CI 同时覆盖普通 initialized 与 `--safe-mode` initialized。该模式不会接触真实用户目录，也不改变普通启动路径。
 
 普通维护可在主窗口导出脱敏诊断 ZIP。它只包含有界日志和 Agent 性能元数据，不包含数据库、用户内容、请求正文、录音、资源、凭据或真实路径；`--safe-mode` 保留该入口用于手动修复。
 

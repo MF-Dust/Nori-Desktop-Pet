@@ -14,8 +14,8 @@ on:
         type: choice
         options: [patch, minor, major]
       codename:
-        description: "可选 Codename；留空则使用纯数字版本标签"
-        required: false
+        description: "必填唯一 Codename；用于产品版本与发布标签"
+        required: true
         default: ""
         type: string
       run_extra_checks:
@@ -79,8 +79,8 @@ jobs:
           tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$'
           codename_pattern='^[A-Za-z0-9][A-Za-z0-9.-]*$'
           codename="$CODENAME"
-          if [ -n "$codename" ] && [[ ! "$codename" =~ $codename_pattern ]]; then
-            echo "Codename 只能包含字母、数字、点和连字符: $codename" >&2
+          if [ -z "$codename" ] || [[ ! "$codename" =~ $codename_pattern ]]; then
+            echo "Release 必须提供唯一 Codename，且只能包含字母、数字、点和连字符: $codename" >&2
             exit 1
           fi
 
@@ -94,8 +94,8 @@ jobs:
             version="${version#V}"
           else
             if [ -z "$latest" ]; then
-              version="0.1.0"
-              echo "没有历史数字版本，使用初始版本 $version"
+              echo "没有历史数字版本；Release 必须显式提供版本，拒绝隐式初始版本。" >&2
+              exit 1
             else
               IFS=. read -r major minor patch <<< "${latest#v}"
               case "$BUMP" in
@@ -371,21 +371,14 @@ jobs:
           rm -rf "$output"
           mkdir -p "$output"
 
+          publish="bin/publish/$rid"
+          node scripts/validate-publish-structure.mjs "$publish" "$rid"
           if [ "${{ matrix.name }}" = "linux" ]; then
-            publish="bin/publish/$rid/app"
-            test -x "$publish/Nori.Desktop"
-            test -f "$publish/wwwroot/index.html"
-            test -f "$publish/libLive2DCubismCore.so"
-            rm -f "bin/publish/$rid/nori-${NORI_VERSION}-${rid}.tar.gz"
             archive="$output/nori-${NORI_VERSION}-${rid}.tar.gz"
             tar -czf "$archive" -C "$publish" .
           else
-            app="bin/publish/$rid/Nori.app"
-            test -x "$app/Contents/MacOS/Nori.Desktop"
-            test -f "$app/Contents/Info.plist"
-            test -f "$app/Contents/MacOS/libLive2DCubismCore.dylib"
             archive="$output/nori-${NORI_VERSION}-${rid}.zip"
-            ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
+            (cd "$publish" && zip -qry "$GITHUB_WORKSPACE/app/desktop/$archive" .)
           fi
 
           if command -v sha256sum >/dev/null 2>&1; then

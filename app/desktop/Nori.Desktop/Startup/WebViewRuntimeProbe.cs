@@ -60,9 +60,21 @@ internal static class WebViewAdapterInfo
 			Path.Combine(programFilesX86, "Microsoft", "EdgeWebView", "Application"),
 			Path.Combine(localAppData, "Microsoft", "EdgeWebView", "Application"),
 		];
-		string? installed = roots.FirstOrDefault(Directory.Exists);
-		return installed is null
-			? new DetailedWebViewAdapterInfo(false, "", "未找到 Microsoft Edge WebView2 Evergreen Runtime")
-			: new DetailedWebViewAdapterInfo(true, "已安装", "");
+		foreach (string root in roots)
+		{
+			try
+			{
+				if (!Directory.Exists(root)) continue;
+				foreach (string versionDirectory in Directory.EnumerateDirectories(root))
+				{
+					string runtime = Path.Combine(versionDirectory, "msedgewebview2.exe");
+					if (File.Exists(runtime) && (File.GetAttributes(runtime) & FileAttributes.ReparsePoint) == 0)
+						return new DetailedWebViewAdapterInfo(true, Path.GetFileName(versionDirectory), "");
+				}
+			}
+			catch (IOException) { }
+			catch (UnauthorizedAccessException) { }
+		}
+		return new DetailedWebViewAdapterInfo(false, "", "未找到 Microsoft Edge WebView2 Evergreen Runtime");
 	}
 }

@@ -70,19 +70,21 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 				return false;
 			}
 
-			string databasePath = Path.Combine(fullProfile, "data", AppPaths.DatabaseFileName);
+			Directory.CreateDirectory(fullProfile);
+			AppStoragePaths profilePaths = new(fullProfile);
+			AppStoragePaths.EnsureNoReparsePoints(fullProfile, fullProfile);
+			string databasePath = profilePaths.DatabasePath;
 			if (File.Exists(databasePath))
 			{
-				error = "--profile 必须是隔离的临时目录, 不能包含已有 nori.db";
+				error = "--profile 必须是隔离的临时目录, 不能包含已有 core/database/nori.db";
 				return false;
 			}
-			Directory.CreateDirectory(fullProfile);
 			string readinessPath = Path.Combine(fullProfile, "readiness.json");
 			if (File.Exists(readinessPath)) File.Delete(readinessPath);
 			options = new SmokeTestOptions(mode, fullProfile);
 			return true;
 		}
-		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
+		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
 		{
 			error = $"--profile 不可用: {exception.Message}";
 			return false;

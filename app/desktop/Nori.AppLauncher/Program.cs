@@ -28,6 +28,7 @@ internal static class Program
 			startInfo.Environment["NORI_PACKAGE_ROOT"] = packageRoot;
 			startInfo.Environment["NORI_DEPLOYMENT_ROOT"] = selection.DeploymentRoot;
 			startInfo.Environment["NORI_LAUNCHER_PATH"] = Environment.ProcessPath ?? selection.Entrypoint;
+			startInfo.Environment["NORI_EXECUTABLE_PATH"] = selection.Entrypoint;
 			using Process child = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 Nori 宿主");
 			child.WaitForExit();
 			return child.ExitCode;
@@ -91,6 +92,7 @@ internal static class Program
 			forwarded.Add(args[index]);
 		}
 		if (waitStartTicks is not null && waitPid is null) throw new ArgumentException("--launcher-wait-start-ticks 必须配合 --launcher-wait-pid");
+		if (waitPid is not null && waitStartTicks is null) throw new ArgumentException("--launcher-wait-pid 必须同时带 --launcher-wait-start-ticks");
 	}
 
 	private static void WaitForProcess(int pid, long? expectedStartTicks)
@@ -107,10 +109,7 @@ internal static class Program
 		{
 			// 旧宿主已经退出。
 		}
-		catch (InvalidOperationException exception) when (exception.Message.Contains("process", StringComparison.OrdinalIgnoreCase))
-		{
-			// 旧宿主已经退出。
-		}
+
 	}
 
 	private static void EnsureExecutable(string path)

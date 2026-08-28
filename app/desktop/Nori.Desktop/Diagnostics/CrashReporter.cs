@@ -323,19 +323,19 @@ public static class CrashReporter
 				};
 				startInfo.ArgumentList.Add("--launcher-wait-pid");
 				startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
-				try
-				{
-					startInfo.ArgumentList.Add("--launcher-wait-start-ticks");
-					startInfo.ArgumentList.Add(Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks.ToString());
-				}
+				long startTicks;
+				try { startTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks; }
 				catch (Exception failure) when (failure is InvalidOperationException or System.ComponentModel.Win32Exception)
 				{
-					WriteLogSafe($"读取崩溃进程身份失败: {SensitiveDataRedactor.ExceptionSummary(failure)}");
+					throw new InvalidOperationException("无法读取崩溃进程身份, 已拒绝无身份重启", failure);
 				}
-				Process? child = Process.Start(startInfo);
-				if (child is null) throw new InvalidOperationException("启动器未返回进程");
+				startInfo.ArgumentList.Add("--launcher-wait-start-ticks");
+				startInfo.ArgumentList.Add(startTicks.ToString());
+				using Process child = Process.Start(startInfo) ?? throw new InvalidOperationException("启动器未返回进程");
+				// 启动器通常会持续等待新宿主；若它在短时间内带错误退出，不能关闭当前错误窗口。
+				if (child.WaitForExit(750) && child.ExitCode != 0)
+					throw new InvalidOperationException($"启动器退出码 {child.ExitCode}");
 				resolved = true;
-				child.Dispose();
 				ShutdownSafely(0);
 			}
 			catch (Exception failure)
@@ -453,14 +453,50 @@ public static class CrashReporter
 	private static string ResolveTrustedPackageRoot()
 	{
 		string? value = Environment.GetEnvironmentVariable("NORI_PACKAGE_ROOT");
-		if (string.IsNullOrWhiteSpace(value)) throw new InvalidOperationException("缺少受信任的发布包根目录");
+		string? deploymentValue = Environment.GetEnvironmentVariable("NORI_DEPLOYMENT_ROOT");
+		string? launcherValue = Environment.GetEnvironmentVariable("NORI_LAUNCHER_PATH");
+		string? executableValue = Environment.GetEnvironmentVariable("NORI_EXECUTABLE_PATH");
+		if (string.IsNullOrWhiteSpace(value) || string.IsNullOrWhiteSpace(deploymentValue) || string.IsNullOrWhiteSpace(launcherValue) || string.IsNullOrWhiteSpace(executableValue))
+			throw new InvalidOperationException("缺少受信任的发布启动环境");
 		string root = Path.GetFullPath(value);
-		if (!Directory.Exists(root) || (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-			throw new InvalidOperationException("发布包根目录无效");
+		string deployment = Path.GetFullPath(deploymentValue);
+		string launcher = Path.GetFullPath(launcherValue);
+		string executable = Path.GetFullPath(executableValue);
 		string baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
-		if (!IsContained(baseDirectory, root)) throw new InvalidOperationException("当前宿主不属于受信任的发布包");
+		string process = Path.GetFullPath(Environment.ProcessPath ?? "");
+		EnsureCanonical(root, directory: true);
+		EnsureCanonical(deployment, directory: true);
+		EnsureCanonical(launcher, directory: false);
+		EnsureCanonical(executable, directory: false);
+		EnsureCanonical(baseDirectory, directory: true);
+		EnsureCanonical(process, directory: false);
+		if (!IsContained(deployment, root) || !string.Equals(Path.GetDirectoryName(deployment)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), PathComparison)
+			|| !IsContained(baseDirectory, deployment) || !IsContained(process, deployment) || !string.Equals(executable, process, PathComparison))
+			throw new InvalidOperationException("当前宿主不属于受信任的发布槽");
+		string expectedLauncher = OperatingSystem.IsMacOS()
+			? Path.Combine(root, "Nori.app", "Contents", "MacOS", "Nori")
+			: Path.Combine(root, OperatingSystem.IsWindows() ? "Nori.exe" : "Nori");
+		if (!string.Equals(launcher, Path.GetFullPath(expectedLauncher), PathComparison))
+			throw new InvalidOperationException("受信任的 launcher 路径不匹配");
 		return root;
 	}
+
+	private static void EnsureCanonical(string path, bool directory)
+	{
+		if (string.IsNullOrWhiteSpace(path) || (directory ? !Directory.Exists(path) : !File.Exists(path)))
+			throw new InvalidOperationException("受信任的启动路径不存在");
+		string? current = path;
+		while (current is not null && !string.IsNullOrEmpty(Path.GetPathRoot(current)))
+		{
+			if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+				throw new InvalidOperationException("受信任的启动路径包含 reparse point");
+			string? parent = Path.GetDirectoryName(current);
+			if (parent is null || string.Equals(parent, current, PathComparison)) break;
+			current = parent;
+		}
+	}
+
+	private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
 	private static string ResolveTrustedLauncher()
 	{

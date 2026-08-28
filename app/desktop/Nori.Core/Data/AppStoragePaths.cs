@@ -12,6 +12,8 @@ public sealed class AppStoragePaths : IAppStoragePaths
 	{
 		if (string.IsNullOrWhiteSpace(packageRoot)) throw new ArgumentException("包根目录不能为空", nameof(packageRoot));
 		PackageRoot = Normalize(packageRoot);
+		if (Directory.Exists(PackageRoot) && (File.GetAttributes(PackageRoot) & FileAttributes.ReparsePoint) != 0)
+			throw new ArgumentException("包根目录不能是符号链接或 reparse point", nameof(packageRoot));
 		if (string.Equals(PackageRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), Path.GetPathRoot(PackageRoot)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), PathComparison))
 			throw new ArgumentException("包根目录不能是文件系统根目录", nameof(packageRoot));
 

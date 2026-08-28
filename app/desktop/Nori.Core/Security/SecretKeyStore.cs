@@ -8,9 +8,9 @@ namespace Nori.Core.Security;
 /// 主密钥保管
 ///
 /// 各平台的落点:
-/// - Windows: DPAPI(CurrentUser) 保护的密钥文件 data/secret.key
-/// - macOS:   Keychain (security 命令); 失败回退 0600 文件
-/// - Linux:   libsecret (secret-tool, 若可用); 否则 0600 文件
+/// - Windows: DPAPI(CurrentUser) 保护的密钥文件 `<PackageRoot>/data/core/security/secret.key`
+/// - macOS:   Keychain (security 命令); 失败回退 `<PackageRoot>/data/core/security/secret.key` (0600)
+/// - Linux:   libsecret (secret-tool, 若可用); 否则 `<PackageRoot>/data/core/security/secret.key` (0600)
 ///
 /// 回退到裸文件时会写日志 —— 这是「能用但更弱」的状态, 不能静默。
 /// </summary>

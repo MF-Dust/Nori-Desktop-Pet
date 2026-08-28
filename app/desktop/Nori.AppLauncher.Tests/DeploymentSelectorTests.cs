@@ -51,6 +51,23 @@ public sealed class DeploymentSelectorTests : IDisposable
 		Assert.Throws<InvalidOperationException>(() => DeploymentSelector.Select(_root, "win-x64"));
 	}
 
+	[Fact]
+	public void 损坏current和控制字符manifest只跳过坏槽()
+	{
+		CreateSlot("app-1.0.0-1", "1.0.0", 1, "win-x64");
+		string badSlot = Path.Combine(_root, "app-2.0.0-1");
+		Directory.CreateDirectory(badSlot);
+		File.WriteAllText(Path.Combine(badSlot, "deployment.json"), JsonSerializer.Serialize(new
+		{
+			schema_version = 1, product_version = "v2.0.0-test", numeric_version = "2.0.0", revision = 1, rid = "win-x64", entrypoint = "bad\u0001.exe",
+		}));
+		File.WriteAllText(Path.Combine(_root, ".current"), "../app-2.0.0-1");
+
+		DeploymentSelection selected = DeploymentSelector.Select(_root, "win-x64");
+
+		Assert.Equal("app-1.0.0-1", Path.GetFileName(selected.DeploymentRoot));
+	}
+
 	private void CreateSlot(string name, string version, int revision, string rid, string entrypoint = "Nori.Desktop.exe")
 	{
 		string slot = Path.Combine(_root, name);

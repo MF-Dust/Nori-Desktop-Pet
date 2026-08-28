@@ -25,7 +25,7 @@ public static class DeploymentSelector
 		ArgumentException.ThrowIfNullOrWhiteSpace(packageRoot);
 		ArgumentException.ThrowIfNullOrWhiteSpace(expectedRid);
 		string root = Path.GetFullPath(packageRoot);
-		if (!Directory.Exists(root)) throw new InvalidOperationException($"发布包根目录不存在: {root}");
+		if (!Directory.Exists(root) || IsReparse(root)) throw new InvalidOperationException($"发布包根目录不存在或无效: {root}");
 		List<DeploymentSelection> candidates = [];
 		string? currentName = ReadCurrent(root);
 		foreach (string directory in Directory.EnumerateDirectories(root))
@@ -43,7 +43,7 @@ public static class DeploymentSelector
 				string entrypoint = ResolveEntrypoint(directory, manifest.Entrypoint);
 				candidates.Add(new DeploymentSelection(root, directory, entrypoint, manifest));
 			}
-			catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException)
+			catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException or ArgumentException)
 			{
 				// 一个损坏或其它 RID 的槽不应遮蔽可用的旧槽。
 			}
@@ -70,7 +70,8 @@ public static class DeploymentSelector
 		string rid = RequiredString(root, "rid");
 		string entrypoint = RequiredString(root, "entrypoint");
 		if (schema != 1 || !Regex.IsMatch(numeric, "^[0-9]+\\.[0-9]+\\.[0-9]+$", RegexOptions.CultureInvariant)
-			|| revision < 0 || Path.IsPathRooted(entrypoint) || entrypoint.Contains('\\') || entrypoint.Split('/').Any(part => part is "" or "." or ".."))
+			|| revision < 0 || ContainsControl(product) || ContainsControl(numeric) || ContainsControl(rid) || ContainsControl(entrypoint)
+			|| Path.IsPathRooted(entrypoint) || entrypoint.Contains('\\') || entrypoint.Split('/').Any(part => part is "" or "." or ".."))
 			throw new InvalidOperationException($"部署 manifest 字段无效: {path}");
 		return new DeploymentManifest(schema, product, numeric, revision, rid, entrypoint);
 	}
@@ -88,10 +89,19 @@ public static class DeploymentSelector
 	private static string? ReadCurrent(string root)
 	{
 		string path = Path.Combine(root, ".current");
-		if (!File.Exists(path) || IsReparse(path)) return null;
-		string value = File.ReadAllText(path).Trim();
-		return value.Length > 0 && !value.Contains('/') && !value.Contains('\\') ? value : null;
+		try
+		{
+			if (!File.Exists(path) || IsReparse(path)) return null;
+			string value = File.ReadAllText(path).Trim();
+			return value.Length > 0 && value.Length <= 128 && !value.Any(char.IsControl) && !value.Contains('/') && !value.Contains('\\') ? value : null;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+		{
+			return null;
+		}
 	}
+
+	private static bool ContainsControl(string value) => value.Any(char.IsControl);
 
 	private static bool IsContained(string path, string root)
 	{
@@ -101,7 +111,13 @@ public static class DeploymentSelector
 		return string.Equals(fullPath, fullRoot, comparison) || fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison);
 	}
 
-	private static bool IsReparse(string path) => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+	private static bool IsReparse(string path)
+	{
+		try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+		catch (IOException) { return true; }
+		catch (UnauthorizedAccessException) { return true; }
+		catch (ArgumentException) { return true; }
+	}
 	private static string RequiredString(JsonElement root, string name) => root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()) ? value.GetString()! : throw new InvalidOperationException($"manifest 缺少 {name}");
 	private static int RequiredInt(JsonElement root, string name) => root.TryGetProperty(name, out JsonElement value) && value.TryGetInt32(out int result) ? result : throw new InvalidOperationException($"manifest 缺少 {name}");
 	private static Version ParseVersion(string value) => Version.Parse(value);
