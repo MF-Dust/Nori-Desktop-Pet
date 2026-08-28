@@ -15,13 +15,18 @@ $output = [IO.Path]::GetFullPath($OutputDir)
 if (-not (Test-Path -LiteralPath $publish -PathType Container)) { throw "找不到发布目录: $publish" }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 
+if (-not (Test-Path -LiteralPath (Join-Path $publish ".current") -PathType Leaf)) { throw "发布根目录缺少 .current" }
+$currentSlot = (Get-Content -LiteralPath (Join-Path $publish ".current") -Raw).Trim()
+if ($currentSlot -notmatch '^app-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$') { throw "发布根目录 .current 无效: $currentSlot" }
 $requiredFiles = @(
-	"Nori.Desktop.exe",
-	"Nori.Desktop.dll",
-	"Nori.Desktop.deps.json",
-	"Nori.Desktop.runtimeconfig.json",
-	"Live2DCubismCore.dll",
-	"wwwroot\index.html"
+	"Nori.exe",
+	"$currentSlot\deployment.json",
+	"$currentSlot\Nori.Desktop.exe",
+	"$currentSlot\Nori.Desktop.dll",
+	"$currentSlot\Nori.Desktop.deps.json",
+	"$currentSlot\Nori.Desktop.runtimeconfig.json",
+	"$currentSlot\Live2DCubismCore.dll",
+	"$currentSlot\wwwroot\index.html"
 )
 foreach ($relativePath in $requiredFiles) {
 	$requiredPath = Join-Path $publish $relativePath
@@ -49,6 +54,7 @@ New-Item -ItemType Directory -Path $metadataOutput -Force | Out-Null
 node (Join-Path $PSScriptRoot "generate-release-metadata.mjs") `
 	--publish-dir $publish --version $Version --rid win-x64 --output-dir $metadataOutput
 
+if (Test-Path -LiteralPath (Join-Path $publish "data")) { throw "发布包不得携带运行时 data 目录" }
 $artifactName = "nori-$Version-win-x64-framework-dependent.zip"
 $artifactPath = Join-Path $output $artifactName
 $staging = Join-Path $output ".staging"

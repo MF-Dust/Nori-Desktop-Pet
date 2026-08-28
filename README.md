@@ -135,9 +135,11 @@ flowchart TD
 ```
 Nori-Desktop-Pet/
 ├── app/desktop/                     # 桌宠主程序根目录
+│   ├── Nori.AppLauncher/            # 无 Avalonia 的稳定根入口（选择 app-* 部署槽）
+│   ├── Nori.AppLauncher.Tests/      # launcher 槽选择与 manifest 安全测试
 │   ├── Nori.Desktop/                # Avalonia 12 宿主（窗口调度/系统托盘/IPC 桥接/OpenGL 控制器）
 │   ├── Nori.Desktop.Tests/          # 宿主层集成与桥接测试套件
-│   ├── Nori.Core/                   # 核心逻辑层（SQLite/LLM/Agent/MCP/Voice/Memory/安全密钥）
+│   ├── Nori.Core/                   # 核心逻辑层（SQLite/LLM/Agent/MCP/Voice/Memory/安全密钥/存储迁移）
 │   ├── Nori.Core.Tests/             # 核心业务单元测试套件（xUnit）
 │   ├── Live2DCSharpSDK.Framework/   # Live2D Cubism Framework C# 实现
 │   ├── Live2DCSharpSDK.OpenGL/      # Live2D OpenGL ES 2.0 渲染器
@@ -207,7 +209,7 @@ dotnet test Nori.slnx   # 运行全部 .NET 单元测试
 - **生产模式（推荐）**：使用内置 Kestrel 服务器同源托管构建后的 `dist` 前端资源
 
 ```bash
-dotnet run --project Nori.Desktop
+NORI_DEV=1 dotnet run --project Nori.Desktop
 ```
 
 - **开发热重载模式**：先启动 Vite 开发服务器，再启动宿主并附加开发环境变量
@@ -221,6 +223,8 @@ NORI_DEV=1 dotnet run --project Nori.Desktop
 ```
 
 5. **独立打包发布**
+
+发布产物由根 `Nori` launcher 和 `app-<numeric-version>-<revision>` 槽组成；槽内包含 `deployment.json` 与宿主，运行时数据单独创建在包根 `data/`，绝不随包分发。直接运行已发布槽会在无法安全推断包根时明确报错。
 
 在 `app/desktop/` 下执行：
 

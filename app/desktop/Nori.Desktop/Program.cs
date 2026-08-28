@@ -1,5 +1,7 @@
 using System;
+using System.Runtime.InteropServices;
 using Avalonia;
+using Nori.Core;
 using Nori.Core.Data;
 using Nori.Desktop.Diagnostics;
 using Nori.Desktop.Startup;
@@ -14,8 +16,24 @@ internal static class Program
 	private static int _activationPending;
 
 	internal static StartupOptions? Options { get; private set; }
+	internal static AppStoragePaths? StoragePaths { get; private set; }
+	internal static StorageBootstrapResult? StorageMigration { get; private set; }
 
 	internal static bool ConsumePendingActivation() => Interlocked.Exchange(ref _activationPending, 0) == 1;
+
+	private static string RuntimeRid()
+	{
+		string rid = RuntimeInformation.RuntimeIdentifier;
+		if (rid.StartsWith("win-", StringComparison.Ordinal) || rid.StartsWith("linux-", StringComparison.Ordinal) || rid.StartsWith("osx-", StringComparison.Ordinal)) return rid;
+		string os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
+		string architecture = RuntimeInformation.OSArchitecture switch
+		{
+			Architecture.X64 => "x64",
+			Architecture.Arm64 => "arm64",
+			_ => throw new InvalidOperationException("不支持的 CPU 架构"),
+		};
+		return $"{os}-{architecture}";
+	}
 
 	private static void ActivateFirstInstance()
 	{
@@ -36,19 +54,21 @@ internal static class Program
 		Options = startup;
 		bool safeMode = startup?.SafeMode == true;
 		SmokeTestOptions? smokeTest = startup?.SmokeTest;
-		if (smokeTest is not null)
+		try
 		{
-			try
+			StoragePaths = smokeTest is null
+				? AppStoragePathResolver.Resolve()
+				: new AppStoragePaths(smokeTest.Profile);
+			if (smokeTest is not null)
 			{
-				AppPaths.UseDiagnosticProfile(smokeTest.Profile);
 				SmokeTestRuntime.Configure(smokeTest);
 			}
-			catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
-			{
-				Console.Error.WriteLine($"冒烟 profile 不可用: {exception.Message}");
-				Environment.ExitCode = 2;
-				return;
-			}
+		}
+		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			Console.Error.WriteLine($"存储包根不可用: {exception.Message}");
+			Environment.ExitCode = 2;
+			return;
 		}
 
 		// 在 Avalonia 启动前就挂上域级兜底, 尽早覆盖启动期异常 (参考 ClassIsland Program.cs)
@@ -66,7 +86,18 @@ internal static class Program
 			}
 			return;
 		}
-		BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+		try
+		{
+			AppStoragePaths paths = StoragePaths ?? throw new InvalidOperationException("存储路径尚未初始化");
+			string legacy = smokeTest is null ? LegacyDataPathResolver.Resolve() : Path.Combine(paths.PackageRoot, "legacy-source");
+			StorageMigration = StorageBootstrapper.Bootstrap(paths, ProductVersion.Current, RuntimeRid(), legacy);
+			BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
+		{
+			Console.Error.WriteLine($"存储初始化失败: {exception.Message}");
+			Environment.ExitCode = 1;
+		}
 	}
 
 	/// <summary>

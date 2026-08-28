@@ -91,10 +91,9 @@ public sealed class App : Application
 		cancellationToken.ThrowIfCancellationRequested();
 		bool devMode = Environment.GetEnvironmentVariable("NORI_DEV") == "1";
 		bool safeMode = Program.Options?.SafeMode == true;
+		AppStoragePaths paths = Program.StoragePaths ?? throw new InvalidOperationException("存储路径尚未初始化");
 
-		AppPaths.EnsureCreated();
-
-		FileLogger logger = new();
+		FileLogger logger = new(paths.LogsDirectory);
 		logger.Initialize();
 		CrashReporter.AttachLogger(logger); // 兜底日志与应用共用同一个写入器
 		logger.Write(LogSource.Backend, "info", "日志系统初始化完成");
@@ -126,7 +125,7 @@ public sealed class App : Application
 		NoriDatabase database;
 		try
 		{
-			database = NoriDatabase.Open();
+			database = NoriDatabase.Open(paths: paths);
 		}
 		catch (Exception exception) when (exception is InvalidOperationException
 			or IOException
@@ -138,7 +137,7 @@ public sealed class App : Application
 			return;
 		}
 		_startupDatabase = database;
-		ConfigStore config = new(database);
+		ConfigStore config = new(database, new Nori.Core.Security.SecretKeyStore(paths.DataRoot));
 		try
 		{
 			config.InitDefaults(AppVersion());
@@ -155,6 +154,11 @@ public sealed class App : Application
 			logger.Write(LogSource.Backend, "error", exception.Message);
 			CrashReporter.ReportStartupFatal("配置数据库版本过高", exception.Message);
 			return;
+		}
+		if (Program.StorageMigration is { Migrated: true, LegacyDataPath: not null } migration)
+		{
+			string oldKnowledgePath = Path.Combine(migration.LegacyDataPath, "knowledge", "Memory.md");
+			StorageBootstrapper.RelocateKnowledgeIdentifier(database, config, oldKnowledgePath, paths.KnowledgePath);
 		}
 		// 只有完成配置迁移并确认 consent=granted 后才允许初始化 Native Sentry。
 		telemetry.Configure(config.GetTelemetryConsent() == TelemetryConsent.Granted);
@@ -177,7 +181,10 @@ public sealed class App : Application
 		AssetServer? assetServer = null;
 		PluginRuntimeHost pluginRuntime = new(new PluginRuntimeHostOptions
 		{
-			DataDirectory = AppPaths.DataDir,
+			DataDirectory = paths.DataRoot,
+			PluginsDirectory = paths.PluginsInstalledDirectory,
+			PluginDataDirectory = paths.PluginsDataDirectory,
+			WebViewDataDirectory = paths.PluginsWebViewCacheDirectory,
 			HostVersion = PluginHostVersion(),
 			DevelopmentHost = string.Equals(Nori.Core.ProductVersion.Current, "Dev", StringComparison.Ordinal),
 			SafeMode = safeMode,
@@ -192,7 +199,7 @@ public sealed class App : Application
 		assetServer = await AssetServer.StartAsync(new AssetServerOptions
 		{
 			AppRoot = AppRoot(),
-			ResourcesRoot = AppPaths.ResourcesDir,
+			ResourcesRoot = paths.ResourcesInstalledDirectory,
 			DevMode = devMode,
 			AdditionalRoutes = [pluginRuntime.AssetRoute],
 		});
@@ -212,7 +219,8 @@ public sealed class App : Application
 			AiSettings = new AiSettingsStore(config),
 			Logger = logger,
 			Telemetry = telemetry,
-			Resources = new ResourceManager(),
+			Paths = paths,
+			Resources = new ResourceManager(paths),
 			Chat = chat,
 			Memory = new Nori.Core.Memory.MemoryStore(database),
 			Embedding = new Nori.Core.Embedding.OpenAiEmbeddingAdapter(http),
@@ -253,7 +261,7 @@ public sealed class App : Application
 		cancellationToken.ThrowIfCancellationRequested();
 		await Dispatcher.UIThread.InvokeAsync(() =>
 		{
-			services.Windows = new WindowManager(assets, desktop);
+			services.Windows = new WindowManager(assets, desktop, paths);
 			services.Commands = new BridgeCommands(services);
 			NoriBridge bridge = new(services);
 			services.Bridge = bridge;
@@ -285,10 +293,14 @@ public sealed class App : Application
 				bool expectedFirstRun = smokeTest.Mode == SmokeTestMode.FirstRun;
 				if (firstRun != expectedFirstRun)
 					throw new InvalidOperationException("启动冒烟分支与 profile 状态不一致");
-				SmokeTestRuntime.WriteReady(smokeTest, firstRun, safeMode);
+				SmokeTestRuntime.WriteReady(smokeTest, firstRun, safeMode, paths);
 				SmokeTestRuntime.ScheduleBoundedExit(services.Windows);
 			}
 		});
+
+		// 数据库、assets、固定窗口与初始窗口 ready 后才清理旧源；失败保留收据，下次启动重试。
+		if (Program.StorageMigration is { Migrated: true } cleanupMigration)
+			CrashReporter.Forget(Task.Run(() => StorageBootstrapper.CleanupLegacy(cleanupMigration, paths), cancellationToken), "旧数据清理");
 
 		// 固定窗口与插件窗口宿主都就绪后再执行第三方入口。
 		// 单个插件失败只记录状态，不阻断桌面宿主启动。

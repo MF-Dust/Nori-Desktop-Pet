@@ -23,6 +23,9 @@ namespace Nori.Desktop.Bridge;
 /// </summary>
 public sealed class AppServices : IAsyncDisposable
 {
+	/// <summary>应用包内不可变存储路径。</summary>
+	public AppStoragePaths Paths { get; init; } = new(Environment.CurrentDirectory);
+
 	/// <summary>数据库</summary>
 	public required NoriDatabase Database { get; init; }
 

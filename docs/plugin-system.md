@@ -90,25 +90,21 @@ locales/        (公开资源)
 runtimes/       (插件私有运行时依赖)
 ```
 
-宿主数据目录保持现有用户路径不变：
+宿主数据目录使用包根 `<PackageRoot>/data` 的固定插件布局：
 
 ```text
 <data>/plugins/
-├── inbox/*.noripack
-├── .staging/<temporary>/
-└── <pluginId>/
+├── cache/packages/inbox/*.noripack
+├── temp/staging/<temporary>/
+├── cache/webview/<pluginId>/
+├── data/<pluginId>/storage.json
+└── installed/<pluginId>/
     ├── current.json
     ├── 1.0.0/
     └── 1.1.0/
-
-<data>/plugin-data/
-├── runtime/
-│   ├── plugin-state.json
-│   └── plugin-startup.json
-└── <pluginId>/storage.json
-
-<data>/webview_plugins/<pluginId>/
 ```
+
+`AppStoragePaths` 不允许插件运行时回退到安装目录之外；插件资源与 WebView 缓存也不会进入发布包。
 
 安装顺序是包预检、同卷 staging、安全解压、manifest/入口/引用复校验、版本目录移动和 `current.json` 原子替换。ZIP Slip、绝对路径、`..`、控制字符、重复规范化路径、符号链接、单文件/总展开大小及压缩比均拒绝。包中不得携带 `Nori.PluginRuntime.dll` 或旧合同程序集副本。
 

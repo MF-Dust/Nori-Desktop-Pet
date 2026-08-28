@@ -1,162 +1,98 @@
 #!/usr/bin/env bash
-# Nori Desktop Pet — Linux / macOS 发布脚本
-#
-# 与 publish.bat 保持同样口径: framework-dependent 发布, 不打包 .NET 运行时。
-# macOS / Linux 目前只在 CI 做编译与单元测试, 此脚本仅供维护者本地预览。
-# 用法:
-#   ./publish.sh                  # 按当前系统推断 RID
-#   ./publish.sh linux-x64        # 指定单个 RID
-#   ./publish.sh osx-arm64 osx-x64
-#
-# 支持的 RID: linux-x64 linux-arm64 osx-arm64 osx-x64
+# Nori Desktop Pet — Linux / macOS 槽式 framework-dependent 发布。
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="Nori.Desktop"
-LINUX_APP_NAME="${APP_NAME}.bin"
 APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-Dev}}"
-APP_NUMERIC_VERSION="${APP_VERSION%%-*}"
-APP_NUMERIC_VERSION="${APP_NUMERIC_VERSION%%+*}"
-APP_NUMERIC_VERSION="${APP_NUMERIC_VERSION#v}"
-if [[ ! "$APP_NUMERIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then APP_NUMERIC_VERSION="0.0.0"; fi
+NUMERIC_VERSION="${APP_VERSION#v}"
+NUMERIC_VERSION="${NUMERIC_VERSION%%-*}"
+NUMERIC_VERSION="${NUMERIC_VERSION%%+*}"
+[[ "$NUMERIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || NUMERIC_VERSION="0.0.0"
+REVISION="${NORI_DEPLOYMENT_REVISION:-0}"
 if [[ -z "${NORI_COMMIT_SHA:-}" ]]; then NORI_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"; fi
-export NORI_VERSION="$APP_VERSION"
-export NORI_PRODUCT_VERSION="$APP_VERSION"
-export NORI_COMMIT_SHA
-BUNDLE_ID="cn.erhio.noriDesktopPet"
+export NORI_VERSION="$APP_VERSION" NORI_PRODUCT_VERSION="$APP_VERSION" NORI_COMMIT_SHA
 
 if [[ "${NORI_INCLUDE_RUNTIME:-0}" =~ ^(1|true|TRUE|yes)$ ]]; then
-	echo "不支持 self-contained 发布; 目标机必须预装 .NET 10 Runtime。" >&2
+	echo "不支持 self-contained 发布；目标机必须预装 .NET 10 Runtime。" >&2
 	exit 2
 fi
-SKIP_FRONTEND="${NORI_SKIP_FRONTEND:-0}"
+if [[ "${NORI_SKIP_FRONTEND:-0}" != "1" ]]; then pnpm build; elif [[ ! -f dist/index.html ]]; then echo "缺少 dist/index.html。" >&2; exit 2; fi
 KEEP_SYMBOLS="${NORI_KEEP_SYMBOLS:-0}"
-case "$KEEP_SYMBOLS" in
-	true | TRUE | yes) KEEP_SYMBOLS="1" ;;
-esac
 
-detect_rid() {
+runtime_rid() {
 	local os arch
-	os="$(uname -s)"
-	arch="$(uname -m)"
-	case "$arch" in
-		x86_64 | amd64) arch="x64" ;;
-		arm64 | aarch64) arch="arm64" ;;
-		*) echo "不支持的 CPU 架构: $arch" >&2; exit 1 ;;
-	esac
-	case "$os" in
-		Linux) echo "linux-$arch" ;;
-		Darwin) echo "osx-$arch" ;;
-		*) echo "不支持的系统: $os (Windows 请用 publish.bat)" >&2; exit 1 ;;
-	esac
+	os="$(uname -s)"; arch="$(uname -m)"
+	case "$arch" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) exit 1 ;; esac
+	case "$os" in Linux) echo "linux-$arch" ;; Darwin) echo "osx-$arch" ;; *) echo "不支持的系统: $os" >&2; exit 1 ;; esac
 }
 
-# macOS 的 .app bundle: Avalonia 需要它才能拿到正常的 Dock/权限行为,
-# 麦克风权限也必须在 Info.plist 里声明, 否则 getUserMedia 会被系统直接拒绝。
-make_macos_bundle() {
-	local rid="$1" publish_dir="$2"
-	local app_dir="bin/publish/$rid/Nori.app"
-	rm -rf "$app_dir"
-	mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
+make_manifest() {
+	local slot="$1" rid="$2" entry="$3"
+	printf '{"schema_version":1,"product_version":"%s","numeric_version":"%s","revision":%s,"rid":"%s","entrypoint":"%s"}\n' \
+		"$APP_VERSION" "$NUMERIC_VERSION" "$REVISION" "$rid" "$entry" > "$slot/deployment.json"
+}
 
-	cp -R "$publish_dir/." "$app_dir/Contents/MacOS/"
-
-	cat > "$app_dir/Contents/Info.plist" <<PLIST
+make_macos_launcher() {
+	local root="$1" rid="$2" temp="bin/publish/$rid/launcher"
+	mkdir -p "$root/Nori.app/Contents/MacOS" "$root/Nori.app/Contents/Resources"
+	cp "$temp/Nori" "$root/Nori.app/Contents/MacOS/Nori"
+	cp "$temp"/Nori.{dll,deps.json,runtimeconfig.json} "$root/Nori.app/Contents/MacOS/" 2>/dev/null || true
+	chmod +x "$root/Nori.app/Contents/MacOS/Nori"
+	cat > "$root/Nori.app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
+<plist version="1.0"><dict>
 	<key>CFBundleName</key><string>Nori</string>
 	<key>CFBundleDisplayName</key><string>Nori Desktop Pet</string>
-	<key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-	<key>CFBundleVersion</key><string>$APP_NUMERIC_VERSION</string>
-	<key>CFBundleShortVersionString</key><string>$APP_NUMERIC_VERSION</string>
+	<key>CFBundleIdentifier</key><string>cn.erhio.noriDesktopPet</string>
+	<key>CFBundleExecutable</key><string>Nori</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleExecutable</key><string>$APP_NAME</string>
-	<key>LSMinimumSystemVersion</key><string>12.0</string>
+	<key>CFBundleVersion</key><string>$NUMERIC_VERSION</string>
+	<key>CFBundleShortVersionString</key><string>$NUMERIC_VERSION</string>
 	<key>NSHighResolutionCapable</key><true/>
-	<!-- 语音输入: 前端 MediaRecorder 会触发系统麦克风授权, 缺这条会被直接拒绝 -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Nori 需要使用麦克风来进行语音对话。</string>
-</dict>
-</plist>
+	<key>NSMicrophoneUsageDescription</key><string>Nori 需要使用麦克风来进行语音对话。</string>
+</dict></plist>
 PLIST
-	echo "已生成 $app_dir"
 }
 
-# Linux: tar.gz + .desktop 模板 (安装路径由用户决定, 因此 Exec 用占位符)
-make_linux_package() {
-	local rid="$1" publish_dir="$2"
-	local out_dir="bin/publish/$rid"
-
-	# 保留原 apphost 作为兼容入口，同时提供不会被 Dolphin 按 .desktop 误判的主入口。
-	cp -p "$publish_dir/$APP_NAME" "$publish_dir/$LINUX_APP_NAME"
-	test -x "$publish_dir/$LINUX_APP_NAME"
-
-	cat > "$out_dir/nori.desktop" <<DESKTOP
+for rid in "${@:-$(runtime_rid)}"; do
+	case "$rid" in linux-x64|linux-arm64|osx-x64|osx-arm64) ;; *) echo "不支持的 RID: $rid" >&2; exit 1 ;; esac
+	root="bin/publish/$rid"; slot="$root/app-$NUMERIC_VERSION-$REVISION"; desktop_temp="$root/desktop"; launcher_temp="$root/launcher"
+	rm -rf "$root"; mkdir -p "$slot" "$desktop_temp" "$launcher_temp"
+	dotnet publish Nori.Desktop/Nori.Desktop.csproj -c Release -r "$rid" --self-contained false -p:NoriProductVersion="$APP_VERSION" -p:NoriDeploymentRevision="$REVISION" -p:NoriSentryDsnNative="${NORI_SENTRY_DSN_NATIVE:-}" -p:NoriSentryRelease="${NORI_SENTRY_RELEASE:-}" -p:NoriSentryEnvironment="${NORI_SENTRY_ENVIRONMENT:-production}" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "$desktop_temp"
+	if [[ "$KEEP_SYMBOLS" != "1" && "$KEEP_SYMBOLS" != "true" ]]; then find "$desktop_temp" -name '*.pdb' -delete; fi
+	if [[ "$rid" == osx-* ]]; then
+		mkdir -p "$slot/Nori.Desktop.app/Contents/MacOS" "$slot/Nori.Desktop.app/Contents/Resources"
+		cp -R "$desktop_temp/." "$slot/Nori.Desktop.app/Contents/MacOS/"
+		chmod +x "$slot/Nori.Desktop.app/Contents/MacOS/Nori.Desktop"
+		cat > "$slot/Nori.Desktop.app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+<key>CFBundleName</key><string>Nori Desktop</string><key>CFBundleExecutable</key><string>Nori.Desktop</string><key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIdentifier</key><string>cn.erhio.noriDesktopPet.desktop</string><key>CFBundleVersion</key><string>$NUMERIC_VERSION</string><key>CFBundleShortVersionString</key><string>$NUMERIC_VERSION</string>
+<key>NSMicrophoneUsageDescription</key><string>Nori 需要使用麦克风来进行语音对话。</string></dict></plist>
+PLIST
+		make_manifest "$slot" "$rid" "Nori.Desktop.app/Contents/MacOS/Nori.Desktop"
+	else
+		cp -R "$desktop_temp/." "$slot/"
+		chmod +x "$slot/Nori.Desktop"
+		make_manifest "$slot" "$rid" "Nori.Desktop"
+	fi
+	dotnet publish Nori.AppLauncher/Nori.AppLauncher.csproj -c Release -r "$rid" --self-contained false -p:NoriProductVersion="$APP_VERSION" -p:NoriDeploymentRevision="$REVISION" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "$launcher_temp"
+	if [[ "$rid" == osx-* ]]; then make_macos_launcher "$root" "$rid"; else cp -R "$launcher_temp/." "$root/"; chmod +x "$root/Nori"; fi
+	rm -rf "$desktop_temp" "$launcher_temp"
+	printf '%s\n' "$(basename "$slot")" > "$root/.current.tmp"; mv -f "$root/.current.tmp" "$root/.current"
+	node scripts/check-package-size.mjs --path "$root" --label "$rid package" --max-mib 180
+	if [[ "$rid" == linux-* ]]; then
+		cat > "$root/nori.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Nori Desktop Pet
 Comment=Live2D 桌面陪伴伙伴
-# 安装后请把 /opt/nori 换成实际安装路径
-Exec=/opt/nori/$LINUX_APP_NAME
+Exec=/opt/nori/Nori
 Icon=/opt/nori/nori.png
 Terminal=false
 Categories=Utility;
-StartupWMClass=Nori.Desktop
 DESKTOP
-
-	cp "$out_dir/nori.desktop" "$publish_dir/nori.desktop"
-	tar -czf "$out_dir/nori-$APP_VERSION-$rid.tar.gz" -C "$publish_dir" .
-	echo "已生成 $out_dir/nori-$APP_VERSION-$rid.tar.gz"
-}
-
-RIDS=("$@")
-if [ ${#RIDS[@]} -eq 0 ]; then
-	RIDS=("$(detect_rid)")
-fi
-
-if [ "$SKIP_FRONTEND" = "1" ]; then
-	echo "[1/2] 跳过前端构建, 使用现有 dist/"
-else
-	echo "[1/2] 构建前端 (pnpm build)..."
-	pnpm build
-fi
-
-for rid in "${RIDS[@]}"; do
-	case "$rid" in
-		linux-x64 | linux-arm64 | osx-arm64 | osx-x64) ;;
-		*) echo "不支持的 RID: $rid" >&2; exit 1 ;;
-	esac
-
-	publish_dir="bin/publish/$rid/app"
-	mode="framework-dependent"
-	echo "[2/2] 发布 $APP_NAME ($rid, $mode)..."
-	rm -rf "bin/publish/$rid"
-	publish_args=(
-		-c Release -r "$rid" --self-contained false
-		-p:NoriProductVersion="$APP_VERSION"
-		-p:NoriSentryDsnNative="${NORI_SENTRY_DSN_NATIVE:-}"
-		-p:NoriSentryRelease="${NORI_SENTRY_RELEASE:-}"
-		-p:NoriSentryEnvironment="${NORI_SENTRY_ENVIRONMENT:-production}"
-		-p:PublishSingleFile=false -p:PublishReadyToRun=false
-	)
-	if [ "$KEEP_SYMBOLS" = "1" ]; then
-		publish_args+=("-p:DebugType=portable" "-p:DebugSymbols=true")
-	else
-		publish_args+=("-p:DebugType=None" "-p:DebugSymbols=false")
+		tar -czf "$root/nori-$APP_VERSION-$rid.tar.gz" -C "$root" . --exclude="nori-$APP_VERSION-$rid.tar.gz"
 	fi
-	dotnet publish "$APP_NAME/$APP_NAME.csproj" "${publish_args[@]}" -o "$publish_dir"
-
-	if [ "$KEEP_SYMBOLS" != "1" ]; then find "$publish_dir" -name "*.pdb" -delete; fi
-	node scripts/check-package-size.mjs --path "$publish_dir" --label "$rid publish" --max-mib 80
-
-	case "$rid" in
-		osx-*) make_macos_bundle "$rid" "$publish_dir" ;;
-		linux-*) make_linux_package "$rid" "$publish_dir" ;;
-	esac
-
-	echo "========================================================"
-	echo "发布完成: app/desktop/bin/publish/$rid/"
-	echo "========================================================"
 done

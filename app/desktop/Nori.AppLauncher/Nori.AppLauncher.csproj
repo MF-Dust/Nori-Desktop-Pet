@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType Condition="'$(NoriIsWindowsBuild)' == 'true'">WinExe</OutputType>
+		<OutputType Condition="'$(NoriIsWindowsBuild)' != 'true'">Exe</OutputType>
+		<RootNamespace>Nori.AppLauncher</RootNamespace>
+		<AssemblyName>Nori</AssemblyName>
+		<EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+	</PropertyGroup>
+
+</Project>

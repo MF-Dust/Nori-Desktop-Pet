@@ -9,11 +9,22 @@ namespace Nori.Core.Resources;
 /// 负责资源的本地检查、列表、删除与从本地 ZIP/目录导入, 不包含远程下载逻辑.
 /// 导入始终经过同卷 staging、完整校验与原子交换.
 /// </summary>
-public sealed class ResourceManager(string? dataDir = null)
+public sealed class ResourceManager
 {
-	private readonly string _dataDir = dataDir ?? AppPaths.DataDir;
+	private readonly string _resourcesRoot;
 
-	private string ResourcesRoot => Path.Combine(_dataDir, AppPaths.ResourcesDirName);
+	public ResourceManager(string? dataDir = null)
+	{
+		_resourcesRoot = Path.Combine(dataDir ?? AppPaths.DataDir, AppPaths.ResourcesDirName);
+	}
+
+	public ResourceManager(AppStoragePaths paths)
+	{
+		ArgumentNullException.ThrowIfNull(paths);
+		_resourcesRoot = paths.ResourcesInstalledDirectory;
+	}
+
+	private string ResourcesRoot => _resourcesRoot;
 
 	/// <summary>指定资源的目录.</summary>
 	public string ResourceDir(ResourceType type, string name) =>

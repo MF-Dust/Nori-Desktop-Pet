@@ -126,7 +126,7 @@ public static class SmokeTestRuntime
 	///
 	/// 只有资源服务、窗口和配置数据库都已经装配后才会调用, 因此它代表宿主已就绪而非仅仅进程已启动。
 	/// </summary>
-	public static void WriteReady(SmokeTestOptions options, bool firstRun, bool safeMode = false)
+	public static void WriteReady(SmokeTestOptions options, bool firstRun, bool safeMode = false, AppStoragePaths? paths = null)
 	{
 		var checkpoint = new
 		{
@@ -139,7 +139,7 @@ public static class SmokeTestRuntime
 			safe_mode = safeMode,
 			first_run = firstRun,
 			initial_window = firstRun ? "first-run" : "init",
-			data_dir = AppPaths.DataDir,
+			data_dir = (paths ?? new AppStoragePaths(options.Profile)).DataRoot,
 			asset_server = "ready",
 		};
 		string temporaryPath = options.ReadinessPath + ".tmp";

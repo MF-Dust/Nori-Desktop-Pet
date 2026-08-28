@@ -20,9 +20,9 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 			throw new ArgumentOutOfRangeException(nameof(options), "插件 API 版本无效");
 
 		string dataDirectory = Path.GetFullPath(options.DataDirectory);
-		string pluginsDirectory = Path.Combine(dataDirectory, "plugins");
-		string pluginDataDirectory = Path.Combine(dataDirectory, "plugin-data");
-		string webViewDataDirectory = Path.Combine(dataDirectory, "webview_plugins");
+		string pluginsDirectory = Path.GetFullPath(options.PluginsDirectory ?? Path.Combine(dataDirectory, "plugins"));
+		string pluginDataDirectory = Path.GetFullPath(options.PluginDataDirectory ?? Path.Combine(dataDirectory, "plugin-data"));
+		string webViewDataDirectory = Path.GetFullPath(options.WebViewDataDirectory ?? Path.Combine(dataDirectory, "webview_plugins"));
 		Directory.CreateDirectory(dataDirectory);
 
 		_windows = new PluginWindowHost(options.Logger, webViewDataDirectory);
@@ -74,6 +74,9 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 internal sealed record PluginRuntimeHostOptions
 {
 	public required string DataDirectory { get; init; }
+	public string? PluginsDirectory { get; init; }
+	public string? PluginDataDirectory { get; init; }
+	public string? WebViewDataDirectory { get; init; }
 	public PluginApiVersion HostApiVersion { get; init; } = new(2, 0);
 	public PluginVersion HostVersion { get; init; } = new(1, 0, 0);
 	public bool DevelopmentHost { get; init; }

@@ -28,7 +28,7 @@ if ($ownsProfile) {
 }
 $profile = [IO.Path]::GetFullPath($Profile)
 New-Item -ItemType Directory -Path $profile -Force | Out-Null
-$databasePath = Join-Path $profile "data\nori.db"
+$databasePath = Join-Path $profile "data\core\database\nori.db"
 if (Test-Path -LiteralPath $databasePath) {
 	throw "profile 不是隔离的临时目录, 已存在 nori.db: $databasePath"
 }

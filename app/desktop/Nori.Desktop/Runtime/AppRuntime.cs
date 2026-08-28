@@ -153,7 +153,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		services.Automation.Changed += OnAutomationChanged;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config, startBackgroundWorker: !services.SafeMode);
-		Knowledge = new KnowledgeService(services.Database, Memory, config);
+		Knowledge = new KnowledgeService(services.Database, Memory, config, services.Paths.KnowledgePath);
 		Knowledge.StatusChanged = () => InvalidateSnapshot("memory");
 		Memory.Knowledge = Knowledge;
 		Lifecycle = new MemoryLifecycleService(Memory);

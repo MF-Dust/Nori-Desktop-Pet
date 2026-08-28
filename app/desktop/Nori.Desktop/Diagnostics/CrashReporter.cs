@@ -316,14 +316,26 @@ public static class CrashReporter
 			resolved = true;
 			try
 			{
-				string? exePath = Environment.ProcessPath;
-				if (!string.IsNullOrEmpty(exePath))
+				string? launcher = Environment.GetEnvironmentVariable("NORI_LAUNCHER_PATH");
+				string? executable = Environment.ProcessPath;
+				if (!string.IsNullOrWhiteSpace(launcher) && File.Exists(launcher))
 				{
-					Process.Start(new ProcessStartInfo { FileName = exePath, UseShellExecute = false });
+					ProcessStartInfo startInfo = new(launcher)
+					{
+						UseShellExecute = false,
+						WorkingDirectory = Environment.GetEnvironmentVariable("NORI_PACKAGE_ROOT") ?? Environment.CurrentDirectory,
+					};
+					startInfo.ArgumentList.Add("--launcher-wait-pid");
+					startInfo.ArgumentList.Add(Environment.ProcessId.ToString());
+					Process.Start(startInfo);
+				}
+				else if (Environment.GetEnvironmentVariable("NORI_DEV") == "1" && !string.IsNullOrWhiteSpace(executable))
+				{
+					Process.Start(new ProcessStartInfo { FileName = executable, UseShellExecute = false });
 				}
 				else
 				{
-					WriteLogSafe("重启应用失败: 无法获取可执行文件路径");
+					throw new InvalidOperationException("找不到发布启动器");
 				}
 			}
 			catch (Exception failure)

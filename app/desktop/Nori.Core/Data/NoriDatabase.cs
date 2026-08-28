@@ -74,9 +74,9 @@ public sealed class NoriDatabase : IDisposable
 	/// <summary>
 	/// 打开数据库文件. 传 null 走默认数据目录, 测试可传临时路径.
 	/// </summary>
-	public static NoriDatabase Open(string? databasePath = null)
+	public static NoriDatabase Open(string? databasePath = null, AppStoragePaths? paths = null)
 	{
-		string path = databasePath ?? AppPaths.DatabasePath;
+		string path = databasePath ?? paths?.DatabasePath ?? AppPaths.DatabasePath;
 		bool databaseExisted = File.Exists(path);
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		SqliteConnection connection = new(new SqliteConnectionStringBuilder

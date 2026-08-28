@@ -8,6 +8,7 @@ Two independent deliverables, no shared build:
 
 - `app/desktop/` — the Nori desktop pet. **.NET 10 + Avalonia 12 host** (`Nori.Desktop/`, `Nori.Core/`, C#) + Vue 3 SPA (`src/`, TypeScript + **UnoCSS**) rendered in Avalonia's **cross-platform NativeWebView** (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux). This is where nearly all work happens.
 - `docs/` — Chinese design docs. `规范.md` is a binding style contract, not advice — read it before touching frontend or C# code. `技术.md` is the module/tech map (and records the pet-window transparency verification), `跨平台.md` the platform support matrix + degradation table, `开发任务清单.md` the roadmap, `windows.md` an Avalonia window-property reference.
+- `Nori.AppLauncher/` is the dependency-free stable root entry (`Nori`). It selects only a validated `app-<numeric-version>-<revision>` slot; it never updates/deletes slots or owns the single-instance lock. Published data is created only at `<PackageRoot>/data` and is never included in a package.
 
 `README.md` contains the project overview, current stabilization boundary and development gates.
 
