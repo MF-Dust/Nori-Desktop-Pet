@@ -6,8 +6,10 @@ import {host} from "../host"
  */
 export const ASSET_BASE = host()?.assetBase ?? "/nori-assets/"
 
-export const assetUrl = (relativePath: string): string =>
-	`${ASSET_BASE}${relativePath.replace(/^\/+/, "")}`
+export const assetUrl = (relativePath: string): string => {
+	const BASE = host()?.assetBase ?? ASSET_BASE
+	return `${BASE}${relativePath.replace(/^\/+/, "")}`
+}
 
 export const defaultModels: Record<string, string> = {
 	"arg-nori": "ARGNori",
