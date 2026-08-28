@@ -235,7 +235,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 	private string ResolvePath()
 	{
 		string configured = _config.GetStringOr("memory_knowledge_path", "").Trim();
-		return configured.Length == 0 ? (_defaultPath ?? AppPaths.MemoryMarkdownPath) : System.IO.Path.GetFullPath(configured);
+		return configured.Length == 0 ? (_defaultPath ?? new AppStoragePaths(Environment.CurrentDirectory).KnowledgePath) : System.IO.Path.GetFullPath(configured);
 	}
 
 	private void EnsureKnowledgeFts()

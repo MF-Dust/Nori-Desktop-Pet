@@ -60,7 +60,7 @@ public sealed class DiagnosticExporterTests : IDisposable
 		Assert.DoesNotContain("nori.db", archiveText, StringComparison.Ordinal);
 		Assert.DoesNotContain("secret-value", archiveText, StringComparison.Ordinal);
 		Assert.DoesNotContain("/home/user/private.db", archiveText, StringComparison.Ordinal);
-		Assert.DoesNotContain(AppPaths.DataDir, archiveText, StringComparison.Ordinal);
+		Assert.DoesNotContain(new AppStoragePaths(Environment.CurrentDirectory).DataRoot, archiveText, StringComparison.Ordinal);
 	}
 
 	[Fact]

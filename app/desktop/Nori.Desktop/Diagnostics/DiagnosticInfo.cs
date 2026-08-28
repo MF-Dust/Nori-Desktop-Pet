@@ -23,8 +23,8 @@ public static class DiagnosticInfo
 	{
 		string version = Nori.Core.ProductVersion.Current;
 		PetRenderMetrics? render = pet?.RenderMetrics;
-		AppStoragePaths storage = paths ?? new AppStoragePaths(AppPaths.DataDir);
-		long dbBytes = FileSizeOrDefault(paths is null ? AppPaths.DatabasePath : storage.DatabasePath);
+		AppStoragePaths storage = paths ?? new AppStoragePaths(Environment.CurrentDirectory);
+		long dbBytes = FileSizeOrDefault(storage.DatabasePath);
 		return new Dictionary<string, string>
 		{
 			["app_version"] = version,
@@ -34,10 +34,10 @@ public static class DiagnosticInfo
 			["os_arch"] = RuntimeInformation.OSArchitecture.ToString(),
 			["process_uptime"] = FormatDuration(Environment.TickCount64),
 			["process_bits"] = Environment.Is64BitProcess ? "64-bit" : "32-bit",
-			["data_dir"] = SensitiveDataRedactor.Redact(paths is null ? AppPaths.DataDir : storage.DataRoot),
-			["resources_dir"] = SensitiveDataRedactor.Redact(paths is null ? AppPaths.ResourcesDir : storage.ResourcesDirectory),
-			["log_dir"] = SensitiveDataRedactor.Redact(paths is null ? AppPaths.LogDir : storage.LogsDirectory),
-			["database_path"] = SensitiveDataRedactor.Redact(paths is null ? AppPaths.DatabasePath : storage.DatabasePath),
+			["data_dir"] = SensitiveDataRedactor.Redact(storage.DataRoot),
+			["resources_dir"] = SensitiveDataRedactor.Redact(storage.ResourcesDirectory),
+			["log_dir"] = SensitiveDataRedactor.Redact(storage.LogsDirectory),
+			["database_path"] = SensitiveDataRedactor.Redact(storage.DatabasePath),
 			["database_size"] = dbBytes < 0 ? "不存在" : FormatSize(dbBytes),
 			["live2d_effective_quality"] = render?.EffectiveQuality ?? "unknown",
 			["live2d_effective_fps"] = render?.EffectiveFps.ToString() ?? "0",

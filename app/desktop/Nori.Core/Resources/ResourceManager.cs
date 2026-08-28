@@ -15,7 +15,7 @@ public sealed class ResourceManager
 
 	public ResourceManager(string? dataDir = null)
 	{
-		_resourcesRoot = Path.Combine(dataDir ?? AppPaths.DataDir, AppPaths.ResourcesDirName);
+		_resourcesRoot = dataDir is null ? new AppStoragePaths(Environment.CurrentDirectory).ResourcesInstalledDirectory : Path.Combine(dataDir, AppPaths.ResourcesDirName);
 	}
 
 	public ResourceManager(AppStoragePaths paths)

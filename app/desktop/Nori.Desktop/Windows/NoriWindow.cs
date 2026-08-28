@@ -158,7 +158,7 @@ public sealed class NoriWindow : Window, IBridgeSource
 	{
 		if (e is not WindowsWebView2EnvironmentRequestedEventArgs wv2) return;
 		// 用户数据放到应用数据目录, 不要落在安装目录
-		wv2.UserDataFolder = _storagePaths?.WebViewHostCacheDirectory ?? Path.Combine(AppPaths.DataDir, "webview");
+		wv2.UserDataFolder = _storagePaths?.WebViewHostCacheDirectory ?? new AppStoragePaths(Environment.CurrentDirectory).WebViewHostCacheDirectory;
 	}
 
 	private void OnWebMessageReceived(object? sender, WebMessageReceivedEventArgs e)

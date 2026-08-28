@@ -45,7 +45,7 @@ public sealed class SecretKeyStore : ISecretKeyStore
 
 	public SecretKeyStore(string? dataDir = null)
 	{
-		_keyPath = Path.Combine(dataDir ?? AppPaths.DataDir, "secret.key");
+		_keyPath = dataDir is null ? new AppStoragePaths(Environment.CurrentDirectory).SecretPath : Path.Combine(dataDir, "secret.key");
 	}
 
 	/// <inheritdoc />

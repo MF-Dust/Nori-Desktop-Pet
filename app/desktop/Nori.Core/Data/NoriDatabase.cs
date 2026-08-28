@@ -76,7 +76,7 @@ public sealed class NoriDatabase : IDisposable
 	/// </summary>
 	public static NoriDatabase Open(string? databasePath = null, AppStoragePaths? paths = null)
 	{
-		string path = databasePath ?? paths?.DatabasePath ?? AppPaths.DatabasePath;
+		string path = databasePath ?? paths?.DatabasePath ?? new AppStoragePaths(Environment.CurrentDirectory).DatabasePath;
 		bool databaseExisted = File.Exists(path);
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		SqliteConnection connection = new(new SqliteConnectionStringBuilder

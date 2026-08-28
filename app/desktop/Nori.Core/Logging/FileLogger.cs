@@ -44,7 +44,7 @@ public sealed class FileLogger
 	/// <summary>创建带最低级别过滤的日志写入器。</summary>
 	public FileLogger(string? directory, string minimumLevel)
 	{
-		_directory = directory ?? AppPaths.LogDir;
+		_directory = directory ?? new AppStoragePaths(Environment.CurrentDirectory).LogsDirectory;
 		_minimumLevel = ParseLevel(minimumLevel, LogLevel.Trace);
 		Directory.CreateDirectory(_directory);
 
