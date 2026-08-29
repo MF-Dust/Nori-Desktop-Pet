@@ -66,9 +66,13 @@ public sealed class BridgeCommandRouter(AppServices services)
 				?? throw new InvalidOperationException("插件运行时尚未就绪");
 			if (!string.Equals(source.Label, WindowLabels.Main, StringComparison.Ordinal))
 				throw new InvalidOperationException("plugin_widgets 仅允许宿主主窗口调用");
-			return runtime.GetChatWidgets()
-				.Select(widget => new { pluginId = widget.PluginId, title = widget.Title, entry = widget.EntryUrl.ToString() })
-				.ToArray();
+			// 返回形状必须与前端 commands.ts 的类型契约一致: {widgets: [...]}
+			return new
+			{
+				widgets = runtime.GetChatWidgets()
+					.Select(widget => new { pluginId = widget.PluginId, title = widget.Title, entry = widget.EntryUrl.ToString() })
+					.ToArray(),
+			};
 		}
 
 		if (domain == BridgeCommandDomain.Plugins)

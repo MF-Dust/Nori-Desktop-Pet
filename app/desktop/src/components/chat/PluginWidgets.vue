@@ -27,11 +27,24 @@ interface WidgetCall {
 
 const widgets = ref<WidgetInfo[]>([])
 const expanded = ref(new Set<string>())
+const knownIds = new Set<string>()
 
 async function refresh(): Promise<void> {
 	try {
 		const result = await invoke("plugin_widgets")
-		widgets.value = (result as unknown as {widgets: WidgetInfo[]}).widgets ?? []
+		const list = (result as unknown as {widgets: WidgetInfo[]}).widgets ?? []
+		widgets.value = list
+		// 新出现的卡片默认展开: 扫码登录这类流程不应要求用户先找到折叠入口
+		let expandedChanged = false
+		const next = new Set(expanded.value)
+		for (const widget of list) {
+			if (!knownIds.has(widget.pluginId)) {
+				knownIds.add(widget.pluginId)
+				next.add(widget.pluginId)
+				expandedChanged = true
+			}
+		}
+		if (expandedChanged) expanded.value = next
 	} catch {
 		widgets.value = []
 	}
@@ -69,11 +82,11 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
 	await refresh()
-	// 插件激活/停用是低频事件, 轮询刷新部件列表即可
+	// 插件激活可能晚于聊天挂载 (宿主启动后异步激活), 轮询保证卡片能及时出现
 	refreshTimer = setInterval(() => {
 		if (document.hidden) return
 		void refresh()
-	}, 60_000)
+	}, 10_000)
 	window.addEventListener("message", proxyCall)
 })
 

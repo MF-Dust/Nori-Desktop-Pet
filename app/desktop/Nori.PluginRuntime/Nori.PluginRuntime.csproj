@@ -8,6 +8,7 @@
 	<ItemGroup>
 		<InternalsVisibleTo Include="Nori.PluginRuntime.Tests" />
 		<InternalsVisibleTo Include="Nori.Desktop" />
+		<InternalsVisibleTo Include="Nori.Desktop.Tests" />
 	</ItemGroup>
 
 	<ItemGroup>
