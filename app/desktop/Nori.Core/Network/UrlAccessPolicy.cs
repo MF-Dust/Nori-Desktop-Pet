@@ -65,11 +65,21 @@ public static class UrlAccessPolicy
 	}
 
 	/// <summary>
+	/// 公网请求是否允许跟随系统代理。
+	///
+	/// 默认 false (强制直连, 防 SSRF 借代理绕过)。用户开启系统代理才能出网的环境下,
+	/// 可由配置 allow_public_system_proxy 放行: 跳过直连强制, 由 hostname/IP 预校验
+	/// 与手动逐跳重定向校验兜底。
+	/// </summary>
+	public static bool PublicSystemProxyAllowed { get; set; }
+
+	/// <summary>
 	/// 公网请求必须直连。系统代理无法被 AntiSSRFHandler 配置时，若该 URL 会走代理则拒绝，
 	/// 防止代理成为 SSRF 绕过路径。
 	/// </summary>
 	public static void EnsureDirectRoute(Uri uri, IWebProxy? proxy = null)
 	{
+		if (PublicSystemProxyAllowed) return;
 		proxy ??= HttpClient.DefaultProxy;
 		if (proxy is null) return;
 		try

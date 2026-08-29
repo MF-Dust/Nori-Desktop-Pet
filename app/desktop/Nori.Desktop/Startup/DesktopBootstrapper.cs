@@ -147,9 +147,13 @@ internal sealed class DesktopBootstrapper
 
 		// 默认校验服务器证书。自签名/私有部署的大模型端点可通过 allow_insecure_tls 显式放开。
 		bool insecureTls = ParseBoolFlag(config.GetStringOr("allow_insecure_tls", "")) ?? false;
+		// 公网请求默认强制直连 (防代理 SSRF 绕过); 开系统代理才能出网的环境可显式放行。
+		bool publicSystemProxy = ParseBoolFlag(config.GetStringOr("allow_public_system_proxy", "")) ?? false;
+		UrlAccessPolicy.PublicSystemProxyAllowed = publicSystemProxy;
 		NoriHttpClients httpClients = NoriHttpClients.Create(
 			insecureTls,
-			TimeSpan.FromSeconds(ChatService.TimeoutSeconds + 10));
+			TimeSpan.FromSeconds(ChatService.TimeoutSeconds + 10),
+			publicSystemProxy);
 		_startupHttpClients = httpClients;
 		HttpClient http = httpClients.Local;
 		HttpClient publicHttp = httpClients.Public;

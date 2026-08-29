@@ -28,7 +28,13 @@ public sealed class NoriHttpClients : IDisposable
 	}
 
 	/// <summary>创建一组带统一 TLS 与超时策略的客户端。</summary>
-	public static NoriHttpClients Create(bool allowInsecureTls, TimeSpan? timeout = null)
+	/// <param name="allowInsecureTls">跳过公网/本地请求的证书校验 (自签名端点)。</param>
+	/// <param name="publicUseSystemProxy">
+	/// 公网客户端跟随系统代理。开启后公网请求不经 AntiSSRF connect-time 校验
+	/// (代理场景下无法配置), 由 UrlAccessPolicy 的 hostname/IP 预校验与手动逐跳重定向兜底。
+	/// </param>
+	/// <param name="timeout">请求超时</param>
+	public static NoriHttpClients Create(bool allowInsecureTls, TimeSpan? timeout = null, bool publicUseSystemProxy = false)
 	{
 		TimeSpan requestTimeout = timeout ?? DefaultTimeout;
 		HttpClientHandler localHandler = new()
@@ -39,23 +45,44 @@ public sealed class NoriHttpClients : IDisposable
 		};
 		HttpClient local = new(localHandler) {Timeout = requestTimeout};
 
-		AntiSSRFPolicy policy = new(PolicyConfigOptions.ExternalOnlyLatest)
+		HttpClient @public;
+		if (publicUseSystemProxy)
 		{
-			AllowPlainTextHttp = true,
-			AddXFFHeader = false,
-		};
-		AntiSSRFHandler publicHandler = policy.GetHandler();
-		publicHandler.AllowAutoRedirect = false;
-		publicHandler.MaxAutomaticRedirections = UrlAccessPolicy.MaxRedirects;
-		publicHandler.PooledConnectionLifetime = TimeSpan.FromMinutes(5);
-		publicHandler.SslOptions = new SslClientAuthenticationOptions
+			SocketsHttpHandler proxiedHandler = new()
+			{
+				AllowAutoRedirect = false,
+				PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+				UseProxy = true,
+				Proxy = HttpClient.DefaultProxy,
+				SslOptions = new SslClientAuthenticationOptions
+				{
+					RemoteCertificateValidationCallback = allowInsecureTls
+						? static (_, _, _, _) => true
+						: null,
+				},
+			};
+			@public = new HttpClient(proxiedHandler) {Timeout = requestTimeout};
+		}
+		else
 		{
-			EnabledSslProtocols = SslProtocols.None,
-			RemoteCertificateValidationCallback = allowInsecureTls
-				? static (_, _, _, _) => true
-				: null,
-		};
-		HttpClient @public = new(publicHandler) {Timeout = requestTimeout};
+			AntiSSRFPolicy policy = new(PolicyConfigOptions.ExternalOnlyLatest)
+			{
+				AllowPlainTextHttp = true,
+				AddXFFHeader = false,
+			};
+			AntiSSRFHandler publicHandler = policy.GetHandler();
+			publicHandler.AllowAutoRedirect = false;
+			publicHandler.MaxAutomaticRedirections = UrlAccessPolicy.MaxRedirects;
+			publicHandler.PooledConnectionLifetime = TimeSpan.FromMinutes(5);
+			publicHandler.SslOptions = new SslClientAuthenticationOptions
+			{
+				EnabledSslProtocols = SslProtocols.None,
+				RemoteCertificateValidationCallback = allowInsecureTls
+					? static (_, _, _, _) => true
+					: null,
+			};
+			@public = new HttpClient(publicHandler) {Timeout = requestTimeout};
+		}
 
 		return new NoriHttpClients(local, @public);
 	}

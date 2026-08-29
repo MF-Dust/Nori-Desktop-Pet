@@ -51,4 +51,43 @@ public class UrlAccessPolicyTests
 		Assert.False(UrlAccessPolicy.IsRestricted(IPAddress.Parse("8.8.8.8")));
 		Assert.False(UrlAccessPolicy.IsRestricted(IPAddress.Parse("172.32.0.1")));
 	}
+
+	[Fact]
+	public void 系统代理接管的公网请求默认被拒绝()
+	{
+		try
+		{
+			UrlAccessPolicy.PublicSystemProxyAllowed = false;
+			InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+				UrlAccessPolicy.EnsureDirectRoute(new Uri("https://api.anysearch.com/v1/search"), AlwaysProxy()));
+			Assert.Contains("系统代理", exception.Message);
+		}
+		finally
+		{
+			UrlAccessPolicy.PublicSystemProxyAllowed = false;
+		}
+	}
+
+	[Fact]
+	public void 放行公网系统代理后不再拒绝()
+	{
+		try
+		{
+			UrlAccessPolicy.PublicSystemProxyAllowed = true;
+			UrlAccessPolicy.EnsureDirectRoute(new Uri("https://api.anysearch.com/v1/search"), AlwaysProxy());
+		}
+		finally
+		{
+			UrlAccessPolicy.PublicSystemProxyAllowed = false;
+		}
+	}
+
+	private static IWebProxy AlwaysProxy() => new AlwaysProxyStub();
+
+	private sealed class AlwaysProxyStub : IWebProxy
+	{
+		public Uri? GetProxy(Uri destination) => new("http://127.0.0.1:7890");
+		public bool IsBypassed(Uri host) => false;
+		public ICredentials? Credentials { get; set; }
+	}
 }
