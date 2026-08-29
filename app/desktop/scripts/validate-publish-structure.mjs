@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
+import { numericVersionFromProduct, validateNumericVersion, validateProductVersion, validateRevision } from "./version-validation.mjs";
 
 const [rootArg, rid] = process.argv.slice(2);
 if (!rootArg || !rid) throw new Error("用法: validate-publish-structure.mjs <package-root> <rid>");
@@ -27,18 +28,34 @@ const rootSidecarBase = rid.startsWith("osx-") ? join(root, "Nori.app", "Content
 file(`${rootSidecarBase}.dll`);
 file(`${rootSidecarBase}.deps.json`);
 file(`${rootSidecarBase}.runtimeconfig.json`);
+file(join(root, "LICENSE"));
 file(join(root, ".current"));
 const slotName = readFileSync(join(root, ".current"), "utf8").trim();
-if (!/^app-\d+\.\d+\.\d+-\d+$/.test(slotName)) fail(`.current 无效: ${slotName}`);
+const slotMatch = /^app-(\d+\.\d+\.\d+)-(\d+)$/.exec(slotName);
+if (!slotMatch) fail(`.current 无效: ${slotName}`);
 const slot = join(root, slotName);
 directory(slot);
-file(join(slot, "deployment.json"));
-let entry;
-if (rid.startsWith("osx-")) {
-	const app = join(slot, "Nori.Desktop.app", "Contents", "MacOS");
-	directory(app);
-	entry = join(app, "Nori.Desktop");
-} else entry = join(slot, rid.startsWith("win-") ? "Nori.Desktop.exe" : "Nori.Desktop");
+const manifestPath = join(slot, "deployment.json");
+file(manifestPath);
+const entryRelative = rid.startsWith("osx-")
+	? "Nori.Desktop.app/Contents/MacOS/Nori.Desktop"
+	: rid.startsWith("win-") ? "Nori.Desktop.exe" : "Nori.Desktop";
+let manifest;
+try {
+	manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+	validateProductVersion(manifest.product_version);
+	validateNumericVersion(manifest.numeric_version);
+	validateRevision(String(manifest.revision));
+} catch (error) {
+	fail(`deployment.json 无效: ${error.message}`);
+}
+if (manifest.schema_version !== 1 || manifest.numeric_version !== slotMatch[1]
+	|| numericVersionFromProduct(manifest.product_version) !== manifest.numeric_version
+	|| String(manifest.revision) !== slotMatch[2] || manifest.rid !== rid || manifest.entrypoint !== entryRelative) {
+	fail("deployment.json 与槽目录、RID 或入口不匹配");
+}
+if (rid.startsWith("osx-")) directory(join(slot, "Nori.Desktop.app", "Contents", "MacOS"));
+const entry = join(slot, ...entryRelative.split("/"));
 file(entry, true);
 const sidecarBase = rid.startsWith("osx-") ? join(slot, "Nori.Desktop.app", "Contents", "MacOS", "Nori.Desktop") : join(slot, rid.startsWith("win-") ? "Nori.Desktop" : "Nori.Desktop");
 file(`${sidecarBase}.dll`);

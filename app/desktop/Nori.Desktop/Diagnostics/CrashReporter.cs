@@ -9,6 +9,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Nori.Core.Data;
 using Nori.Core.Logging;
 using Nori.Core.Security;
 using Nori.Core.Telemetry;
@@ -70,7 +71,8 @@ public static class CrashReporter
 			try { new FileLogger(logDirectory).Write(LogSource.Backend, "error", message); return; }
 			catch { }
 		}
-		WriteLogSafe(message);
+		// 存储 marker 提交前不得创建 data 子目录；此时只保留控制台诊断。
+		try { Console.Error.WriteLine(message); } catch { }
 	}
 
 	/// <summary>
@@ -551,8 +553,12 @@ public static class CrashReporter
 			if (_logger is null)
 			{
 				string root = ResolveTrustedPackageRoot();
-				string logDirectory = Path.Combine(root, "data", "diagnostics", "logs");
+				string dataDirectory = Path.Combine(root, "data");
+				string markerPath = Path.Combine(dataDirectory, AppStoragePaths.MarkerFileName);
+				if (!File.Exists(markerPath) || (File.GetAttributes(markerPath) & FileAttributes.ReparsePoint) != 0) return;
+				string logDirectory = Path.Combine(dataDirectory, "diagnostics", "logs");
 				if (!IsContained(logDirectory, root)) return;
+				AppStoragePaths.EnsureNoReparsePoints(logDirectory, root);
 				_logger = new FileLogger(logDirectory);
 			}
 			_logger.Write(LogSource.Backend, "error", SensitiveDataRedactor.Redact(message));

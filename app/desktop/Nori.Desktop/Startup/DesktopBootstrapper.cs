@@ -34,8 +34,6 @@ internal sealed class DesktopBootstrapper
 	private Nori.Core.Mcp.McpManager? _startupMcp;
 	private PluginRuntimeHost? _startupPluginRuntime;
 	private Task? _shutdownTask;
-	private Task? _mcpAutoConnectTask;
-	private Task? _pluginStartTask;
 	private int _shutdownStarted;
 	private int _secondInstanceActivationPending;
 
@@ -45,8 +43,9 @@ internal sealed class DesktopBootstrapper
 	{
 		_shutdownCts.Cancel();
 		if (Interlocked.CompareExchange(ref _shutdownStarted, 1, 0) == 0) _shutdownTask = ShutdownAsync();
-		// Exit 事件来自 UI 线程，不能同步等待可能回到 UI 的清理任务。
-		// ShutdownAsync 自带统一 8 秒上限，退出流程由生命周期继续推进。
+		// Exit 处理器返回后进程即可终止；必须在统一上限内等待清理，而不能把它留成后台任务。
+		try { (_shutdownTask ?? Task.CompletedTask).GetAwaiter().GetResult(); }
+		catch (Exception exception) { WriteShutdownFailure(exception); }
 	}
 
 	public async Task StartAsync(IClassicDesktopStyleApplicationLifetime desktop)
@@ -238,8 +237,8 @@ internal sealed class DesktopBootstrapper
 		if (!safeMode)
 		{
 			// 异步自动连接已启用的 MCP 服务; 后台任务失败只记日志, 不崩进程
-			_mcpAutoConnectTask = mcp.AutoConnectEnabledAsync();
-			CrashReporter.Forget(_mcpAutoConnectTask, "MCP 自动连接");
+			Task mcpAutoConnectTask = mcp.AutoConnectEnabledAsync();
+			CrashReporter.Forget(mcpAutoConnectTask, "MCP 自动连接");
 		}
 
 		cancellationToken.ThrowIfCancellationRequested();
@@ -283,15 +282,15 @@ internal sealed class DesktopBootstrapper
 		});
 
 		// 数据库、assets、固定窗口与初始窗口 ready 后才清理旧源；失败保留收据，下次启动重试。
-		if (Program.StorageMigration is { } cleanupMigration)
+		if (Program.StorageMigration is { } cleanupMigration && File.Exists(paths.CleanupReceiptPath))
 			CrashReporter.Forget(Task.Run(() => StorageBootstrapper.CleanupLegacy(cleanupMigration, paths, LegacyDataPathResolver.Resolve()), cancellationToken), "旧数据清理");
 
 		// 固定窗口与插件窗口宿主都就绪后再执行第三方入口。
 		// 单个插件失败只记录状态，不阻断桌面宿主启动。
 		if (!safeMode)
 		{
-			_pluginStartTask = pluginRuntime.StartAllAsync(cancellationToken);
-			CrashReporter.Forget(_pluginStartTask, "插件启动");
+			Task pluginStartTask = pluginRuntime.StartAllAsync(cancellationToken);
+			CrashReporter.Forget(pluginStartTask, "插件启动");
 		}
 	}
 
@@ -312,46 +311,38 @@ internal sealed class DesktopBootstrapper
 
 	private async Task ShutdownCoreAsync()
 	{
-		try
+		// 服务各自负责取消并收拢启动任务；先等 MCP/插件启动反而会推迟它们收到 Dispose 取消。
+		if (_services is not null)
 		{
-			await AwaitBackgroundTask(_mcpAutoConnectTask, "MCP 自动连接").ConfigureAwait(false);
-			await AwaitBackgroundTask(_pluginStartTask, "插件启动").ConfigureAwait(false);
+			try { await _services.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(7)).ConfigureAwait(false); }
+			catch (Exception exception) { WriteShutdownFailure(exception); }
+			_services = null;
 		}
-		finally
-		{
-			// 后台任务的异常/超时不能跳过服务容器清理。
-			if (_services is not null)
-			{
-				try { await _services.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(7)).ConfigureAwait(false); }
-				catch (Exception exception) { WriteShutdownFailure(exception); }
-				_services = null;
-			}
 
-			if (_startupPluginRuntime is not null)
-			{
-				try { await _startupPluginRuntime.DisposeAsync().ConfigureAwait(false); } catch { }
-				_startupPluginRuntime = null;
-			}
-			if (_startupMcp is not null)
-			{
-				try { await _startupMcp.DisposeAsync().ConfigureAwait(false); } catch { }
-				_startupMcp = null;
-			}
-			if (_startupAssets is not null)
-			{
-				try { await _startupAssets.DisposeAsync().ConfigureAwait(false); } catch { }
-				_startupAssets = null;
-			}
-			try { _startupHttpClients?.Dispose(); } catch { }
-			_startupHttpClients = null;
-			try { _startupDatabase?.Dispose(); } catch { }
-			_startupDatabase = null;
-			if (_startupTelemetry is not null)
-			{
-				try { await _startupTelemetry.FlushAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); } catch { }
-				try { _startupTelemetry.Dispose(); } catch { }
-				_startupTelemetry = null;
-			}
+		if (_startupPluginRuntime is not null)
+		{
+			try { await _startupPluginRuntime.DisposeAsync().ConfigureAwait(false); } catch { }
+			_startupPluginRuntime = null;
+		}
+		if (_startupMcp is not null)
+		{
+			try { await _startupMcp.DisposeAsync().ConfigureAwait(false); } catch { }
+			_startupMcp = null;
+		}
+		if (_startupAssets is not null)
+		{
+			try { await _startupAssets.DisposeAsync().ConfigureAwait(false); } catch { }
+			_startupAssets = null;
+		}
+		try { _startupHttpClients?.Dispose(); } catch { }
+		_startupHttpClients = null;
+		try { _startupDatabase?.Dispose(); } catch { }
+		_startupDatabase = null;
+		if (_startupTelemetry is not null)
+		{
+			try { await _startupTelemetry.FlushAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); } catch { }
+			try { _startupTelemetry.Dispose(); } catch { }
+			_startupTelemetry = null;
 		}
 	}
 
@@ -365,13 +356,6 @@ internal sealed class DesktopBootstrapper
 	///
 	/// 生产: 与可执行文件同目录的 wwwroot; 开发模式下不使用 (页面由 vite 提供)
 	/// </summary>
-	private static async Task AwaitBackgroundTask(Task? task, string name)
-	{
-		if (task is null) return;
-		try { await task.WaitAsync(TimeSpan.FromSeconds(7)).ConfigureAwait(false); }
-		catch (Exception exception) { WriteShutdownFailure(new InvalidOperationException($"{name} 清理等待失败", exception)); }
-	}
-
 	private static string AppRoot() => Path.Combine(AppContext.BaseDirectory, "wwwroot");
 
 	/// <summary>

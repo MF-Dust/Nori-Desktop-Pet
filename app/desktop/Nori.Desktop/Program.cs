@@ -66,15 +66,27 @@ internal static class Program
 	private static extern int MessageBox(nint hWnd, string text, string caption, uint type);
 
 	private static bool IsDevelopmentProcess() =>
-		string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal)
-		&& (Environment.GetEnvironmentVariable("NORI_DEV") == "1"
-			|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT"))
-			|| Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "").Equals("dotnet", StringComparison.OrdinalIgnoreCase));
+		string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal);
 
 	private static void ActivateFirstInstance()
 	{
 		if (Application.Current is App app) app.ActivateMainWindow();
 		else Interlocked.Exchange(ref _activationPending, 1);
+	}
+
+	private static string? SafeEarlyLogDirectory()
+	{
+		if (StoragePaths is not { } paths || !File.Exists(paths.MarkerPath)) return null;
+		try
+		{
+			if ((File.GetAttributes(paths.MarkerPath) & FileAttributes.ReparsePoint) != 0) return null;
+			AppStoragePaths.EnsureNoReparsePoints(paths.LogsDirectory, paths.PackageRoot);
+			return paths.LogsDirectory;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			return null;
+		}
 	}
 
 	[STAThread]
@@ -103,7 +115,7 @@ internal static class Program
 		catch (Exception exception)
 		{
 			string summary = Nori.Core.Security.SensitiveDataRedactor.ExceptionSummary(exception);
-			CrashReporter.LogEarlyStartupFailure("存储包根不可用", exception, StoragePaths?.LogsDirectory);
+			CrashReporter.LogEarlyStartupFailure("存储包根不可用", exception, SafeEarlyLogDirectory());
 			ShowStartupError("存储包根不可用", summary);
 			Environment.ExitCode = 2;
 			return;
@@ -115,7 +127,7 @@ internal static class Program
 		using SingleInstanceGuard? singleInstance = smokeTest is null
 			? SingleInstanceGuard.TryAcquire(ActivateFirstInstance, signalExisting: !safeMode)
 			: null;
-		if (smokeTest is null && OperatingSystem.IsWindows() && singleInstance is null)
+		if (smokeTest is null && singleInstance is null)
 		{
 			if (safeMode)
 			{
@@ -140,7 +152,8 @@ internal static class Program
 		catch (Exception exception)
 		{
 			string summary = Nori.Core.Security.SensitiveDataRedactor.ExceptionSummary(exception);
-			CrashReporter.LogEarlyStartupFailure("存储初始化失败", exception, StoragePaths?.LogsDirectory);
+			// marker 尚未提交时不能在 data 下创建日志目录，否则下一次启动会把它视为无 marker 脏数据。
+			CrashReporter.LogEarlyStartupFailure("存储初始化失败", exception, SafeEarlyLogDirectory());
 			ShowStartupError("存储初始化失败", summary);
 			Environment.ExitCode = 1;
 		}

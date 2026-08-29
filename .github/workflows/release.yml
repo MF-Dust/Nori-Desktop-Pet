@@ -124,6 +124,13 @@ jobs:
             tag="v$version"
             stable_version="$version"
           fi
+          node app/desktop/scripts/validate-publish-input.mjs "$stable_version" 0 win-x64 linux-x64 osx-arm64
+          while IFS= read -r historical_version_tag; do
+            if [ -n "$historical_version_tag" ] && [ "$historical_version_tag" != "$tag" ]; then
+              echo "数字版本已由其它发布标签使用，会与 revision 0 槽冲突: $historical_version_tag" >&2
+              exit 1
+            fi
+          done < <(git tag --list "v$version" "v$version-*")
           if git show-ref --tags --verify --quiet "refs/tags/$tag"; then
             tagged_sha="$(git rev-list -n1 "refs/tags/$tag")"
             if [ "$tagged_sha" != "$GITHUB_SHA" ]; then
@@ -286,7 +293,6 @@ jobs:
           done
           if [ "$missing" -eq 0 ]; then echo "Native Sentry 配置完整。"; fi
       - uses: actions/setup-node@v4
-        if: matrix.name == 'windows'
         with:
           node-version: 24
       - name: Windows 发布目标还原
@@ -401,7 +407,7 @@ jobs:
           else
             hash="$(shasum -a 256 "$archive" | awk '{print $1}')"
           fi
-          printf '%s  %s\\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
+          printf '%s  %s\n' "$hash" "$(basename "$archive")" > "$archive.sha256"
           metadata="bin/release/.metadata-$rid"
           rm -rf "$metadata"
           node scripts/generate-release-metadata.mjs --publish-dir "$publish" --version "$NORI_VERSION" --rid "$rid" --output-dir "$metadata"

@@ -139,35 +139,36 @@ public sealed class AppServices : IAsyncDisposable
 	{
 		if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-		// Shutdown is best-effort: one broken subsystem must not strand the rest.
-		await DisposeStep(() => Bridge?.DisposeAsync() ?? ValueTask.CompletedTask);
-		await DisposeStep(() => Runtime?.DisposeAsync() ?? ValueTask.CompletedTask);
-		await DisposeStep(() => Automation?.DisposeAsync() ?? ValueTask.CompletedTask);
-		await DisposeStep(() => PluginRuntime?.DisposeAsync() ?? ValueTask.CompletedTask);
-		await DisposeStep(() => Mcp.DisposeAsync());
-		await DisposeStep(() => Assets?.DisposeAsync() ?? ValueTask.CompletedTask);
+		// 先停止桥接，再并行取消彼此独立的后台子系统；单个挂起项不能挡住数据库与遥测释放。
+		await DisposeStep(() => Bridge?.DisposeAsync() ?? ValueTask.CompletedTask, TimeSpan.FromSeconds(1));
+		await Task.WhenAll(
+			DisposeStep(() => Runtime?.DisposeAsync() ?? ValueTask.CompletedTask, TimeSpan.FromSeconds(4)),
+			DisposeStep(() => Automation?.DisposeAsync() ?? ValueTask.CompletedTask, TimeSpan.FromSeconds(4)),
+			DisposeStep(() => PluginRuntime?.DisposeAsync() ?? ValueTask.CompletedTask, TimeSpan.FromSeconds(4)),
+			DisposeStep(() => Mcp.DisposeAsync(), TimeSpan.FromSeconds(4)),
+			DisposeStep(() => Assets?.DisposeAsync() ?? ValueTask.CompletedTask, TimeSpan.FromSeconds(4)));
 		await DisposeStep(() =>
 		{
 			if (_publicHttp is not null && !ReferenceEquals(_publicHttp, Http)) _publicHttp.Dispose();
 			Http.Dispose();
 			return ValueTask.CompletedTask;
-		});
+		}, TimeSpan.FromSeconds(1));
 		await DisposeStep(() =>
 		{
 			Database.Dispose();
 			return ValueTask.CompletedTask;
-		});
-		await DisposeStep(async () => await Telemetry.FlushAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false));
+		}, TimeSpan.FromSeconds(1));
+		await DisposeStep(async () => await Telemetry.FlushAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false), TimeSpan.FromSeconds(2));
 		await DisposeStep(() =>
 		{
 			Telemetry.Dispose();
 			return ValueTask.CompletedTask;
-		});
+		}, TimeSpan.FromSeconds(1));
 	}
 
-	private static async ValueTask DisposeStep(Func<ValueTask> dispose)
+	private static async Task DisposeStep(Func<ValueTask> dispose, TimeSpan timeout)
 	{
-		try { await dispose().ConfigureAwait(false); }
-		catch { /* continue releasing independent resources */ }
+		try { await dispose().AsTask().WaitAsync(timeout).ConfigureAwait(false); }
+		catch { /* 继续释放彼此独立的资源。 */ }
 	}
 }

@@ -17,7 +17,7 @@ public static class LegacyDataPathResolver
 		if (OperatingSystem.IsLinux())
 		{
 			string? xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-			string root = string.IsNullOrWhiteSpace(xdg)
+			string root = string.IsNullOrWhiteSpace(xdg) || !Path.IsPathFullyQualified(xdg)
 				? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share")
 				: xdg;
 			return Path.Combine(root, AppPaths.Identifier, "data");
@@ -33,14 +33,13 @@ public static class AppStoragePathResolver
 
 	public static AppStoragePaths Resolve(string? launcherPath = null, string? baseDirectory = null)
 	{
-		bool devOverride = string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal)
-			&& (string.Equals(Environment.GetEnvironmentVariable("NORI_DEV"), "1", StringComparison.Ordinal)
-				|| !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT")));
-		if (devOverride)
-			return new AppStoragePaths(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT") ?? Environment.CurrentDirectory);
-
+		// Launcher 注入的完整路径链优先，Dev 发布包也不能被开发环境变量重定向。
 		string? trustedRoot = ResolveTrustedEnvironmentRoot();
 		if (trustedRoot is not null) return new AppStoragePaths(trustedRoot);
+
+		// 未注入版本的本地 apphost 进程名并不是 dotnet；所有 Dev 构建都明确留在开发包根。
+		if (string.Equals(ProductVersion.Current, "Dev", StringComparison.Ordinal))
+			return new AppStoragePaths(Environment.GetEnvironmentVariable("NORI_DEV_PACKAGE_ROOT") ?? Environment.CurrentDirectory);
 
 		string supplied = launcherPath ?? baseDirectory ?? AppContext.BaseDirectory;
 		string full = Path.GetFullPath(supplied);
@@ -48,10 +47,6 @@ public static class AppStoragePathResolver
 		string? packageRoot = ValidatePublishedSlot(directory);
 		if (packageRoot is not null) return new AppStoragePaths(packageRoot);
 
-		// dotnet run 没有稳定槽；它只能使用当前工作目录，避免误触真实用户数据目录。
-		string processName = Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "");
-		if (processName.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
-			return new AppStoragePaths(Environment.CurrentDirectory);
 		throw new InvalidOperationException("无法安全推断包根目录，请通过 Nori 启动器启动应用");
 	}
 

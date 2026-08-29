@@ -7,8 +7,8 @@ APP_VERSION="${NORI_VERSION:-${NORI_PRODUCT_VERSION:-Dev}}"
 NUMERIC_VERSION="${APP_VERSION#v}"
 NUMERIC_VERSION="${NUMERIC_VERSION%%-*}"
 NUMERIC_VERSION="${NUMERIC_VERSION%%+*}"
-if [[ "$APP_VERSION" != "Dev" && ! "$NUMERIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-	echo "版本必须是数字 major.minor.patch 或 Dev。" >&2; exit 2
+if [[ "$APP_VERSION" != "Dev" && ! "$NUMERIC_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+	echo "版本必须是无前导零的数字 major.minor.patch 或 Dev。" >&2; exit 2
 fi
 if [[ "$APP_VERSION" == "Dev" ]]; then NUMERIC_VERSION="0.0.0"; fi
 CODENAME="${NORI_CODENAME:-}"
@@ -17,12 +17,12 @@ if [[ "$APP_VERSION" != "Dev" ]]; then
 	[[ "$CODENAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "Codename 无效。" >&2; exit 2; }
 fi
 REVISION="${NORI_DEPLOYMENT_REVISION:-0}"
-[[ "$REVISION" =~ ^[0-9]+$ ]] || { echo "部署 revision 必须是非负整数。" >&2; exit 2; }
+[[ "$REVISION" =~ ^(0|[1-9][0-9]*)$ ]] || { echo "部署 revision 必须是无前导零的非负整数。" >&2; exit 2; }
 if [[ -z "${NORI_COMMIT_SHA:-}" ]]; then NORI_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"; fi
 export NORI_VERSION="$APP_VERSION" NORI_PRODUCT_VERSION="$APP_VERSION" NORI_COMMIT_SHA
 
 if [[ "${NORI_INCLUDE_RUNTIME:-0}" =~ ^(1|true|TRUE|yes)$ ]]; then
-	echo "不支持 self-contained 发布；目标机必须预装 .NET 10 Runtime。" >&2
+	echo "不支持 self-contained 发布；目标机必须预装 ASP.NET Core Runtime 10。" >&2
 	exit 2
 fi
 if [[ "${NORI_SKIP_FRONTEND:-0}" != "1" ]]; then pnpm build; elif [[ ! -f dist/index.html ]]; then echo "缺少 dist/index.html。" >&2; exit 2; fi
@@ -48,6 +48,9 @@ make_macos_launcher() {
 		[[ -f "$temp/$file" ]] || { echo "macOS launcher 缺少 $file。" >&2; exit 2; }
 		cp "$temp/$file" "$root/Nori.app/Contents/MacOS/$file"
 	done
+	if [[ "$KEEP_SYMBOLS" == "1" || "$KEEP_SYMBOLS" == "true" ]]; then
+		[[ -f "$temp/Nori.pdb" ]] && cp "$temp/Nori.pdb" "$root/Nori.app/Contents/MacOS/Nori.pdb"
+	fi
 	chmod +x "$root/Nori.app/Contents/MacOS/Nori"
 	cat > "$root/Nori.app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -90,21 +93,11 @@ PLIST
 		make_manifest "$slot" "$rid" "Nori.Desktop"
 	fi
 	dotnet publish Nori.AppLauncher/Nori.AppLauncher.csproj -c Release -r "$rid" --self-contained false -p:NoriProductVersion="$APP_VERSION" -p:NoriDeploymentRevision="$REVISION" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "$launcher_temp"
+	if [[ "$KEEP_SYMBOLS" != "1" && "$KEEP_SYMBOLS" != "true" ]]; then find "$launcher_temp" -name '*.pdb' -delete; fi
 	if [[ "$rid" == osx-* ]]; then make_macos_launcher "$root" "$rid"; else cp -R "$launcher_temp/." "$root/"; chmod +x "$root/Nori"; fi
+	cp ../../LICENSE "$root/LICENSE"
 	rm -rf "$desktop_temp" "$launcher_temp"
 	printf '%s\n' "$(basename "$slot")" > "$root/.current.tmp"; mv -f "$root/.current.tmp" "$root/.current"
 	node scripts/validate-publish-structure.mjs "$root" "$rid"
 	node scripts/check-package-size.mjs --path "$root" --label "$rid package" --max-mib 180
-	if [[ "$rid" == linux-* ]]; then
-		cat > "$root/nori.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=Nori Desktop Pet
-Comment=Live2D 桌面陪伴伙伴
-Exec=/opt/nori/Nori
-Icon=/opt/nori/nori.png
-Terminal=false
-Categories=Utility;
-DESKTOP
-	fi
 done

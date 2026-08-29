@@ -20,6 +20,7 @@ $currentSlot = (Get-Content -LiteralPath (Join-Path $publish ".current") -Raw).T
 if ($currentSlot -notmatch '^app-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$') { throw "发布根目录 .current 无效: $currentSlot" }
 $requiredFiles = @(
 	"Nori.exe",
+	"LICENSE",
 	"$currentSlot\deployment.json",
 	"$currentSlot\Nori.Desktop.exe",
 	"$currentSlot\Nori.Desktop.dll",

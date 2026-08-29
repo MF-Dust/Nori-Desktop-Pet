@@ -3,14 +3,15 @@ using System.Runtime.Versioning;
 namespace Nori.Desktop.Startup;
 
 /// <summary>
-/// Windows 单实例与第二实例激活信号。
+/// 跨平台单实例锁与 Windows 第二实例激活信号。
 ///
-/// 只在 Windows 启用命名内核对象；其他平台不改变现有启动方式。第二个实例不创建
-/// Avalonia 应用，而是唤醒第一个实例的 main 窗口后立即退出。
+/// 三平台都使用宿主命名 Mutex 保护启动与迁移；Windows 额外用命名事件唤醒第一个
+/// 实例的 main 窗口，Linux/macOS 的第二实例则直接退出。
 /// </summary>
 internal sealed class SingleInstanceGuard : IDisposable
 {
-	private const string MutexName = @"Local\NoriDesktopPet.SingleInstance";
+	private const string WindowsMutexName = @"Local\NoriDesktopPet.SingleInstance";
+	private const string PortableMutexName = "NoriDesktopPet.SingleInstance";
 	private const string ActivationEventName = @"Local\NoriDesktopPet.Activate";
 
 	private readonly Mutex? _mutex;
@@ -49,9 +50,8 @@ internal sealed class SingleInstanceGuard : IDisposable
 	public static SingleInstanceGuard? TryAcquire(Action onActivate, bool signalExisting = true)
 	{
 		ArgumentNullException.ThrowIfNull(onActivate);
-		if (!OperatingSystem.IsWindows()) return new SingleInstanceGuard(null, null, false, onActivate);
-
-		Mutex mutex = new(true, MutexName, out bool createdNew);
+		string mutexName = OperatingSystem.IsWindows() ? WindowsMutexName : PortableMutexName;
+		Mutex mutex = new(true, mutexName, out bool createdNew);
 		bool ownsMutex = createdNew;
 		if (!createdNew)
 		{
@@ -66,11 +66,13 @@ internal sealed class SingleInstanceGuard : IDisposable
 
 			if (!ownsMutex)
 			{
-				if (signalExisting) SignalExistingInstance();
+				if (signalExisting && OperatingSystem.IsWindows()) SignalExistingInstance();
 				mutex.Dispose();
 				return null;
 			}
 		}
+
+		if (!OperatingSystem.IsWindows()) return new SingleInstanceGuard(mutex, null, ownsMutex, onActivate);
 
 		EventWaitHandle? activationEvent = null;
 		try

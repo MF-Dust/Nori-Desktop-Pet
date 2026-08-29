@@ -95,6 +95,21 @@ public sealed class StorageBootstrapperTests : IDisposable
 		Assert.False(result.Migrated);
 		Assert.False(File.Exists(paths.SecretPath));
 		Assert.True(File.Exists(Path.Combine(legacy, "secret.key")));
+		StorageBootstrapper.CleanupLegacy(result, paths, "\0");
+		Assert.True(File.Exists(Path.Combine(legacy, "secret.key")));
+	}
+
+	[Fact]
+	public void 旧数据目录与包根重叠时拒绝迁移()
+	{
+		string legacy = Path.Combine(_root, "legacy-overlap");
+		string package = Path.Combine(legacy, "package");
+		Directory.CreateDirectory(package);
+		File.WriteAllText(Path.Combine(legacy, "keep.txt"), "keep");
+
+		Assert.Throws<InvalidOperationException>(() => StorageBootstrapper.Bootstrap(new AppStoragePaths(package), "Dev", "win-x64", legacy));
+		Assert.Equal("keep", File.ReadAllText(Path.Combine(legacy, "keep.txt")));
+		Assert.False(Directory.Exists(Path.Combine(package, "data")));
 	}
 
 	[Fact]
@@ -104,6 +119,18 @@ public sealed class StorageBootstrapperTests : IDisposable
 		AppStoragePaths paths = new(package);
 		Directory.CreateDirectory(paths.DataRoot);
 		File.WriteAllText(Path.Combine(paths.DataRoot, "unexpected"), "x");
+
+		Assert.Throws<InvalidOperationException>(() => StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", Path.Combine(_root, "none")));
+	}
+
+	[Fact]
+	public void marker的迁移字段类型损坏时拒绝启动()
+	{
+		string package = Path.Combine(_root, "package-invalid-marker");
+		AppStoragePaths paths = new(package);
+		StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", Path.Combine(_root, "none"));
+		string marker = File.ReadAllText(paths.MarkerPath).Replace("\"migrated\":false", "\"migrated\":\"false\"", StringComparison.Ordinal);
+		File.WriteAllText(paths.MarkerPath, marker);
 
 		Assert.Throws<InvalidOperationException>(() => StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", Path.Combine(_root, "none")));
 	}
@@ -171,16 +198,17 @@ public sealed class StorageBootstrapperTests : IDisposable
 		using (NoriDatabase database = NoriDatabase.Open(Path.Combine(legacy, AppPaths.DatabaseFileName))) { }
 		for (int index = 0; index < 5; index++)
 		{
-			string backup = Path.Combine(legacy, $"nori.db-pre-migration-{index}.bak");
+			string separator = index == 0 ? "-pre-migration-" : ".pre-migration-";
+			string backup = Path.Combine(legacy, $"nori.db{separator}{index}.bak");
 			File.WriteAllText(backup, index.ToString());
 			File.SetLastWriteTimeUtc(backup, DateTime.UtcNow.AddMinutes(index));
 		}
 		AppStoragePaths paths = new(Path.Combine(_root, "package-backups"));
 		StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
-		Assert.Equal(3, Directory.EnumerateFiles(paths.DatabaseDirectory, "nori.db-pre-migration-*.bak").Count());
-		Assert.True(File.Exists(Path.Combine(paths.DatabaseDirectory, "nori.db-pre-migration-4.bak")));
+		Assert.Equal(3, Directory.EnumerateFiles(paths.DatabaseDirectory, "nori.db*pre-migration-*.bak").Count());
+		Assert.True(File.Exists(Path.Combine(paths.DatabaseDirectory, "nori.db.pre-migration-4.bak")));
 
-		string oversized = Path.Combine(legacy, "nori.db-pre-migration-too-large.bak");
+		string oversized = Path.Combine(legacy, "nori.db.pre-migration-too-large.bak");
 		using (FileStream stream = new(oversized, FileMode.CreateNew)) stream.SetLength(64L * 1024 * 1024 + 1);
 		Assert.Throws<InvalidOperationException>(() => StorageBootstrapper.Bootstrap(new AppStoragePaths(Path.Combine(_root, "package-too-large")), "Dev", "win-x64", legacy));
 	}
@@ -218,16 +246,22 @@ public sealed class StorageBootstrapperTests : IDisposable
 		Directory.CreateDirectory(legacy);
 		File.WriteAllText(Path.Combine(legacy, "user-export.json"), "keep");
 		File.WriteAllText(Path.Combine(legacy, "cache.tmp"), "discard-or-classify");
+		Directory.CreateDirectory(Path.Combine(legacy, "webview"));
+		File.WriteAllText(Path.Combine(legacy, "webview", "cache.bin"), "discard");
 
 		AppStoragePaths paths = new(package);
 		StorageBootstrapResult result = StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
 
 		Assert.True(result.Migrated);
 		Assert.True(File.Exists(Path.Combine(paths.LegacyUnclassifiedDirectory, "user-export.json")));
+		Assert.False(Directory.Exists(Path.Combine(paths.LegacyUnclassifiedDirectory, "webview")));
 		Assert.True(File.Exists(paths.CleanupReceiptPath));
 		Assert.True(File.Exists(paths.MarkerPath));
 		StorageBootstrapResult reopened = StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
 		Assert.True(reopened.Migrated);
+		StorageBootstrapper.CleanupLegacy(reopened, paths, legacy);
+		Assert.False(Directory.Exists(legacy));
+		Assert.False(File.Exists(paths.CleanupReceiptPath));
 	}
 
 	public void Dispose()

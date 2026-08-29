@@ -157,7 +157,7 @@ public sealed class NoriWindow : Window, IBridgeSource
 	private void OnEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
 	{
 		if (e is not WindowsWebView2EnvironmentRequestedEventArgs wv2) return;
-		// 用户数据放到应用数据目录, 不要落在安装目录
+		// WebView 缓存固定放入可移动包根的 data/webview 分层目录。
 		wv2.UserDataFolder = _storagePaths.WebViewHostCacheDirectory;
 	}
 

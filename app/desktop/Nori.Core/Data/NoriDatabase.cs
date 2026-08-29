@@ -356,9 +356,14 @@ public sealed class NoriDatabase : IDisposable
 
 	private static void PruneMigrationBackups(string directory, string databaseName)
 	{
-		IEnumerable<string> paths = Directory.EnumerateFiles(directory, $"{databaseName}{MigrationBackupMarker}*.bak")
-			.OrderByDescending(path => File.GetLastWriteTimeUtc(path));
+		string pattern = $"{databaseName}{MigrationBackupMarker}*.bak";
+		string[] paths = Directory.EnumerateFiles(directory, pattern)
+			.OrderByDescending(path => File.GetLastWriteTimeUtc(path))
+			.ThenByDescending(path => Path.GetFileName(path), StringComparer.Ordinal)
+			.ToArray();
 		foreach (string path in paths.Skip(MigrationBackupCount)) TryDelete(path);
+		if (Directory.EnumerateFiles(directory, pattern).Skip(MigrationBackupCount).Any())
+			throw new IOException($"无法将迁移前备份限制在最新 {MigrationBackupCount} 份以内");
 	}
 
 	private static void TryDelete(string path)

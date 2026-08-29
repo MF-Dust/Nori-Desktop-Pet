@@ -114,7 +114,7 @@ internal static class Program
 
 	private static void EnsureExecutable(string path)
 	{
-		if (!OperatingSystem.IsLinux()) return;
+		if (OperatingSystem.IsWindows()) return;
 		UnixFileMode mode = File.GetUnixFileMode(path);
 		UnixFileMode execute = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
 		if ((mode & execute) != execute) File.SetUnixFileMode(path, mode | execute);

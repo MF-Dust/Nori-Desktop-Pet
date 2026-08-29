@@ -3,6 +3,14 @@ import {chmodSync, mkdtempSync, mkdirSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {spawnSync} from "node:child_process"
+import {validateProductVersion, validateRevision} from "./version-validation.mjs"
+
+validateProductVersion("Dev")
+validateProductVersion("v1.2.3-Nori+abcdef0")
+validateRevision("0")
+assert.throws(() => validateProductVersion("01.2.3-Nori"))
+assert.throws(() => validateProductVersion("1.2.3-bad/name"))
+assert.throws(() => validateRevision("01"))
 
 const script = join(import.meta.dirname, "validate-publish-structure.mjs")
 const createFixture = (rid) => {
@@ -15,7 +23,7 @@ const createFixture = (rid) => {
 	const slotBase = mac ? join(slot, "Nori.Desktop.app", "Contents", "MacOS", "Nori.Desktop") : join(slot, "Nori.Desktop")
 	const slotExecutable = mac ? slotBase : rid.startsWith("win-") ? `${slotBase}.exe` : slotBase
 	const native = rid.startsWith("win-") ? "Live2DCubismCore.dll" : rid.startsWith("osx-") ? "libLive2DCubismCore.dylib" : "libLive2DCubismCore.so"
-	const files = [rootExecutable, `${rootBase}.dll`, `${rootBase}.deps.json`, `${rootBase}.runtimeconfig.json`, join(root, ".current"), join(slot, "deployment.json"), slotExecutable, `${slotBase}.dll`, `${slotBase}.deps.json`, `${slotBase}.runtimeconfig.json`, mac ? join(slot, "Nori.Desktop.app", "Contents", "MacOS", native) : join(slot, native)]
+	const files = [rootExecutable, `${rootBase}.dll`, `${rootBase}.deps.json`, `${rootBase}.runtimeconfig.json`, join(root, "LICENSE"), join(root, ".current"), join(slot, "deployment.json"), slotExecutable, `${slotBase}.dll`, `${slotBase}.deps.json`, `${slotBase}.runtimeconfig.json`, mac ? join(slot, "Nori.Desktop.app", "Contents", "MacOS", native) : join(slot, native)]
 	for (const file of files) {
 		mkdirSync(join(file, ".."), {recursive: true})
 		writeFileSync(file, "fixture")
@@ -35,4 +43,9 @@ const root = createFixture("linux-x64")
 writeFileSync(join(root, "libhostfxr.so"), "forbidden")
 const rejected = spawnSync(process.execPath, [script, root, "linux-x64"], {encoding: "utf8"})
 assert.notEqual(rejected.status, 0)
+
+const mismatched = createFixture("linux-x64")
+writeFileSync(join(mismatched, "app-1.2.3-4", "deployment.json"), JSON.stringify({schema_version: 1, product_version: "v1.2.3-test", numeric_version: "1.2.3", revision: 5, rid: "linux-x64", entrypoint: "Nori.Desktop"}))
+const manifestRejected = spawnSync(process.execPath, [script, mismatched, "linux-x64"], {encoding: "utf8"})
+assert.notEqual(manifestRejected.status, 0)
 console.log("发布结构 fixture 测试通过")

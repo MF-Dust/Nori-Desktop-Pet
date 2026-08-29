@@ -57,7 +57,15 @@ public sealed record SmokeTestOptions(SmokeTestMode Mode, string Profile)
 
 		try
 		{
-			string fullProfile = Path.GetFullPath(profile);
+			string requestedProfile = Path.GetFullPath(profile);
+			if ((File.Exists(requestedProfile) || Directory.Exists(requestedProfile))
+				&& (File.GetAttributes(requestedProfile) & FileAttributes.ReparsePoint) != 0)
+			{
+				error = "--profile 不能是符号链接、junction 或 reparse point";
+				return false;
+			}
+			// macOS 的临时目录通常经 /var 系统链接进入 /private/var；先解析祖先链接再做安全检查。
+			string fullProfile = AppStoragePaths.ResolvePhysicalPath(requestedProfile);
 			if (Path.GetPathRoot(fullProfile)?.Equals(fullProfile, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) == true)
 			{
 				error = "--profile 不能指向文件系统根目录";

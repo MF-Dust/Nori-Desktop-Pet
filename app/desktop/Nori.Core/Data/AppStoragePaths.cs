@@ -123,6 +123,44 @@ public sealed class AppStoragePaths : IAppStoragePaths
 			|| fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, PathComparison);
 	}
 
+	/// <summary>解析现有路径段中的符号链接，缺失的尾部路径保持原样。</summary>
+	public static string ResolvePhysicalPath(string path)
+	{
+		string fullPath = Normalize(path);
+		for (int pass = 0; pass < 32; pass++)
+		{
+			string root = Path.GetPathRoot(fullPath) ?? throw new InvalidOperationException("路径缺少文件系统根目录");
+			string current = root;
+			bool resolvedLink = false;
+			string relative = Path.GetRelativePath(root, fullPath);
+			foreach (string part in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+			{
+				if (part is "." or "") continue;
+				string candidate = Path.Combine(current, part);
+				if (!File.Exists(candidate) && !Directory.Exists(candidate))
+				{
+					current = candidate;
+					continue;
+				}
+				if ((File.GetAttributes(candidate) & FileAttributes.ReparsePoint) == 0)
+				{
+					current = candidate;
+					continue;
+				}
+				FileSystemInfo entry = Directory.Exists(candidate)
+					? new DirectoryInfo(candidate)
+					: new FileInfo(candidate);
+				FileSystemInfo target = entry.ResolveLinkTarget(returnFinalTarget: true)
+					?? throw new InvalidOperationException($"无法解析符号链接或 reparse point: {candidate}");
+				current = Path.GetFullPath(target.FullName);
+				resolvedLink = true;
+			}
+			fullPath = Path.GetFullPath(current);
+			if (!resolvedLink) return fullPath;
+		}
+		throw new InvalidOperationException("路径包含过深的符号链接链");
+	}
+
 	/// <summary>拒绝路径链中的符号链接、junction 和其他 reparse point。</summary>
 	public static void EnsureNoReparsePoints(string path, string root)
 	{
@@ -149,11 +187,12 @@ public sealed class AppStoragePaths : IAppStoragePaths
 	private static StringComparison PathComparison => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 	private static string Normalize(string path) => Path.GetFullPath(path.Trim());
 
-	private static void EnsureDirectory(string path)
+	private void EnsureDirectory(string path)
 	{
 		if (File.Exists(path)) throw new IOException($"目录位置被文件占用: {path}");
 		Directory.CreateDirectory(path);
-		EnsureNoReparsePoints(path, Path.GetPathRoot(path) ?? path);
+		// 包根的可信性由启动解析器负责；此处只拒绝包内路径被链接重定向。
+		EnsureNoReparsePoints(path, PackageRoot);
 	}
 }
 

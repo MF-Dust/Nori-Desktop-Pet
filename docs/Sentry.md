@@ -64,7 +64,7 @@ release 是手动 workflow，顺序不可颠倒：
 → 创建 GitHub Release
 ```
 
-Release workflow 当前为 `win-x64`、`linux-x64`、`osx-arm64` 生成槽式 framework-dependent 归档：Windows ZIP、Linux tar.gz、macOS ZIP，完整归档 root（包括隐藏 `.current`）。目标机必须安装 .NET 10 Runtime，Windows 另需 WebView2；不提供 self-contained、安装器、签名或自动更新。工作流不会再有 `include_runtime` 开关。
+Release workflow 当前为 `win-x64`、`linux-x64`、`osx-arm64` 生成槽式 framework-dependent 归档：Windows ZIP、Linux tar.gz、macOS ZIP，完整归档 root（包括隐藏 `.current`）。目标机必须安装 ASP.NET Core Runtime 10，Windows 另需 WebView2；不提供 self-contained、安装器、签名或自动更新。工作流不会再有 `include_runtime` 开关。
 
 发布输入还必须显式为 true：
 

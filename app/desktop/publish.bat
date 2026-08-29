@@ -44,6 +44,8 @@ node scripts\write-deployment-json.mjs "%ROOT%\%SLOT%\deployment.json" "%APP_VER
 rem 根入口只由 launcher 发布，发布包不创建 data。
 echo 发布稳定根入口...
 dotnet publish Nori.AppLauncher/Nori.AppLauncher.csproj -c Release -r win-x64 --self-contained false -p:NoriProductVersion="%APP_VERSION%" -p:NoriDeploymentRevision="%REVISION%" -p:PublishSingleFile=false -p:PublishReadyToRun=false -o "%ROOT%" || goto :error
+if not "%NORI_KEEP_SYMBOLS%"=="1" if /I not "%NORI_KEEP_SYMBOLS%"=="true" for /r "%ROOT%" %%F in (*.pdb) do del /q "%%F"
+copy /y "..\..\LICENSE" "%ROOT%\LICENSE" >nul || goto :error
 >"%ROOT%\.current.tmp" echo %SLOT%
 move /y "%ROOT%\.current.tmp" "%ROOT%\.current" >nul
 if not exist "%ROOT%\Nori.exe" goto :error

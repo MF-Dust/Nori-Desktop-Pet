@@ -1,10 +1,11 @@
 import { writeFileSync } from "node:fs";
-import { validateNumericVersion, validateProductVersion, validateRevision } from "./version-validation.mjs";
+import { numericVersionFromProduct, validateNumericVersion, validateProductVersion, validateRevision } from "./version-validation.mjs";
 
 const [output, productVersion, numericVersion, revision, rid, entrypoint] = process.argv.slice(2);
 try {
 	validateProductVersion(productVersion);
 	validateNumericVersion(numericVersion);
+	if (numericVersionFromProduct(productVersion) !== numericVersion) throw new Error("产品版本与数字版本不匹配");
 	validateRevision(revision);
 } catch (error) {
 	console.error(`deployment.json 参数无效: ${error.message}`);

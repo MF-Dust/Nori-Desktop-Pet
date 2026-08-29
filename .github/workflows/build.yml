@@ -182,7 +182,7 @@ jobs:
         run: |
           ./scripts/package-windows.ps1 `
             -PublishDir bin/publish/win-x64 `
-            -Version ci `
+            -Version Dev `
             -OutputDir bin/ci-release
 
       - name: Windows first-run 启动冒烟

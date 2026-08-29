@@ -10,9 +10,9 @@ public static class StorageBootstrapper
 {
 	private const int MarkerSchemaVersion = 1;
 	private const long MaxCopiedFileBytes = 64L * 1024 * 1024;
-	private static readonly string[] KnownLegacyPaths = [
-		AppPaths.DatabaseFileName, AppPaths.DatabaseFileName + "-wal", AppPaths.DatabaseFileName + "-shm",
-		"secret.key", "knowledge", "resources", "plugins", "plugin-data", "log",
+	private static readonly string[] LegacyDatabaseBackupPrefixes = [
+		AppPaths.DatabaseFileName + ".pre-migration-",
+		AppPaths.DatabaseFileName + "-pre-migration-",
 	];
 
 	/// <summary>数据库打开后把精确旧默认知识路径改为稳定逻辑 ID，避免包移动造成重复索引。</summary>
@@ -21,7 +21,8 @@ public static class StorageBootstrapper
 		ArgumentNullException.ThrowIfNull(database);
 		ArgumentNullException.ThrowIfNull(config);
 		string oldPath = Path.GetFullPath(oldDefaultPath);
-		if (!string.Equals(config.GetStringOr("memory_knowledge_path", "").Trim(), oldPath, PathComparison)) return;
+		string configuredPath = config.GetStringOr("memory_knowledge_path", "").Trim();
+		if (!PathsEqual(configuredPath, oldPath)) return;
 		// 空间移动后由 KnowledgeService 按当前 AppStoragePaths 解析稳定逻辑 ID。
 		config.Set("memory_knowledge_path", new ConfigValue.Text("nori://knowledge/Memory.md"));
 		_ = newPath;
@@ -72,7 +73,11 @@ public static class StorageBootstrapper
 			throw new InvalidOperationException($"新数据目录不是空目录且缺少有效 marker: {paths.DataRoot}");
 
 		string source = Path.GetFullPath(legacyDataPath ?? LegacyDataPathResolver.Resolve());
-		if (allowLegacyMigration && Directory.Exists(source)) EnsureLegacySourceSafe(source);
+		if (allowLegacyMigration && Directory.Exists(source))
+		{
+			source = CanonicalLegacySource(source);
+			EnsureLegacySourceSeparated(paths, source);
+		}
 		bool hasLegacyData = allowLegacyMigration && Directory.Exists(source) && Directory.EnumerateFileSystemEntries(source).Any();
 		string migrationId = Guid.NewGuid().ToString("N");
 		string staging = paths.DataRoot + $".staging-{migrationId}";
@@ -107,12 +112,14 @@ public static class StorageBootstrapper
 	public static void CleanupLegacy(StorageBootstrapResult result, AppStoragePaths paths, string expectedSource)
 	{
 		ArgumentNullException.ThrowIfNull(paths);
+		// 收据是唯一清理授权；无收据时不能解析、更不能读取默认旧数据目录。
+		if (!File.Exists(paths.CleanupReceiptPath)) return;
 		string allowedSource = CanonicalLegacySource(expectedSource);
-		if (!result.Migrated && !File.Exists(paths.CleanupReceiptPath)) return;
 		MigrationMarker marker = ValidateMarker(paths.MarkerPath);
 		ReceiptInfo? receipt = ValidateReceipt(paths, marker, allowedSource);
 		if (receipt is null || !string.Equals(receipt.Source, allowedSource, PathComparison)) return;
 		string source = receipt.Source;
+		EnsureLegacySourceSeparated(paths, source);
 		if (!Directory.Exists(source))
 		{
 			UpdateMarkerStatus(paths.MarkerPath, "ready");
@@ -123,19 +130,8 @@ public static class StorageBootstrapper
 		{
 			EnsureLegacySourceSafe(source);
 			EnsureLegacyDatabaseAvailable(source);
-			foreach (string relative in KnownLegacyPaths)
-			{
-				string candidate = Path.Combine(source, relative);
-				EnsureLegacyEntrySafe(candidate);
-				if (File.Exists(candidate)) File.Delete(candidate);
-				else if (Directory.Exists(candidate)) Directory.Delete(candidate, true);
-			}
-			foreach (string backup in Directory.EnumerateFiles(source, AppPaths.DatabaseFileName + "-pre-migration-*", SearchOption.TopDirectoryOnly))
-			{
-				EnsureLegacyEntrySafe(backup);
-				File.Delete(backup);
-			}
-			if (!Directory.EnumerateFileSystemEntries(source).Any()) Directory.Delete(source);
+			// staging 已保全所有持久项；缓存与临时项也应随旧 Tauri 数据根一次性移除。
+			Directory.Delete(source, recursive: true);
 			UpdateMarkerStatus(paths.MarkerPath, "ready");
 			TryDeleteReceipt(paths.CleanupReceiptPath);
 		}
@@ -157,6 +153,24 @@ public static class StorageBootstrapper
 	}
 
 	private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+	private static bool PathsEqual(string left, string right)
+	{
+		if (string.IsNullOrWhiteSpace(left) || left.StartsWith("nori://", StringComparison.Ordinal)) return false;
+		try
+		{
+			if (string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), PathComparison)) return true;
+			return string.Equals(
+				AppStoragePaths.ResolvePhysicalPath(left),
+				AppStoragePaths.ResolvePhysicalPath(right),
+				PathComparison);
+		}
+		catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException)
+		{
+			return false;
+		}
+	}
+
 	private static void ValidateExistingTarget(AppStoragePaths paths)
 	{
 		if (File.Exists(paths.DataRoot)) throw new IOException($"data 路径被文件占用: {paths.DataRoot}");
@@ -175,17 +189,17 @@ public static class StorageBootstrapper
 
 	private static void CopyLegacy(string source, string staging)
 	{
+		CopyMigrationBackups(source, staging);
 		foreach (string entry in Directory.EnumerateFileSystemEntries(source))
 		{
 			string name = Path.GetFileName(entry);
-			if (name is "." or ".." || name is "webview" or "staging" or "temp" or "tmp" or "cache") continue;
+			if (name is "." or ".." || name is "webview" or "webview_plugins" or "staging" or "temp" or "tmp" or "cache") continue;
 			if (name.Equals(AppPaths.DatabaseFileName + "-wal", StringComparison.OrdinalIgnoreCase)
 				|| name.Equals(AppPaths.DatabaseFileName + "-shm", StringComparison.OrdinalIgnoreCase)
-				|| name.StartsWith(AppPaths.DatabaseFileName + "-pre-migration-", StringComparison.OrdinalIgnoreCase)) continue;
+				|| LegacyDatabaseBackupPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))) continue;
 			if (name.Equals(AppPaths.DatabaseFileName, StringComparison.OrdinalIgnoreCase))
 			{
 				CopyDatabase(entry, Path.Combine(staging, "core", "database", AppPaths.DatabaseFileName));
-				CopyMatchingFiles(source, staging, $"{AppPaths.DatabaseFileName}-pre-migration-");
 			}
 			else if (name.Equals("secret.key", StringComparison.OrdinalIgnoreCase))
 			{
@@ -234,12 +248,23 @@ public static class StorageBootstrapper
 		if (!result.Equals("ok", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"旧数据库 {operation} 失败: {result}");
 	}
 
-	private static void CopyMatchingFiles(string source, string staging, string prefix)
+	private static void CopyMigrationBackups(string source, string staging)
 	{
-		string[] candidates = Directory.EnumerateFiles(source, prefix + "*", SearchOption.TopDirectoryOnly).ToArray();
+		string[] candidates = LegacyDatabaseBackupPrefixes
+			.SelectMany(prefix => Directory.EnumerateFiles(source, prefix + "*", SearchOption.TopDirectoryOnly))
+			.Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+			.ToArray();
 		// 即使旧备份不在最新三份内，也不能让超额文件绕过单文件限制。
-		foreach (string path in candidates) { EnsureRegularFile(path); if (new FileInfo(path).Length > MaxCopiedFileBytes) throw new InvalidOperationException($"迁移文件超过 64 MiB 限制: {path}"); }
-		foreach (string path in candidates.OrderByDescending(File.GetLastWriteTimeUtc).Take(3))
+		foreach (string path in candidates)
+		{
+			EnsureRegularFile(path);
+			if (new FileInfo(path).Length > MaxCopiedFileBytes)
+				throw new InvalidOperationException($"迁移文件超过 64 MiB 限制: {path}");
+		}
+		foreach (string path in candidates
+			.OrderByDescending(File.GetLastWriteTimeUtc)
+			.ThenByDescending(path => Path.GetFileName(path), StringComparer.Ordinal)
+			.Take(3))
 			CopyFileChecked(path, Path.Combine(staging, "core", "database", Path.GetFileName(path)));
 	}
 
@@ -365,12 +390,12 @@ public static class StorageBootstrapper
 		try
 		{
 			using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-		using (StreamWriter writer = new(stream, new System.Text.UTF8Encoding(false), leaveOpen: true))
-		{
-			writer.Write(content);
-			writer.Flush();
-			stream.Flush(true);
-		}
+			using (StreamWriter writer = new(stream, new System.Text.UTF8Encoding(false), leaveOpen: true))
+			{
+				writer.Write(content);
+				writer.Flush();
+				stream.Flush(true);
+			}
 			File.Move(temporary, path, true);
 		}
 		finally
@@ -390,7 +415,8 @@ public static class StorageBootstrapper
 			|| !root.TryGetProperty("status", out JsonElement status) || status.ValueKind != JsonValueKind.String || status.GetString() != "pending"
 			|| !root.TryGetProperty("migration_id", out JsonElement id) || id.ValueKind != JsonValueKind.String
 			|| !Guid.TryParseExact(id.GetString(), "N", out _)
-			|| !root.TryGetProperty("source", out JsonElement sourceValue) || sourceValue.ValueKind != JsonValueKind.String)
+			|| !root.TryGetProperty("source", out JsonElement sourceValue) || sourceValue.ValueKind != JsonValueKind.String
+			|| string.IsNullOrWhiteSpace(sourceValue.GetString()))
 			throw new InvalidOperationException("旧数据清理收据无效");
 		string source = CanonicalLegacySource(sourceValue.GetString()!);
 		string allowed = CanonicalLegacySource(expectedSource);
@@ -413,6 +439,9 @@ public static class StorageBootstrapper
 	private static string CanonicalLegacySource(string source)
 	{
 		string full = Path.GetFullPath(source);
+		if ((File.Exists(full) || Directory.Exists(full)) && (File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0)
+			throw new InvalidOperationException("旧数据目录不能是符号链接或 reparse point");
+		full = AppStoragePaths.ResolvePhysicalPath(full);
 		EnsureLegacySourceAncestorsSafe(full);
 		if (Directory.Exists(full)) EnsureDirectoryTree(full);
 		return full;
@@ -428,10 +457,11 @@ public static class StorageBootstrapper
 			|| !root.TryGetProperty("status", out JsonElement status) || status.ValueKind != JsonValueKind.String || status.GetString() is not ("ready" or "cleanup_pending")
 			|| !root.TryGetProperty("product_version", out JsonElement product) || product.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(product.GetString())
 			|| !root.TryGetProperty("numeric_version", out JsonElement numeric) || numeric.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(numeric.GetString())
-			|| !root.TryGetProperty("rid", out JsonElement rid) || rid.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(rid.GetString()))
+			|| !root.TryGetProperty("rid", out JsonElement rid) || rid.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(rid.GetString())
+			|| !root.TryGetProperty("migrated", out JsonElement migratedValue) || migratedValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
 			throw new InvalidOperationException($"数据 marker 无效: {path}");
 		if (!IsNumericVersionSupported(numeric.GetString()!)) throw new InvalidOperationException($"数据 marker 的 numeric_version 无效: {path}");
-		bool migrated = root.TryGetProperty("migrated", out JsonElement migratedValue) && migratedValue.ValueKind == JsonValueKind.True;
+		bool migrated = migratedValue.GetBoolean();
 		string? migrationId = root.TryGetProperty("migration_id", out JsonElement id) && id.ValueKind == JsonValueKind.String ? id.GetString() : null;
 		if (migrated && (migrationId is null || !Guid.TryParseExact(migrationId, "N", out _)))
 			throw new InvalidOperationException($"数据 marker 缺少有效迁移标识: {path}");
@@ -478,6 +508,13 @@ public static class StorageBootstrapper
 		EnsureDirectoryTree(full);
 	}
 
+	private static void EnsureLegacySourceSeparated(AppStoragePaths paths, string source)
+	{
+		string packageRoot = AppStoragePaths.ResolvePhysicalPath(paths.PackageRoot);
+		if (AppStoragePaths.IsContained(packageRoot, source) || AppStoragePaths.IsContained(source, packageRoot))
+			throw new InvalidOperationException("旧数据目录不能与当前包根互相包含");
+	}
+
 	private static void EnsureLegacySourceAncestorsSafe(string full)
 	{
 		string? current = full;
@@ -489,14 +526,6 @@ public static class StorageBootstrapper
 			if (parent is null || string.Equals(parent, current, PathComparison)) break;
 			current = parent;
 		}
-	}
-
-	private static void EnsureLegacyEntrySafe(string path)
-	{
-		if (!File.Exists(path) && !Directory.Exists(path)) return;
-		if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-			throw new InvalidOperationException($"旧数据待清理项包含 reparse point: {path}");
-		if (Directory.Exists(path)) EnsureDirectoryTree(path);
 	}
 
 	private static void EnsureLegacyDatabaseAvailable(string source)
