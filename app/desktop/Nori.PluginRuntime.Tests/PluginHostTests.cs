@@ -468,6 +468,158 @@ public sealed class PluginHostTests
 
 	#endregion
 
+	#region 9. 插件自定义命令处理器测试 (Plugin Command Handler)
+
+	private sealed class FakeCommandHandler : IPluginWebViewCommandHandler
+	{
+		public string? LastCommand { get; private set; }
+		public JsonElement LastArgs { get; private set; }
+		public Func<string, JsonElement, object?>? Responder { get; set; }
+
+		public Task<object?> HandleAsync(string command, JsonElement args, CancellationToken cancellationToken)
+		{
+			LastCommand = command;
+			LastArgs = args.Clone();
+			return Task.FromResult(Responder?.Invoke(command, args));
+		}
+	}
+
+	[Fact]
+	public async Task 非白名单命令被转发到插件自定义处理器()
+	{
+		FakePluginBridgeSource source = new("io.plugin.a", "win-1");
+		PluginDescriptorSummary descriptor = new()
+		{
+			Id = "io.plugin.a",
+			Name = "Plugin A",
+			Version = "1.0.0",
+		};
+
+		FakeCommandHandler handler = new()
+		{
+			Responder = (command, args) => new { echoed = command, songId = args.GetProperty("id").GetInt64() },
+		};
+		PluginBridge bridge = new("io.plugin.a", "win-1", descriptor, commandHandler: handler);
+
+		string payload = JsonSerializer.Serialize(new
+		{
+			kind = "invoke",
+			id = 9001,
+			cmd = "song_url_v1",
+			args = new { id = 347230, level = "exhigh" },
+		});
+
+		bridge.Handle(source, payload);
+
+		FakeResult result = await source.WaitForResultAsync(9001);
+		Assert.Equal("resolve", result.Kind);
+		Assert.Null(result.Error);
+		Assert.Equal("song_url_v1", handler.LastCommand);
+		Assert.Equal(347230, handler.LastArgs.GetProperty("id").GetInt64());
+
+		string json = JsonSerializer.Serialize(result.Value);
+		using JsonDocument doc = JsonDocument.Parse(json);
+		Assert.Equal("song_url_v1", doc.RootElement.GetProperty("echoed").GetString());
+		Assert.Equal(347230, doc.RootElement.GetProperty("songId").GetInt64());
+	}
+
+	[Fact]
+	public async Task 白名单命令优先于插件自定义处理器()
+	{
+		FakePluginBridgeSource source = new("io.plugin.a", "win-1");
+		PluginDescriptorSummary descriptor = new()
+		{
+			Id = "io.plugin.a",
+			Name = "Plugin A",
+			Version = "1.0.0",
+		};
+
+		FakeCommandHandler handler = new()
+		{
+			Responder = (_, _) => new { hijacked = true },
+		};
+		PluginBridge bridge = new("io.plugin.a", "win-1", descriptor, commandHandler: handler);
+
+		string payload = JsonSerializer.Serialize(new
+		{
+			kind = "invoke",
+			id = 9002,
+			cmd = "ping",
+		});
+
+		bridge.Handle(source, payload);
+
+		FakeResult result = await source.WaitForResultAsync(9002);
+		Assert.Equal("resolve", result.Kind);
+		Assert.Null(handler.LastCommand);
+
+		string json = JsonSerializer.Serialize(result.Value);
+		using JsonDocument doc = JsonDocument.Parse(json);
+		Assert.True(doc.RootElement.GetProperty("pong").GetBoolean());
+	}
+
+	[Fact]
+	public async Task 自定义处理器抛出异常时被包装为Reject并脱敏()
+	{
+		FakePluginBridgeSource source = new("io.plugin.a", "win-1");
+		PluginDescriptorSummary descriptor = new()
+		{
+			Id = "io.plugin.a",
+			Name = "Plugin A",
+			Version = "1.0.0",
+		};
+
+		FakeCommandHandler handler = new()
+		{
+			Responder = (_, _) => throw new InvalidOperationException("云端请求失败，目标路径 C:\\Users\\Secret\\cache"),
+		};
+		PluginBridge bridge = new("io.plugin.a", "win-1", descriptor, commandHandler: handler);
+
+		string payload = JsonSerializer.Serialize(new
+		{
+			kind = "invoke",
+			id = 9003,
+			cmd = "playlist_detail",
+		});
+
+		bridge.Handle(source, payload);
+
+		FakeResult result = await source.WaitForResultAsync(9003);
+		Assert.Equal("reject", result.Kind);
+		Assert.Null(result.Value);
+		Assert.NotNull(result.Error);
+		Assert.DoesNotContain("C:\\Users\\Secret", result.Error);
+	}
+
+	[Fact]
+	public async Task 未注册处理器时非白名单命令仍被拒绝()
+	{
+		FakePluginBridgeSource source = new("io.plugin.a", "win-1");
+		PluginDescriptorSummary descriptor = new()
+		{
+			Id = "io.plugin.a",
+			Name = "Plugin A",
+			Version = "1.0.0",
+		};
+
+		PluginBridge bridge = new("io.plugin.a", "win-1", descriptor);
+
+		string payload = JsonSerializer.Serialize(new
+		{
+			kind = "invoke",
+			id = 9004,
+			cmd = "song_url_v1",
+		});
+
+		bridge.Handle(source, payload);
+
+		FakeResult result = await source.WaitForResultAsync(9004);
+		Assert.Equal("reject", result.Kind);
+		Assert.Contains("白名单", result.Error);
+	}
+
+	#endregion
+
 	#region 辅助测试替身 (Test Doubles)
 
 	private sealed class FakeResult
@@ -551,6 +703,14 @@ public sealed class PluginHostTests
 		public string EntryUrl => entryUrl;
 		public bool IsVisible { get; private set; }
 		public bool IsClosed { get; private set; }
+
+		public List<(string Event, string? Payload)> Events { get; } = [];
+
+		public Task SendEventAsync(string eventName, System.Text.Json.Nodes.JsonNode? payload, CancellationToken cancellationToken = default)
+		{
+			Events.Add((eventName, payload?.ToJsonString()));
+			return Task.CompletedTask;
+		}
 
 		public Task ShowAsync(CancellationToken cancellationToken = default)
 		{

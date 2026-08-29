@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -92,6 +93,7 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 			WindowId,
 			descriptor,
 			closeSelfHandler: ct => CloseAsync(ct),
+			commandHandler: options.CommandHandler,
 			logger: logger);
 
 		_webView = new NativeWebView
@@ -174,6 +176,24 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 	public async ValueTask DisposeAsync()
 	{
 		await CloseAsync().ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// 向插件页面推送事件 (kind='event' 信封): 宿主侧动作 (如 AI 调用) 由此通知页面。
+	/// </summary>
+	public Task SendEventAsync(string eventName, JsonNode? payload, CancellationToken cancellationToken = default)
+	{
+		if (string.IsNullOrWhiteSpace(eventName)) throw new ArgumentException("事件名无效", nameof(eventName));
+		if (Volatile.Read(ref _isClosingOrClosed) != 0) return Task.CompletedTask;
+
+		JsonObject envelope = new()
+		{
+			["kind"] = "event",
+			["event"] = eventName,
+			["payload"] = payload?.DeepClone(),
+		};
+		Dispatch($"window.__noriPlugin&&window.__noriPlugin.dispatch({JsonSerializer.Serialize(envelope, PluginRuntimeJson.Options)})");
+		return Task.CompletedTask;
 	}
 
 	/// <summary>

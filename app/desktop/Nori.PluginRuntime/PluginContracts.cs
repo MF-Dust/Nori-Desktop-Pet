@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Nori.PluginRuntime;
@@ -73,6 +74,25 @@ public interface IPluginAssets
 /// <summary>插件提供的贡献标记。</summary>
 public interface IPluginContribution
 {
+}
+
+/// <summary>
+/// 插件向宿主贡献的可执行动作。
+/// 宿主会把活跃插件的动作注册为 AI 工具 (plugin__&lt;pluginId&gt;__&lt;actionId&gt;)，供桌宠对话调用。
+/// </summary>
+public interface IPluginActionContribution : IPluginContribution
+{
+	/// <summary>动作 ID (插件内唯一，用于宿主工具名)。</summary>
+	string Id { get; }
+
+	/// <summary>面向模型的动作描述。</summary>
+	string Description { get; }
+
+	/// <summary>参数 JSON Schema (可为 null 表示无参数)。</summary>
+	JsonNode? ParametersSchema { get; }
+
+	/// <summary>执行动作并返回可序列化结果。</summary>
+	Task<JsonObject?> InvokeAsync(JsonNode? arguments, CancellationToken cancellationToken);
 }
 
 /// <summary>一个插件贡献注册项的可撤销句柄。</summary>
@@ -154,6 +174,13 @@ public interface IWebViewCapability : IPluginCapability
 		CancellationToken cancellationToken = default);
 }
 
+/// <summary>插件自定义 WebView bridge 命令处理器。插件页面经 bridge invoke 的非白名单命令会转发到此处理器。</summary>
+public interface IPluginWebViewCommandHandler
+{
+	/// <summary>处理页面发起的自定义命令。返回值会被 JSON 序列化后回传给页面。</summary>
+	Task<object?> HandleAsync(string command, JsonElement args, CancellationToken cancellationToken);
+}
+
 /// <summary>插件 WebView 创建参数。</summary>
 public sealed record PluginWebViewOptions
 {
@@ -165,6 +192,9 @@ public sealed record PluginWebViewOptions
 
 	/// <summary>相对插件 webRoot 的入口路径或由宿主生成的同源 URL。</summary>
 	public required string EntryPoint { get; init; }
+
+	/// <summary>插件自定义 bridge 命令处理器 (可选)。为空时非白名单命令仍被拒绝。</summary>
+	public IPluginWebViewCommandHandler? CommandHandler { get; init; }
 
 	/// <summary>窗口宽度 (DIP)。</summary>
 	public double Width { get; init; } = 800;
@@ -199,4 +229,7 @@ public interface IPluginWebViewWindow : IAsyncDisposable
 	Task ShowAsync(CancellationToken cancellationToken = default);
 	Task HideAsync(CancellationToken cancellationToken = default);
 	Task CloseAsync(CancellationToken cancellationToken = default);
+
+	/// <summary>向页面推送事件: 页面侧 window.__noriPlugin.dispatch({kind:'event', event, payload})。</summary>
+	Task SendEventAsync(string eventName, JsonNode? payload, CancellationToken cancellationToken = default);
 }

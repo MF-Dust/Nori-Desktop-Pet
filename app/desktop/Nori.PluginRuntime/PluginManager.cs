@@ -67,6 +67,11 @@ internal sealed class PluginManager : IAsyncDisposable
 	private readonly PluginStateStore _stateStore;
 	private int _disposed;
 
+	/// <summary>活跃插件集合发生变化 (激活完成 / 停用完成) 时触发，供宿主刷新贡献派生状态。</summary>
+	public event Action? ActivePluginsChanged;
+
+	private void RaiseActiveChanged() => ActivePluginsChanged?.Invoke();
+
 	public PluginManager(PluginRuntimeOptions options)
 	{
 		ArgumentNullException.ThrowIfNull(options);
@@ -412,6 +417,21 @@ internal sealed class PluginManager : IAsyncDisposable
 			.SelectMany(handle => handle.Contributions.GetAll<T>())
 			.ToArray();
 
+	/// <summary>返回当前活动插件提供的指定类型贡献及其来源插件描述。</summary>
+	public IReadOnlyList<(PluginDescriptor Plugin, T Contribution)> GetContributionsWithSource<T>()
+		where T : class, IPluginContribution =>
+		_plugins.Values.Where(handle => handle.State == PluginLifecycleState.Active)
+			.SelectMany(handle => handle.Contributions.GetAll<T>().Select(contribution => (Plugin: new PluginDescriptor
+			{
+				Id = handle.Manifest.Id,
+				Name = handle.Manifest.Name,
+				Description = handle.Manifest.Description,
+				Version = handle.Manifest.Version,
+				ApiVersion = handle.Manifest.ApiVersion,
+				Capabilities = handle.Manifest.Capabilities,
+			}, Contribution: contribution)))
+			.ToArray();
+
 	/// <summary>返回当前插件的安装目录，供 AssetServer 做公开资源映射。</summary>
 	public string? ResolveAssetRoot(string pluginId) =>
 		_plugins.TryGetValue(pluginId, out PluginHandle? handle)
@@ -474,6 +494,7 @@ internal sealed class PluginManager : IAsyncDisposable
 			handle.ErrorCode = null;
 			handle.ErrorMessage = null;
 			ClearStartupFailure(handle.Manifest.Id);
+			RaiseActiveChanged();
 		}
 		catch (PluginException exception)
 		{
@@ -541,6 +562,7 @@ internal sealed class PluginManager : IAsyncDisposable
 			handle.State = failure is null ? (disabled ? PluginLifecycleState.Disabled : PluginLifecycleState.Installed) : PluginLifecycleState.Failed;
 			handle.ErrorCode = failure?.Code;
 			handle.ErrorMessage = failure is null ? null : SanitizeMessage(failure.Message);
+			RaiseActiveChanged();
 		}
 		if (failure is not null) throw failure;
 	}

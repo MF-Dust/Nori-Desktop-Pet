@@ -18,6 +18,7 @@ using Nori.Core.Security;
 using Nori.Core.Tools;
 using Nori.Core.Telemetry;
 using Nori.Core.Voice;
+using Nori.PluginRuntime;
 using Nori.Desktop.Audio;
 using Nori.Desktop.Automation;
 using Nori.Desktop.Bridge;
@@ -45,6 +46,8 @@ public sealed class AppRuntime : IAsyncDisposable
 	public const int ApprovalTimeoutSeconds = 60;
 
 	private const string McpToolCategory = "mcp";
+	private const string PluginToolCategory = "plugin";
+	private const int PluginToolsRefreshDebounceMs = 500;
 	private const int McpRefreshLogMaxCharacters = 192;
 	private const int McpRefreshLogServerIdMaxCharacters = 64;
 
@@ -60,6 +63,8 @@ public sealed class AppRuntime : IAsyncDisposable
 	private readonly PetInteractionReactionService _petInteractionService;
 	private readonly SemaphoreSlim _petInteractionGate = new(1, 1);
 	private readonly SemaphoreSlim _mcpRefreshGate = new(1, 1);
+	private readonly SemaphoreSlim _pluginToolsRefreshGate = new(1, 1);
+	private System.Threading.Timer? _pluginToolsRefreshTimer;
 	private readonly Lock _petInteractionThrottleGate = new();
 	private readonly Lock _petSpeechGate = new();
 	private CancellationTokenSource? _petInteractionCts;
@@ -261,6 +266,13 @@ public sealed class AppRuntime : IAsyncDisposable
 		{
 			Proactive.Message += message => Dispatcher.UIThread.Post(() => OnProactiveMessage(message));
 			Proactive.Start();
+
+			// 插件贡献动作 → AI 工具 (plugin 分类): 活跃插件变化时防抖刷新
+			if (Services.PluginRuntime is not null)
+			{
+				Services.PluginRuntime.ActivePluginsChanged += SchedulePluginToolsRefresh;
+				SchedulePluginToolsRefresh();
+			}
 
 			// Knowledge 和 Reflection 都在后台启动；索引或整理失败不能阻塞聊天。
 			_reflectionWorker.Start();
@@ -701,6 +713,59 @@ public sealed class AppRuntime : IAsyncDisposable
 	{
 		if (string.IsNullOrEmpty(value) || maxCharacters <= 0) return "unknown";
 		return value.Length <= maxCharacters ? value : value[..maxCharacters];
+	}
+
+	/// <summary>活跃插件集合变化后防抖刷新插件工具。</summary>
+	private void SchedulePluginToolsRefresh()
+	{
+		_pluginToolsRefreshTimer?.Dispose();
+		_pluginToolsRefreshTimer = new Timer(
+			_ => { _ = RefreshPluginToolsAsync(); },
+			null, PluginToolsRefreshDebounceMs, Timeout.Infinite);
+	}
+
+	private async Task RefreshPluginToolsAsync()
+	{
+		if (Volatile.Read(ref _disposed) != 0) return;
+		PluginRuntimeHost? pluginRuntime = Services.PluginRuntime;
+		if (pluginRuntime is null) return;
+		bool entered = false;
+		try
+		{
+			if (!await _pluginToolsRefreshGate.WaitAsync(0).ConfigureAwait(false)) return;
+			entered = true;
+
+			List<RegisteredTool> tools = [];
+			HashSet<string> names = new(StringComparer.Ordinal);
+			foreach ((PluginDescriptor plugin, IPluginActionContribution action) in pluginRuntime.GetContributionsWithSource<IPluginActionContribution>())
+			{
+				if (string.IsNullOrWhiteSpace(action.Id)) continue;
+				string pluginName = plugin.Id.Replace('.', '_');
+				string fullName = $"plugin__{pluginName}__{action.Id}";
+				if (!names.Add(fullName)) continue;
+				tools.Add(new RegisteredTool
+				{
+					Name = fullName,
+					Description = $"[{plugin.Name}] {action.Description}",
+					Parameters = ToolLimits.CapSchema(action.ParametersSchema as JsonObject ?? new JsonObject()),
+					PermissionLevel = "safe",
+					Category = PluginToolCategory,
+					Execute = async (arguments, context) =>
+						await action.InvokeAsync(arguments, context.CancellationToken).ConfigureAwait(false),
+				});
+			}
+			Tools.ReplaceCategory(PluginToolCategory, tools);
+		}
+		catch (Exception exception)
+		{
+			// 只记录类别与摘要, 不写入插件参数或结果
+			try { Services.Logger.Write(LogSource.Backend, "warn", $"插件工具刷新失败: {SensitiveDataRedactor.ExceptionSummary(exception)}"); }
+			catch { }
+		}
+		finally
+		{
+			if (entered) _pluginToolsRefreshGate.Release();
+		}
 	}
 
 	private ToolRegistry BuildToolRegistry(bool audioAvailable)
@@ -1452,6 +1517,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		try { Voice.Dispose(); } catch { }
 		try { if (Services.Automation is not null) await Services.Automation.DisposeAsync().ConfigureAwait(false); } catch { }
 		_petInteractionGate.Dispose();
+		_pluginToolsRefreshTimer?.Dispose();
+		_pluginToolsRefreshGate.Dispose();
 		_mcpRefreshGate.Dispose();
 		_lifetimeCts.Dispose();
 	}

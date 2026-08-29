@@ -67,6 +67,7 @@ internal sealed class PluginBridge : IAsyncDisposable
 	private readonly PluginDescriptorSummary _descriptor;
 	private readonly Func<IReadOnlyList<string>>? _capabilityProvider;
 	private readonly Func<CancellationToken, Task>? _closeSelfHandler;
+	private readonly IPluginWebViewCommandHandler? _commandHandler;
 	private readonly FileLogger? _logger;
 	private readonly ConcurrentDictionary<Task, byte> _pendingInvokes = new();
 	private readonly CancellationTokenSource _cts = new();
@@ -78,6 +79,7 @@ internal sealed class PluginBridge : IAsyncDisposable
 		PluginDescriptorSummary descriptor,
 		Func<IReadOnlyList<string>>? capabilityProvider = null,
 		Func<CancellationToken, Task>? closeSelfHandler = null,
+		IPluginWebViewCommandHandler? commandHandler = null,
 		FileLogger? logger = null)
 	{
 		PluginWindowHost.ValidatePluginId(pluginId, nameof(pluginId));
@@ -89,6 +91,7 @@ internal sealed class PluginBridge : IAsyncDisposable
 		_descriptor = descriptor;
 		_capabilityProvider = capabilityProvider;
 		_closeSelfHandler = closeSelfHandler;
+		_commandHandler = commandHandler;
 		_logger = logger;
 	}
 
@@ -199,6 +202,9 @@ internal sealed class PluginBridge : IAsyncDisposable
 				pong = true,
 				timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
 			},
+			_ when _commandHandler is not null => await _commandHandler
+				.HandleAsync(command, args, cancellationToken)
+				.ConfigureAwait(false),
 			_ => throw new PluginException(PluginErrorCodes.BridgeDenied, $"命令 '{command}' 未被允许或不在插件 Web 视图安全白名单中。"),
 		};
 	}

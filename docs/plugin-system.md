@@ -193,7 +193,7 @@ Safe Mode 允许列出、禁用和卸载；拒绝本地安装与启用。Safe Mo
 
 插件窗口由 `PluginWindowHost` 管理，不加入固定窗口定义。标签固定为 `plugin:<pluginId>:<windowId>`，身份由宿主创建时绑定，页面载荷里的 `pluginId` 永远不是权限依据。所有插件 ID 使用 manifest 的统一校验规则。
 
-插件页面的 bridge 不转发到宿主 `NoriBridge`，只接受以下五个命令：
+插件页面的 bridge 不转发到宿主 `NoriBridge`，只接受以下五个固定命令：
 
 ```text
 plugin_get_info
@@ -203,7 +203,9 @@ window_close
 ping
 ```
 
-桥接使用独立的 `window.__noriPlugin.dispatch` 信封；旧点号/短名称别名、安装/启用/禁用/卸载以及宿主核心命令均拒绝。插件窗口使用独立的 WebView 数据目录，插件上下文撤销时自动关闭。
+除此之外，插件可以在创建窗口时通过 `PluginWebViewOptions.CommandHandler` 注册自己的 `IPluginWebViewCommandHandler`，页面发起的非白名单命令会被转发给该处理器（deny-by-default：未注册处理器时一律拒绝）。白名单命令始终优先于自定义处理器。
+
+插件还可以注册 `IPluginActionContribution` 贡献（Id/Description/参数 Schema/InvokeAsync）。宿主在活跃插件变化时把这些动作注册进 `ToolRegistry` 的 `plugin` 分类（工具名 `plugin__<pluginId>__<actionId>`，权限级别 safe），桌宠 AI 对话即可调用；动作内部经 `IPluginWebViewWindow.SendEventAsync` 向页面推送事件（`kind:'event'` 信封），由页面执行实际播放控制。桥接使用独立的 `window.__noriPlugin.dispatch` 信封；旧点号/短名称别名、安装/启用/禁用/卸载以及宿主核心命令均拒绝。插件窗口使用独立的 WebView 数据目录，插件上下文撤销时自动关闭。
 
 ## AssetServer 附加路由
 

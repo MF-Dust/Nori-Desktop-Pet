@@ -60,6 +60,23 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 
 	public Task StartAllAsync(CancellationToken cancellationToken = default) => _manager.StartAllAsync(cancellationToken);
 
+	/// <summary>活跃插件集合变化 (激活/停用完成) 时触发，供宿主刷新插件贡献派生状态 (如 AI 工具)。</summary>
+	public event Action? ActivePluginsChanged
+	{
+		add => _manager.ActivePluginsChanged += value;
+		remove => _manager.ActivePluginsChanged -= value;
+	}
+
+	/// <summary>枚举当前活跃插件提供的指定类型贡献快照。</summary>
+	public IReadOnlyList<T> GetContributions<T>()
+		where T : class, IPluginContribution =>
+		_manager.GetContributions<T>();
+
+	/// <summary>枚举当前活跃插件提供的指定类型贡献及其来源插件。</summary>
+	public IReadOnlyList<(PluginDescriptor Plugin, T Contribution)> GetContributionsWithSource<T>()
+		where T : class, IPluginContribution =>
+		_manager.GetContributionsWithSource<T>();
+
 	public Task<object?> InvokeManagementAsync(
 		PluginManagementSource source,
 		string command,
