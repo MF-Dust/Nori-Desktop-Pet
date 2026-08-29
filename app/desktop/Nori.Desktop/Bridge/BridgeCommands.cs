@@ -1720,6 +1720,7 @@ public sealed class BridgeCommands
 	private void ApplyPetConfigAndBroadcast(string key, string storage)
 	{
 		_services.PetRuntime?.ApplyConfig(key, storage);
+		if (key == "l2d_click_through") _uiDispatcher.Post(() => _services.Windows.Pet?.ReapplyInputState());
 		PostBroadcast("nori:config-changed", new {key, value = storage});
 	}
 

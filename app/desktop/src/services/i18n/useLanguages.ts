@@ -731,6 +731,10 @@ export default () => {
 						title: t("views.main.general.startup.title"),
 						autoSummon: t("views.main.general.startup.autoSummon"),
 						autoSummonDesc: t("views.main.general.startup.autoSummonDesc"),
+						clickThrough: t("views.main.general.startup.clickThrough"),
+						clickThroughDesc: t("views.main.general.startup.clickThroughDesc"),
+						clickThroughUnsupportedDesc: t("views.main.general.startup.clickThroughUnsupportedDesc"),
+						clickThroughSaveFailed: t("views.main.general.startup.clickThroughSaveFailed"),
 					},
 					telemetry: {
 						title: t("views.main.general.telemetry.title"),

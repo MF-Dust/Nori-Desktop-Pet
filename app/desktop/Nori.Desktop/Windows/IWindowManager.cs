@@ -23,7 +23,7 @@ public interface IWindowManager
 	/// <summary>原生桌宠窗口引用</summary>
 	PetWindow? Pet { get; }
 
-	/// <summary>显示并聚焦窗口</summary>
+	/// <summary>显示窗口；桌宠不抢焦点，其他窗口同时聚焦</summary>
 	void Show(string label);
 
 	/// <summary>隐藏窗口</summary>

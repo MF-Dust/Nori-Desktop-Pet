@@ -16,7 +16,10 @@ import enUs from "../../assets/images/flags/us.png"
 const TEXT = computed(() => useLanguages().views.main.general)
 
 const SAVE_MGR = useSnapshotSave({
-	onError: (_key, error) => feedback.error(TEXT.value.telemetry.saveFailed, error),
+	onError: (key, error) => feedback.error(
+		key === "clickThrough" ? TEXT.value.startup.clickThroughSaveFailed : TEXT.value.telemetry.saveFailed,
+		error,
+	),
 })
 const {defineField, saveNow} = SAVE_MGR
 
@@ -38,6 +41,15 @@ const telemetryEnabledField = defineField(
 	val => RUNTIME.updateGeneral({telemetryEnabled: val}),
 )
 const telemetryEnabled = telemetryEnabledField.value
+
+const clickThroughField = defineField(
+	"clickThrough",
+	snapshot => snapshot.behaviors.clickThrough ?? false,
+	false,
+	val => RUNTIME.setModelBehavior({clickThrough: val}),
+)
+const clickThrough = clickThroughField.value
+const clickThroughSupported = computed(() => RUNTIME.platform().supportsHitThrough)
 
 const telemetryAvailable = computed(() => RUNTIME.snapshot.value?.telemetry.available ?? false)
 const telemetryConsent = computed(() => RUNTIME.snapshot.value?.telemetry.consent ?? "unset")
@@ -77,6 +89,12 @@ const onAutoSummonChange = (val: boolean) => {
 const onTelemetryChange = (val: boolean) => {
 	telemetryEnabled.value = val
 	void telemetryEnabledField.saveNow()
+}
+
+const onClickThroughChange = (val: boolean) => {
+	if (!clickThroughSupported.value) return
+	clickThrough.value = val
+	void clickThroughField.saveNow()
 }
 
 onMounted(() => {
@@ -137,6 +155,13 @@ onMounted(() => {
 					:desc="TEXT.startup.autoSummonDesc"
 					:model-value="autoSummon"
 					@update:model-value="onAutoSummonChange"
+				/>
+				<AppSwitchRow
+					:title="TEXT.startup.clickThrough"
+					:desc="clickThroughSupported ? TEXT.startup.clickThroughDesc : TEXT.startup.clickThroughUnsupportedDesc"
+					:model-value="clickThrough"
+					:disabled="!clickThroughSupported"
+					@update:model-value="onClickThroughChange"
 				/>
 			</AppCard>
 

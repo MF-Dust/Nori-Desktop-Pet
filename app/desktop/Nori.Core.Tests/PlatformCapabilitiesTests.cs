@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Nori.Core.Platform;
 
 namespace Nori.Core.Tests;
@@ -10,6 +11,24 @@ namespace Nori.Core.Tests;
 /// </summary>
 public class PlatformCapabilitiesTests
 {
+	private const int GwlExStyle = -20;
+	private const long WsExTopmost = 0x00000008;
+	private const long WsExTransparent = 0x00000020;
+	private const uint WsPopup = 0x80000000;
+
+	[DllImport("user32.dll", EntryPoint = "CreateWindowExW", CharSet = CharSet.Unicode, SetLastError = true)]
+	private static extern nint CreateWindowEx(
+		uint exStyle, string className, string? windowName, uint style,
+		int x, int y, int width, int height,
+		nint parent, nint menu, nint instance, nint parameter);
+
+	[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+	private static extern nint GetWindowLongPtr(nint window, int index);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool DestroyWindow(nint window);
+
 	[Fact]
 	public void 会话类型与当前操作系统一致()
 	{
@@ -79,6 +98,32 @@ public class PlatformCapabilitiesTests
 		Assert.True(capabilities.SupportsHitThrough);
 		Assert.True(capabilities.SupportsTopmost);
 		Assert.Equal(SessionType.Windows, PlatformServices.Current.Session);
+	}
+
+	[Fact]
+	public void Windows穿透会切换透明样式与Topmost层级()
+	{
+		if (!OperatingSystem.IsWindows()) return;
+
+		nint window = CreateWindowEx((uint)WsExTopmost, "STATIC", null, WsPopup, 0, 0, 1, 1, 0, 0, 0, 0);
+		Assert.NotEqual(0, window);
+		try
+		{
+			WindowsPlatformServices services = new();
+			services.SetClickThrough(window, true);
+			long throughStyle = GetWindowLongPtr(window, GwlExStyle).ToInt64();
+			Assert.NotEqual(0, throughStyle & WsExTransparent);
+			Assert.Equal(0, throughStyle & WsExTopmost);
+
+			services.SetClickThrough(window, false);
+			long clickableStyle = GetWindowLongPtr(window, GwlExStyle).ToInt64();
+			Assert.Equal(0, clickableStyle & WsExTransparent);
+			Assert.NotEqual(0, clickableStyle & WsExTopmost);
+		}
+		finally
+		{
+			DestroyWindow(window);
+		}
 	}
 
 	[Fact]

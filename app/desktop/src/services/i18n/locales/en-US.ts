@@ -727,6 +727,10 @@ export default {
 					title: "Startup & Runtime Behavior",
 					autoSummon: "Summon the pet on startup",
 					autoSummonDesc: "Show Nori on the desktop automatically after startup",
+					clickThrough: "Click-through",
+					clickThroughDesc: "Let pointer events pass through the pet so you can interact with windows behind it.",
+					clickThroughUnsupportedDesc: "Click-through is not supported by the current window system.",
+					clickThroughSaveFailed: "Failed to save click-through settings",
 				},
 				telemetry: {
 					title: "Diagnostics & Privacy",

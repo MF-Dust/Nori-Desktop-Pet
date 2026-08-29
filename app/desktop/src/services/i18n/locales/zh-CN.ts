@@ -727,6 +727,10 @@ export default {
 					title: "启动与运行行为",
 					autoSummon: "启动时自动唤出桌宠",
 					autoSummonDesc: "软件启动完成后自动在桌面上显示 Nori 桌宠窗口",
+					clickThrough: "鼠标穿透",
+					clickThroughDesc: "开启后鼠标事件会穿过桌宠，可直接操作后方窗口",
+					clickThroughUnsupportedDesc: "当前窗口系统不支持鼠标穿透",
+					clickThroughSaveFailed: "保存鼠标穿透设置失败",
 				},
 				telemetry: {
 					title: "诊断与隐私",

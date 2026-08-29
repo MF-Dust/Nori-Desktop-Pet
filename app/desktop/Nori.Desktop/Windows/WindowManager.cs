@@ -106,18 +106,20 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 	public IEnumerable<Window> All => _windows.Values;
 
 	/// <summary>
-	/// 显示并聚焦窗口
+	/// 显示窗口；桌宠不抢焦点，其他窗口同时聚焦
 	/// </summary>
 	public void Show(string label)
 	{
 		if (Get(label) is not { } window) return;
 		window.Show();
-		window.Activate();
 		if (window is PetWindow pet)
 		{
-			pet.Topmost = true;
+			// 桌宠不抢当前应用焦点；穿透状态会自行决定 Topmost / 普通 Z 序。
 			pet.ApplyWindowSize();
+			pet.ReapplyInputState();
+			return;
 		}
+		window.Activate();
 	}
 
 	/// <summary>

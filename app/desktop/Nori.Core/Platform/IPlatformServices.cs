@@ -80,7 +80,7 @@ public interface IPlatformServices
 	/// <summary>
 	/// 设置窗口是否整体穿透点击
 	///
-	/// 模型矩形穿透在 Windows 上由 WM_NCHITTEST 逐点判定, 不走这个入口;
+	/// Windows 用它同步 WS_EX_TRANSPARENT 与 Topmost Z 序, WM_NCHITTEST 仍负责逐点判定;
 	/// macOS / Linux 则按 alpha 采样结果在「整窗可点」与「整窗穿透」之间切换。
 	/// </summary>
 	void SetClickThrough(nint windowHandle, bool through);

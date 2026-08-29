@@ -18,8 +18,9 @@ namespace Nori.Desktop.Windows;
 /// 原生桌宠窗口
 ///
 /// 承载 PetGlControl 并接管桌宠的全部交互：
-/// - 模型外接矩形穿透: 约 10Hz 从 alpha 画面更新连续交互范围; Windows 走 WM_NCHITTEST,
-///   macOS/Linux(X11) 设置穿透开关/输入形状; Wayland 无此能力, 降级为整窗可点
+/// - 模型外接矩形穿透: 约 10Hz 从 alpha 画面更新连续交互范围; Windows 走 WM_NCHITTEST
+///   并按命中状态切换 Topmost Z 序, macOS/Linux(X11) 设置穿透开关/输入形状;
+///   Wayland 无此能力, 降级为整窗可点
 /// - 左键拖拽移动窗口 + 坐标持久化（阈值 4px）
 /// - 左键点击触发动作与表情判定
 /// - 深海微光配色原生右键菜单（打开主界面 / 随机动作 / 重置位置 / 隐藏桌宠 / 退出）
@@ -67,6 +68,7 @@ public sealed class PetWindow : Window
 		Height = definition.Height;
 		CanResize = false;
 		Topmost = true;
+		ShowActivated = false;
 		ShowInTaskbar = false;
 		WindowDecorations = WindowDecorations.None;
 		Background = Brushes.Transparent;
@@ -128,6 +130,7 @@ public sealed class PetWindow : Window
 			_glControl.ResumeRenderLoop();
 			if (PlatformServices.Current.Capabilities.SupportsGlobalCursor) _cursorTrackingTimer.Start();
 			_hitShapeTimer?.Start();
+			RefreshInputState();
 		}
 		else
 		{
@@ -158,15 +161,13 @@ public sealed class PetWindow : Window
 
 	private void OnOpened(object? sender, EventArgs e)
 	{
-		if (OperatingSystem.IsWindows())
-		{
-			Win32Properties.AddWndProcHookCallback(this, _wndProcHook);
-		}
+		if (OperatingSystem.IsWindows()) Win32Properties.AddWndProcHookCallback(this, _wndProcHook);
 		RestoreWindowPosition();
 		ApplyTopmost();
 		_glControl.ResumeRenderLoop();
 		if (PlatformServices.Current.Capabilities.SupportsGlobalCursor) _cursorTrackingTimer.Start();
 		_hitShapeTimer?.Start();
+		ReapplyInputState();
 	}
 
 	/// <summary>
@@ -246,10 +247,14 @@ public sealed class PetWindow : Window
 		}
 		_runtime.ModelChanged -= OnRuntimeModelChanged;
 		_runtime.LayoutChanged -= OnRuntimeLayoutChanged;
-		if (OperatingSystem.IsWindows())
-		{
-			Win32Properties.RemoveWndProcHookCallback(this, _wndProcHook);
-		}
+		if (OperatingSystem.IsWindows()) Win32Properties.RemoveWndProcHookCallback(this, _wndProcHook);
+	}
+
+	/// <summary>显示桌宠后重新应用点击穿透与 Z 序状态。</summary>
+	public void ReapplyInputState()
+	{
+		_lastClickThrough = null;
+		RefreshInputState();
 	}
 
 	/// <summary>
@@ -364,21 +369,68 @@ public sealed class PetWindow : Window
 
 	private void OnCursorTrackingTick(object? sender, EventArgs e)
 	{
-		if (!_runtime.EyeTrackingEnabled) return;
+		if (_runtime.EyeTrackingEnabled)
+		{
+			try
+			{
+				if (PlatformServices.Current.Capabilities.SupportsGlobalCursor)
+				{
+					var (screenCursorX, screenCursorY) = PlatformServices.Current.GetCursorPosition();
+					double scale = RenderScaling > 0 ? RenderScaling : 1.0;
+					double clientX = (screenCursorX - Position.X) / scale;
+					double clientY = (screenCursorY - Position.Y) / scale;
+
+					_runtime.LookAt((float)clientX, (float)clientY, (float)Bounds.Width, (float)Bounds.Height);
+				}
+			}
+			catch
+			{
+				// 忽略追踪异常
+			}
+		}
+
+		RefreshInputState();
+	}
+
+	/// <summary>刷新 Windows 桌宠的点击穿透与 Z 序状态。</summary>
+	public void RefreshInputState()
+	{
+		if (!OperatingSystem.IsWindows() || PlatformServices.Current is not WindowsPlatformServices windows) return;
+		nint handle = TryGetPlatformHandle()?.Handle ?? 0;
+		if (handle == 0) return;
+
+		bool through = _runtime.ClickThroughEnabled;
+		if (!through && !_isDragPending && !_isDragging && _contextMenu is not {IsOpen: true})
+		{
+			try
+			{
+				if (!PlatformServices.Current.Capabilities.SupportsGlobalCursor) return;
+				var (cursorX, cursorY) = PlatformServices.Current.GetCursorPosition();
+				double scale = RenderScaling > 0 ? RenderScaling : 1.0;
+				double clientX = (cursorX - Position.X) / scale;
+				double clientY = (cursorY - Position.Y) / scale;
+				bool inside = clientX >= 0 && clientX < Bounds.Width && clientY >= 0 && clientY < Bounds.Height;
+				through = !(inside && _glControl.IsPointOnModel(clientX, clientY));
+			}
+			catch (Exception exception) when (exception is PlatformNotSupportedException or InvalidOperationException)
+			{
+				_services.Logger.Write(LogSource.Backend, "warn", $"读取桌宠穿透状态失败: {exception.Message}");
+				return;
+			}
+		}
+
+		if (_contextMenu is {IsOpen: true} || _isDragPending || _isDragging) through = false;
+		if (_lastClickThrough == through) return;
 
 		try
 		{
-			if (!PlatformServices.Current.Capabilities.SupportsGlobalCursor) return;
-			var (screenCursorX, screenCursorY) = PlatformServices.Current.GetCursorPosition();
-			double scale = RenderScaling > 0 ? RenderScaling : 1.0;
-			double clientX = (screenCursorX - Position.X) / scale;
-			double clientY = (screenCursorY - Position.Y) / scale;
-
-			_runtime.LookAt((float)clientX, (float)clientY, (float)Bounds.Width, (float)Bounds.Height);
+			windows.SetClickThrough(handle, through);
+			Topmost = !through;
+			_lastClickThrough = through;
 		}
-		catch
+		catch (Exception exception) when (exception is InvalidOperationException or EntryPointNotFoundException or DllNotFoundException)
 		{
-			// 忽略追踪异常
+			_services.Logger.Write(LogSource.Backend, "warn", $"同步桌宠穿透状态失败: {exception.Message}");
 		}
 	}
 
@@ -386,16 +438,16 @@ public sealed class PetWindow : Window
 	{
 		if (msg == WmNcHitTest)
 		{
+			if (_isDragPending || _isDragging || _contextMenu is {IsOpen: true})
+			{
+				handled = true;
+				return HtClient;
+			}
+
 			if (_runtime.ClickThroughEnabled)
 			{
 				handled = true;
 				return HtTransparent;
-			}
-
-			if (_contextMenu is { IsOpen: true })
-			{
-				handled = true;
-				return HtClient;
 			}
 
 			long lp = lParam.ToInt64();

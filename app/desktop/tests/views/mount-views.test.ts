@@ -252,6 +252,11 @@ describe("Views and Panels Mounting", () => {
 			const PANELS = MOUNT.container.querySelectorAll("[data-settings-panel]")
 			expect(PANELS).toHaveLength(1)
 			expect(PANELS[0].getAttribute("data-settings-panel")).toBe("ai")
+
+			click(NAV_BUTTONS[7])
+			await settleView()
+			const GENERAL_PANEL = MOUNT.container.querySelector("[data-settings-panel='general']")
+			expect(GENERAL_PANEL?.textContent).toContain("鼠标穿透")
 		} finally {
 			MOUNT.app.unmount()
 			MOUNT.container.remove()

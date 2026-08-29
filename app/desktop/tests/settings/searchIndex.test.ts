@@ -75,6 +75,8 @@ describe("设置搜索索引", () => {
 		expect(hits("视觉")).toContain("automation")
 		expect(hits("telemetry")).toContain("general")
 		expect(hits("language")).toContain("general")
+		expect(hits("鼠标穿透")).toContain("general")
+		expect(hits("clickThrough")).toContain("general")
 		expect(hits("log")).toContain("debug")
 		expect(hits("license")).toContain("about")
 		expect(hits("协议")).toContain("about")
