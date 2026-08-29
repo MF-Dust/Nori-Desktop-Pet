@@ -38,6 +38,13 @@ interface MusicStatus {
 const expanded = ref(false)
 const dismissed = ref(false)
 const status = ref<MusicStatus | null>(null)
+const loggedIn = ref(false)
+const loginQrVisible = ref(false)
+const loginQrImg = ref("")
+const loginUnikey = ref("")
+const loginMessage = ref("")
+const loginExpired = ref(false)
+let loginPollTimer: ReturnType<typeof setInterval> | null = null
 const candidates = ref<Candidate[]>([])
 const keyword = ref("")
 const searching = ref(false)
@@ -65,6 +72,7 @@ async function refreshStatus(): Promise<void> {
 		const result = await call("music_status")
 		status.value = result as unknown as MusicStatus
 		volume.value = Math.round((result.volume as number) ?? 60)
+		loggedIn.value = (result.loggedIn as boolean) ?? false
 	} catch {
 		status.value = null
 	}
@@ -100,6 +108,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
 	if (pollTimer) clearInterval(pollTimer)
+	stopLoginPolling()
 	unlisten?.()
 	unlisten = null
 })
@@ -125,6 +134,65 @@ async function skip(action: "music_next" | "music_previous"): Promise<void> {
 
 async function changeVolume(): Promise<void> {
 	await call("music_volume", {level: volume.value}).catch(() => undefined)
+}
+
+async function startLogin(): Promise<void> {
+	loginExpired.value = false
+	loginMessage.value = "正在获取登录码…"
+	try {
+		const result = await call("music_login_qr")
+		if (result.loggedIn) {
+			loginMessage.value = (result.message as string) ?? "已登录"
+			return
+		}
+		loginUnikey.value = (result.unikey as string) ?? ""
+		loginQrImg.value = (result.qrimg as string) ?? ""
+		loginQrVisible.value = true
+		loginMessage.value = (result.message as string) ?? "请用网易云音乐 App 扫码"
+		startLoginPolling()
+	} catch {
+		loginMessage.value = "获取登录码失败, 请稍后重试"
+	}
+}
+
+function startLoginPolling(): void {
+	if (loginPollTimer) clearInterval(loginPollTimer)
+	loginPollTimer = setInterval(async () => {
+		if (!loginQrVisible.value) return
+		try {
+			const result = await call("music_login_check", {unikey: loginUnikey.value})
+			const code = result.code as number
+			loginMessage.value = (result.message as string) ?? loginMessage.value
+			if (code === 803) {
+				stopLoginPolling()
+				loginQrVisible.value = false
+				loggedIn.value = true
+				loginMessage.value = "登录成功"
+				await refreshStatus()
+			} else if (code === 800) {
+				stopLoginPolling()
+				loginExpired.value = true
+			}
+		} catch {
+			// 轮询错误忽略
+		}
+	}, 2000)
+}
+
+function stopLoginPolling(): void {
+	if (loginPollTimer) clearInterval(loginPollTimer)
+	loginPollTimer = null
+}
+
+function closeLogin(): void {
+	loginQrVisible.value = false
+	stopLoginPolling()
+}
+
+async function logout(): Promise<void> {
+	await call("music_logout").catch(() => undefined)
+	loggedIn.value = false
+	await refreshStatus()
 }
 
 async function runSearch(): Promise<void> {
@@ -178,10 +246,34 @@ const progressPercent = computed(() =>
 				<span v-if="status.playing" class="text-emerald-400 ml-1">●</span>
 			</span>
 			<span v-else class="text-text-muted flex-1">{{ status?.detail ?? "未在播放" }}</span>
+			<span v-if="!loggedIn" class="text-xs text-nori-teal-bright shrink-0 hover:underline" @click.stop="startLogin">扫码登录</span>
+			<span v-else class="text-xs text-text-muted shrink-0 hover:underline" @click.stop="logout">退出</span>
 			<Icon :name="expanded ? 'arrow-up' : 'arrow-down'" class="w-4 h-4 text-text-muted" />
 		</button>
 
 		<div v-if="expanded" class="px-3.5 pb-3 flex flex-col gap-2.5">
+			<!-- 扫码登录 -->
+			<div v-if="!loggedIn || loginQrVisible" class="rounded-lg border border-line-subtle bg-bg-hover/30 p-3 flex items-center gap-3">
+				<template v-if="loginQrVisible && loginQrImg">
+					<div class="relative shrink-0">
+						<img :src="loginQrImg" class="w-28 h-28 rounded-md" :class="loginExpired ? 'opacity-25 blur-[1px]' : ''" />
+						<button
+							v-if="loginExpired"
+							class="absolute inset-0 flex items-center justify-center text-xs bg-black/40 rounded-md text-white"
+							@click="startLogin"
+						>刷新二维码</button>
+					</div>
+					<div class="text-xs text-text-muted flex flex-col gap-1.5">
+						<span>{{ loginMessage }}</span>
+						<button class="text-nori-teal-bright text-left hover:underline w-fit" @click="closeLogin">收起二维码</button>
+					</div>
+				</template>
+				<template v-else>
+					<span class="text-xs text-text-muted flex-1">{{ loginMessage || "搜索与播放需要登录网易云音乐" }}</span>
+					<AppButton variant="primary" size="sm" @click="startLogin">获取登录二维码</AppButton>
+				</template>
+			</div>
+
 			<!-- 当前播放 -->
 			<div class="flex items-center gap-3">
 				<div class="min-w-0 flex-1">
