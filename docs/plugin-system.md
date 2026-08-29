@@ -19,7 +19,27 @@ Nori.PluginRuntime
 
 测试夹具保持独立：`Nori.PluginRuntime.Tests` 验证运行时，`Nori.PluginRuntime.TestPlugin` 是用于真实 ALC 加载的测试插件，不会进入发布包。
 
-第三方插件必须引用 `Nori.PluginRuntime`。运行时实现类型均为内部类型，插件只能编译期看到明确的公共合同。旧的多个合同/运行时程序集不再发布，也不提供类型转发兼容层。
+第三方插件必须面向 `Nori.PluginRuntime` 的公共合同编译。标准获取方式是 NuGet 上的 [`Nori.PluginSDK`](https://www.nuget.org/packages/Nori.PluginSDK/)；不要直接引用 Nori Desktop 仓库里的宿主项目，也不要复制宿主程序集。运行时实现类型均为内部类型，插件只能编译期看到明确的公共合同。旧的多个合同/运行时程序集不再发布，也不提供类型转发兼容层。
+
+## 插件 SDK
+
+Plugin API 2.0 对应 `Nori.PluginSDK` 2.0.0，目标框架为 .NET 10。新插件可以直接安装 NuGet 包：
+
+```bash
+dotnet add package Nori.PluginSDK --version 2.0.0
+```
+
+或在项目文件中声明：
+
+```xml
+<ItemGroup>
+  <PackageReference Include="Nori.PluginSDK" Version="2.0.0" />
+</ItemGroup>
+```
+
+`Nori.PluginSDK` 是仅编译期使用的 ref-only 包。NuGet 包 ID 为 `Nori.PluginSDK`，其中合同程序集名称仍是 `Nori.PluginRuntime`；包只提供 `ref/net10.0/Nori.PluginRuntime.dll`，没有 runtime asset。插件运行时由 Nori Desktop 提供自己的 `Nori.PluginRuntime` 宿主程序集。
+
+因此 `.noripack` 不得携带 `Nori.PluginRuntime.dll`。插件作者无需克隆 SDK 仓库或使用跨仓库 `ProjectReference`；SDK 源码、示例与更完整的作者指南位于 [`MF-Dust/Nori.PluginSDK`](https://github.com/MF-Dust/Nori.PluginSDK)。
 
 ## 核心合同
 
