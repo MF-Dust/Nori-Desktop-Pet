@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using Nori.Core.Data;
 using Nori.Core.Resources;
 namespace Nori.PluginRuntime;
 
@@ -23,10 +24,11 @@ internal sealed class PluginPackageInstaller
 		Directory.CreateDirectory(_root);
 		Directory.CreateDirectory(_stagingRoot);
 		Directory.CreateDirectory(_inboxRoot);
-		string managementRoot = Directory.GetParent(_root)?.FullName ?? _root;
-		PluginPathSafety.EnsureNoReparsePoints(managementRoot, _root, PluginErrorCodes.PackagePathDenied, "插件管理路径越过宿主边界");
-		PluginPathSafety.EnsureNoReparsePoints(managementRoot, _stagingRoot, PluginErrorCodes.PackagePathDenied, "插件 staging 路径越过宿主边界");
-		PluginPathSafety.EnsureNoReparsePoints(managementRoot, _inboxRoot, PluginErrorCodes.PackagePathDenied, "插件 inbox 路径越过宿主边界");
+		// 插件根本身不能是链接；管理边界取物理父目录，允许宿主位于 macOS /var 等系统级别名祖先之下。
+		PluginPathSafety.EnsureNoReparsePoint(_root, PluginErrorCodes.PackagePathDenied, "插件根不能是符号链接或 reparse point");
+		string managementRoot = AppStoragePaths.ResolvePhysicalPath(Directory.GetParent(_root)?.FullName ?? _root);
+		PluginPathSafety.EnsureNoReparsePoints(managementRoot, AppStoragePaths.ResolvePhysicalPath(_stagingRoot), PluginErrorCodes.PackagePathDenied, "插件 staging 路径越过宿主边界");
+		PluginPathSafety.EnsureNoReparsePoints(managementRoot, AppStoragePaths.ResolvePhysicalPath(_inboxRoot), PluginErrorCodes.PackagePathDenied, "插件 inbox 路径越过宿主边界");
 	}
 
 	public string RootDirectory => _root;

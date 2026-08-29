@@ -162,10 +162,29 @@ public sealed class StorageBootstrapperTests : IDisposable
 		using (NoriDatabase database = NoriDatabase.Open(Path.Combine(legacy, AppPaths.DatabaseFileName))) { }
 		AppStoragePaths paths = new(package);
 		StorageBootstrapResult migration = StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
-		using (NoriDatabase locked = NoriDatabase.Open(Path.Combine(legacy, AppPaths.DatabaseFileName)))
+		if (OperatingSystem.IsWindows())
 		{
-			StorageBootstrapper.CleanupLegacy(migration, paths, legacy);
-			Assert.True(File.Exists(paths.CleanupReceiptPath));
+			// Windows 上占用数据库文件即可让清理失败。
+			using (NoriDatabase locked = NoriDatabase.Open(Path.Combine(legacy, AppPaths.DatabaseFileName)))
+			{
+				StorageBootstrapper.CleanupLegacy(migration, paths, legacy);
+				Assert.True(File.Exists(paths.CleanupReceiptPath));
+			}
+		}
+		else
+		{
+			// POSIX 允许删除打开中的文件；改用只读旧数据目录注入清理失败。
+			UnixFileMode original = File.GetUnixFileMode(legacy);
+			File.SetUnixFileMode(legacy, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+			try
+			{
+				StorageBootstrapper.CleanupLegacy(migration, paths, legacy);
+				Assert.True(File.Exists(paths.CleanupReceiptPath));
+			}
+			finally
+			{
+				File.SetUnixFileMode(legacy, original);
+			}
 		}
 		StorageBootstrapper.CleanupLegacy(migration, paths, legacy);
 		Assert.False(File.Exists(paths.CleanupReceiptPath));
@@ -182,7 +201,12 @@ public sealed class StorageBootstrapperTests : IDisposable
 		File.WriteAllText(Path.Combine(legacy, "keep.txt"), "keep");
 		AppStoragePaths paths = new(package);
 		StorageBootstrapResult migration = StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy);
-		string receipt = File.ReadAllText(paths.CleanupReceiptPath).Replace($"\"source\":\"{legacy.Replace("\\", "\\\\", StringComparison.Ordinal)}\"", $"\"source\":\"{other.Replace("\\", "\\\\", StringComparison.Ordinal)}\"", StringComparison.Ordinal);
+		// macOS 临时目录常经符号链接进入，收据保存的是物理路径；篡改必须以迁移返回的规范来源为准。
+		string receiptSource = migration.LegacyDataPath ?? legacy;
+		string forged = $"\"source\":\"{other.Replace("\\", "\\\\", StringComparison.Ordinal)}\"";
+		string receipt = File.ReadAllText(paths.CleanupReceiptPath)
+			.Replace($"\"source\":\"{receiptSource.Replace("\\", "\\\\", StringComparison.Ordinal)}\"", forged, StringComparison.Ordinal);
+		Assert.Contains(forged, receipt);
 		File.WriteAllText(paths.CleanupReceiptPath, receipt);
 
 		Assert.Throws<InvalidOperationException>(() => StorageBootstrapper.Bootstrap(paths, "Dev", "win-x64", legacy));
