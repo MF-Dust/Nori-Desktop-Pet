@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Nori.Core.Assets;
 using Nori.Core.Logging;
 
@@ -76,6 +77,27 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 	public IReadOnlyList<(PluginDescriptor Plugin, T Contribution)> GetContributionsWithSource<T>()
 		where T : class, IPluginContribution =>
 		_manager.GetContributionsWithSource<T>();
+
+	/// <summary>
+	/// 调用活跃插件的一个动作贡献 (宿主前端控制卡 / 宿主自动化入口)。
+	/// </summary>
+	public async Task<JsonNode?> InvokePluginActionAsync(
+		string pluginId,
+		string actionId,
+		JsonNode? arguments,
+		CancellationToken cancellationToken = default)
+	{
+		if (string.IsNullOrWhiteSpace(pluginId) || string.IsNullOrWhiteSpace(actionId))
+			throw new PluginException(PluginErrorCodes.BridgeDenied, "plugin_action 参数无效");
+		foreach ((PluginDescriptor plugin, IPluginActionContribution action) in _manager.GetContributionsWithSource<IPluginActionContribution>())
+		{
+			if (!string.Equals(plugin.Id, pluginId, StringComparison.Ordinal)
+				|| !string.Equals(action.Id, actionId, StringComparison.Ordinal))
+				continue;
+			return await action.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false);
+		}
+		throw new PluginException(PluginErrorCodes.BridgeDenied, $"插件动作不存在或插件未激活: {pluginId}/{actionId}");
+	}
 
 	public Task<object?> InvokeManagementAsync(
 		PluginManagementSource source,

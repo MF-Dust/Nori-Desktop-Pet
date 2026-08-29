@@ -172,6 +172,10 @@ export interface BridgeCommandMap {
 	plugin_enable: {args: {id: string}; result: PluginInfo}
 	plugin_disable: {args: {id: string}; result: PluginInfo}
 	plugin_uninstall: {args: {id: string; deleteData: boolean}; result: PluginUninstallResult}
+	plugin_action: {
+		args: {pluginId: string; actionId: string; args?: Record<string, unknown>}
+		result: Record<string, unknown>
+	}
 
 	reminder_add: {args: {content: string; delayMinutes?: number}; result: ReminderItemDto}
 	reminder_cancel: {args: {id: string}; result: boolean}

@@ -4,6 +4,7 @@ import {useTextareaAutosize} from "@vueuse/core"
 import useLanguages from "../services/i18n/useLanguages.ts"
 import Icon from "./Icon.vue"
 import ChatMessageBubble, {type ChatDisplayBubble} from "./chat/ChatMessageBubble.vue"
+import MusicCard from "./chat/MusicCard.vue"
 import AppChip from "./ui/AppChip.vue"
 import AppConfirm from "./ui/AppConfirm.vue"
 import AppEmpty from "./ui/AppEmpty.vue"
@@ -414,6 +415,9 @@ const toggleVoiceInput = async () => {
 					</AppButton>
 				</div>
 			</div>
+
+			<!-- 插件播放控制卡 (网易云) -->
+			<MusicCard />
 
 			<!-- 消息滚动流 -->
 			<div

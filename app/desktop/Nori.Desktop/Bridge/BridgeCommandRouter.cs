@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Nori.Desktop.Automation;
+using Nori.Desktop.Windows;
 using Nori.Desktop.Automation.Browser;
 using Nori.PluginRuntime;
 
@@ -41,6 +43,21 @@ public sealed class BridgeCommandRouter(AppServices services)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		BridgeCommandDomain domain = Classify(command);
+
+		// 插件动作调用 (宿主聊天控制卡): 仅主窗口可调, 转发到活跃插件的 IPluginActionContribution。
+		if (command == "plugin_action")
+		{
+			PluginRuntimeHost runtime = _services.PluginRuntime
+				?? throw new InvalidOperationException("插件运行时尚未就绪");
+			if (!string.Equals(source.Label, WindowLabels.Main, StringComparison.Ordinal))
+				throw new InvalidOperationException("plugin_action 仅允许宿主主窗口调用");
+			string pluginId = args.TryGetProperty("pluginId", out JsonElement pluginIdElement) ? pluginIdElement.GetString() ?? "" : "";
+			string actionId = args.TryGetProperty("actionId", out JsonElement actionIdElement) ? actionIdElement.GetString() ?? "" : "";
+			JsonNode? actionArgs = args.TryGetProperty("args", out JsonElement argsElement) && argsElement.ValueKind == JsonValueKind.Object
+				? JsonNode.Parse(argsElement.GetRawText())
+				: null;
+			return await runtime.InvokePluginActionAsync(pluginId, actionId, actionArgs, cancellationToken).ConfigureAwait(false);
+		}
 
 		if (domain == BridgeCommandDomain.Plugins)
 		{
