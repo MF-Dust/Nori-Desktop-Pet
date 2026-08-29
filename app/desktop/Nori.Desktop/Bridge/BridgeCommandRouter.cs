@@ -59,6 +59,18 @@ public sealed class BridgeCommandRouter(AppServices services)
 			return await runtime.InvokePluginActionAsync(pluginId, actionId, actionArgs, cancellationToken).ConfigureAwait(false);
 		}
 
+		// 插件聊天卡片部件列表 (通用卡片槽挂载用): 仅主窗口。
+		if (command == "plugin_widgets")
+		{
+			PluginRuntimeHost runtime = _services.PluginRuntime
+				?? throw new InvalidOperationException("插件运行时尚未就绪");
+			if (!string.Equals(source.Label, WindowLabels.Main, StringComparison.Ordinal))
+				throw new InvalidOperationException("plugin_widgets 仅允许宿主主窗口调用");
+			return runtime.GetChatWidgets()
+				.Select(widget => new { pluginId = widget.PluginId, title = widget.Title, entry = widget.EntryUrl.ToString() })
+				.ToArray();
+		}
+
 		if (domain == BridgeCommandDomain.Plugins)
 		{
 			PluginRuntimeHost runtime = _services.PluginRuntime

@@ -221,13 +221,22 @@ const PLUGIN_MANAGEMENT_COMMANDS = extractSwitchCommands(PLUGIN_MANAGEMENT_SOURC
 const PLUGIN_PAGE_COMMANDS = extractSwitchCommands(PLUGIN_BRIDGE_SOURCE, "return command switch")
 const TYPED_COMMANDS = extractTypedCommands(TYPED_COMMANDS_SOURCE)
 const TYPED_HOST_COMMANDS = TYPED_COMMANDS.filter(command => !command.startsWith("plugin_"))
-const TYPED_PLUGIN_COMMANDS = TYPED_COMMANDS.filter(command => command.startsWith("plugin_"))
+// plugin_action (动作调用) 与 plugin_widgets (聊天卡片槽) 走独立路由, 不属于管理命令
+const TYPED_PLUGIN_COMMANDS = TYPED_COMMANDS.filter(
+	command => command.startsWith("plugin_") && command !== "plugin_action" && command !== "plugin_widgets")
 
 describe("Bridge 跨语言命令契约", () => {
 	it("宿主真实分支与 typed map 完全一致", () => {
 		expect(sorted(HOST_COMMANDS)).toEqual(sorted(TYPED_HOST_COMMANDS))
 		expect(HOST_COMMANDS).not.toContain("overwrite")
 		expect(HOST_COMMANDS).not.toContain("create_copy")
+	})
+
+	it("plugin_action 与 plugin_widgets 已类型化且不进管理命令表", () => {
+		expect(TYPED_COMMANDS).toContain("plugin_action")
+		expect(TYPED_COMMANDS).toContain("plugin_widgets")
+		expect(PLUGIN_MANAGEMENT_COMMANDS).not.toContain("plugin_action")
+		expect(PLUGIN_MANAGEMENT_COMMANDS).not.toContain("plugin_widgets")
 	})
 
 	it("插件管理命令走独立路由且与 typed map 完全一致", () => {

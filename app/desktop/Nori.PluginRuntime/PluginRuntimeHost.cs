@@ -73,6 +73,9 @@ internal sealed class PluginRuntimeHost : IAsyncDisposable
 		where T : class, IPluginContribution =>
 		_manager.GetContributions<T>();
 
+	/// <summary>枚举活跃插件的聊天卡片部件 (约定 web/card.html)。</summary>
+	public IReadOnlyList<PluginChatWidget> GetChatWidgets() => _manager.GetChatWidgets();
+
 	/// <summary>枚举当前活跃插件提供的指定类型贡献及其来源插件。</summary>
 	public IReadOnlyList<(PluginDescriptor Plugin, T Contribution)> GetContributionsWithSource<T>()
 		where T : class, IPluginContribution =>

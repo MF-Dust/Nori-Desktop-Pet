@@ -39,6 +39,9 @@ internal sealed record PluginRuntimeOptions
 	public TimeSpan DeactivationTimeout { get; init; } = TimeSpan.FromSeconds(5);
 }
 
+/// <summary>活跃插件聊天卡片部件 (约定 web/card.html)。</summary>
+public sealed record PluginChatWidget(string PluginId, string Title, Uri EntryUrl);
+
 /// <summary>插件当前状态快照。只包含可安全暴露给宿主 UI 的运行时信息。</summary>
 internal sealed record PluginInfo(
 	string Id,
@@ -416,6 +419,23 @@ internal sealed class PluginManager : IAsyncDisposable
 		_plugins.Values.Where(handle => handle.State == PluginLifecycleState.Active)
 			.SelectMany(handle => handle.Contributions.GetAll<T>())
 			.ToArray();
+
+	/// <summary>
+	/// 返回活跃插件的聊天卡片部件: 约定为插件包内存在 web/card.html,
+	/// 标题取插件名, 入口为宿主资源服务的同源 URL。由宿主聊天界面的通用卡片槽挂载。
+	/// </summary>
+	public IReadOnlyList<PluginChatWidget> GetChatWidgets()
+	{
+		List<PluginChatWidget> widgets = [];
+		foreach (PluginHandle handle in _plugins.Values.Where(handle => handle.State == PluginLifecycleState.Active))
+		{
+			if (!File.Exists(Path.Combine(handle.Directory, "web", "card.html"))) continue;
+			Uri entry = _options.AssetUriFactory?.Invoke(handle.Manifest.Id, "web/card.html")
+				?? new Uri(Path.Combine(handle.Directory, "web", "card.html"), UriKind.Absolute);
+			widgets.Add(new PluginChatWidget(handle.Manifest.Id, handle.Manifest.Name, entry));
+		}
+		return widgets;
+	}
 
 	/// <summary>返回当前活动插件提供的指定类型贡献及其来源插件描述。</summary>
 	public IReadOnlyList<(PluginDescriptor Plugin, T Contribution)> GetContributionsWithSource<T>()

@@ -172,6 +172,7 @@ export interface BridgeCommandMap {
 	plugin_enable: {args: {id: string}; result: PluginInfo}
 	plugin_disable: {args: {id: string}; result: PluginInfo}
 	plugin_uninstall: {args: {id: string; deleteData: boolean}; result: PluginUninstallResult}
+	plugin_widgets: {args: Record<string, never>; result: {widgets: {pluginId: string; title: string; entry: string}[]}}
 	plugin_action: {
 		args: {pluginId: string; actionId: string; args?: Record<string, unknown>}
 		result: Record<string, unknown>

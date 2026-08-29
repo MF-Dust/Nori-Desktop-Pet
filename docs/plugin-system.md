@@ -207,6 +207,20 @@ ping
 
 插件还可以注册 `IPluginActionContribution` 贡献（Id/Description/参数 Schema/InvokeAsync）。宿主在活跃插件变化时把这些动作注册进 `ToolRegistry` 的 `plugin` 分类（工具名 `plugin__<pluginId>__<actionId>`，权限级别 safe），桌宠 AI 对话即可调用；动作内部经 `IPluginWebViewWindow.SendEventAsync` 向页面推送事件（`kind:'event'` 信封），由页面执行实际播放控制。桥接使用独立的 `window.__noriPlugin.dispatch` 信封；旧点号/短名称别名、安装/启用/禁用/卸载以及宿主核心命令均拒绝。插件窗口使用独立的 WebView 数据目录，插件上下文撤销时自动关闭。
 
+## 插件聊天卡片 (约定)
+
+活跃插件包内存在 `web/card.html` 时, 宿主聊天界面顶部的通用卡片槽会以同源 iframe
+挂载 `/<random-prefix>/plugins/<pluginId>/web/card.html` (标题取插件名)。
+卡片内通过 `window.parent.postMessage` 请求宿主代理调用插件动作:
+
+```text
+卡片 → 宿主: {source: "nori-plugin-widget", requestId, pluginId, actionId, args}
+宿主 → 卡片: {source: "nori-plugin-widget-host", requestId, result, error}
+```
+
+宿主代理只转发到 `plugin_action` (仅主窗口, 即活跃插件的 IPluginActionContribution)。
+卡片 UI 与文案完全由插件自带, 宿主不含任何具体插件逻辑。
+
 ## AssetServer 附加路由
 
 Core 的 loopback `AssetServer` 只负责通用服务：随机前缀、Host allowlist、`/app`、`/nori-assets`、`/media` 和可注册的 `IAssetRoute`。扩展模块通过 `AdditionalRoutes` 注册路由，Core 不知道插件 ID 或 capability 策略。
