@@ -55,12 +55,4 @@ public interface ILlmAdapter
 		Action<string> onChunk,
 		Action<LlmUsageInfo>? onUsage = null,
 		CancellationToken cancellationToken = default);
-
-	/// <summary>
-	/// 获取支持的模型列表
-	/// </summary>
-	Task<IReadOnlyList<string>> FetchModelsAsync(
-		string baseUrl,
-		string apiKey,
-		CancellationToken cancellationToken = default);
 }

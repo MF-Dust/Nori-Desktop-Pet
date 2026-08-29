@@ -82,22 +82,7 @@ public sealed class ChatClientLlmAdapter(LlmProvider provider, HttpClient httpCl
 					if (content is UsageContent usageContent) usage = usageContent.Details;
 				}
 			}
-			stopwatch.Stop();
-			UsageDetails actual = usage ?? new UsageDetails
-			{
-				InputTokenCount = Math.Max(1, EstimateTokens(systemPrompt, messages)),
-				OutputTokenCount = Math.Max(1, (int)(fullText.Length / 3.2)),
-			};
-			onUsage?.Invoke(new LlmUsageInfo
-			{
-				PromptTokens = (int)Math.Min(int.MaxValue, actual.InputTokenCount ?? 0),
-				CompletionTokens = (int)Math.Min(int.MaxValue, actual.OutputTokenCount ?? 0),
-				TotalTokens = (int)Math.Min(int.MaxValue, actual.TotalTokenCount ?? (actual.InputTokenCount ?? 0) + (actual.OutputTokenCount ?? 0)),
-				CachedTokens = (int)Math.Min(int.MaxValue, actual.CachedInputTokenCount ?? 0),
-				DurationMs = stopwatch.ElapsedMilliseconds,
-				Model = model,
-			});
-			return fullText.ToString();
+			return FinishStream(usage, fullText, systemPrompt, messages, model, stopwatch, onUsage);
 		}
 		catch (ChatException)
 		{
@@ -168,22 +153,7 @@ public sealed class ChatClientLlmAdapter(LlmProvider provider, HttpClient httpCl
 				}
 			}
 
-			stopwatch.Stop();
-			UsageDetails actual = usage ?? new UsageDetails
-			{
-				InputTokenCount = Math.Max(1, EstimateTokens(systemPrompt, messages)),
-				OutputTokenCount = Math.Max(1, (int)(fullText.Length / 3.2)),
-			};
-			onUsage?.Invoke(new LlmUsageInfo
-			{
-				PromptTokens = (int)Math.Min(int.MaxValue, actual.InputTokenCount ?? 0),
-				CompletionTokens = (int)Math.Min(int.MaxValue, actual.OutputTokenCount ?? 0),
-				TotalTokens = (int)Math.Min(int.MaxValue, actual.TotalTokenCount ?? (actual.InputTokenCount ?? 0) + (actual.OutputTokenCount ?? 0)),
-				CachedTokens = (int)Math.Min(int.MaxValue, actual.CachedInputTokenCount ?? 0),
-				DurationMs = stopwatch.ElapsedMilliseconds,
-				Model = model,
-			});
-			return fullText.ToString();
+			return FinishStream(usage, fullText, systemPrompt, messages, model, stopwatch, onUsage);
 		}
 		catch (Exception exception) when (ToolsUnsupportedException.TryCreate(exception, out ToolsUnsupportedException? unsupported))
 		{
@@ -202,12 +172,6 @@ public sealed class ChatClientLlmAdapter(LlmProvider provider, HttpClient httpCl
 			throw new ChatException($"工具调用请求失败: {exception.Message}", exception);
 		}
 	}
-
-	public Task<IReadOnlyList<string>> FetchModelsAsync(
-		string baseUrl,
-		string apiKey,
-		CancellationToken cancellationToken = default) =>
-		ProviderModelCatalog.FetchAsync(_provider, _httpClient, baseUrl, apiKey, cancellationToken);
 
 	internal static IReadOnlyList<Microsoft.Extensions.AI.ChatMessage> BuildMessages(string systemPrompt, IReadOnlyList<ChatMessageInput> messages)
 	{
@@ -236,4 +200,32 @@ public sealed class ChatClientLlmAdapter(LlmProvider provider, HttpClient httpCl
 
 	private static int EstimateTokens(string systemPrompt, IReadOnlyList<ChatMessageInput> messages) =>
 		(int)((systemPrompt.Length + messages.Sum(message => message.Content.Length)) / 3.2);
+
+	/// <summary>流式收尾: 汇报用量(缺省时按 token 估算兜底)并返回完整回复。</summary>
+	private string FinishStream(
+		UsageDetails? usage,
+		System.Text.StringBuilder fullText,
+		string systemPrompt,
+		IReadOnlyList<ChatMessageInput> messages,
+		string model,
+		System.Diagnostics.Stopwatch stopwatch,
+		Action<LlmUsageInfo>? onUsage)
+	{
+		stopwatch.Stop();
+		UsageDetails actual = usage ?? new UsageDetails
+		{
+			InputTokenCount = Math.Max(1, EstimateTokens(systemPrompt, messages)),
+			OutputTokenCount = Math.Max(1, (int)(fullText.Length / 3.2)),
+		};
+		onUsage?.Invoke(new LlmUsageInfo
+		{
+			PromptTokens = (int)Math.Min(int.MaxValue, actual.InputTokenCount ?? 0),
+			CompletionTokens = (int)Math.Min(int.MaxValue, actual.OutputTokenCount ?? 0),
+			TotalTokens = (int)Math.Min(int.MaxValue, actual.TotalTokenCount ?? (actual.InputTokenCount ?? 0) + (actual.OutputTokenCount ?? 0)),
+			CachedTokens = (int)Math.Min(int.MaxValue, actual.CachedInputTokenCount ?? 0),
+			DurationMs = stopwatch.ElapsedMilliseconds,
+			Model = model,
+		});
+		return fullText.ToString();
+	}
 }

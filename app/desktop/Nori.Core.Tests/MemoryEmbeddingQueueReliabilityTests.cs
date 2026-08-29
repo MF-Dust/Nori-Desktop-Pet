@@ -98,7 +98,7 @@ public sealed class MemoryEmbeddingQueueReliabilityTests
 		{
 			using NoriDatabase database = NoriDatabase.Open(path);
 			MemoryStore store = new(database);
-			MemoryItem item = store.Add("fact", "过期指纹记忆", embedding: "[1, 0]", embeddingFingerprint: "old");
+			MemoryItem item = store.AddAggregate("fact", "过期指纹记忆", embedding: "[1, 0]", embeddingFingerprint: "old");
 
 			Assert.Empty(store.GetUnembedded(10));
 			Assert.Contains(store.GetUnembedded(10, fingerprint: "current"), pending => pending.Id == item.Id);
@@ -118,7 +118,7 @@ public sealed class MemoryEmbeddingQueueReliabilityTests
 			using NoriDatabase database = NoriDatabase.Open(path);
 			ConfigStore config = CreateEmbeddingConfig(database);
 			MemoryStore store = new(database);
-			MemoryItem item = store.Add("fact", "固定正文", embedding: "[1, 0]", canonicalSummary: "旧摘要", embeddingFingerprint: "old");
+			MemoryItem item = store.AddAggregate("fact", "固定正文", embedding: "[1, 0]", canonicalSummary: "旧摘要", embeddingFingerprint: "old");
 			CanonicalSummaryRecoveryEmbedding embedding = new();
 			await using MemoryService service = new(store, embedding, config);
 

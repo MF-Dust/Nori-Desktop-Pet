@@ -5,7 +5,6 @@ using System.Reflection;
 using Microsoft.Data.Sqlite;
 using Nori.Core.Configuration;
 using Nori.Core.Data;
-using Nori.Core.Embedding;
 
 namespace Nori.Core.Memory;
 
@@ -73,33 +72,14 @@ public sealed class KnowledgeService : IAsyncDisposable
 		string documentHash = Hash(content);
 		KnowledgeDocument? existing = GetDocument(DocumentIdentifier);
 		Dictionary<string, KnowledgeChunkRow> old = GetChunks(existing?.Id).ToDictionary(row => row.ChunkKey, StringComparer.Ordinal);
-		string fingerprint = _memory.ResolveEmbeddingFingerprint();
 		bool keysCurrent = old.Count == chunks.Count && chunks.All(chunk => old.ContainsKey(chunk.ChunkKey));
-		bool embeddingsCurrent = !_memory.EmbeddingConfigured
-			|| old.Count == chunks.Count && old.Values.All(row => row.HasEmbedding && row.EmbeddingFingerprint == fingerprint);
-		if (existing?.ContentHash == documentHash && keysCurrent && embeddingsCurrent)
+		if (existing?.ContentHash == documentHash && keysCurrent)
 		{
-			SetStatus(new MemoryIndexStatus {State = old.Values.Any(row => row.Embedding is null) ? MemoryIndexState.Partial : MemoryIndexState.Ready, Processed = chunks.Count, Total = chunks.Count});
+			SetStatus(new MemoryIndexStatus {State = MemoryIndexState.Ready, Processed = chunks.Count, Total = chunks.Count});
 			return Status;
 		}
 
 		SetStatus(new MemoryIndexStatus {State = MemoryIndexState.Rebuilding, Total = chunks.Count});
-		Dictionary<string, byte[]?> embeddings = [];
-		foreach (MarkdownChunker.Chunk chunk in chunks)
-		{
-			cancellationToken.ThrowIfCancellationRequested();
-			if (old.TryGetValue(chunk.ChunkKey, out KnowledgeChunkRow? previous)
-				&& previous.ContentHash == chunk.ContentHash
-				&& (!_memory.EmbeddingConfigured || previous.EmbeddingFingerprint == fingerprint))
-			{
-				embeddings[chunk.ChunkKey] = ToBlob(previous);
-				continue;
-			}
-			float[]? vector = _memory.EmbeddingConfigured
-				? await _memory.EmbedAsync(chunk.Content, cancellationToken).ConfigureAwait(false)
-				: null;
-			embeddings[chunk.ChunkKey] = vector is null ? null : EmbeddingVectorCodec.Encode(vector);
-		}
 
 		try
 		{
@@ -121,13 +101,12 @@ public sealed class KnowledgeService : IAsyncDisposable
 					using SqliteCommand upsert = connection.CreateCommand();
 					upsert.Transaction = transaction;
 					upsert.CommandText = """
-						INSERT INTO knowledge_chunks(document_id, chunk_key, sequence, heading, subheading, content, knowledge_type, awareness, content_hash, embedding, embedding_blob, embedding_fingerprint, updated_at)
-						VALUES ($document, $key, $sequence, $heading, $subheading, $content, $type, $awareness, $hash, NULL, $embedding_blob, $fingerprint, $updated)
+						INSERT INTO knowledge_chunks(document_id, chunk_key, sequence, heading, subheading, content, knowledge_type, awareness, content_hash, updated_at)
+						VALUES ($document, $key, $sequence, $heading, $subheading, $content, $type, $awareness, $hash, $updated)
 						ON CONFLICT(document_id, chunk_key) DO UPDATE SET
 						sequence = excluded.sequence, heading = excluded.heading, subheading = excluded.subheading,
 						content = excluded.content, knowledge_type = excluded.knowledge_type, awareness = excluded.awareness,
-						content_hash = excluded.content_hash, embedding = excluded.embedding, embedding_blob = excluded.embedding_blob,
-						embedding_fingerprint = excluded.embedding_fingerprint, updated_at = excluded.updated_at
+						content_hash = excluded.content_hash, updated_at = excluded.updated_at
 						""";
 					AddParameter(upsert, "$document", documentId);
 					AddParameter(upsert, "$key", chunk.ChunkKey);
@@ -138,8 +117,6 @@ public sealed class KnowledgeService : IAsyncDisposable
 					AddParameter(upsert, "$type", chunk.KnowledgeType);
 					AddParameter(upsert, "$awareness", chunk.Awareness.ToStorage());
 					AddParameter(upsert, "$hash", chunk.ContentHash);
-					AddParameter(upsert, "$embedding_blob", embeddings.GetValueOrDefault(chunk.ChunkKey));
-					AddParameter(upsert, "$fingerprint", embeddings.GetValueOrDefault(chunk.ChunkKey) is null ? null : fingerprint);
 					AddParameter(upsert, "$updated", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
 					upsert.ExecuteNonQuery();
 				}
@@ -154,7 +131,7 @@ public sealed class KnowledgeService : IAsyncDisposable
 		}
 		SetStatus(new MemoryIndexStatus
 		{
-			State = embeddings.Values.Any(value => value is null) ? MemoryIndexState.Partial : MemoryIndexState.Ready,
+			State = MemoryIndexState.Ready,
 			Processed = chunks.Count,
 			Total = chunks.Count,
 			LastMaintenanceAt = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture),
@@ -325,11 +302,11 @@ public sealed class KnowledgeService : IAsyncDisposable
 	{
 		if (documentId is null) return (IReadOnlyList<KnowledgeChunkRow>)[];
 		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = "SELECT id, chunk_key, content_hash, embedding, embedding_blob, embedding_fingerprint FROM knowledge_chunks WHERE document_id = $document";
+		command.CommandText = "SELECT id, chunk_key, content_hash FROM knowledge_chunks WHERE document_id = $document";
 		AddParameter(command, "$document", documentId.Value);
 		using SqliteDataReader reader = command.ExecuteReader();
 		List<KnowledgeChunkRow> result = [];
-		while (reader.Read()) result.Add(new KnowledgeChunkRow(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetFieldValue<byte[]>(4), reader.IsDBNull(5) ? null : reader.GetString(5)));
+		while (reader.Read()) result.Add(new KnowledgeChunkRow(reader.GetInt64(0), reader.GetString(1), reader.GetString(2)));
 		return (IReadOnlyList<KnowledgeChunkRow>)result;
 	});
 
@@ -356,14 +333,6 @@ public sealed class KnowledgeService : IAsyncDisposable
 			result.Add(new KnowledgeRow(reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), KnowledgeAwarenessExtensions.Parse(reader.IsDBNull(5) ? null : reader.GetString(5))));
 		}
 		return result;
-	}
-
-	private static byte[]? ToBlob(KnowledgeChunkRow row)
-	{
-		if (row.EmbeddingBlob is {Length: > 0}) return row.EmbeddingBlob;
-		return row.Embedding is not null && EmbeddingVectorCodec.TryDecodeJson(row.Embedding, out float[] vector)
-			? EmbeddingVectorCodec.Encode(vector)
-			: null;
 	}
 
 	private void SetStatus(MemoryIndexStatus status)
@@ -405,9 +374,6 @@ public sealed class KnowledgeService : IAsyncDisposable
 	}
 
 	private sealed record KnowledgeDocument(long Id, string Path, string ContentHash, string UpdatedAt);
-	private sealed record KnowledgeChunkRow(long Id, string ChunkKey, string ContentHash, string? Embedding, byte[]? EmbeddingBlob, string? EmbeddingFingerprint)
-	{
-		public bool HasEmbedding => EmbeddingBlob is {Length: > 0} || !string.IsNullOrWhiteSpace(Embedding);
-	}
+	private sealed record KnowledgeChunkRow(long Id, string ChunkKey, string ContentHash);
 	private sealed record KnowledgeRow(long Id, string? Heading, string? Subheading, string Content, string? KnowledgeType, KnowledgeAwareness Awareness);
 }

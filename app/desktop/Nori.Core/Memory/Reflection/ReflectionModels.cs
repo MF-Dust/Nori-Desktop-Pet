@@ -1,8 +1,5 @@
 namespace Nori.Core.Memory;
 
-/// <summary>一次后台 Reflection 请求。</summary>
-public sealed record ReflectionJob(string Reason = "chat");
-
 /// <summary>Reflection 提取出的事实。</summary>
 public sealed record ReflectionFact
 {

@@ -56,7 +56,6 @@ public sealed class AppRuntime : IAsyncDisposable
 	private readonly WebViewAudioPlayback _playback;
 	private readonly WebViewMicrophoneRecorder _recorder;
 	private readonly AudioHostChannel _audioChannel;
-	private readonly ReflectionQueue _reflectionQueue;
 	private readonly ReflectionWorker _reflectionWorker;
 	private readonly PetInteractionReactionService _petInteractionService;
 	private readonly SemaphoreSlim _petInteractionGate = new(1, 1);
@@ -157,9 +156,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		Knowledge.StatusChanged = () => InvalidateSnapshot("memory");
 		Memory.Knowledge = Knowledge;
 		Lifecycle = new MemoryLifecycleService(Memory);
-		_reflectionQueue = new ReflectionQueue();
 		ReflectionService reflection = new(services.Http, services.Chat, Memory, config);
-		_reflectionWorker = new ReflectionWorker(_reflectionQueue, reflection, exception =>
+		_reflectionWorker = new ReflectionWorker(reflection, exception =>
 		{
 			try { services.Logger.Write(LogSource.Backend, "warn", $"记忆整理失败: {SensitiveDataRedactor.ExceptionSummary(exception)}"); }
 			catch { }
@@ -266,7 +264,7 @@ public sealed class AppRuntime : IAsyncDisposable
 
 			// Knowledge 和 Reflection 都在后台启动；索引或整理失败不能阻塞聊天。
 			_reflectionWorker.Start();
-			_reflectionWorker.TryEnqueue(new ReflectionJob("startup"));
+			_reflectionWorker.TryEnqueue();
 			TrackBackground(InitializeKnowledgeAsync, "Memory.md index");
 			TrackBackground(() => Memory.ReembedAllAsync(_lifetimeCts.Token, false), "memory embedding rebuild");
 			TrackBackground(RunMemoryMaintenanceAsync, "memory lifecycle");
@@ -788,7 +786,7 @@ public sealed class AppRuntime : IAsyncDisposable
 			{
 				await RefreshMcpToolsAsync(session.Cts.Token);
 				ProtocolMessage final = await Engine.RunAsync(text, sessionId, callbacks, session.Cts.Token);
-				_reflectionWorker.TryEnqueue(new ReflectionJob("chat"));
+				_reflectionWorker.TryEnqueue();
 				PostAgentEvent(session.SourceLabel, new
 				{
 					type = "complete",

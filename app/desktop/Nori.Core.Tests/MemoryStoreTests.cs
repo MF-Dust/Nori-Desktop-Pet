@@ -34,7 +34,7 @@ public class MemoryStoreTests : IDisposable
 	[Fact]
 	public void 添加与查询全部记忆()
 	{
-		MemoryItem item = _memory.Add("fact", "主人喜欢吃草莓蛋糕", 0.9, "chat", "food");
+		MemoryItem item = _memory.AddAggregate("fact", "主人喜欢吃草莓蛋糕", 0.9, "chat", "food");
 
 		Assert.True(item.Id > 0);
 		Assert.Equal("fact", item.Type);
@@ -50,25 +50,24 @@ public class MemoryStoreTests : IDisposable
 	[Fact]
 	public void 搜索记忆()
 	{
-		_memory.Add("fact", "主人养了一只猫叫咪咪", 0.8, "chat", "pet");
-		_memory.Add("fact", "明天下午三点有会议", 0.7, "chat", "schedule");
+		_memory.AddAggregate("fact", "主人养了一只猫叫咪咪", 0.8, "chat", "pet");
+		_memory.AddAggregate("fact", "明天下午三点有会议", 0.7, "chat", "schedule");
 
-		IReadOnlyList<MemoryItem> catResults = _memory.Search("猫");
-		Assert.Single(catResults);
-		Assert.Equal("主人养了一只猫叫咪咪", catResults[0].Content);
+		IReadOnlyList<RetrievalHit> catHits = _memory.SearchKeyword("猫");
+		Assert.Single(catHits);
+		Assert.Equal("主人养了一只猫叫咪咪", _memory.Get(catHits[0].MemoryId)!.Content);
 
-		IReadOnlyList<MemoryItem> scheduleResults = _memory.Search("会议");
-		Assert.Single(scheduleResults);
-		Assert.Equal("明天下午三点有会议", scheduleResults[0].Content);
+		IReadOnlyList<RetrievalHit> scheduleHits = _memory.SearchKeyword("会议");
+		Assert.Single(scheduleHits);
+		Assert.Equal("明天下午三点有会议", _memory.Get(scheduleHits[0].MemoryId)!.Content);
 
-		IReadOnlyList<MemoryItem> notFound = _memory.Search("不存在的内容");
-		Assert.Empty(notFound);
+		Assert.Empty(_memory.SearchKeyword("不存在的内容"));
 	}
 
 	[Fact]
 	public void 更新记忆()
 	{
-		MemoryItem item = _memory.Add("fact", "主人住在北京", 0.5, embedding: "[1, 0]");
+		MemoryItem item = _memory.AddAggregate("fact", "主人住在北京", 0.5, embedding: "[1, 0]");
 
 		Assert.NotEmpty(_memory.SearchSemantic([1, 0], 5, 0));
 		bool updated = _memory.Update(item.Id, "主人住在上海", 0.8, "city");
@@ -86,7 +85,7 @@ public class MemoryStoreTests : IDisposable
 	[Fact]
 	public void 更新内容时可在同一次操作提交新向量()
 	{
-		MemoryItem item = _memory.Add("fact", "旧内容", embedding: "[1, 0]");
+		MemoryItem item = _memory.AddAggregate("fact", "旧内容", embedding: "[1, 0]");
 
 		Assert.True(_memory.Update(item.Id, "新内容", embedding: "[0, 1]"));
 		MemoryItem updated = Assert.Single(_memory.GetAll());
@@ -98,8 +97,8 @@ public class MemoryStoreTests : IDisposable
 	[Fact]
 	public void 删除与清空记忆()
 	{
-		MemoryItem item1 = _memory.Add("fact", "记忆一", 0.5);
-		MemoryItem item2 = _memory.Add("fact", "记忆二", 0.6);
+		MemoryItem item1 = _memory.AddAggregate("fact", "记忆一", 0.5);
+		MemoryItem item2 = _memory.AddAggregate("fact", "记忆二", 0.6);
 
 		Assert.Equal(2, _memory.GetAll().Count);
 
@@ -127,11 +126,11 @@ public class MemoryStoreTests : IDisposable
 	}
 
 	[Fact]
-	public void 向量语义检索与混合检索()
+	public void 向量语义检索()
 	{
 		// 模拟 3 维向量
-		_memory.Add("fact", "主人喜欢喝拿铁", 0.9, "chat", "drink", "[0.9, 0.1, 0.0]");
-		_memory.Add("fact", "主人养了一只柯基", 0.8, "chat", "pet", "[0.0, 0.1, 0.9]");
+		_memory.AddAggregate("fact", "主人喜欢喝拿铁", 0.9, "chat", "drink", "[0.9, 0.1, 0.0]");
+		_memory.AddAggregate("fact", "主人养了一只柯基", 0.8, "chat", "pet", "[0.0, 0.1, 0.9]");
 
 		float[] queryDrink = [0.85f, 0.15f, 0.0f];
 
@@ -139,51 +138,25 @@ public class MemoryStoreTests : IDisposable
 		Assert.NotEmpty(results);
 		Assert.Equal("主人喜欢喝拿铁", results[0].Item.Content);
 		Assert.True(results[0].Similarity > 0.8);
-
-		IReadOnlyList<MemoryItem> hybrid = _memory.SearchHybrid("咖啡", queryDrink, 5);
-		Assert.NotEmpty(hybrid);
-		Assert.Equal("主人喜欢喝拿铁", hybrid[0].Content);
 	}
 
 	[Fact]
 	public void 语义候选集有上限()
 	{
-		MemoryStore bounded = new(_database, semanticCandidateLimit: 2, vectorCacheCapacity: 4);
-		bounded.Add("fact", "高重要度一", 1.0, embedding: "[1, 0, 0]");
-		bounded.Add("fact", "高重要度二", 0.9, embedding: "[0, 1, 0]");
-		bounded.Add("fact", "低重要度目标", 0.1, embedding: "[0, 0, 1]");
+		MemoryStore bounded = new(_database, semanticCandidateLimit: 2);
+		bounded.AddAggregate("fact", "高重要度一", 1.0, embedding: "[1, 0, 0]");
+		bounded.AddAggregate("fact", "高重要度二", 0.9, embedding: "[0, 1, 0]");
+		bounded.AddAggregate("fact", "低重要度目标", 0.1, embedding: "[0, 0, 1]");
 
 		Assert.Empty(bounded.SearchSemantic([0, 0, 1], 5, 0.9));
 	}
 
 	[Fact]
-	public void 向量缓存按LRU容量逐出()
-	{
-		MemoryStore bounded = new(_database, semanticCandidateLimit: 10, vectorCacheCapacity: 1);
-		MemoryItem first = bounded.Add("fact", "第一条", 0.9, embedding: "[1, 0]");
-		MemoryItem second = bounded.Add("fact", "第二条", 0.8, embedding: "[0, 1]");
-
-		Assert.NotEmpty(bounded.SearchSemantic([1, 0], 5, 0));
-		Assert.NotEmpty(bounded.SearchSemantic([0, 1], 5, 0));
-		_database.Locked(connection =>
-		{
-			using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
-			command.CommandText = "UPDATE memories SET embedding = '[0, 0]' WHERE id = $id";
-			command.Parameters.AddWithValue("$id", first.Id);
-			command.ExecuteNonQuery();
-		});
-
-		// first 已被 second 挤出缓存, 读取时必须看到数据库中的新向量.
-		Assert.Empty(bounded.SearchSemantic([1, 0], 5, 0.9));
-		Assert.Equal(second.Id, Assert.Single(bounded.SearchSemantic([0, 1], 5, 0.9)).Item.Id);
-	}
-
-	[Fact]
 	public void 待嵌入记忆支持id游标分页()
 	{
-		_memory.Add("fact", "已有向量", embedding: "[1]");
-		MemoryItem pending1 = _memory.Add("fact", "待处理一");
-		MemoryItem pending2 = _memory.Add("fact", "待处理二");
+		_memory.AddAggregate("fact", "已有向量", embedding: "[1]");
+		MemoryItem pending1 = _memory.AddAggregate("fact", "待处理一");
+		MemoryItem pending2 = _memory.AddAggregate("fact", "待处理二");
 
 		IReadOnlyList<MemoryItem> first = _memory.GetUnembedded(1);
 		Assert.Single(first);

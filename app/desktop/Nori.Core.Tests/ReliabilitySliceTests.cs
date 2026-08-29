@@ -19,7 +19,7 @@ public sealed class ReliabilitySliceTests
 		{
 			using NoriDatabase database = NoriDatabase.Open(path);
 			MemoryStore store = new(database);
-			MemoryItem item = store.Add("fact", "BLOB 向量", embedding: "[1.0,-2.5,0.25]");
+			MemoryItem item = store.AddAggregate("fact", "BLOB 向量", embedding: "[1.0,-2.5,0.25]");
 
 			(string type, string? legacy) = database.Locked(connection =>
 			{
@@ -130,9 +130,9 @@ public sealed class ReliabilitySliceTests
 			config.InitDefaults("test");
 			config.Set("embedding_api_base", new ConfigValue.Text("http://embedding.test/v1"));
 			MemoryStore store = new(database);
-			store.Add("fact", "批次一");
-			store.Add("fact", "批次二");
-			store.Add("fact", "批次三");
+			store.AddAggregate("fact", "批次一");
+			store.AddAggregate("fact", "批次二");
+			store.AddAggregate("fact", "批次三");
 			ControlledBatchEmbedding embedding = new();
 			await using MemoryService service = new(store, embedding, config);
 			using CancellationTokenSource cancellation = new();

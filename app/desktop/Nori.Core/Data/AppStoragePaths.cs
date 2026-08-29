@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace Nori.Core.Data;
 
 /// <summary>应用运行时使用的不可变数据路径集合。</summary>
-public sealed class AppStoragePaths : IAppStoragePaths
+public sealed class AppStoragePaths
 {
 	public const string MarkerFileName = ".nori-storage.json";
 	public const string CleanupReceiptFileName = ".legacy-cleanup-pending.json";
@@ -194,17 +194,4 @@ public sealed class AppStoragePaths : IAppStoragePaths
 		// 包根的可信性由启动解析器负责；此处只拒绝包内路径被链接重定向。
 		EnsureNoReparsePoints(path, PackageRoot);
 	}
-}
-
-/// <summary>允许测试和宿主显式注入路径实现的最小接口。</summary>
-public interface IAppStoragePaths
-{
-	string PackageRoot { get; }
-	string DataRoot { get; }
-	string DatabasePath { get; }
-	string SecretPath { get; }
-	string KnowledgePath { get; }
-	string ResourcesDirectory { get; }
-	string PluginsDirectory { get; }
-	string LogsDirectory { get; }
 }

@@ -10,8 +10,6 @@ public sealed record MemoryTransferLimits
 	public int MaxItems { get; init; } = 1000;
 	public int MaxBytes { get; init; } = 4 * 1024 * 1024;
 	public int MaxFieldBytes { get => _maxFieldBytes; init => _maxFieldBytes = value; }
-	/// <summary>旧测试/调用方的兼容别名；限制始终按 UTF-8 字节计算。</summary>
-	public int MaxFieldLength { get => _maxFieldBytes; init => _maxFieldBytes = value; }
 	public TimeSpan PreviewLifetime { get; init; } = TimeSpan.FromMinutes(5);
 }
 

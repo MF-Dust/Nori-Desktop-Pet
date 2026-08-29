@@ -261,7 +261,7 @@ public class ConfigStoreTests : IDisposable
 	[Fact]
 	public void nsec1读取后惰性迁移到nsec2()
 	{
-		string legacy = SecretProtector.ProtectV1(Enumerable.Range(0, SecretKeyStore.KeySize).Select(index => (byte)index).ToArray(), "legacy-secret");
+		string legacy = ProtectLegacyNsec1(Enumerable.Range(0, SecretKeyStore.KeySize).Select(index => (byte)index).ToArray(), "legacy-secret");
 		_database.Locked(connection =>
 		{
 			using Microsoft.Data.Sqlite.SqliteCommand command = connection.CreateCommand();
@@ -272,6 +272,24 @@ public class ConfigStoreTests : IDisposable
 
 		Assert.Equal("legacy-secret", _config.GetStringOr("llm_api_key", ""));
 		Assert.StartsWith(SecretProtector.Prefix, _config.RawValue("llm_api_key"), StringComparison.Ordinal);
+	}
+
+	/// <summary>测试本地的 nsec1 造数: base64(nonce|cipher|tag), 无 AAD, 与已发布格式一致。</summary>
+	private static string ProtectLegacyNsec1(byte[] key, string plainText)
+	{
+		const int nonceSize = 12;
+		const int tagSize = 16;
+		byte[] nonce = System.Security.Cryptography.RandomNumberGenerator.GetBytes(nonceSize);
+		byte[] plain = System.Text.Encoding.UTF8.GetBytes(plainText);
+		byte[] cipher = new byte[plain.Length];
+		byte[] tag = new byte[tagSize];
+		using System.Security.Cryptography.AesGcm aes = new(key, tagSize);
+		aes.Encrypt(nonce, plain, cipher, tag);
+		byte[] payload = new byte[nonceSize + cipher.Length + tagSize];
+		nonce.CopyTo(payload.AsSpan(0, nonceSize));
+		cipher.CopyTo(payload.AsSpan(nonceSize, cipher.Length));
+		tag.CopyTo(payload.AsSpan(nonceSize + cipher.Length, tagSize));
+		return SecretProtector.LegacyNsec1Prefix + Convert.ToBase64String(payload);
 	}
 
 	[Fact]

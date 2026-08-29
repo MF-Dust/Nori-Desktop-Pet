@@ -420,15 +420,6 @@ public sealed class NoriDatabase : IDisposable
 		alter.ExecuteNonQuery();
 	}
 
-	/// <summary>一次性失效历史向量, 迁移本身不访问外部 embedding 服务.</summary>
-	private static void ClearLegacyEmbeddings(SqliteConnection connection, SqliteTransaction transaction)
-	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.Transaction = transaction;
-		command.CommandText = "UPDATE memories SET embedding = NULL WHERE embedding IS NOT NULL;";
-		command.ExecuteNonQuery();
-	}
-
 	/// <summary>
 	/// v3: 新增可恢复的定时提醒表.
 	/// 幂等: 建表语句带 IF NOT EXISTS, 重复执行安全。

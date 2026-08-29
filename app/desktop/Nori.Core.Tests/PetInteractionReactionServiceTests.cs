@@ -31,9 +31,6 @@ public sealed class PetInteractionReactionServiceTests : IDisposable
 
 		public Task<string> StreamAsync(string baseUrl, string apiKey, string model, string systemPrompt, IReadOnlyList<ChatMessageInput> messages, Action<string> onChunk, Action<LlmUsageInfo>? onUsage = null, CancellationToken cancellationToken = default) =>
 			throw new NotSupportedException();
-
-		public Task<IReadOnlyList<string>> FetchModelsAsync(string baseUrl, string apiKey, CancellationToken cancellationToken = default) =>
-			Task.FromResult<IReadOnlyList<string>>([]);
 	}
 
 	private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"nori-pet-reaction-{Guid.NewGuid():N}.db");

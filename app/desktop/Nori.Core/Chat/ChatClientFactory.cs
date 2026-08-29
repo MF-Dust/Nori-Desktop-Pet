@@ -36,7 +36,7 @@ public static class ChatClientFactory
 		};
 	}
 
-	internal static ILlmAdapter CreateModelCatalogAdapter(LlmProvider provider, HttpClient httpClient) => provider switch
+	internal static Adapters.IModelCatalogAdapter CreateModelCatalogAdapter(LlmProvider provider, HttpClient httpClient) => provider switch
 	{
 		LlmProvider.OpenAi => new Adapters.OpenAiChatAdapter(httpClient),
 		LlmProvider.OpenAiResponses => new Adapters.OpenAiResponsesAdapter(httpClient),

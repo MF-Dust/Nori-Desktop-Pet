@@ -68,7 +68,7 @@ public sealed class MemoryEngineBaselineTests : IDisposable
 	public async Task Embedding失败时关键词仍可召回()
 	{
 		MemoryStore store = new(_database);
-		store.Add("fact", "主人喜欢草莓蛋糕", 0.8, tags: "food");
+		store.AddAggregate("fact", "主人喜欢草莓蛋糕", 0.8, tags: "food");
 		MemoryService service = new(store, new FailingEmbedding(), _config);
 
 		IReadOnlyList<MemoryItem> results = await service.SearchHybridAsync("草莓");
@@ -80,8 +80,8 @@ public sealed class MemoryEngineBaselineTests : IDisposable
 	public async Task ReembedAll_按id游标补齐向量()
 	{
 		MemoryStore store = new(_database);
-		store.Add("fact", "第一条");
-		store.Add("fact", "第二条");
+		store.AddAggregate("fact", "第一条");
+		store.AddAggregate("fact", "第二条");
 		MemoryService service = new(store, new StubEmbedding(), _config);
 
 		Assert.Equal(2, await service.ReembedAllAsync());

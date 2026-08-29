@@ -55,16 +55,7 @@ public sealed class MemoryTransferService : IDisposable
 		ValidateLimits(_limits);
 	}
 
-	/// <summary>保留直接以 MemoryService 构造的 Core 调用兼容入口；此入口不安装后台向量回调。</summary>
-	public MemoryTransferService(MemoryService memory, MemoryTransferLimits? limits = null, TimeProvider? timeProvider = null)
-		: this((memory ?? throw new ArgumentNullException(nameof(memory))).Store, limits, timeProvider)
-	{
-	}
-
 	public MemoryTransferLimits Limits => _limits;
-
-	/// <summary>导出 nori-memory-v1 文档，保留早期 Core 调用的文档返回形状。</summary>
-	public MemoryTransferDocument Export() => ExportResult().Document;
 
 	/// <summary>导出全部可迁移记忆，并在返回前校验 UTF-8 总大小。</summary>
 	public MemoryTransferExport ExportResult()
@@ -121,9 +112,6 @@ public sealed class MemoryTransferService : IDisposable
 			throw new MemoryTransferException(MemoryTransferErrorCategory.WriteFailed);
 		}
 	}
-
-	/// <summary>兼容仅需要导出 JSON 正文的调用方。</summary>
-	public string ExportJson() => ExportResult().Content;
 
 	/// <summary>解析并分析导入文件；预览阶段绝不写入数据库。</summary>
 	public MemoryTransferPreview Preview(string? content)
@@ -210,20 +198,6 @@ public sealed class MemoryTransferService : IDisposable
 			return CommitFailure(MemoryTransferErrorCategory.WriteFailed);
 		}
 	}
-
-	/// <summary>异步包装，保持桥接命令不会在 UI 调用链上阻塞。</summary>
-	public Task<MemoryTransferCommitResult> CommitAsync(
-		string? previewToken,
-		MemoryTransferConflictStrategy strategy = MemoryTransferConflictStrategy.Skip,
-		CancellationToken cancellationToken = default)
-	{
-		cancellationToken.ThrowIfCancellationRequested();
-		return Task.FromResult(Commit(previewToken, strategy));
-	}
-
-	/// <summary>兼容未传入冲突策略的异步调用。</summary>
-	public Task<MemoryTransferCommitResult> CommitAsync(string? previewToken, CancellationToken cancellationToken) =>
-		CommitAsync(previewToken, MemoryTransferConflictStrategy.Skip, cancellationToken);
 
 	/// <summary>kind 与规范化摘要组成的稳定 SHA-256；不信任传输文件自带的 hash。</summary>
 	public static string ComputeDedupeHash(string? kind, string content)
@@ -605,24 +579,8 @@ public sealed class MemoryTransferService : IDisposable
 
 	private static bool IsHash(string value) => value.Length == 64 && value.All(character => char.IsAsciiHexDigit(character));
 
-	private static string NormalizeForDedupe(string value)
-	{
-		string normalized = value.Normalize(NormalizationForm.FormKC).Trim().ToLowerInvariant();
-		StringBuilder result = new(normalized.Length);
-		bool spacePending = false;
-		foreach (char character in normalized)
-		{
-			if (char.IsWhiteSpace(character))
-			{
-				spacePending = result.Length > 0;
-				continue;
-			}
-			if (spacePending) result.Append(' ');
-			result.Append(character);
-			spacePending = false;
-		}
-		return result.ToString();
-	}
+	private static string NormalizeForDedupe(string value) =>
+		string.Join(' ', value.Normalize(NormalizationForm.FormKC).ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
 	private string? NormalizeOptionalExportField(string? value)
 	{

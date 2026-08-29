@@ -219,12 +219,6 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	}
 
 	/// <summary>
-	/// 判断原始值是否属于受保护格式。它只表示格式需要解密, 不代表当前一定能解开。
-	/// </summary>
-	public static bool IsUnreadableSecret(string stored) =>
-		SecretProtector.IsProtected(stored) || SecretProtector.IsLegacyDpapi(stored);
-
-	/// <summary>
 	/// 在已有事务中写入配置。
 	/// </summary>
 	private void SetInTransaction(
@@ -253,17 +247,20 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 		return command.ExecuteScalar() as string ?? "";
 	});
 
-	/// <summary>升级一个旧敏感值; 解不开时保持原值并记录分类。</summary>
-	public void UpgradeSecretFormat(string key)
-	{
-		if (!IsSensitiveKey(key)) return;
-		string stored = RawValue(key);
-		if (stored.Length == 0) return;
-		_ = ReadSecretValue(key, stored, migrate: true);
-	}
-
 	/// <summary>读取字符串配置, 缺失/类型不符时返回 fallback。</summary>
 	public string GetStringOr(string key, string fallback) => ConfigValue.AsStringOr(Get(key), fallback);
+
+	/// <summary>读取整型配置并夹紧到 [min, max]; 无效或缺省时返回 fallback。</summary>
+	public int GetClampedInt(string key, int fallback, int min, int max) =>
+		int.TryParse(GetStringOr(key, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
+			? Math.Clamp(value, min, max)
+			: fallback;
+
+	/// <summary>读取浮点配置并夹紧到 [min, max]; 无效或缺省时返回 fallback。</summary>
+	public double GetClampedDouble(string key, double fallback, double min, double max) =>
+		double.TryParse(GetStringOr(key, ""), NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
+			? Math.Clamp(value, min, max)
+			: fallback;
 
 	/// <summary>
 	/// 读取布尔配置, 兼容历史上可能写入的 0/1 与 true/false 字符串。
@@ -301,12 +298,6 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 	/// <summary>保存明确的遥测同意状态。</summary>
 	public void SetTelemetryConsent(TelemetryConsent consent) =>
 		Set(KeyTelemetryConsent, new ConfigValue.Text(ConfigValidation.TelemetryConsentStorage(consent)));
-
-	/// <summary>首次运行完成时确认默认开启的遥测开关。</summary>
-	public void ConfirmTelemetryConsent()
-	{
-		if (GetTelemetryConsent() == TelemetryConsent.Unset) SetTelemetryConsent(TelemetryConsent.Granted);
-	}
 
 	/// <summary>
 	/// 初始化默认配置: 只补缺失项, 不覆盖用户已有配置。

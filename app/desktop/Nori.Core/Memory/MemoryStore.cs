@@ -59,140 +59,23 @@ public sealed record MemorySearchResult
 public sealed class MemoryStore
 {
 	public const int DefaultSemanticCandidateLimit = 100000;
-	public const int DefaultVectorCacheCapacity = 512;
 
 	private readonly NoriDatabase _database;
 	private readonly int _semanticCandidateLimit;
-	private readonly int _vectorCacheCapacity;
-	private readonly Lock _vectorCacheGate = new();
-	private readonly Dictionary<long, (string UpdatedAt, float[] Vector)> _vectorCache = [];
 	private bool _ftsAvailable;
 
 	public MemoryStore(
 		NoriDatabase database,
-		int semanticCandidateLimit = DefaultSemanticCandidateLimit,
-		int vectorCacheCapacity = DefaultVectorCacheCapacity)
+		int semanticCandidateLimit = DefaultSemanticCandidateLimit)
 	{
 		if (semanticCandidateLimit <= 0) throw new ArgumentOutOfRangeException(nameof(semanticCandidateLimit));
-		if (vectorCacheCapacity <= 0) throw new ArgumentOutOfRangeException(nameof(vectorCacheCapacity));
 		_database = database;
 		_semanticCandidateLimit = semanticCandidateLimit;
-		_vectorCacheCapacity = vectorCacheCapacity;
 		InitializeFts();
 	}
 
 	/// <summary>当前 SQLite 是否提供可用的 FTS5 索引。</summary>
 	public bool IsFtsAvailable => _ftsAvailable;
-
-	private float[]? VectorOf(MemoryItem item)
-	{
-		if (string.IsNullOrWhiteSpace(item.Embedding) && item.EmbeddingBlob is not {Length: > 0}) return null;
-		lock (_vectorCacheGate)
-		{
-			if (_vectorCache.Remove(item.Id, out (string UpdatedAt, float[] Vector) cached))
-			{
-				if (cached.UpdatedAt == item.UpdatedAt)
-				{
-					_vectorCache[item.Id] = cached;
-					return cached.Vector;
-				}
-			}
-
-			float[]? vector = item.GetVector();
-			if (vector is null) return null;
-			if (_vectorCache.Count >= _vectorCacheCapacity)
-			{
-				long oldest = _vectorCache.Keys.First();
-				_vectorCache.Remove(oldest);
-			}
-			_vectorCache[item.Id] = (item.UpdatedAt, vector);
-			return vector;
-		}
-	}
-
-	private void EvictVector(long id)
-	{
-		lock (_vectorCacheGate) _vectorCache.Remove(id);
-	}
-
-	/// <summary>添加一条记忆，并初始化 v4 聚合字段。</summary>
-	public MemoryItem Add(
-		string type,
-		string content,
-		double importance = 0.5,
-		string source = "chat",
-		string? tags = null,
-		string? embedding = null,
-		MemoryKind kind = MemoryKind.General,
-		string? canonicalSummary = null,
-		string? personaSummary = null,
-		double confidence = 0.8,
-		double? ttlDays = null,
-		string? expiresAt = null,
-		string? embeddingFingerprint = null)
-	{
-		ValidateScore(importance, nameof(importance));
-		ValidateScore(confidence, nameof(confidence));
-		string now = DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture);
-		string storageKind = kind == MemoryKind.General ? MemoryKindExtensions.Parse(type).ToStorage() : kind.ToStorage();
-		(string? Legacy, byte[]? Blob) embeddingStorage = PrepareEmbedding(embedding);
-		long id = _database.Locked(connection =>
-		{
-			using SqliteTransaction transaction = connection.BeginTransaction();
-			using SqliteCommand command = connection.CreateCommand();
-			command.Transaction = transaction;
-			command.CommandText = """
-				INSERT INTO memories
-					(type, content, importance, source, tags, embedding, embedding_blob, created_at, updated_at,
-					 kind, canonical_summary, persona_summary, confidence, status, ttl_days, expires_at, embedding_fingerprint)
-				VALUES ($type, $content, $importance, $source, $tags, $embedding, $embedding_blob, $created_at, $updated_at,
-					 $kind, $canonical_summary, $persona_summary, $confidence, 'active', $ttl_days, $expires_at, $embedding_fingerprint);
-				SELECT last_insert_rowid();
-				""";
-			AddParameter(command, "$type", type);
-			AddParameter(command, "$content", content);
-			AddParameter(command, "$importance", importance);
-			AddParameter(command, "$source", source);
-			AddParameter(command, "$tags", tags);
-			AddParameter(command, "$embedding", embeddingStorage.Legacy);
-			AddParameter(command, "$embedding_blob", embeddingStorage.Blob);
-			AddParameter(command, "$created_at", now);
-			AddParameter(command, "$updated_at", now);
-			AddParameter(command, "$kind", storageKind);
-			AddParameter(command, "$canonical_summary", canonicalSummary ?? content);
-			AddParameter(command, "$persona_summary", personaSummary ?? content);
-			AddParameter(command, "$confidence", confidence);
-			AddParameter(command, "$ttl_days", ttlDays);
-			AddParameter(command, "$expires_at", expiresAt);
-			AddParameter(command, "$embedding_fingerprint", embeddingFingerprint);
-			long result = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-			RefreshMemoryIndex(connection, transaction, result);
-			transaction.Commit();
-			return result;
-		});
-
-		return new MemoryItem
-		{
-			Id = id,
-			Type = type,
-			Content = content,
-			Importance = importance,
-			Source = source,
-			Tags = tags,
-			Embedding = embedding,
-			EmbeddingBlob = embeddingStorage.Blob,
-			CreatedAt = now,
-			UpdatedAt = now,
-			Kind = storageKind,
-			CanonicalSummary = canonicalSummary ?? content,
-			PersonaSummary = personaSummary ?? content,
-			Confidence = confidence,
-			Status = "active",
-			TtlDays = ttlDays,
-			ExpiresAt = expiresAt,
-			EmbeddingFingerprint = embeddingFingerprint,
-		};
-	}
 
 	/// <summary>以一个事务写入 Memory、默认 Atom 和 Source 聚合。</summary>
 	public MemoryItem AddAggregate(
@@ -374,22 +257,6 @@ public sealed class MemoryStore
 		});
 	}
 
-	/// <summary>更新记忆的向量嵌入和 fingerprint。</summary>
-	public bool UpdateEmbedding(long id, string embedding, string? fingerprint = null)
-	{
-		(string? Legacy, byte[]? Blob) storage = PrepareEmbedding(embedding);
-		return _database.Locked(connection =>
-		{
-			using SqliteCommand command = connection.CreateCommand();
-			command.CommandText = "UPDATE memories SET embedding = $embedding, embedding_blob = $embedding_blob, embedding_fingerprint = COALESCE($fingerprint, embedding_fingerprint) WHERE id = $id";
-			AddParameter(command, "$id", id);
-			AddParameter(command, "$embedding", storage.Legacy);
-			AddParameter(command, "$embedding_blob", storage.Blob);
-			AddParameter(command, "$fingerprint", fingerprint);
-			return command.ExecuteNonQuery() > 0;
-		});
-	}
-
 	/// <summary>在一个事务中批量写回向量，并用 updated_at 防止覆盖新内容。</summary>
 	public int UpdateEmbeddings(IReadOnlyList<MemoryEmbeddingUpdate> updates, string fingerprint)
 	{
@@ -443,18 +310,6 @@ public sealed class MemoryStore
 		return ReadItems(command);
 	});
 
-	/// <summary>读取需要向量重建的记忆，支持 fingerprint 变化和强制重建。</summary>
-	public IReadOnlyList<MemoryItem> GetReembedCandidates(string fingerprint, int limit = 100, long afterId = 0, bool force = false) => _database.Locked(connection =>
-	{
-		using SqliteCommand command = connection.CreateCommand();
-		command.CommandText = BaseSelect + " WHERE id > $afterId AND status IN ('active', 'dormant') AND ($force = 1 OR (embedding_blob IS NULL AND (embedding IS NULL OR embedding = '')) OR embedding_fingerprint IS NULL OR embedding_fingerprint <> $fingerprint) ORDER BY id ASC LIMIT $limit";
-		AddParameter(command, "$afterId", afterId);
-		AddParameter(command, "$force", force ? 1 : 0);
-		AddParameter(command, "$fingerprint", fingerprint);
-		AddParameter(command, "$limit", Math.Max(1, limit));
-		return ReadItems(command);
-	});
-
 	/// <summary>读取批量重嵌入所需的最小字段，避免先物化完整 MemoryItem。</summary>
 	public IReadOnlyList<MemoryEmbeddingWorkItem> GetReembedWork(string fingerprint, int limit = 32, long afterId = 0, bool force = false) => _database.Locked(connection =>
 	{
@@ -487,10 +342,6 @@ public sealed class MemoryStore
 		using SqliteDataReader reader = command.ExecuteReader();
 		return reader.Read() ? ReadRow(reader) : null;
 	});
-
-	/// <summary>按关键词搜索；FTS 不可用时降级到 LIKE。</summary>
-	public IReadOnlyList<MemoryItem> Search(string keyword, int limit = 20) =>
-		SearchKeyword(keyword, limit).Select(hit => Get(hit.MemoryId)).OfType<MemoryItem>().ToList();
 
 	/// <summary>返回关键词检索的排序命中。</summary>
 	public IReadOnlyList<RetrievalHit> SearchKeyword(string keyword, int limit = 20)
@@ -589,18 +440,6 @@ public sealed class MemoryStore
 			.Where(item => items.ContainsKey(item.Id))
 			.Select(item => new MemorySearchResult {Item = items[item.Id], Similarity = item.Score, Score = item.Score})
 			.ToList();
-	}
-
-	/// <summary>真正的关键词 + 向量 RRF 兼容搜索。</summary>
-	public IReadOnlyList<MemoryItem> SearchHybrid(string keyword, float[]? queryVector = null, int limit = 10)
-	{
-		List<RetrievalHit> keywordHits = [.. SearchKeyword(keyword, Math.Max(limit * 2, 20))];
-		List<RetrievalHit> vectorHits = queryVector is {Length: > 0}
-			? SearchSemantic(queryVector, Math.Max(limit * 2, 20), 0).Select((hit, index) => new RetrievalHit(hit.Item.Id, hit.Similarity, index + 1)).ToList()
-			: [];
-		Dictionary<long, double> fused = FuseRrf([keywordHits, vectorHits], 60);
-		return fused.OrderByDescending(pair => pair.Value).Take(Math.Max(0, limit))
-			.Select(pair => Get(pair.Key)).OfType<MemoryItem>().ToList();
 	}
 
 	/// <summary>读取单个 Atom。</summary>
@@ -746,7 +585,6 @@ public sealed class MemoryStore
 			transaction.Commit();
 			return count > 0;
 		});
-		if (updated) EvictVector(id);
 		return updated;
 	}
 
@@ -851,7 +689,6 @@ public sealed class MemoryStore
 			transaction.Commit();
 			return result;
 		});
-		if (deleted) EvictVector(id);
 		return deleted;
 	}
 
@@ -869,7 +706,6 @@ public sealed class MemoryStore
 			if (_ftsAvailable) command.ExecuteNonQuery();
 			transaction.Commit();
 		});
-		lock (_vectorCacheGate) _vectorCache.Clear();
 	}
 
 	/// <summary>只强化最终注入 Prompt 的记忆。</summary>
@@ -1054,7 +890,6 @@ public sealed class MemoryStore
 				throw;
 			}
 		});
-		foreach (long id in applied.ChangedIds) EvictVector(id);
 		return applied.Result;
 	}
 

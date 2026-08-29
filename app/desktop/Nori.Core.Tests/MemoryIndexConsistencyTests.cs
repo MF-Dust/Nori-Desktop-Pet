@@ -18,21 +18,21 @@ public sealed class MemoryIndexConsistencyTests : IDisposable
 	[Fact]
 	public void 归档恢复和删除同步Memory与Atom索引()
 	{
-		MemoryItem item = _store.Add("fact", "索引一致性测试", embedding: "[1,0]");
+		MemoryItem item = _store.AddAggregate("fact", "索引一致性测试", embedding: "[1,0]");
 		_store.AddAtom(item.Id, MemoryKind.Factual, item.Content);
-		Assert.NotEmpty(_store.Search("一致性"));
+		Assert.NotEmpty(_store.SearchKeyword("一致性"));
 		Assert.NotEmpty(_store.SearchAtomKeyword("一致性"));
 
 		Assert.True(_store.Archive(item.Id));
-		Assert.Empty(_store.Search("一致性"));
+		Assert.Empty(_store.SearchKeyword("一致性"));
 		Assert.Empty(_store.SearchAtomKeyword("一致性"));
 
 		Assert.True(_store.Restore(item.Id));
-		Assert.NotEmpty(_store.Search("一致性"));
+		Assert.NotEmpty(_store.SearchKeyword("一致性"));
 		Assert.NotEmpty(_store.SearchAtomKeyword("一致性"));
 
 		Assert.True(_store.Delete(item.Id));
-		Assert.Empty(_store.Search("一致性"));
+		Assert.Empty(_store.SearchKeyword("一致性"));
 		Assert.Empty(_store.SearchAtomKeyword("一致性"));
 	}
 

@@ -112,17 +112,17 @@ public sealed class MemoryService : IAsyncDisposable
 	{
 		Enabled = _config.GetBoolOr("memory_enabled", true),
 		ReflectionEnabled = _config.GetBoolOr("memory_reflection_enabled", true),
-		ReflectionRounds = ReadInt("memory_reflection_rounds", 8, 1, 32),
-		ReflectionMinChars = ReadInt("memory_reflection_min_chars", 2500, 100, 20000),
-		RecallTopK = ReadInt("memory_recall_top_k", 6, 1, 20),
-		KeywordTopK = ReadInt("memory_keyword_top_k", 20, 1, 100),
-		VectorTopK = ReadInt("memory_vector_top_k", 20, 1, 100),
-		RrfK = ReadInt("memory_rrf_k", 60, 1, 500),
-		MinSimilarity = ReadDouble("memory_min_similarity", 0.25, 0, 1),
+		ReflectionRounds = _config.GetClampedInt("memory_reflection_rounds", 8, 1, 32),
+		ReflectionMinChars = _config.GetClampedInt("memory_reflection_min_chars", 2500, 100, 20000),
+		RecallTopK = _config.GetClampedInt("memory_recall_top_k", 6, 1, 20),
+		KeywordTopK = _config.GetClampedInt("memory_keyword_top_k", 20, 1, 100),
+		VectorTopK = _config.GetClampedInt("memory_vector_top_k", 20, 1, 100),
+		RrfK = _config.GetClampedInt("memory_rrf_k", 60, 1, 500),
+		MinSimilarity = _config.GetClampedDouble("memory_min_similarity", 0.25, 0, 1),
 		DecayEnabled = _config.GetBoolOr("memory_decay_enabled", true),
 		ArchiveEnabled = _config.GetBoolOr("memory_archive_enabled", true),
-		SourceRetentionThreshold = ReadDouble("memory_source_retention_threshold", 0.75, 0, 1),
-		ArchiveThreshold = ReadDouble("memory_archive_threshold", 0.15, 0, 1),
+		SourceRetentionThreshold = _config.GetClampedDouble("memory_source_retention_threshold", 0.75, 0, 1),
+		ArchiveThreshold = _config.GetClampedDouble("memory_archive_threshold", 0.15, 0, 1),
 		KnowledgeEnabled = _config.GetBoolOr("memory_knowledge_enabled", true),
 		KnowledgeWatch = _config.GetBoolOr("memory_knowledge_watch", true),
 		DebugRetrieval = _config.GetBoolOr("memory_debug_retrieval", false),
@@ -316,20 +316,6 @@ public sealed class MemoryService : IAsyncDisposable
 			}
 			: null;
 		return new MemoryContext {Personal = personal, Atoms = atoms, Knowledge = knowledge, Echoes = echoes, Debug = debug};
-	}
-
-	/// <summary>旧接口只返回可注入的个人记忆文本。</summary>
-	public async Task<IReadOnlyList<string>> GetRelevantMemoriesAsync(string prompt, int limit = 5)
-	{
-		try
-		{
-			MemoryContext context = await BuildContextAsync(prompt, []).ConfigureAwait(false);
-			return context.Personal.Take(Math.Max(0, limit)).Select(item => item.PersonaSummary ?? item.Content).ToList();
-		}
-		catch
-		{
-			return [];
-		}
 	}
 
 	/// <summary>按 fingerprint 批量重建向量，进度持久化后可取消并从游标恢复。</summary>
@@ -668,16 +654,5 @@ public sealed class MemoryService : IAsyncDisposable
 			used += size;
 		}
 		return result;
-	}
-
-	private int ReadInt(string key, int fallback, int min, int max)
-	{
-		return int.TryParse(_config.GetStringOr(key, ""), out int value) ? Math.Clamp(value, min, max) : fallback;
-	}
-
-	private double ReadDouble(string key, double fallback, double min, double max)
-	{
-		return double.TryParse(_config.GetStringOr(key, ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)
-			? Math.Clamp(value, min, max) : fallback;
 	}
 }

@@ -67,23 +67,6 @@ public static class SecretProtector
 	}
 
 	/// <summary>
-	/// 仅供迁移测试与兼容读取使用的 nsec1 加密。
-	/// 新配置不得继续调用此方法。
-	/// </summary>
-	public static string ProtectV1(ReadOnlySpan<byte> key, string plainText)
-	{
-		if (plainText.Length == 0) return plainText;
-		byte[] nonce = RandomNumberGenerator.GetBytes(NonceSize);
-		byte[] plain = Encoding.UTF8.GetBytes(plainText);
-		byte[] cipher = new byte[plain.Length];
-		byte[] tag = new byte[TagSize];
-
-		using AesGcm aes = new(key, TagSize);
-		aes.Encrypt(nonce, plain, cipher, tag);
-		return LegacyNsec1Prefix + EncodePayload(nonce, cipher, tag);
-	}
-
-	/// <summary>
 	/// 解密兼容入口。nsec2 使用空 AAD, 配置存储应使用带 configKey 的重载。
 	/// </summary>
 	public static bool TryUnprotect(ReadOnlySpan<byte> key, string stored, out string plainText)

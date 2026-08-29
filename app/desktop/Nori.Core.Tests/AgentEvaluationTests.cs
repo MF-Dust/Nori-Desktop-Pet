@@ -115,12 +115,6 @@ public sealed class AgentEvaluationTests : IDisposable
 			});
 			return Task.FromResult(response);
 		}
-
-		public Task<IReadOnlyList<string>> FetchModelsAsync(
-			string baseUrl,
-			string apiKey,
-			CancellationToken cancellationToken = default) =>
-			Task.FromResult<IReadOnlyList<string>>(["deterministic-model"]);
 	}
 
 	private sealed class EmbeddingStub : Nori.Core.Embedding.IEmbeddingAdapter

@@ -1,216 +1,16 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Nori.Core.Chat.Adapters;
 
 /// <summary>
-/// OpenAI Chat Completions 协议适配器 (/chat/completions)
+/// OpenAI 兼容模型目录适配器 (/models)
+/// 聊天与流式对话统一走 ChatClientLlmAdapter (Microsoft.Extensions.AI)。
 /// </summary>
-public sealed class OpenAiChatAdapter(HttpClient httpClient) : ILlmAdapter
+public sealed class OpenAiChatAdapter(HttpClient httpClient) : IModelCatalogAdapter
 {
 	private readonly HttpClient _httpClient = httpClient;
-
-	public async Task<string> CompleteAsync(
-		string baseUrl,
-		string apiKey,
-		string model,
-		string systemPrompt,
-		IReadOnlyList<ChatMessageInput> messages,
-		CancellationToken cancellationToken = default)
-	{
-		string endpoint = FormatEndpoint(baseUrl, "chat/completions");
-
-		JsonArray payloadMessages = [new JsonObject {["role"] = "system", ["content"] = systemPrompt}];
-		foreach (ChatMessageInput message in messages)
-		{
-			payloadMessages.Add(new JsonObject {["role"] = message.Role, ["content"] = message.Content});
-		}
-
-		JsonObject payload = new()
-		{
-			["model"] = model,
-			["messages"] = payloadMessages,
-		};
-
-		using HttpRequestMessage request = new(HttpMethod.Post, new Uri(endpoint))
-		{
-			Content = JsonContent.Create(payload),
-		};
-		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-		HttpResponseMessage response;
-		try
-		{
-			response = await _httpClient.SendAsync(request, cancellationToken);
-		}
-		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-		{
-			throw new ChatException($"请求失败: {exception.Message}", exception);
-		}
-
-		using (response)
-		{
-			if (!response.IsSuccessStatusCode)
-			{
-				string errorText = await SafeReadErrorAsync(response, cancellationToken);
-				throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}{(errorText.Length > 0 ? $", {errorText}" : "")}");
-			}
-
-			JsonNode? body;
-			try
-			{
-				body = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-			}
-			catch (JsonException exception)
-			{
-				throw new ChatException($"解析响应失败: {exception.Message}", exception);
-			}
-
-			string? content = null;
-			if (body?["choices"] is JsonArray choices && choices.Count > 0)
-			{
-				content = choices[0]?["message"]?["content"]?.GetValue<string>()
-					?? choices[0]?["text"]?.GetValue<string>();
-			}
-			if (content is null) throw new ChatException("接口响应格式异常: 缺少 choices[0].message.content");
-
-			return content;
-		}
-	}
-
-	public async Task<string> StreamAsync(
-		string baseUrl,
-		string apiKey,
-		string model,
-		string systemPrompt,
-		IReadOnlyList<ChatMessageInput> messages,
-		Action<string> onChunk,
-		Action<LlmUsageInfo>? onUsage = null,
-		CancellationToken cancellationToken = default)
-	{
-		string endpoint = FormatEndpoint(baseUrl, "chat/completions");
-
-		JsonArray payloadMessages = [new JsonObject {["role"] = "system", ["content"] = systemPrompt}];
-		foreach (ChatMessageInput message in messages)
-		{
-			payloadMessages.Add(new JsonObject {["role"] = message.Role, ["content"] = message.Content});
-		}
-
-		JsonObject payload = new()
-		{
-			["model"] = model,
-			["messages"] = payloadMessages,
-			["stream"] = true,
-			["stream_options"] = new JsonObject
-			{
-				["include_usage"] = true,
-			},
-		};
-
-		using HttpRequestMessage request = new(HttpMethod.Post, new Uri(endpoint))
-		{
-			Content = JsonContent.Create(payload),
-		};
-		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-		System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-		HttpResponseMessage response;
-		try
-		{
-			response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-		}
-		catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
-		{
-			throw new ChatException($"请求失败: {exception.Message}", exception);
-		}
-
-		using (response)
-		{
-			if (!response.IsSuccessStatusCode)
-			{
-				string errorText = await SafeReadErrorAsync(response, cancellationToken);
-				throw new ChatException($"接口返回错误: HTTP {(int)response.StatusCode}{(errorText.Length > 0 ? $", {errorText}" : "")}");
-			}
-
-			using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-			using StreamReader reader = new(stream);
-			System.Text.StringBuilder fullText = new();
-			LlmUsageInfo? reportedUsage = null;
-
-			while (!cancellationToken.IsCancellationRequested && await reader.ReadLineAsync(cancellationToken) is { } rawLine)
-			{
-				string line = rawLine.Trim();
-				if (line.Length == 0 || line.StartsWith(':')) continue;
-
-				if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-				{
-					string data = line["data:".Length..].Trim();
-					if (data == "[DONE]") break;
-
-					try
-					{
-						JsonNode? node = JsonNode.Parse(data);
-						if (node?["choices"] is JsonArray choices && choices.Count > 0)
-						{
-							string? chunk = choices[0]?["delta"]?["content"]?.GetValue<string>()
-								?? choices[0]?["text"]?.GetValue<string>();
-							if (!string.IsNullOrEmpty(chunk))
-							{
-								fullText.Append(chunk);
-								onChunk(chunk);
-							}
-						}
-
-						if (node?["usage"] is JsonNode usageNode)
-						{
-							int promptTokens = usageNode["prompt_tokens"]?.GetValue<int>() ?? 0;
-							int completionTokens = usageNode["completion_tokens"]?.GetValue<int>() ?? 0;
-							int totalTokens = usageNode["total_tokens"]?.GetValue<int>() ?? (promptTokens + completionTokens);
-							int cachedTokens = usageNode["prompt_tokens_details"]?["cached_tokens"]?.GetValue<int>() ?? 0;
-
-							reportedUsage = new LlmUsageInfo
-							{
-								PromptTokens = promptTokens,
-								CompletionTokens = completionTokens,
-								TotalTokens = totalTokens,
-								CachedTokens = cachedTokens,
-								DurationMs = stopwatch.ElapsedMilliseconds,
-								Model = model,
-							};
-						}
-					}
-					catch (Exception)
-					{
-						/* 忽略不完整或格式异常分片 */
-					}
-				}
-			}
-
-			stopwatch.Stop();
-
-			// 如果模型端未返回 usage 对象，基于输入字符数提供精准估算
-			if (reportedUsage == null)
-			{
-				int promptChars = systemPrompt.Length + messages.Sum(m => m.Content.Length);
-				int outputChars = fullText.Length;
-				reportedUsage = new LlmUsageInfo
-				{
-					PromptTokens = Math.Max(1, (int)(promptChars / 3.2)),
-					CompletionTokens = Math.Max(1, (int)(outputChars / 3.2)),
-					TotalTokens = Math.Max(2, (int)((promptChars + outputChars) / 3.2)),
-					CachedTokens = 0,
-					DurationMs = stopwatch.ElapsedMilliseconds,
-					Model = model,
-				};
-			}
-
-			onUsage?.Invoke(reportedUsage);
-			return fullText.ToString();
-		}
-	}
 
 	public async Task<IReadOnlyList<string>> FetchModelsAsync(
 		string baseUrl,
@@ -275,12 +75,6 @@ public sealed class OpenAiChatAdapter(HttpClient httpClient) : ILlmAdapter
 	{
 		baseUrl = baseUrl.Trim().TrimEnd('/');
 		if (baseUrl.Length == 0) throw new ChatException("Base URL 不能为空");
-
-		if (path == "chat/completions")
-		{
-			if (baseUrl.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase)) return baseUrl;
-			return $"{baseUrl}/chat/completions";
-		}
 
 		if (path == "models")
 		{

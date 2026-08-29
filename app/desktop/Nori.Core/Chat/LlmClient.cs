@@ -17,19 +17,7 @@ public sealed class LlmClient(HttpClient httpClient)
 		CancellationToken cancellationToken = default)
 	{
 		LlmProvider provider = LlmProviderExtensions.ParseProvider(providerStr);
-		ILlmAdapter adapter = CreateAdapter(provider, _httpClient);
-		return adapter.FetchModelsAsync(baseUrl, apiKey, cancellationToken);
-	}
-
-	/// <summary>
-	/// 兼容老接口 (默认 OpenAI 协议)
-	/// </summary>
-	public Task<IReadOnlyList<string>> FetchModelsAsync(
-		string baseUrl,
-		string apiKey,
-		CancellationToken cancellationToken = default)
-	{
-		return FetchModelsAsync(null, baseUrl, apiKey, cancellationToken);
+		return ProviderModelCatalog.FetchAsync(provider, _httpClient, baseUrl, apiKey, cancellationToken);
 	}
 
 	public static ILlmAdapter CreateAdapter(LlmProvider provider, HttpClient httpClient) =>

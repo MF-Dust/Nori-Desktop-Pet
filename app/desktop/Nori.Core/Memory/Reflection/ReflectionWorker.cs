@@ -1,19 +1,29 @@
+using System.Threading.Channels;
+
 namespace Nori.Core.Memory;
 
-/// <summary>单消费者 Reflection 后台 Worker。</summary>
+/// <summary>
+/// 单消费者 Reflection 后台 Worker。
+/// 容量 1 的丢弃式信号队列：重复触发只保留一次待处理工作。
+/// </summary>
 public sealed class ReflectionWorker : IAsyncDisposable
 {
-	private readonly ReflectionQueue _queue;
+	private static readonly object Signal = new();
 	private readonly ReflectionService _service;
 	private readonly Action<Exception>? _onError;
 	private readonly Action? _onCompleted;
+	private readonly Channel<object> _channel = Channel.CreateBounded<object>(new BoundedChannelOptions(1)
+	{
+		FullMode = BoundedChannelFullMode.DropWrite,
+		SingleReader = true,
+		SingleWriter = false,
+	});
 	private readonly CancellationTokenSource _cts = new();
 	private Task? _worker;
 	private int _started;
 
-	public ReflectionWorker(ReflectionQueue queue, ReflectionService service, Action<Exception>? onError = null, Action? onCompleted = null)
+	public ReflectionWorker(ReflectionService service, Action<Exception>? onError = null, Action? onCompleted = null)
 	{
-		_queue = queue;
 		_service = service;
 		_onError = onError;
 		_onCompleted = onCompleted;
@@ -25,13 +35,13 @@ public sealed class ReflectionWorker : IAsyncDisposable
 		_worker = Task.Run(RunAsync);
 	}
 
-	public bool TryEnqueue(ReflectionJob job) => _queue.TryEnqueue(job);
+	public bool TryEnqueue() => _channel.Writer.TryWrite(Signal);
 
 	private async Task RunAsync()
 	{
 		try
 		{
-			await foreach (ReflectionJob _ in _queue.ReadAllAsync(_cts.Token).ConfigureAwait(false))
+			await foreach (object _ in _channel.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
 			{
 				try
 				{
@@ -52,7 +62,7 @@ public sealed class ReflectionWorker : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		_cts.Cancel();
-		await _queue.DisposeAsync().ConfigureAwait(false);
+		_channel.Writer.TryComplete();
 		if (_worker is not null)
 		{
 			try { await _worker.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }

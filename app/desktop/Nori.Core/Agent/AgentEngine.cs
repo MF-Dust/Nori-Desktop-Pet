@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -197,8 +196,8 @@ public sealed class AgentEngine
 		};
 		ContextBudgetOptions budgetOptions = new()
 		{
-			MaxInputTokens = ReadConfigInt("agent_context_tokens", DefaultContextTokens, 512, 128_000),
-			ReservedOutputTokens = ReadConfigInt("agent_reserved_output_tokens", DefaultReservedOutputTokens, 128, 64_000),
+			MaxInputTokens = _config.GetClampedInt("agent_context_tokens", DefaultContextTokens, 512, 128_000),
+			ReservedOutputTokens = _config.GetClampedInt("agent_reserved_output_tokens", DefaultReservedOutputTokens, 128, 64_000),
 		};
 		ContextBudgetResult initialBudget = ContextBudgeter.Build(
 			promptOptions,
@@ -484,19 +483,6 @@ public sealed class AgentEngine
 			arguments = call.Arguments,
 		}, JsonOptions);
 
-	/// <summary>push 异常隔离: 解析器内部错误不应打断流式回调链</summary>
-	private static IReadOnlyList<AgentProtocolItem> SafePush(StreamingJsonParser parser, string chunk)
-	{
-		try
-		{
-			return parser.Push(chunk);
-		}
-		catch
-		{
-			return [];
-		}
-	}
-
 	private void WriteTrace(
 		string sessionId,
 		string phase,
@@ -528,13 +514,6 @@ public sealed class AgentEngine
 			ChatException => "chat",
 			_ => "exception",
 		};
-	}
-
-	private int ReadConfigInt(string key, int fallback, int min, int max)
-	{
-		return int.TryParse(_config.GetStringOr(key, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value)
-			? Math.Clamp(value, min, max)
-			: fallback;
 	}
 }
 

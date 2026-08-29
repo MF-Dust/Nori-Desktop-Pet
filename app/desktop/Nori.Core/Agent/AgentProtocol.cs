@@ -42,7 +42,6 @@ public enum AgentRunState
 	Thinking,
 	Streaming,
 	ToolExecuting,
-	WaitingApproval,
 	Speaking,
 	Error,
 }

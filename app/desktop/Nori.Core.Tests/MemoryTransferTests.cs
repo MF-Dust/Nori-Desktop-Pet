@@ -142,7 +142,7 @@ public sealed class MemoryTransferTests : IDisposable
 		MemoryAtom atom = Assert.Single(_store.GetAtoms(imported.Id));
 		Assert.Equal("喜欢夜间散步", atom.Content);
 		Assert.Equal(MemoryStatus.Active, atom.Status);
-		Assert.Contains(_store.Search("夜间散步"), item => item.Id == imported.Id);
+		Assert.Contains(_store.SearchKeyword("夜间散步"), hit => hit.MemoryId == imported.Id);
 		Assert.Contains(_store.SearchAtomKeyword("夜间散步"), hit => hit.MemoryId == atom.Id);
 		Assert.Single(queued);
 		Assert.Equal(imported.Id, queued[0].Id);
@@ -179,8 +179,8 @@ public sealed class MemoryTransferTests : IDisposable
 		Assert.Equal(MemoryTransferService.ImportSource, updated.Source);
 		Assert.Equal("active", updated.Status);
 		Assert.Equal("同一语义", Assert.Single(_store.GetAtoms(existing.Id)).Content);
-		Assert.Empty(_store.Search("旧内容"));
-		Assert.Contains(_store.Search("新内容"), item => item.Id == existing.Id);
+		Assert.Empty(_store.SearchKeyword("旧内容"));
+		Assert.Contains(_store.SearchKeyword("新内容"), hit => hit.MemoryId == existing.Id);
 
 		MemoryTransferPreview copyPreview = _service.Preview(CreateDocument(incoming));
 		MemoryTransferCommitResult copy = _service.Commit(copyPreview.PreviewToken, MemoryTransferConflictStrategy.CreateCopy);
