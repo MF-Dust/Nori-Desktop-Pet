@@ -318,6 +318,14 @@ public sealed class MemoryService : IAsyncDisposable
 		return new MemoryContext {Personal = personal, Atoms = atoms, Knowledge = knowledge, Echoes = echoes, Debug = debug};
 	}
 
+	/// <summary>重嵌入连续失败多少轮后才升级为 Error 遥测; 单轮失败只降级为诊断日志。</summary>
+	public const int ReembedEscalationThreshold = 5;
+
+	/// <summary>嵌入批处理恢复期的低噪声诊断回调 (severity, message); 宿主接到日志器, 不进 Error 遥测。</summary>
+	public Action<string, string>? EmbeddingDiagnostic { get; set; }
+
+	private int _consecutiveReembedFailures;
+
 	/// <summary>按 fingerprint 批量重建向量，进度持久化后可取消并从游标恢复。</summary>
 	public async Task<int> ReembedAllAsync(CancellationToken cancellationToken = default, bool force = true)
 	{
@@ -348,12 +356,22 @@ public sealed class MemoryService : IAsyncDisposable
 				if (completed is null)
 				{
 					// 游标停在上一页, 下次运行会重新补偿这一批, 不把失败项推进到永久盲区.
-					throw new InvalidOperationException("向量批处理失败, 待处理记忆将在下次重试");
+					int failures = Interlocked.Increment(ref _consecutiveReembedFailures);
+					if (failures >= ReembedEscalationThreshold)
+					{
+						throw new InvalidOperationException($"向量批处理连续 {failures} 轮失败, 待处理记忆将在下次重试");
+					}
+					// 单轮失败降级: 不抛错 (避免每次都成为 Error 遥测), 状态经 EmbeddingQueueStatus
+					// (Degraded) 暴露给前端, 连续多轮无进度才升级为 Error。
+					EmbeddingDiagnostic?.Invoke("warn",
+						$"向量批处理失败, 待处理记忆将在下次重试 (pending_batch_count={Volatile.Read(ref _queueDepth)}, 连续失败={failures})");
+					return count;
 				}
 				count += completed.Value;
 				afterId = page[^1].Id;
 				SaveReembedCursor(afterId);
 			}
+			Interlocked.Exchange(ref _consecutiveReembedFailures, 0);
 			SaveReembedCursor(0);
 			return count;
 		}

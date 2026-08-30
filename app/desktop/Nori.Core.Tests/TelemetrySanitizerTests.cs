@@ -61,6 +61,9 @@ public sealed class TelemetrySanitizerTests
 			["user_content"] = "聊天正文",
 			["api_key"] = "sk-secret",
 			["PLUGIN_ID"] = "cloud-music",
+			["hresult"] = "0x800711C7",
+			["assembly"] = "Blocked.dll",
+			["type_name"] = "Some.Plugin.MissingType",
 		};
 
 		IReadOnlyDictionary<string, string> safe = TelemetrySanitizer.NormalizeTags(tags);
@@ -68,6 +71,9 @@ public sealed class TelemetrySanitizerTests
 		Assert.Equal("timeout", safe["failure_kind"]);
 		Assert.Equal("bridge.test", safe["operation"]);
 		Assert.Equal("cloud-music", safe["plugin_id"]);
+		Assert.Equal("0x800711c7", safe["hresult"]);
+		Assert.Equal("blocked.dll", safe["assembly"]);
+		Assert.Equal("some.plugin.missingtype", safe["type_name"]);
 		Assert.False(safe.ContainsKey("user_content"));
 		Assert.False(safe.ContainsKey("api_key"));
 	}

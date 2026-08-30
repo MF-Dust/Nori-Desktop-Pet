@@ -644,7 +644,7 @@ internal sealed class PluginManager : IAsyncDisposable
 		handle.StopSource = null;
 		try { (loadContext ?? handle.LoadContext)?.Unload(); } catch { handle.State = PluginLifecycleState.PendingRestart; }
 		handle.LoadContext = null;
-		Report(exception);
+		Report(exception, handle);
 	}
 
 	private bool UnloadContext(PluginHandle handle)
@@ -659,7 +659,7 @@ internal sealed class PluginManager : IAsyncDisposable
 			handle.State = PluginLifecycleState.PendingRestart;
 			handle.ErrorCode = PluginErrorCodes.UnloadPendingRestart;
 			handle.ErrorMessage = "插件程序集无法卸载，需要重启";
-			Report(new PluginException(PluginErrorCodes.UnloadPendingRestart, "插件程序集无法卸载", exception));
+			Report(new PluginException(PluginErrorCodes.UnloadPendingRestart, "插件程序集无法卸载", exception), handle);
 			return false;
 		}
 		context = null;
@@ -914,9 +914,18 @@ internal sealed class PluginManager : IAsyncDisposable
 		return Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)), comparison);
 	}
 
-	private void Report(PluginException exception)
+	private void Report(PluginException exception, PluginHandle? handle = null)
 	{
-		try { _options.OnError?.Invoke(exception); } catch { }
+		try
+		{
+			_options.OnError?.Invoke(PluginDiagnostics.Attach(
+				exception,
+				handle?.Manifest.Id,
+				handle?.Manifest.Version,
+				$"{_options.HostApiVersion.Major}.{_options.HostApiVersion.Minor}",
+				_options.HostVersion.ToString()));
+		}
+		catch { }
 	}
 
 	private void EnsureNotDisposed()

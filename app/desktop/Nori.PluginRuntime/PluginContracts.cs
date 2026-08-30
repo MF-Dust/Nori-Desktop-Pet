@@ -163,6 +163,29 @@ public class PluginException : Exception
 	}
 
 	public string Code { get; }
+
+	// ---- 宿主侧装配的脱敏诊断 (仅用于日志与遥测标签, 不含完整安装路径/用户目录/私有配置) ----
+
+	/// <summary>失败插件的 manifest ID。</summary>
+	public string? DiagnosticPluginId { get; internal set; }
+
+	/// <summary>失败插件的 manifest 版本。</summary>
+	public string? DiagnosticPluginVersion { get; internal set; }
+
+	/// <summary>宿主 API 版本 (major.minor)。</summary>
+	public string? DiagnosticHostApiVersion { get; internal set; }
+
+	/// <summary>宿主产品版本。</summary>
+	public string? DiagnosticHostVersion { get; internal set; }
+
+	/// <summary>根因异常类型全名 (不含消息正文)。</summary>
+	public string? DiagnosticExceptionType { get; internal set; }
+
+	/// <summary>TypeLoadException.TypeName (截断, 仅类型名)。</summary>
+	public string? DiagnosticTypeLoadTypeName { get; internal set; }
+
+	/// <summary>FileLoadException 涉及的程序集文件名 (仅文件名, 非完整路径)。</summary>
+	public string? DiagnosticAssemblyName { get; internal set; }
 }
 
 /// <summary>插件 WebView 能力。</summary>

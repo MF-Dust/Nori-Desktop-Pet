@@ -23,6 +23,9 @@ public static class TelemetrySanitizer
 		"plugin_version",
 		"host_api",
 		"exception_kind",
+		"hresult",
+		"assembly",
+		"type_name",
 	};
 
 	/// <summary>把操作名压缩为不含用户输入的 ASCII 标识。</summary>

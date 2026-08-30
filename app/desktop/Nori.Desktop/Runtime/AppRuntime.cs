@@ -157,6 +157,11 @@ public sealed class AppRuntime : IAsyncDisposable
 		services.Automation.Changed += OnAutomationChanged;
 
 		Memory = new MemoryService(services.Memory, services.Embedding, config, startBackgroundWorker: !services.SafeMode);
+		// 嵌入批处理恢复期的单轮失败降级为 warn 日志, 连续多轮失败才由 MemoryService 升级为 Error 遥测。
+		Memory.EmbeddingDiagnostic = (severity, message) =>
+		{
+			try { services.Logger.Write(LogSource.Backend, severity, message); } catch { }
+		};
 		Knowledge = new KnowledgeService(services.Database, Memory, config, services.Paths.KnowledgePath);
 		Knowledge.StatusChanged = () => InvalidateSnapshot("memory");
 		Memory.Knowledge = Knowledge;

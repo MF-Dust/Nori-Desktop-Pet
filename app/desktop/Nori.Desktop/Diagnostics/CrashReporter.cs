@@ -101,7 +101,8 @@ public static class CrashReporter
 	/// false 表示运行期兜底: 关闭窗口可继续运行</param>
 	public static void Report(Exception exception, bool critical = false)
 	{
-		_telemetry.CaptureException(exception, critical ? "startup_failure" : "unhandled_exception", handled: false, terminal: critical);
+		_telemetry.CaptureException(exception, critical ? "startup_failure" : "unhandled_exception",
+			handled: false, terminal: critical, tags: LoadFailureTags(exception));
 		WriteLogSafe(critical
 			? $"致命异常: {SensitiveDataRedactor.ExceptionSummary(exception)}"
 			: $"未处理异常: {SensitiveDataRedactor.ExceptionSummary(exception)}");
@@ -191,6 +192,38 @@ public static class CrashReporter
 	}
 
 	// ---- 内部实现 ----
+
+	/// <summary>
+	/// 加载类失败的安全诊断标签 (NORI-1X / NORI-24): 只含 HRESULT、程序集文件名与类型名,
+	/// 不上传 FileLoadException.FileName 的完整路径; 非加载类失败返回 null 不加标签。
+	/// </summary>
+	internal static IReadOnlyDictionary<string, string>? LoadFailureTags(Exception exception)
+	{
+		for (Exception? current = exception; current is not null; current = current.InnerException)
+		{
+			if (current is FileLoadException fileLoad)
+			{
+				Dictionary<string, string> tags = new()
+				{
+					["exception_kind"] = "file_load",
+					["hresult"] = $"0x{current.HResult:X8}",
+				};
+				if (!string.IsNullOrWhiteSpace(fileLoad.FileName)) tags["assembly"] = Path.GetFileName(fileLoad.FileName);
+				return tags;
+			}
+			if (current is TypeLoadException typeLoad)
+			{
+				Dictionary<string, string> tags = new()
+				{
+					["exception_kind"] = "type_load",
+					["hresult"] = $"0x{current.HResult:X8}",
+				};
+				if (!string.IsNullOrWhiteSpace(typeLoad.TypeName)) tags["type_name"] = typeLoad.TypeName!;
+				return tags;
+			}
+		}
+		return null;
+	}
 
 	private static void OnDomainUnhandledException(object? sender, UnhandledExceptionEventArgs eventArgs)
 	{

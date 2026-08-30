@@ -34,6 +34,19 @@ const formatError = (error: unknown): string => {
 }
 
 /**
+ * 构造只有稳定 name 的合成 Error (不含原始正文)。
+ *
+ * window.onerror 收到的非 Error 值 (字符串 throw、宿主包装对象) 借此获得可分组
+ * 的错误名, 不把原始值上传遥测。
+ */
+const createSyntheticError = (name: string): Error => {
+	const SAFE_NAME = /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(name) ? name : "WindowError"
+	const error = new Error("window error")
+	error.name = SAFE_NAME
+	return error
+}
+
+/**
  * 转发到宿主日志; 同一首行消息限流, 超出后静默丢弃
  */
 const forward = async (message: string): Promise<void> => {
@@ -67,13 +80,15 @@ export const installErrorHandlers = (app: App): void => {
 		const TARGET = event.target
 		const RESOURCE = TARGET instanceof HTMLScriptElement || TARGET instanceof HTMLLinkElement || TARGET instanceof HTMLImageElement
 		if (RESOURCE) {
-			void forward(`[resource.error] ${TARGET.tagName.toLowerCase()}`)
+			void forward(`[resource.error:${TARGET.tagName.toLowerCase()}] ${TARGET instanceof HTMLLinkElement ? "link" : TARGET instanceof HTMLImageElement ? "img" : "script"}`)
 			return
 		}
-		const ERROR = event.error instanceof Error ? event.error : new Error("window error")
+		// 保留稳定的 error.name 供遥测分组, 避免所有非 Error 值都归成同一类 "Error"。
+		const ERROR_NAME = event.error instanceof Error && event.error.name ? event.error.name : "WindowError"
+		const ERROR = event.error instanceof Error ? event.error : createSyntheticError(ERROR_NAME)
 		CaptureError(ERROR, "window.error")
 		const DETAIL = event.error instanceof Error ? `\n${formatError(event.error)}` : ""
-		void forward(`[window.onerror] ${RedactErrorText(event.message || "window error")}${DETAIL}`)
+		void forward(`[window.onerror:${ERROR_NAME}] ${RedactErrorText(event.message || "window error")}${DETAIL}`)
 	})
 	// 未处理的 Promise 拒绝
 	window.addEventListener("unhandledrejection", (event) => {

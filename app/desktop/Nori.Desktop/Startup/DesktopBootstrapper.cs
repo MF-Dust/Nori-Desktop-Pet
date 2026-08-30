@@ -178,7 +178,14 @@ internal sealed class DesktopBootstrapper
 			AssetUriFactory = (pluginId, path) => assetServer is { } server
 				? new Uri(server.PublicUrl("plugins", $"{pluginId}/{path}"), UriKind.RelativeOrAbsolute)
 				: throw new InvalidOperationException("插件资源服务尚未启动"),
-			OnError = exception => logger.Write(LogSource.Backend, "error", $"插件 {exception.Code}: {exception.Message}"),
+			OnError = exception =>
+			{
+				// 统一分类: 预期失败只记 warn, 程序缺陷 (如 TypeLoad/激活失败) 上报遥测并带安全标签。
+				BridgeFailure failure = BridgeFailureClassifier.Classify(exception);
+				if (failure.Telemetry)
+					telemetry.CaptureException(exception, "plugin.failure", tags: PluginFailureTags(exception, failure.Tags));
+				logger.Write(LogSource.Backend, failure.LogLevel, $"插件 {exception.Code}: {exception.Message}");
+			},
 			OnLog = (descriptor, message, exception) => logger.Write(LogSource.Backend, "info", $"插件 [{descriptor.Id}@{descriptor.Version}] {message}"),
 		});
 		_startupPluginRuntime = pluginRuntime;
@@ -373,6 +380,22 @@ internal sealed class DesktopBootstrapper
 		string raw = Nori.Core.ProductVersion.Current.TrimStart('v', 'V');
 		string core = raw.Split(['-', '+'], 2, StringSplitOptions.None)[0];
 		return PluginVersion.TryParse(core, out PluginVersion version) ? version : new PluginVersion(1, 0, 0);
+	}
+
+	/// <summary>插件失败遥测标签: 白名单键 + 宿主装配的脱敏诊断字段 (值在发送边界再归一化)。</summary>
+	private static IReadOnlyDictionary<string, string> PluginFailureTags(
+		PluginException exception, IReadOnlyDictionary<string, string>? failureTags)
+	{
+		Dictionary<string, string> tags = new();
+		if (failureTags is not null)
+		{
+			foreach ((string key, string value) in failureTags) tags[key] = value;
+		}
+		if (!string.IsNullOrWhiteSpace(exception.DiagnosticPluginId)) tags["plugin_id"] = exception.DiagnosticPluginId!;
+		if (!string.IsNullOrWhiteSpace(exception.DiagnosticPluginVersion)) tags["plugin_version"] = exception.DiagnosticPluginVersion!;
+		if (!string.IsNullOrWhiteSpace(exception.DiagnosticHostApiVersion)) tags["host_api"] = exception.DiagnosticHostApiVersion!;
+		if (!string.IsNullOrWhiteSpace(exception.DiagnosticExceptionType)) tags["exception_kind"] = exception.DiagnosticExceptionType!;
+		return tags;
 	}
 
 	/// <summary>
