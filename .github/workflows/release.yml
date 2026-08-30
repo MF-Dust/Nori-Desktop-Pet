@@ -196,6 +196,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: 缓存 NuGet 全局包
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('app/desktop/**/*.csproj', 'app/desktop/Directory.Build.props', 'app/desktop/version.props', 'app/desktop/Nori.slnx') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
       - name: 安装前端依赖
         run: pnpm install --frozen-lockfile
       - name: 一方 TODO/FIXME 门禁（可选）
@@ -280,6 +287,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: 缓存 NuGet 全局包
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('app/desktop/**/*.csproj', 'app/desktop/Directory.Build.props', 'app/desktop/version.props', 'app/desktop/Nori.slnx') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
       - name: 后端门 · 跨平台构建
         run: dotnet build Nori.slnx --configuration Release
       - name: 后端门 · 跨平台单元测试
@@ -485,6 +499,14 @@ jobs:
         if: env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != '' && env.SENTRY_PROJECT_NATIVE != ''
         with:
           dotnet-version: "10.0.x"
+      - name: 缓存 NuGet 全局包
+        if: env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != '' && env.SENTRY_PROJECT_NATIVE != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('app/desktop/**/*.csproj', 'app/desktop/Directory.Build.props', 'app/desktop/version.props', 'app/desktop/Nori.slnx') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
       - name: 创建或复用并完成 Native release
         if: env.SENTRY_AUTH_TOKEN != '' && env.SENTRY_ORG != '' && env.SENTRY_PROJECT_NATIVE != ''
         shell: bash
