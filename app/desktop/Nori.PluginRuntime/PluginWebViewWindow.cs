@@ -7,6 +7,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Nori.Core.Logging;
 using Nori.Core.Platform;
+using Nori.Core.WebView;
 
 namespace Nori.PluginRuntime;
 
@@ -38,9 +39,8 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 	bool IPluginBridgeSource.IsVisible => Volatile.Read(ref _visible) == 1;
 
 	private readonly NativeWebView _webView;
+	private readonly WebViewScriptDispatcher _scriptDispatcher;
 	private readonly string _webViewDataRoot;
-	private readonly List<string> _pendingScripts = [];
-	private bool _ready;
 	private int _visible;
 	private CancellationTokenRegistration _revocationRegistration;
 	private int _isClosingOrClosed;
@@ -104,6 +104,7 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 		_webView.WebMessageReceived += OnWebMessageReceived;
 		_webView.NavigationCompleted += OnNavigationCompleted;
 		Content = _webView;
+		_scriptDispatcher = new WebViewScriptDispatcher(script => _webView.InvokeScript(script));
 
 		// 导航至插件入口 URL
 		_webView.Source = new Uri(options.EntryPoint, UriKind.RelativeOrAbsolute);
@@ -209,6 +210,8 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 
 	/// <summary>
 	/// 将 JSON 信封发送至插件 Web 视图的 __noriPlugin 命名空间
+	///
+	/// 未 ready 时排队, 窗口销毁后丢弃, 派发任务由 dispatcher 统一观察。
 	/// </summary>
 	private void Dispatch(string envelopeJson)
 	{
@@ -219,13 +222,7 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 			return;
 		}
 
-		if (!_ready)
-		{
-			_pendingScripts.Add(script);
-			return;
-		}
-
-		_ = _webView.InvokeScript(script);
+		_scriptDispatcher.Dispatch(script);
 	}
 
 	private void OnEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
@@ -250,12 +247,7 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 			return;
 		}
 
-		_ready = true;
-		foreach (string script in _pendingScripts)
-		{
-			_ = _webView.InvokeScript(script);
-		}
-		_pendingScripts.Clear();
+		_scriptDispatcher.MarkReady();
 	}
 
 	private void OnPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs args)
@@ -268,6 +260,7 @@ internal sealed class PluginWebViewWindow : Window, IPluginWebViewWindow, IPlugi
 	{
 		Closed -= OnClosed;
 		PropertyChanged -= OnPropertyChanged;
+		_scriptDispatcher.Close();
 		Volatile.Write(ref _visible, 0);
 		_revocationRegistration.Dispose();
 		WindowClosed?.Invoke(this);

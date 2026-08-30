@@ -7,6 +7,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Nori.Core.Data;
 using Nori.Core.Platform;
+using Nori.Core.WebView;
 using Nori.Desktop.Bridge;
 
 namespace Nori.Desktop.Windows;
@@ -34,8 +35,7 @@ public sealed class NoriWindow : Window, IBridgeSource
 
 	private readonly NativeWebView _webView;
 	private readonly NoriBridge _bridge;
-	private bool _ready;
-	private readonly List<string> _pendingScripts = [];
+	private readonly WebViewScriptDispatcher _scriptDispatcher;
 	private readonly DispatcherTimer _metricsTimer;
 	private readonly AppStoragePaths _storagePaths;
 
@@ -71,6 +71,7 @@ public sealed class NoriWindow : Window, IBridgeSource
 		_webView.WebMessageReceived += OnWebMessageReceived;
 		_webView.NavigationCompleted += OnNavigationCompleted;
 		Content = _webView;
+		_scriptDispatcher = new WebViewScriptDispatcher(script => _webView.InvokeScript(script));
 
 		_webView.Source = new Uri(url);
 
@@ -85,9 +86,19 @@ public sealed class NoriWindow : Window, IBridgeSource
 		};
 		PositionChanged += (_, _) =>
 		{
+			if (_scriptDispatcher.IsClosed) return;
 			if (!_metricsTimer.IsEnabled) _metricsTimer.Start();
 		};
-		ScalingChanged += (_, _) => PostMetrics();
+		ScalingChanged += (_, _) =>
+		{
+			if (!_scriptDispatcher.IsClosed) PostMetrics();
+		};
+		// 窗口真正销毁时停掉度量定时器并停止一切脚本派发 (隐藏不关闭的窗口不受影响)。
+		Closed += (_, _) =>
+		{
+			_metricsTimer.Stop();
+			_scriptDispatcher.Close();
+		};
 	}
 
 	/// <summary>
@@ -135,7 +146,8 @@ public sealed class NoriWindow : Window, IBridgeSource
 	/// <summary>
 	/// 把 JSON 信封送进页面
 	///
-	/// 再序列化一次成 JS 字符串字面量, 页面里 JSON.parse 回来 —— 双层编码, 杜绝转义问题
+	/// 再序列化一次成 JS 字符串字面量, 页面里 JSON.parse 回来 —— 双层编码, 杜绝转义问题。
+	/// 未 ready 时排队, 窗口销毁后丢弃, 派发任务由 dispatcher 统一观察。
 	/// </summary>
 	private void Dispatch(string envelopeJson)
 	{
@@ -145,13 +157,7 @@ public sealed class NoriWindow : Window, IBridgeSource
 			Dispatcher.UIThread.Post(() => Dispatch(envelopeJson));
 			return;
 		}
-		// 导航完成前发的事件先攒着, 否则页面还没定义 __nori
-		if (!_ready)
-		{
-			_pendingScripts.Add(script);
-			return;
-		}
-		_ = _webView.InvokeScript(script);
+		_scriptDispatcher.Dispatch(script);
 	}
 
 	private void OnEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
@@ -175,9 +181,7 @@ public sealed class NoriWindow : Window, IBridgeSource
 			Dispatcher.UIThread.Post(() => OnNavigationCompleted(sender, e));
 			return;
 		}
-		_ready = true;
-		foreach (string script in _pendingScripts) _ = _webView.InvokeScript(script);
-		_pendingScripts.Clear();
+		_scriptDispatcher.MarkReady();
 		// 页面就绪后先给一份度量, 免得首次调用还要往返
 		PostMetrics();
 	}

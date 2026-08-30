@@ -1515,6 +1515,8 @@ public sealed class AppRuntime : IAsyncDisposable
 		// Voice.Dispose 会逆向释放 _playback; 录音票据要单独作废
 		try { _recorder.Dispose(); } catch { }
 		try { Voice.Dispose(); } catch { }
+		// 音频宿主通道最后解除: 让所有 WaitUntilReadyAsync 等待者立即结束而不是等超时
+		try { _audioChannel.Dispose(); } catch { }
 		try { if (Services.Automation is not null) await Services.Automation.DisposeAsync().ConfigureAwait(false); } catch { }
 		_petInteractionGate.Dispose();
 		_pluginToolsRefreshTimer?.Dispose();

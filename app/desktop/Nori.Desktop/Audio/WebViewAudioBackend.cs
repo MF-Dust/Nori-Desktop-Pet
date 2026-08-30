@@ -236,8 +236,30 @@ public sealed class WebViewMicrophoneRecorder(MediaExchange media, Func<string, 
 	public async Task<RecordedAudio> StopAsync(CancellationToken cancellationToken = default)
 	{
 		string token;
-		lock (_gate) token = _token;
+		TaskCompletionSource<bool>? pendingStart = null;
+		bool startPending = false;
+		lock (_gate)
+		{
+			token = _token;
+			pendingStart = _startCompletion;
+			startPending = pendingStart is { Task.IsCompleted: false };
+			if (token.Length > 0 && startPending)
+			{
+				// 录音尚未就绪就停止: 先摘除当前会话, 走"空录音"分支而不是等上传。
+				_token = "";
+				_startCompletion = null;
+			}
+		}
 		if (token.Length == 0) return new RecordedAudio([], "audio/wav", "speech.wav");
+
+		if (startPending)
+		{
+			// 作废票据并解除 StartAsync 的等待; 前端随后对旧 token 的回报都会因 token 不匹配被忽略。
+			media.CancelUpload(token);
+			pendingStart?.TrySetCanceled();
+			try { channel.Post("nori:audio-record-stop", new {token}); } catch { }
+			return new RecordedAudio([], "audio/wav", "speech.wav");
+		}
 
 		try
 		{
@@ -307,13 +329,17 @@ public sealed class WebViewMicrophoneRecorder(MediaExchange media, Func<string, 
 
 	public void Dispose()
 	{
+		TaskCompletionSource<bool>? started;
 		string token;
 		lock (_gate)
 		{
 			token = _token;
 			_token = "";
+			started = _startCompletion;
 			_startCompletion = null;
 		}
+		// 解除还在 StartAsync 中等待权限回报的等待者, 避免Dispose后等到超时。
+		started?.TrySetCanceled();
 		if (token.Length > 0) media.CancelUpload(token);
 	}
 }
@@ -322,21 +348,40 @@ public sealed class WebViewMicrophoneRecorder(MediaExchange media, Func<string, 
 /// 指向某个 WebView 窗口的音频事件通道。
 /// 音频宿主固定为 main 窗口：它关窗只隐藏、进程内始终存在，因此隐藏时依然能放声。
 /// </summary>
-public sealed class AudioHostChannel(Func<Nori.Desktop.Windows.NoriWindow?> resolve) : IAudioHostChannel
+public class AudioHostChannel(Func<Nori.Desktop.Windows.NoriWindow?> resolve, TimeSpan? readyTimeout = null) : IAudioHostChannel, IDisposable
 {
+	/// <summary>等待宿主页面握手完成的默认上限; 超过视为宿主异常而不是永远等待。</summary>
+	public static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(15);
+
+	private readonly object _gate = new();
+	private readonly TimeSpan _readyTimeout = readyTimeout ?? ReadyTimeout;
 	private readonly TaskCompletionSource<bool> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+	private bool _disposed;
 
 	/// <inheritdoc />
-	public bool IsAvailable => resolve() is not null;
+	public virtual bool IsAvailable => !Volatile.Read(ref _disposed) && resolve() is not null;
 
 	/// <inheritdoc />
 	public bool IsReady => IsAvailable && _ready.Task.IsCompletedSuccessfully;
 
-	/// <inheritdoc />
-	public Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
+	/// <summary>
+	/// 真正等待宿主页面完成 audio_host_ready 握手。
+	///
+	/// 宿主窗口不存在时立刻给出明确 unavailable; 宿主存在但页面未就绪时阻塞等待,
+	/// 直到 MarkReady、取消、Dispose 或超时。
+	/// </summary>
+	public async Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
 	{
-		if (!IsAvailable || !IsReady) throw new InvalidOperationException("音频宿主窗口尚未就绪");
-		return Task.CompletedTask;
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (!IsAvailable) throw new InvalidOperationException("音频宿主窗口不可用");
+		try
+		{
+			await _ready.Task.WaitAsync(_readyTimeout, cancellationToken).ConfigureAwait(false);
+		}
+		catch (TimeoutException)
+		{
+			throw new TimeoutException("等待音频宿主就绪超时");
+		}
 	}
 
 	/// <inheritdoc />
@@ -345,8 +390,20 @@ public sealed class AudioHostChannel(Func<Nori.Desktop.Windows.NoriWindow?> reso
 	/// <inheritdoc />
 	public void Post(string name, object? payload)
 	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
 		Nori.Desktop.Windows.NoriWindow? window = resolve()
 			?? throw new InvalidOperationException("音频宿主窗口不可用");
 		window.PostEvent(name, payload);
+	}
+
+	/// <summary>解除所有等待者并拒绝后续使用; 由应用关闭路径调用。</summary>
+	public virtual void Dispose()
+	{
+		lock (_gate)
+		{
+			if (_disposed) return;
+			_disposed = true;
+		}
+		_ready.TrySetCanceled();
 	}
 }
