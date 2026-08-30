@@ -101,8 +101,12 @@ internal static class ResourcePathSafety
 
 		try
 		{
-			FileSystemInfo info = new FileInfo(path);
-			if (info.LinkTarget is not null || File.ResolveLinkTarget(path, returnFinalTarget: false) is not null)
+			// 目录段必须用 DirectoryInfo: File.ResolveLinkTarget 对目录会抛 IOException (NORI-1T/1S),
+			// 链接判定语义与文件完全一致, 仅 API 按条目类型区分。
+			FileSystemInfo info = (attributes & FileAttributes.Directory) != 0
+				? new DirectoryInfo(path)
+				: new FileInfo(path);
+			if (info.LinkTarget is not null || info.ResolveLinkTarget(returnFinalTarget: false) is not null)
 			{
 				throw new ResourceException($"资源路径包含符号链接或 reparse point: {path}");
 			}
