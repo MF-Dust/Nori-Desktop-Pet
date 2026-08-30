@@ -11,6 +11,19 @@ namespace Nori.Core.Telemetry;
 public static class TelemetrySanitizer
 {
 	private const int MaxOperationLength = 80;
+	private const int MaxTagLength = 64;
+
+	/// <summary>允许随异常上传的标签键; 白名单外的键在发送边界一律丢弃。</summary>
+	private static readonly HashSet<string> SafeTagKeys = new(StringComparer.Ordinal)
+	{
+		"operation",
+		"provider",
+		"failure_kind",
+		"plugin_id",
+		"plugin_version",
+		"host_api",
+		"exception_kind",
+	};
 
 	/// <summary>把操作名压缩为不含用户输入的 ASCII 标识。</summary>
 	public static string NormalizeOperation(string? operation)
@@ -21,6 +34,36 @@ public static class TelemetrySanitizer
 			char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '-' ? character : '_').ToArray()).Trim('_');
 		if (normalized.Length == 0) return "operation";
 		return normalized.Length > MaxOperationLength ? normalized[..MaxOperationLength] : normalized;
+	}
+
+	/// <summary>
+	/// 把标签值压缩为小写稳定标识, 不保留空白与用户正文。
+	///
+	/// 标签值可能来自插件 ID 等外部输入, 只允许固定的安全字符, 供 tag 白名单过滤使用。
+	/// </summary>
+	public static string NormalizeTag(string? value)
+	{
+		if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+		string normalized = new string(value.Trim().Select(character =>
+			char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '-' ? char.ToLowerInvariant(character) : '_').ToArray()).Trim('_');
+		return normalized.Length > MaxTagLength ? normalized[..MaxTagLength] : normalized;
+	}
+
+	/// <summary>按白名单过滤并归一化标签; 键或值非法的条目直接丢弃。</summary>
+	public static IReadOnlyDictionary<string, string> NormalizeTags(IReadOnlyDictionary<string, string>? tags)
+	{
+		if (tags is null || tags.Count == 0) return new Dictionary<string, string>();
+
+		Dictionary<string, string> safe = new(StringComparer.Ordinal);
+		foreach ((string rawKey, string rawValue) in tags)
+		{
+			string key = NormalizeTag(rawKey);
+			string value = NormalizeTag(rawValue);
+			if (key.Length == 0 || value.Length == 0 || !SafeTagKeys.Contains(key) || safe.ContainsKey(key)) continue;
+			safe[key] = value;
+		}
+		return safe;
 	}
 
 	/// <summary>

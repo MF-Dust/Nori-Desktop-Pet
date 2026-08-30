@@ -67,18 +67,26 @@ public sealed class SentryTelemetry : ITelemetry
 		}
 	}
 
-	public void CaptureException(Exception exception, string operation, bool unhandled = false, bool crashed = false)
+	/// <summary>
+	/// 测试观测缝: 在 BeforeSend 边界观察最终事件, 返回 null 即丢弃 (不会出网)。
+	/// 仅测试代码允许设置; 生产路径保持 null。
+	/// </summary>
+	internal Func<SentryEvent, SentryEvent?>? TestBeforeSend { get; set; }
+
+	public void CaptureException(Exception exception, string operation, bool handled = true, bool terminal = false, IReadOnlyDictionary<string, string>? tags = null)
 	{
 		if (exception is null) return;
 		lock (_gate)
 		{
 			if (!_enabled || _disposed) return;
 			string normalizedOperation = TelemetrySanitizer.NormalizeOperation(operation);
+			IReadOnlyDictionary<string, string> safeTags = TelemetrySanitizer.NormalizeTags(tags);
 			try
 			{
-				SentrySdk.CaptureException(exception, unhandled, crashed, scope =>
+				SentrySdk.CaptureException(exception, handled, terminal, scope =>
 				{
 					scope.SetTag("operation", normalizedOperation);
+					foreach ((string key, string value) in safeTags) scope.SetTag(key, value);
 				});
 			}
 			catch
@@ -160,7 +168,7 @@ public sealed class SentryTelemetry : ITelemetry
 		options.SetBeforeBreadcrumb(DropBreadcrumb);
 	}
 
-	private SentryEvent ScrubEvent(SentryEvent current, SentryHint hint)
+	private SentryEvent? ScrubEvent(SentryEvent current, SentryHint hint)
 	{
 		current.Request = null!;
 		current.User = null!;
@@ -169,10 +177,7 @@ public sealed class SentryTelemetry : ITelemetry
 		current.Message = null!;
 		current.ServerName = null!;
 		current.TransactionName = TelemetrySanitizer.NormalizeOperation(current.TransactionName);
-		if (current.Tags is not null)
-		{
-			foreach (string key in current.Tags.Keys.ToArray()) current.UnsetTag(key);
-		}
+		PreserveSafeTags(current);
 		current.SetTag("runtime", "native");
 		current.SetTag("os", OperatingSystemName());
 		current.SetTag("session_type", SessionType());
@@ -192,7 +197,26 @@ public sealed class SentryTelemetry : ITelemetry
 				}
 			}
 		}
-		return current;
+		return TestBeforeSend is null ? current : TestBeforeSend(current);
+	}
+
+	/// <summary>
+	/// 事件 tag 白名单: scope 合并进来的键里只保留固定安全键, 其余(可能含用户输入)丢弃。
+	/// </summary>
+	private static void PreserveSafeTags(SentryEvent current)
+	{
+		if (current.Tags is null || current.Tags.Count == 0) return;
+
+		List<(string Key, string Value)> safe = [];
+		foreach ((string rawKey, string rawValue) in current.Tags)
+		{
+			string key = TelemetrySanitizer.NormalizeTag(rawKey);
+			if (key is "runtime" or "os" or "session_type") continue;
+			string value = TelemetrySanitizer.NormalizeTag(rawValue);
+			if (value.Length > 0) safe.Add((key, value));
+		}
+		foreach (string key in current.Tags.Keys.ToArray()) current.UnsetTag(key);
+		foreach ((string key, string value) in safe) current.SetTag(key, value);
 	}
 
 	private Sentry.SentryTransaction? ScrubTransaction(Sentry.SentryTransaction current, SentryHint hint)

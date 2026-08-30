@@ -2,8 +2,10 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Avalonia.Threading;
 using Nori.Core.Logging;
+using Nori.Core.Resources;
 using Nori.Core.Security;
 using Nori.Core.Telemetry;
+using Nori.PluginRuntime;
 using Nori.Desktop.Windows;
 
 namespace Nori.Desktop.Bridge;
@@ -86,8 +88,9 @@ public sealed class NoriBridge(AppServices services)
 		{
 			try
 			{
-				_services.Telemetry.CaptureException(exception, "bridge.invoke");
-				_services.Logger.Write(LogSource.Backend, "error", $"桥接调用后台任务失败: {SensitiveDataRedactor.ExceptionSummary(exception)}");
+				BridgeFailure failure = BridgeFailureClassifier.Classify(exception);
+				if (failure.Telemetry) _services.Telemetry.CaptureException(exception, "bridge.invoke", tags: failure.Tags);
+				_services.Logger.Write(LogSource.Backend, failure.LogLevel, $"桥接调用后台任务失败: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 			}
 			catch
 			{
@@ -113,8 +116,9 @@ public sealed class NoriBridge(AppServices services)
 		}
 		catch (Exception exception)
 		{
-			_services.Telemetry.CaptureException(exception, $"bridge.{cmd}");
-			_services.Logger.Write(LogSource.Backend, "error", $"命令执行失败: {cmd}: {SensitiveDataRedactor.ExceptionSummary(exception)}");
+			BridgeFailure failure = BridgeFailureClassifier.Classify(exception);
+			if (failure.Telemetry) _services.Telemetry.CaptureException(exception, $"bridge.{cmd}", tags: failure.Tags);
+			_services.Logger.Write(LogSource.Backend, failure.LogLevel, $"命令执行失败: {cmd}: {SensitiveDataRedactor.ExceptionSummary(exception)}");
 			source.PostResult(message.Id, null, SensitiveDataRedactor.Redact(exception.Message));
 		}
 	}

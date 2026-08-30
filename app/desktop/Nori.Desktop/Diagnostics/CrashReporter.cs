@@ -101,7 +101,7 @@ public static class CrashReporter
 	/// false 表示运行期兜底: 关闭窗口可继续运行</param>
 	public static void Report(Exception exception, bool critical = false)
 	{
-		_telemetry.CaptureException(exception, critical ? "startup_failure" : "unhandled_exception", critical, critical);
+		_telemetry.CaptureException(exception, critical ? "startup_failure" : "unhandled_exception", handled: false, terminal: critical);
 		WriteLogSafe(critical
 			? $"致命异常: {SensitiveDataRedactor.ExceptionSummary(exception)}"
 			: $"未处理异常: {SensitiveDataRedactor.ExceptionSummary(exception)}");
@@ -153,7 +153,7 @@ public static class CrashReporter
 	/// <param name="message">给用户看的中文说明</param>
 	public static void ReportStartupFatal(string title, string message)
 	{
-		_telemetry.CaptureException(new InvalidOperationException(title), "startup_fatal", unhandled: true, crashed: true);
+		_telemetry.CaptureException(new InvalidOperationException(title), "startup_fatal", handled: false, terminal: true);
 		WriteLogSafe($"启动失败: {SensitiveDataRedactor.Redact(title)}: {SensitiveDataRedactor.Redact(message)}");
 
 		if (Application.Current is null || _lifetime is null)

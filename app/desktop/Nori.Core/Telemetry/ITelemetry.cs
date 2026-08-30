@@ -16,8 +16,13 @@ public interface ITelemetry : IDisposable
 	/// <summary>按用户开关重新启用或关闭遥测。</summary>
 	void Configure(bool enabled);
 
-	/// <summary>捕获一个已经脱敏的异常边界。</summary>
-	void CaptureException(Exception exception, string operation, bool unhandled = false, bool crashed = false);
+	/// <summary>
+	/// 捕获一个已经脱敏的异常边界。
+	///
+	/// tags 只接受白名单键值(见 TelemetrySanitizer.NormalizeTags), 值会被归一化,
+	/// 白名单外的键在发送边界丢弃, 避免用户输入进入遥测标签。
+	/// </summary>
+	void CaptureException(Exception exception, string operation, bool handled = true, bool terminal = false, IReadOnlyDictionary<string, string>? tags = null);
 
 	/// <summary>开始一个只包含固定操作名的性能事务。</summary>
 	ITelemetryTransaction StartTransaction(string operation);
@@ -61,7 +66,7 @@ public sealed class NoopTelemetry : ITelemetry
 	{
 	}
 
-	public void CaptureException(Exception exception, string operation, bool unhandled = false, bool crashed = false)
+	public void CaptureException(Exception exception, string operation, bool handled = true, bool terminal = false, IReadOnlyDictionary<string, string>? tags = null)
 	{
 	}
 

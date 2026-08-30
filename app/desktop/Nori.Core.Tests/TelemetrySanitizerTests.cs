@@ -39,4 +39,44 @@ public sealed class TelemetrySanitizerTests
 		Assert.DoesNotContain("聊天内容", value, StringComparison.Ordinal);
 		Assert.Equal(typeof(InvalidOperationException).FullName, value);
 	}
+
+	[Fact]
+	public void 标签值归一化为小写安全字符并限制长度()
+	{
+		Assert.Equal("http_status", TelemetrySanitizer.NormalizeTag("HTTP_Status"));
+		Assert.Equal("plugin.not-found", TelemetrySanitizer.NormalizeTag("Plugin.Not-Found"));
+		Assert.Equal(string.Empty, TelemetrySanitizer.NormalizeTag("用户"));
+		Assert.Equal(string.Empty, TelemetrySanitizer.NormalizeTag("  "));
+		Assert.Equal(string.Empty, TelemetrySanitizer.NormalizeTag(null));
+		Assert.True(TelemetrySanitizer.NormalizeTag(new string('x', 200)).Length <= 64);
+	}
+
+	[Fact]
+	public void 标签白名单外的键被丢弃()
+	{
+		Dictionary<string, string> tags = new()
+		{
+			["failure_kind"] = "timeout",
+			["operation"] = "bridge.test",
+			["user_content"] = "聊天正文",
+			["api_key"] = "sk-secret",
+			["PLUGIN_ID"] = "cloud-music",
+		};
+
+		IReadOnlyDictionary<string, string> safe = TelemetrySanitizer.NormalizeTags(tags);
+
+		Assert.Equal("timeout", safe["failure_kind"]);
+		Assert.Equal("bridge.test", safe["operation"]);
+		Assert.Equal("cloud-music", safe["plugin_id"]);
+		Assert.False(safe.ContainsKey("user_content"));
+		Assert.False(safe.ContainsKey("api_key"));
+	}
+
+	[Fact]
+	public void 空标签集合返回空结果()
+	{
+		Assert.Empty(TelemetrySanitizer.NormalizeTags(null));
+		Assert.Empty(TelemetrySanitizer.NormalizeTags(new Dictionary<string, string>()));
+		Assert.Empty(TelemetrySanitizer.NormalizeTags(new Dictionary<string, string> { ["provider"] = "" }));
+	}
 }
