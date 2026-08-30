@@ -144,9 +144,10 @@ jobs:
           echo "version=$stable_version" >> "$GITHUB_OUTPUT"
           echo "informational=$informational" >> "$GITHUB_OUTPUT"
           # Sentry 只按数字产品版本聚合事件；Codename 仅用于产品版本、标签和产物名。
-          echo "sentry_release=$version" >> "$GITHUB_OUTPUT"
+          # Sentry 服务端只有 package@version 格式才解析 semver（裸版本号 Semver 恒为否）。
+          echo "sentry_release=nori@$version" >> "$GITHUB_OUTPUT"
           echo "目标版本: $stable_version"
-          echo "Sentry release: $version (不含 Codename)"
+          echo "Sentry release: nori@$version (不含 Codename)"
           echo "程序 informational version: $informational (标签将在所有测试通过后创建)"
 
   preflight:
