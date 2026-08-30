@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Network;
 
@@ -25,7 +26,9 @@ public sealed class GeminiTtsProvider(HttpClient httpClient, ConfigStore config)
         if (voice.Length == 0) voice = "Kore";
 
         string endpoint = BuildEndpoint(baseUrl, model);
-        UrlAccessPolicy.EnsureAllowed(new Uri(endpoint), allowPrivate: true);
+        if (!ChatEndpoint.TryCreateHttpUri(endpoint, out Uri? endpointUri) || endpointUri is null)
+            throw new InvalidOperationException("Gemini TTS Base URL 格式无效");
+        UrlAccessPolicy.EnsureAllowed(endpointUri, allowPrivate: true);
 
         JsonObject payload = new()
         {
@@ -49,34 +52,37 @@ public sealed class GeminiTtsProvider(HttpClient httpClient, ConfigStore config)
             },
         };
 
-        using HttpRequestMessage request = new(HttpMethod.Post, endpoint)
+        using HttpRequestMessage request = new(HttpMethod.Post, endpointUri)
         {
             Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
         };
         if (apiKey.Length > 0) request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
 
-        using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, Name, cancellationToken);
         byte[] responseBytes = await VoiceHttpContent.ReadBytesAsync(response.Content, cancellationToken, allowEmpty: true);
         if (!response.IsSuccessStatusCode)
         {
-            throw new HttpRequestException($"Gemini TTS 请求失败: HTTP {(int)response.StatusCode} {ReadError(responseBytes)}".TrimEnd());
+            throw new VoiceProviderException(
+                Name, VoiceFailureKind.HttpRejected,
+                $"Gemini TTS 请求失败: HTTP {(int)response.StatusCode} {ReadError(responseBytes)}".TrimEnd(),
+                httpStatusCode: (int)response.StatusCode);
         }
-        if (responseBytes.Length == 0) throw new InvalidOperationException("Gemini TTS 响应为空");
+        if (responseBytes.Length == 0) throw new VoiceProviderException(Name, VoiceFailureKind.EmptyResponse, "Gemini TTS 响应为空");
 
         using JsonDocument document = JsonDocument.Parse(responseBytes);
         if (!TryReadInlineAudio(document.RootElement, out string? encoded, out string? mime) || string.IsNullOrWhiteSpace(encoded))
-            throw new InvalidOperationException("Gemini TTS 响应未包含 inlineData 音频数据");
+            throw new VoiceProviderException(Name, VoiceFailureKind.InvalidResponse, "Gemini TTS 响应未包含 inlineData 音频数据");
 
         byte[] audioBytes;
         try { audioBytes = Convert.FromBase64String(encoded); }
-        catch (FormatException exception) { throw new InvalidOperationException("Gemini TTS 返回的音频 Base64 无效", exception); }
+        catch (FormatException exception) { throw new VoiceProviderException(Name, VoiceFailureKind.InvalidResponse, "Gemini TTS 返回的音频 Base64 无效", exception); }
 
         if (IsPcmMime(mime))
         {
             int sampleRate = ReadSampleRate(mime) ?? DefaultSampleRate;
             return AudioMime.ValidateEncoded(WrapPcm16LeAsWav(audioBytes, sampleRate), "audio/wav");
         }
-        if (!AudioMime.IsSupported(mime)) throw new InvalidOperationException($"Gemini TTS 返回了不支持的音频 MIME: {mime ?? "<empty>"}");
+        if (!AudioMime.IsSupported(mime)) throw new VoiceProviderException(Name, VoiceFailureKind.InvalidResponse, $"Gemini TTS 返回了不支持的音频 MIME: {mime ?? "<empty>"}");
         return AudioMime.ValidateEncoded(audioBytes, mime);
     }
 
@@ -150,8 +156,8 @@ public sealed class GeminiTtsProvider(HttpClient httpClient, ConfigStore config)
     {
         const short channels = 1;
         const short bitsPerSample = 16;
-        if (pcm.Length == 0) throw new InvalidOperationException("Gemini TTS 返回的音频为空");
-        if (pcm.Length > VoiceAudioLimits.MaxBytes - 44) throw new InvalidOperationException("Gemini TTS 音频超过大小限制");
+        if (pcm.Length == 0) throw new VoiceProviderException("gemini", VoiceFailureKind.EmptyResponse, "Gemini TTS 返回的音频为空");
+        if (pcm.Length > VoiceAudioLimits.MaxBytes - 44) throw new VoiceProviderException("gemini", VoiceFailureKind.InvalidResponse, "Gemini TTS 音频超过大小限制");
         using MemoryStream stream = new(44 + pcm.Length);
         using (BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true))
         {

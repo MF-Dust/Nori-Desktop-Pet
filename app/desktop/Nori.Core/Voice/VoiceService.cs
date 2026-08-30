@@ -202,7 +202,9 @@ public sealed class VoiceService : IDisposable
 		Task consumer = ConsumeAsync();
 		try
 		{
-			await Task.WhenAll(producer, consumer);
+			// 先失败的一方是主错误; 聚合到 AggregateException 会把 Provider 失败
+			// 和消费者的取消噪音混成一条不可分类的遥测。
+			await VoicePipeline.JoinAsync(producer, consumer);
 		}
 		catch
 		{

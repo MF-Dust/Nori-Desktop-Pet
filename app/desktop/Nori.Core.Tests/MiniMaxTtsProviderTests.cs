@@ -78,12 +78,14 @@ public class MiniMaxTtsProviderTests : IDisposable
 		using HttpClient client = new(handler);
 		MiniMaxTtsProvider provider = new(client, _config);
 
-		InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+		VoiceProviderException error = await Assert.ThrowsAsync<VoiceProviderException>(() =>
 			provider.SynthesizeAsync("测试", new TtsSynthesizeOptions(), CancellationToken.None));
 
 		Assert.Contains("status_code=1008", error.Message, StringComparison.Ordinal);
 		Assert.Contains("invalid api key", error.Message, StringComparison.Ordinal);
 		Assert.Contains("trace-123", error.Message, StringComparison.Ordinal);
+		Assert.Equal(VoiceFailureKind.ProviderRejected, error.FailureKind);
+		Assert.Equal(1008, error.ProviderStatusCode);
 	}
 
 	[Fact]

@@ -52,7 +52,7 @@ public static class ChatClientFactory
 		HttpClient providerHttpClient = CreateProviderHttpClient(sharedHttpClient);
 		OpenAIClientOptions options = new()
 		{
-			Endpoint = new Uri(endpoint),
+			Endpoint = ChatEndpoint.CreateHttpUri(endpoint),
 			Transport = new HttpClientPipelineTransport(providerHttpClient),
 		};
 		ChatClient client = new(model, credential, options);
@@ -66,7 +66,7 @@ public static class ChatClientFactory
 		HttpClient providerHttpClient = CreateProviderHttpClient(sharedHttpClient);
 		ResponsesClientOptions options = new()
 		{
-			Endpoint = new Uri(endpoint),
+			Endpoint = ChatEndpoint.CreateHttpUri(endpoint),
 			Transport = new HttpClientPipelineTransport(providerHttpClient),
 		};
 		ResponsesClient client = new(credential, options);
@@ -128,6 +128,8 @@ public static class ChatClientFactory
 	{
 		string normalized = baseUrl.Trim().TrimEnd('/');
 		if (normalized.Length == 0) throw new ChatException("Base URL 不能为空");
+		// 协议头严格校验 (NORI-14): Google SDK 只收字符串 BaseUrl, 非法地址提前转领域错误。
+		_ = ChatEndpoint.CreateHttpUri(normalized);
 		if (normalized.EndsWith("/models", StringComparison.OrdinalIgnoreCase))
 		{
 			normalized = normalized[..^"/models".Length].TrimEnd('/');
@@ -151,6 +153,8 @@ public static class ChatClientFactory
 	{
 		string endpoint = baseUrl.Trim().TrimEnd('/');
 		if (endpoint.Length == 0) throw new ChatException("Base URL 不能为空");
+		// 协议头严格校验 (NORI-14): 非法地址在这里转成领域错误, 不让 UriFormatException 泄漏。
+		_ = ChatEndpoint.CreateHttpUri(endpoint);
 		if (endpoint.EndsWith(protocolPath, StringComparison.OrdinalIgnoreCase))
 		{
 			endpoint = endpoint[..^protocolPath.Length].TrimEnd('/');

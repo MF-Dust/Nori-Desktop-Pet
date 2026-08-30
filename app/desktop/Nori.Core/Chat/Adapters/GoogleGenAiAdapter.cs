@@ -18,7 +18,7 @@ public sealed class GoogleGenAiAdapter(HttpClient httpClient) : IModelCatalogAda
 	{
 		string endpoint = FormatEndpoint(baseUrl, "models");
 
-		using HttpRequestMessage request = new(HttpMethod.Get, new Uri(endpoint));
+		using HttpRequestMessage request = new(HttpMethod.Get, ChatEndpoint.CreateHttpUri(endpoint));
 		request.Headers.Add("x-goog-api-key", apiKey);
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 

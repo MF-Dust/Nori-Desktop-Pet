@@ -59,7 +59,8 @@ public class VoiceServiceTests : IDisposable
 		using HttpClient client = new(new FailingHandler());
 		using VoiceService voice = new(client, _config, new FakePlayback(), () => null);
 
-		await Assert.ThrowsAsync<HttpRequestException>(() => voice.SpeakAsync("失败测试"));
+		VoiceProviderException error = await Assert.ThrowsAsync<VoiceProviderException>(() => voice.SpeakAsync("失败测试"));
+		Assert.IsType<HttpRequestException>(error.InnerException);
 		Assert.False(voice.IsSpeaking);
 	}
 

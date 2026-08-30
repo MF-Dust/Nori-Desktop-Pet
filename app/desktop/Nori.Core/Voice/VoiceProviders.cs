@@ -2,10 +2,43 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Nori.Core.Chat;
 using Nori.Core.Configuration;
 using Nori.Core.Network;
 
 namespace Nori.Core.Voice;
+
+/// <summary>
+/// HttpClient 发送边界: 把传输层失败 (TCP/DNS/超时) 归一化为 VoiceProviderException。
+///
+/// 用户主动取消原样上抛; HTTP 状态码失败由各 Provider 在拿到响应后按 HttpRejected 分类。
+/// </summary>
+internal static class VoiceHttp
+{
+	public static async Task<HttpResponseMessage> SendAsync(
+		HttpClient client,
+		HttpRequestMessage request,
+		string provider,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (OperationCanceledException exception)
+		{
+			throw new VoiceProviderException(provider, VoiceFailureKind.Timeout, "语音服务请求超时", exception);
+		}
+		catch (HttpRequestException exception)
+		{
+			throw new VoiceProviderException(provider, VoiceFailureKind.Network, "语音服务网络请求失败", exception);
+		}
+	}
+}
 
 /// <summary>OpenAI 兼容 TTS 适配器 (/v1/audio/speech)。</summary>
 public sealed class OpenAiTtsProvider(HttpClient httpClient, ConfigStore config) : ITtsProvider
@@ -34,11 +67,14 @@ public sealed class OpenAiTtsProvider(HttpClient httpClient, ConfigStore config)
 		};
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-		using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, Name, cancellationToken);
 		if (!response.IsSuccessStatusCode)
 		{
 			string error = await ReadErrorAsync(response, cancellationToken);
-			throw new HttpRequestException($"OpenAI TTS 请求失败: HTTP {(int)response.StatusCode} {error}");
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.HttpRejected,
+				$"OpenAI TTS 请求失败: HTTP {(int)response.StatusCode} {error}",
+				httpStatusCode: (int)response.StatusCode);
 		}
 		return await VoiceHttpContent.ReadAudioAsync(response.Content, cancellationToken);
 	}
@@ -70,8 +106,10 @@ public sealed class CustomHttpTtsProvider(HttpClient httpClient, ConfigStore con
 	{
 		string endpoint = config.GetStringOr("tts_base_url", "").Trim();
 		if (endpoint.Length == 0) throw new InvalidOperationException("未配置自定义 TTS 请求端点 URL");
+		if (!ChatEndpoint.TryCreateHttpUri(endpoint, out Uri? endpointUri) || endpointUri is null)
+			throw new InvalidOperationException("自定义 TTS 请求端点 URL 格式无效");
 
-		UrlAccessPolicy.EnsureAllowed(new Uri(endpoint), allowPrivate: true);
+		UrlAccessPolicy.EnsureAllowed(endpointUri, allowPrivate: true);
 		JsonObject payload = new()
 		{
 			["text"] = text,
@@ -79,14 +117,17 @@ public sealed class CustomHttpTtsProvider(HttpClient httpClient, ConfigStore con
 			["speed"] = options.Speed,
 		};
 
-		using HttpRequestMessage request = new(HttpMethod.Post, endpoint)
+		using HttpRequestMessage request = new(HttpMethod.Post, endpointUri)
 		{
 			Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
 		};
-		using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, Name, cancellationToken);
 		if (!response.IsSuccessStatusCode)
 		{
-			throw new HttpRequestException($"自定义 TTS 请求失败: HTTP {(int)response.StatusCode}");
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.HttpRejected,
+				$"自定义 TTS 请求失败: HTTP {(int)response.StatusCode}",
+				httpStatusCode: (int)response.StatusCode);
 		}
 		return await VoiceHttpContent.ReadAudioAsync(response.Content, cancellationToken);
 	}
@@ -107,7 +148,9 @@ public sealed class GptSoVitsTtsProvider(HttpClient httpClient, ConfigStore conf
 		string promptLang = config.GetStringOr("gptsovits_prompt_lang", "zh");
 		string url = baseUrl.EndsWith("/tts", StringComparison.OrdinalIgnoreCase) ? baseUrl : $"{baseUrl}/tts";
 
-		UrlAccessPolicy.EnsureAllowed(new Uri(baseUrl), allowPrivate: true);
+		if (!ChatEndpoint.TryCreateHttpUri(baseUrl, out Uri? baseUri) || baseUri is null)
+			throw new InvalidOperationException("GPT-SoVITS Base URL 格式无效");
+		UrlAccessPolicy.EnsureAllowed(baseUri, allowPrivate: true);
 		JsonObject payload = new()
 		{
 			["text"] = text,
@@ -124,9 +167,9 @@ public sealed class GptSoVitsTtsProvider(HttpClient httpClient, ConfigStore conf
 		{
 			post = await PostAsync(url, payload, cancellationToken);
 		}
-		catch (HttpRequestException)
+		catch (VoiceProviderException exception) when (exception.FailureKind == VoiceFailureKind.Network)
 		{
-			// 网络错误也尝试旧版 GET 路径；取消仍由上层直接处理。
+			// 网络错误也尝试旧版 GET 路径；取消/超时仍由上层直接处理。
 		}
 		if (post is not null) return post;
 
@@ -139,7 +182,7 @@ public sealed class GptSoVitsTtsProvider(HttpClient httpClient, ConfigStore conf
 		{
 			Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
 		};
-		using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, Name, cancellationToken);
 		if (!response.IsSuccessStatusCode) return null;
 
 		string mime = AudioMime.Validate(response.Content.Headers.ContentType?.ToString());
@@ -159,11 +202,14 @@ public sealed class GptSoVitsTtsProvider(HttpClient httpClient, ConfigStore conf
 			$"prompt_lang={Uri.EscapeDataString(promptLang)}",
 			$"speed_factor={speed.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
 		];
-		using HttpResponseMessage response = await httpClient.GetAsync(
-			$"{url}?{string.Join("&", query)}", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		using HttpRequestMessage request = new(HttpMethod.Get, $"{url}?{string.Join("&", query)}");
+		using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, Name, cancellationToken);
 		if (!response.IsSuccessStatusCode)
 		{
-			throw new HttpRequestException($"GPT-SoVITS API 合成失败: HTTP {(int)response.StatusCode}");
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.HttpRejected,
+				$"GPT-SoVITS API 合成失败: HTTP {(int)response.StatusCode}",
+				httpStatusCode: (int)response.StatusCode);
 		}
 		return await VoiceHttpContent.ReadAudioAsync(response.Content, cancellationToken);
 	}
@@ -189,11 +235,14 @@ public sealed class WhisperSttProvider(HttpClient httpClient, ConfigStore config
 
 		using HttpRequestMessage request = new(HttpMethod.Post, baseUrl) {Content = form};
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-		using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, "whisper", cancellationToken);
 		if (!response.IsSuccessStatusCode)
 		{
 			string error = await ReadTextAsync(response.Content, cancellationToken);
-			throw new HttpRequestException($"Whisper 识别失败: HTTP {(int)response.StatusCode} {error}");
+			throw new VoiceProviderException(
+				"whisper", VoiceFailureKind.HttpRejected,
+				$"Whisper 识别失败: HTTP {(int)response.StatusCode} {error}",
+				httpStatusCode: (int)response.StatusCode);
 		}
 
 		string json = await ReadTextAsync(response.Content, cancellationToken);

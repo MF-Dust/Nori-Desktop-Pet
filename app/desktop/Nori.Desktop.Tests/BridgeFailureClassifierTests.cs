@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Nori.Core.Chat;
 using Nori.Core.Resources;
+using Nori.Core.Voice;
 using Nori.Desktop.Bridge;
 using Nori.PluginRuntime;
 
@@ -129,6 +130,26 @@ public sealed class BridgeFailureClassifierTests
 		Assert.Equal(BridgeFailureClass.Unexpected, failure.Class);
 		Assert.Equal("error", failure.LogLevel);
 		Assert.True(failure.Telemetry);
+	}
+
+	[Fact]
+	public void VoiceProvider失败分类为ExternalService并携带provider标签()
+	{
+		BridgeFailure rejected = BridgeFailureClassifier.Classify(
+			new VoiceProviderException("minimax", VoiceFailureKind.ProviderRejected, "status_code=1008", providerStatusCode: 1008));
+		Assert.Equal(BridgeFailureClass.ExternalService, rejected.Class);
+		Assert.True(rejected.Telemetry);
+		Assert.Equal("provider_rejected", rejected.Tags!["failure_kind"]);
+		Assert.Equal("minimax", rejected.Tags!["provider"]);
+
+		BridgeFailure network = BridgeFailureClassifier.Classify(
+			new VoiceProviderException("openai", VoiceFailureKind.Network, "网络失败"));
+		Assert.Equal("connect", network.Tags!["failure_kind"]);
+
+		BridgeFailure http = BridgeFailureClassifier.Classify(
+			new VoiceProviderException("gemini", VoiceFailureKind.HttpRejected, "HTTP 429", httpStatusCode: 429));
+		Assert.Equal("http_status", http.Tags!["failure_kind"]);
+		Assert.Equal("gemini", http.Tags!["provider"]);
 	}
 
 	[Fact]

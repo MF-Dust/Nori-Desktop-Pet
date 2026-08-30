@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Nori.Core.Chat;
 using Nori.Core.Resources;
+using Nori.Core.Voice;
 using Nori.PluginRuntime;
 
 namespace Nori.Desktop.Bridge;
@@ -38,6 +39,7 @@ public static class BridgeFailureClassifier
 	{
 		ArgumentNullException.ThrowIfNull(exception);
 		if (exception is AggregateException aggregate) return ClassifyAggregate(aggregate);
+		if (exception is VoiceProviderException voiceProvider) return ClassifyVoiceProvider(voiceProvider);
 		if (exception is TaskCanceledException or TimeoutException)
 			return ExternalService("timeout");
 		if (exception is OperationCanceledException)
@@ -56,6 +58,26 @@ public static class BridgeFailureClassifier
 
 	private static BridgeFailure Expected() =>
 		new(BridgeFailureClass.Expected, "warn", false, FailureKind("validation"));
+
+	/// <summary>Voice Provider 失败统一按外部服务处理, 并带上 provider / failure_kind 安全标签。</summary>
+	private static BridgeFailure ClassifyVoiceProvider(VoiceProviderException exception)
+	{
+		string kind = exception.FailureKind switch
+		{
+			VoiceFailureKind.Network => "connect",
+			VoiceFailureKind.Timeout => "timeout",
+			VoiceFailureKind.HttpRejected => "http_status",
+			VoiceFailureKind.ProviderRejected => "provider_rejected",
+			VoiceFailureKind.InvalidResponse => "invalid_response",
+			_ => "empty_response",
+		};
+		Dictionary<string, string> tags = new()
+		{
+			["failure_kind"] = kind,
+			["provider"] = exception.Provider,
+		};
+		return new(BridgeFailureClass.ExternalService, "warn", true, tags);
+	}
 
 	private static BridgeFailure ExternalService(string kind) =>
 		new(BridgeFailureClass.ExternalService, "warn", true, FailureKind(kind));

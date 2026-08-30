@@ -24,6 +24,18 @@ public sealed class AnthropicModelDiscoveryTests
 	}
 
 	[Fact]
+	public async Task 非法BaseURL转成领域错误而不是UriFormatException()
+	{
+		using HttpClient client = new(new StubHandler(_ => throw new InvalidOperationException("不应发起网络请求")));
+		AnthropicAdapter adapter = new(client);
+
+		ChatException exception = await Assert.ThrowsAsync<ChatException>(() =>
+			adapter.FetchModelsAsync("not-a-valid-url", "secret"));
+
+		Assert.Contains("Base URL 格式无效", exception.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public async Task 空模型列表被视为发现失败()
 	{
 		using HttpClient client = new(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)

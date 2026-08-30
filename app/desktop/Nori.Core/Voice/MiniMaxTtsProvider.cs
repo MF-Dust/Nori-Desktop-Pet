@@ -49,10 +49,7 @@ public sealed class MiniMaxTtsProvider(HttpClient httpClient, ConfigStore config
 		};
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-		using HttpResponseMessage response = await httpClient.SendAsync(
-			request,
-			HttpCompletionOption.ResponseHeadersRead,
-			cancellationToken);
+		using HttpResponseMessage response = await VoiceHttp.SendAsync(httpClient, request, Name, cancellationToken);
 
 		byte[] responseBytes = await VoiceHttpContent.ReadBytesAsync(response.Content, cancellationToken, allowEmpty: true);
 		string raw = Encoding.UTF8.GetString(responseBytes);
@@ -60,24 +57,31 @@ public sealed class MiniMaxTtsProvider(HttpClient httpClient, ConfigStore config
 
 		if (!response.IsSuccessStatusCode)
 		{
-			throw new HttpRequestException(
-				$"MiniMax TTS 请求失败: HTTP {(int)response.StatusCode}{DiagnosticSuffix(body, raw)}");
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.HttpRejected,
+				$"MiniMax TTS 请求失败: HTTP {(int)response.StatusCode}{DiagnosticSuffix(body, raw)}",
+				httpStatusCode: (int)response.StatusCode);
 		}
 
 		int statusCode = ReadStatusCode(body);
 		if (statusCode != 0)
 		{
-			throw new InvalidOperationException($"MiniMax TTS 返回错误: status_code={statusCode}{DiagnosticSuffix(body, raw)}");
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.ProviderRejected,
+				$"MiniMax TTS 返回错误: status_code={statusCode}{DiagnosticSuffix(body, raw)}",
+				providerStatusCode: statusCode);
 		}
 
 		string? audioHex = body?["data"]?["audio"]?.GetValue<string>();
 		if (string.IsNullOrWhiteSpace(audioHex))
 		{
-			throw new InvalidOperationException($"MiniMax TTS 响应缺少 data.audio{DiagnosticSuffix(body, raw)}");
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.InvalidResponse,
+				$"MiniMax TTS 响应缺少 data.audio{DiagnosticSuffix(body, raw)}");
 		}
 		if (audioHex.Length > VoiceAudioLimits.MaxBytes * 2)
 		{
-			throw new InvalidOperationException("MiniMax TTS 音频超过 32MiB 限制");
+			throw new VoiceProviderException(Name, VoiceFailureKind.InvalidResponse, "MiniMax TTS 音频超过 32MiB 限制");
 		}
 
 		byte[] audioBytes;
@@ -87,7 +91,9 @@ public sealed class MiniMaxTtsProvider(HttpClient httpClient, ConfigStore config
 		}
 		catch (FormatException exception)
 		{
-			throw new InvalidOperationException($"MiniMax TTS data.audio 不是有效的 hex 数据{DiagnosticSuffix(body, raw)}", exception);
+			throw new VoiceProviderException(
+				Name, VoiceFailureKind.InvalidResponse,
+				$"MiniMax TTS data.audio 不是有效的 hex 数据{DiagnosticSuffix(body, raw)}", exception);
 		}
 
 		string format = body?["extra_info"]?["audio_format"]?.GetValue<string>()?.Trim().ToLowerInvariant() ?? "mp3";
@@ -96,7 +102,8 @@ public sealed class MiniMaxTtsProvider(HttpClient httpClient, ConfigStore config
 			"mp3" => "audio/mpeg",
 			"wav" => "audio/wav",
 			"flac" => "audio/flac",
-			_ => throw new InvalidOperationException($"MiniMax TTS 返回了不支持的音频格式: {format}"),
+			_ => throw new VoiceProviderException(
+				Name, VoiceFailureKind.InvalidResponse, $"MiniMax TTS 返回了不支持的音频格式: {format}"),
 		};
 		return AudioMime.ValidateEncoded(audioBytes, mime);
 	}

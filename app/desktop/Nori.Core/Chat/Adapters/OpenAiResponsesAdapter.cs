@@ -19,7 +19,7 @@ public sealed class OpenAiResponsesAdapter(HttpClient httpClient) : IModelCatalo
 	{
 		string endpoint = FormatEndpoint(baseUrl, "models");
 
-		using HttpRequestMessage request = new(HttpMethod.Get, new Uri(endpoint));
+		using HttpRequestMessage request = new(HttpMethod.Get, ChatEndpoint.CreateHttpUri(endpoint));
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
 		HttpResponseMessage response;
