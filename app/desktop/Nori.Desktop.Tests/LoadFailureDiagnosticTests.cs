@@ -20,6 +20,16 @@ public sealed class LoadFailureDiagnosticTests
 	}
 
 	[Fact]
+	public void FileLoad失败标签在POSIX路径下也只取文件名()
+	{
+		Dictionary<string, string>? tags = CrashReporter.LoadFailureTags(
+			new FileLoadException("Could not load file.", "/opt/nori/vendor/Blocked.so")) as Dictionary<string, string>;
+
+		Assert.NotNull(tags);
+		Assert.Equal("Blocked.so", tags!["assembly"]);
+	}
+
+	[Fact]
 	public void TypeLoad失败标签含类型名()
 	{
 		Dictionary<string, string>? tags = CrashReporter.LoadFailureTags(

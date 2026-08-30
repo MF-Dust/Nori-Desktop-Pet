@@ -26,7 +26,11 @@ internal static class PluginDiagnostics
 				exception.DiagnosticTypeLoadTypeName = typeName.Length <= 200 ? typeName : typeName[..200];
 			}
 			if (root is FileLoadException fileLoad && !string.IsNullOrWhiteSpace(fileLoad.FileName))
-				exception.DiagnosticAssemblyName = Path.GetFileName(fileLoad.FileName);
+			{
+				// FileName 可能带 \ 或 / 分隔符, Path.GetFileName 在 Linux 上不认反斜杠;
+				// 先统一替换, 保证任何平台都不把目录部分带进诊断字段。
+				exception.DiagnosticAssemblyName = Path.GetFileName(fileLoad.FileName.Replace('\\', '/'));
+			}
 			exception.DiagnosticPluginId = pluginId;
 			exception.DiagnosticPluginVersion = pluginVersion;
 			exception.DiagnosticHostApiVersion = hostApiVersion;

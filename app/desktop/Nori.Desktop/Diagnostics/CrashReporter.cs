@@ -208,7 +208,7 @@ public static class CrashReporter
 					["exception_kind"] = "file_load",
 					["hresult"] = $"0x{current.HResult:X8}",
 				};
-				if (!string.IsNullOrWhiteSpace(fileLoad.FileName)) tags["assembly"] = Path.GetFileName(fileLoad.FileName);
+				if (!string.IsNullOrWhiteSpace(fileLoad.FileName)) tags["assembly"] = AssemblyFileName(fileLoad.FileName);
 				return tags;
 			}
 			if (current is TypeLoadException typeLoad)
@@ -224,6 +224,13 @@ public static class CrashReporter
 		}
 		return null;
 	}
+
+	/// <summary>
+	/// 取程序集文件名并保证剥掉全部目录成分: FileName 可能带 \ 或 / 分隔符,
+	/// Path.GetFileName 在 Linux 上不认反斜杠, 先统一替换避免目录部分泄漏进遥测。
+	/// </summary>
+	private static string AssemblyFileName(string fileName) =>
+		Path.GetFileName(fileName.Replace('\\', '/'));
 
 	private static void OnDomainUnhandledException(object? sender, UnhandledExceptionEventArgs eventArgs)
 	{

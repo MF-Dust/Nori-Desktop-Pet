@@ -42,6 +42,21 @@ public sealed class PluginDiagnosticsTests
 	}
 
 	[Fact]
+	public void FileLoad失败在POSIX路径下同样只取文件名()
+	{
+		PluginException exception = new(
+			PluginErrorCodes.ActivationFailed,
+			"插件激活失败: Demo",
+			new FileLoadException("Could not load file.", "/home/user/.nori/plugins/demo/vendor/Locked.so"));
+
+		PluginDiagnostics.Attach(exception, "demo", "0.1.0", "2.0", "Dev");
+
+		Assert.Equal("Locked.so", exception.DiagnosticAssemblyName);
+		Assert.DoesNotContain("vendor", exception.DiagnosticAssemblyName, StringComparison.Ordinal);
+		Assert.DoesNotContain("/home", exception.DiagnosticAssemblyName, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public void 无根因异常时仅记录宿主与插件信息()
 	{
 		PluginException exception = new(PluginErrorCodes.PackagePathDenied, "插件包路径被拒绝: ../escape");
