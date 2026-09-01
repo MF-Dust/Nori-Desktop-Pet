@@ -64,4 +64,53 @@ public class VoiceTextSanitizerTests
 		Assert.Equal("", VoiceTextSanitizer.StripKaomoji(""));
 		Assert.Equal("", VoiceTextSanitizer.StripKaomoji(null));
 	}
+
+	[Theory]
+	[InlineData("今天好开心😊", "今天好开心")]
+	[InlineData("谢谢啦❤️", "谢谢啦")]
+	[InlineData("超棒！🎉", "超棒！")]
+	[InlineData("我是狼🐺", "我是狼")]
+	[InlineData("晚安🌙", "晚安")]
+	[InlineData("加油💪", "加油")]
+	[InlineData("震惊🤯", "震惊")]
+	[InlineData("欢迎👋", "欢迎")]
+	public void 单字符emoji被移除(string input, string expected)
+	{
+		Assert.Equal(expected, VoiceTextSanitizer.StripKaomoji(input));
+	}
+
+	[Theory]
+	[InlineData("庆祝🎉🎊", "庆祝")]
+	[InlineData("爱你❤️😘", "爱你")]
+	[InlineData("太棒了👍👍", "太棒了")]
+	public void 多个emoji连排全部移除(string input, string expected)
+	{
+		Assert.Equal(expected, VoiceTextSanitizer.StripKaomoji(input));
+	}
+
+	[Fact]
+	public void emoji与颜文字混合全部移除()
+	{
+		Assert.Equal("今天真不错", VoiceTextSanitizer.StripKaomoji("今天(^_^)真不错😊✨"));
+	}
+
+	[Fact]
+	public void 纯emoji文本清洗后为空()
+	{
+		Assert.Equal("", VoiceTextSanitizer.StripKaomoji("😊😂❤️"));
+	}
+
+	[Fact]
+	public void emoji序列含变体选择符与ZWJ被整体移除()
+	{
+		Assert.Equal("全家福", VoiceTextSanitizer.StripKaomoji("全家福👨‍👩‍👧"));
+	}
+
+	[Fact]
+	public void 版权与商标符号被移除()
+	{
+		// © 被删除后其两侧空格可能保留（正常文本场景罕见，不做额外空格合并）
+		Assert.Equal("版本v2.0  2026", VoiceTextSanitizer.StripKaomoji("版本v2.0 © 2026"));
+		Assert.Equal("注册标志", VoiceTextSanitizer.StripKaomoji("注册标志®"));
+	}
 }
