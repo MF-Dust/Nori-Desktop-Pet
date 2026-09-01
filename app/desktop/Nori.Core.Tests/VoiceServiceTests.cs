@@ -64,6 +64,24 @@ public class VoiceServiceTests : IDisposable
 		Assert.False(voice.IsSpeaking);
 	}
 
+	[Fact]
+	public async Task IndexTTS整段一次合成不拆段()
+	{
+		_config.Set("tts_provider", new ConfigValue.Text("indextts"));
+		_config.Set("tts_base_url", new ConfigValue.Text("https://api.modelverse.cn/v1"));
+		_config.Set("tts_api_key", new ConfigValue.Text("test-secret"));
+		_config.Set("tts_voice", new ConfigValue.Text("uspeech:test-voice"));
+		FakePlayback playback = new();
+		CountingHandler handler = new();
+		using HttpClient client = new(handler);
+		using VoiceService voice = new(client, _config, playback, () => null);
+
+		await voice.SpeakAsync("第一句。第二句！第三句？");
+
+		Assert.Equal(1, handler.RequestCount); // 整段一次合成，不因三个句子拆成三次
+		Assert.Single(playback.Played);
+	}
+
 	public void Dispose()
 	{
 		_database.Dispose();
@@ -90,6 +108,23 @@ public class VoiceServiceTests : IDisposable
 	{
 		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
 			throw new HttpRequestException("test connection failure");
+	}
+
+	private sealed class CountingHandler : HttpMessageHandler
+	{
+		public int RequestCount { get; private set; }
+
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			RequestCount++;
+			return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new ByteArrayContent([1, 2, 3])
+				{
+					Headers = {ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/wav")},
+				},
+			});
+		}
 	}
 
 	private sealed class FakePlayback : IAudioPlayback

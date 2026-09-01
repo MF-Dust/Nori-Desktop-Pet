@@ -126,7 +126,11 @@ public sealed class VoiceService : IDisposable
 			await _queue.WaitAsync(speechCts.Token);
 			try
 			{
-				IReadOnlyList<string> chunks = SentenceChunker.Split(text);
+				// IndexTTS-2 整段一次合成（避免长回复拆成多段触发多次 API 调用撞限流）；
+				// 其余 provider 保持按句切段、边合成边播放。
+				IReadOnlyList<string> chunks = ResolveProviderName() == "indextts"
+					? [text]
+					: SentenceChunker.Split(text);
 				await RunPipelineAsync(player, chunks, options, speechCts.Token);
 			}
 			finally
