@@ -227,6 +227,10 @@ public sealed class VoiceService : IDisposable
 		string text, TtsSynthesizeOptions? options, CancellationToken cancellationToken)
 	{
 		if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("合成文本不能为空");
+		// 合成前清洗颜文字/装饰符号（AI 回复常带 (๑•̀ㅂ•́)و✧ 等，会被 TTS 读成怪声）。
+		// 清洗后再算缓存 key，避免脏文本占缓存。
+		text = VoiceTextSanitizer.StripKaomoji(text);
+		if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("合成文本清洗后为空");
 		string providerName = ResolveProviderName();
 		ITtsProvider provider = CreateProvider(providerName);
 		TtsSynthesizeOptions merged = MergeOptions(options);
