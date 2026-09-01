@@ -38,13 +38,17 @@ public sealed class VoiceService : IDisposable
 		HttpClient httpClient,
 		ConfigStore config,
 		IAudioPlayback? playback,
-		Func<IMicrophoneRecorder?> recorderFactory)
+		Func<IMicrophoneRecorder?> recorderFactory,
+		Nori.Core.Data.AppStoragePaths? paths = null)
 	{
 		_httpClient = httpClient;
 		_config = config;
 		_playback = playback;
 		_recorderFactory = recorderFactory;
+		_paths = paths;
 	}
+
+	private readonly Nori.Core.Data.AppStoragePaths? _paths;
 
 	// ---- 音量 ----
 
@@ -226,8 +230,16 @@ public sealed class VoiceService : IDisposable
 		string providerName = ResolveProviderName();
 		ITtsProvider provider = CreateProvider(providerName);
 		TtsSynthesizeOptions merged = MergeOptions(options);
+		// indextts 的音色由模板驱动：解析出真实 voice_id，让缓存 key 用实际音色，
+		// 换模板后不会命中旧模板的合成缓存。
+		if (provider is IndexTtsProvider indexTts
+			&& _config.GetStringOr("indextts_template_audio", "").Trim() is {Length: > 0})
+		{
+			string resolvedVoice = await indexTts.ResolveTemplateVoiceAsync(cancellationToken);
+			merged = merged with {Voice = resolvedVoice};
+		}
 		string endpoint = ResolveProviderEndpoint(providerName);
-		string key = AudioSynthesisCache.CreateKey(endpoint, merged.Voice, merged.Speed, text);
+		string key = AudioSynthesisCache.CreateKey(endpoint, merged.Voice, merged.Speed, text, merged.EmotionText);
 		if (SynthesisCache.TryGet(key, out EncodedAudio cached)) return cached;
 
 		EncodedAudio audio = await provider.SynthesizeAsync(text, merged, cancellationToken);
@@ -242,6 +254,7 @@ public sealed class VoiceService : IDisposable
 			? voice
 			: _config.GetStringOr("tts_voice", "") is {Length: > 0} saved ? saved : null,
 		Speed = options?.Speed is > 0 ? options.Speed : ReadDoubleConfig("tts_speed", 1.0),
+		EmotionText = options?.EmotionText,
 	};
 
 	private string ResolveProviderEndpoint(string providerName)
@@ -252,6 +265,9 @@ public sealed class VoiceService : IDisposable
 			"minimax" => _config.GetStringOr("tts_base_url", "") is {Length: > 0} minimaxUrl
 				? minimaxUrl
 				: "https://api.minimaxi.com/v1",
+			"indextts" => _config.GetStringOr("tts_base_url", "") is {Length: > 0} indexttsUrl
+				? indexttsUrl
+				: "https://api.modelverse.cn/v1",
 			_ => _config.GetStringOr("tts_base_url", "https://api.openai.com/v1"),
 		};
 		return $"{providerName}:{endpoint.Trim().TrimEnd('/') }";
@@ -262,12 +278,13 @@ public sealed class VoiceService : IDisposable
 	{
 		if (RetiredProviders.Contains(name))
 		{
-			throw new InvalidOperationException($"语音提供商 {name} 依赖浏览器能力, 已在纯后端版本中停用, 请改用 OpenAI / Gemini / MiniMax / 自定义 HTTP / GPT-SoVITS");
+			throw new InvalidOperationException($"语音提供商 {name} 依赖浏览器能力, 已在纯后端版本中停用, 请改用 OpenAI / Gemini / MiniMax / IndexTTS-2 / 自定义 HTTP / GPT-SoVITS");
 		}
 		return name switch
 		{
 			"gemini" => new GeminiTtsProvider(_httpClient, _config),
 			"minimax" => new MiniMaxTtsProvider(_httpClient, _config),
+			"indextts" => new IndexTtsProvider(_httpClient, _config, _paths),
 			"gpt_sovits" => new GptSoVitsTtsProvider(_httpClient, _config),
 			"custom" => new CustomHttpTtsProvider(_httpClient, _config),
 			_ => new OpenAiTtsProvider(_httpClient, _config),

@@ -257,11 +257,11 @@ public sealed class AudioSynthesisCache
 		get { lock (_gate) return _bytes; }
 	}
 
-	/// <summary>按提供商端点、音色、语速和文本哈希生成稳定键。</summary>
-	public static string CreateKey(string providerEndpoint, string? voice, double speed, string text)
+	/// <summary>按提供商端点、音色、语速、情绪和文本哈希生成稳定键。</summary>
+	public static string CreateKey(string providerEndpoint, string? voice, double speed, string text, string? emotion = null)
 	{
 		byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-		return $"{providerEndpoint.Trim()}\n{voice?.Trim() ?? ""}\n{speed.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}\n{Convert.ToHexString(hash)}";
+		return $"{providerEndpoint.Trim()}\n{voice?.Trim() ?? ""}\n{speed.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}\n{emotion?.Trim() ?? ""}\n{Convert.ToHexString(hash)}";
 	}
 
 	/// <summary>读取缓存并更新最近使用顺序。</summary>

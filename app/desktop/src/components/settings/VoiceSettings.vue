@@ -30,18 +30,19 @@ const volumeField = defineField(
 )
 const volume = volumeField.value
 
-// TTS 配置 (云端路径: openai / minimax / custom / gpt_sovits)
-type TtsProvider = "openai" | "gemini" | "minimax" | "custom" | "gpt_sovits"
+// TTS 配置 (云端路径: openai / minimax / custom / gpt_sovits / indextts)
+type TtsProvider = "openai" | "gemini" | "minimax" | "custom" | "gpt_sovits" | "indextts"
 const TTS_DEFAULT_BASE_URLS: Partial<Record<TtsProvider, string>> = {
 	openai: "https://api.openai.com/v1",
 	gemini: "https://generativelanguage.googleapis.com/v1beta",
 	minimax: "https://api.minimaxi.com/v1",
+	indextts: "https://api.modelverse.cn/v1",
 }
 const ttsProviderField = defineField<TtsProvider>(
 	"ttsProvider",
 	snapshot => {
 		const VALUE = snapshot.voice.ttsProvider
-		return (["openai", "gemini", "minimax", "custom", "gpt_sovits"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
+		return (["openai", "gemini", "minimax", "custom", "gpt_sovits", "indextts"] as string[]).includes(VALUE) ? VALUE as TtsProvider : "openai"
 	},
 	"openai",
 	val => RUNTIME.updateVoice({ttsProvider: val}),
@@ -126,6 +127,65 @@ const gptsovitsPromptLangField = defineField(
 )
 const gptsovitsPromptLang = gptsovitsPromptLangField.value
 
+// IndexTTS-2 模板音频与情绪强度
+const indexttsTemplateAudioField = defineField(
+	"indextts_template_audio",
+	snapshot => snapshot.voice.indexttsTemplateAudio,
+	"",
+	val => RUNTIME.updateVoice({indexttsTemplateAudio: val.trim()}),
+)
+const indexttsTemplateAudio = indexttsTemplateAudioField.value
+
+const indexttsEmoAlphaField = defineField(
+	"indextts_emo_alpha",
+	snapshot => snapshot.voice.indexttsEmoAlpha ?? 0.3,
+	0.3,
+	val => RUNTIME.updateVoice({indexttsEmoAlpha: String(val)}),
+)
+const indexttsEmoAlpha = indexttsEmoAlphaField.value
+
+const indexttsCloning = ref(false)
+const indexttsCloneResult = ref("")
+
+// 选择模板音频文件
+const onPickIndexTtsTemplate = async () => {
+	try {
+		const picked = await RUNTIME.pickIndexTtsTemplate()
+		if (picked) {
+			indexttsTemplateAudio.value = picked
+			indexttsTemplateAudioField.touch()
+			indexttsTemplateAudioField.save()
+		}
+	} catch (error) {
+		feedback.error(I18N.value.indexTts.pickFailed, error)
+	}
+}
+
+// 上传克隆音色
+const onCloneIndexTtsVoice = async () => {
+	if (indexttsCloning.value) return
+	if (!indexttsTemplateAudio.value.trim()) {
+		feedback.error(I18N.value.indexTts.templateMissing)
+		return
+	}
+	indexttsCloning.value = true
+	indexttsCloneResult.value = ""
+	try {
+		const result = await RUNTIME.cloneIndexTtsVoice(indexttsTemplateAudio.value.trim())
+		indexttsCloneResult.value = result.voiceId
+		feedback.success(I18N.value.indexTts.cloneSuccess)
+	} catch (error) {
+		feedback.error(I18N.value.indexTts.cloneFailed, error)
+	} finally {
+		indexttsCloning.value = false
+	}
+}
+
+const onIndexttsEmoAlphaChange = (value: number) => {
+	indexttsEmoAlpha.value = value
+	indexttsEmoAlphaField.save()
+}
+
 // STT (仅 Whisper 云端识别)
 const sttBaseUrlField = defineField(
 	"stt_base_url",
@@ -169,8 +229,12 @@ const onTtsProviderChange = (value: TtsProvider) => {
 		ttsVoice.value = "male-qn-qingse"
 		ttsVoiceField.touch()
 		void ttsVoiceField.saveNow()
+	} else if (value === "indextts" && (!ttsModel.value.trim() || ttsModel.value === "tts-1" || ttsModel.value.startsWith("gemini-"))) {
+		ttsModel.value = "IndexTeam/IndexTTS-2"
+		ttsModelField.touch()
+		void ttsModelField.saveNow()
 	} else if (value === "openai" && (ttsVoice.value === "male-qn-qingse" || ttsVoice.value === "Kore")) {
-		if (ttsModel.value.startsWith("gemini-")) { ttsModel.value = "tts-1"; ttsModelField.touch(); void ttsModelField.saveNow() }
+		if (ttsModel.value.startsWith("gemini-") || ttsModel.value.startsWith("IndexTeam/")) { ttsModel.value = "tts-1"; ttsModelField.touch(); void ttsModelField.saveNow() }
 		ttsVoice.value = "nova"
 		ttsVoiceField.touch()
 		void ttsVoiceField.saveNow()
@@ -318,6 +382,14 @@ const testVoice = async () => {
 						</label>
 						<label
 							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
+							:class="ttsProvider === 'indextts' ? 'pill-choice-on' : 'pill-choice-off'"
+						>
+							<input v-model="ttsProvider" type="radio" value="indextts" class="sr-only"
+								@change="onTtsProviderChange('indextts')"/>
+							{{ I18N.tts.providerIndexTts }}
+						</label>
+						<label
+							class="pill-choice focus-ring-within gap-1.5 px-3.5 py-1.5 text-xs"
 							:class="ttsProvider === 'custom' ? 'pill-choice-on' : 'pill-choice-off'"
 						>
 							<input v-model="ttsProvider" type="radio" value="custom" class="sr-only"
@@ -335,25 +407,25 @@ const testVoice = async () => {
 					</div>
 				</div>
 
-				<template v-if="ttsProvider === 'openai' || ttsProvider === 'gemini' || ttsProvider === 'minimax' || ttsProvider === 'custom'">
+				<template v-if="ttsProvider === 'openai' || ttsProvider === 'gemini' || ttsProvider === 'minimax' || ttsProvider === 'custom' || ttsProvider === 'indextts'">
 					<label class="field">
 						<span class="field-label font-500">{{ I18N.tts.baseUrl }}</span>
 						<input
 							v-model="ttsBaseUrl"
 							class="input-base"
-							:placeholder="ttsProvider === 'minimax' ? 'https://api.minimaxi.com/v1' : ttsProvider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : 'https://api.openai.com/v1'"
+							:placeholder="ttsProvider === 'minimax' ? 'https://api.minimaxi.com/v1' : ttsProvider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta' : ttsProvider === 'indextts' ? 'https://api.modelverse.cn/v1' : 'https://api.openai.com/v1'"
 							@focus="ttsBaseUrlField.focus"
 							@input="ttsBaseUrlField.touch"
 							@blur="onTtsBaseUrlBlur"
 						/>
 					</label>
 
-					<label v-if="ttsProvider === 'openai' || ttsProvider === 'gemini'" class="field">
+					<label v-if="ttsProvider === 'openai' || ttsProvider === 'gemini' || ttsProvider === 'indextts'" class="field">
 						<span class="field-label font-500">{{ I18N.tts.model }}</span>
 						<input
 							v-model="ttsModel"
 							class="input-base"
-							placeholder="tts-1"
+							:placeholder="ttsProvider === 'indextts' ? 'IndexTeam/IndexTTS-2' : 'tts-1'"
 							@focus="ttsModelField.focus"
 							@input="ttsModelField.touch"
 							@blur="onTtsModelBlur"
@@ -371,6 +443,66 @@ const testVoice = async () => {
 							@blur="onTtsApiKeyBlur"
 						/>
 					</label>
+
+					<template v-if="ttsProvider === 'indextts'">
+						<label class="field">
+							<span class="field-label font-500">{{ I18N.indexTts.templateAudio }}</span>
+							<div class="flex gap-2">
+								<input
+									v-model="indexttsTemplateAudio"
+									class="input-base flex-1"
+									placeholder="E:/IndexTTS/reference.wav"
+									@focus="indexttsTemplateAudioField.focus"
+									@input="indexttsTemplateAudioField.touch"
+									@blur="() => indexttsTemplateAudioField.save()"
+								/>
+								<AppButton size="sm" @click="onPickIndexTtsTemplate">
+									{{ I18N.indexTts.pick }}
+								</AppButton>
+							</div>
+							<span class="text-hint">{{ I18N.indexTts.templateHint }}</span>
+						</label>
+
+						<div class="flex gap-2 pt-1">
+							<AppButton
+								variant="primary"
+								size="sm"
+								:loading="indexttsCloning"
+								:disabled="indexttsCloning"
+								@click="onCloneIndexTtsVoice"
+							>
+								{{ indexttsCloning ? I18N.indexTts.cloning : I18N.indexTts.clone }}
+							</AppButton>
+							<span v-if="indexttsCloneResult" class="self-center text-xs text-text-muted mono">
+								{{ indexttsCloneResult }}
+							</span>
+						</div>
+
+						<div class="field">
+							<span class="field-label font-500">{{ I18N.indexTts.emoAlpha }}: {{ indexttsEmoAlpha }}</span>
+							<n-slider
+								:value="indexttsEmoAlpha"
+								:min="0"
+								:max="1"
+								:step="0.05"
+								:format-tooltip="(v: number) => `${v.toFixed(2)}`"
+								@update:value="onIndexttsEmoAlphaChange"
+							/>
+							<span class="text-hint">{{ I18N.indexTts.emoAlphaHint }}</span>
+						</div>
+
+						<div class="field">
+							<span class="field-label font-500">{{ I18N.tts.speed }}: {{ ttsSpeed }}x</span>
+							<n-slider
+								:value="ttsSpeed"
+								:min="0.5"
+								:max="2.0"
+								:step="0.1"
+								:format-tooltip="(v: number) => `${v}x`"
+								@update:value="onTtsSpeedChange"
+							/>
+						</div>
+					</template>
 				</template>
 
 				<template v-else-if="ttsProvider === 'gpt_sovits'">
@@ -424,7 +556,7 @@ const testVoice = async () => {
 					</div>
 				</template>
 
-				<div class="flex gap-3">
+				<div v-if="ttsProvider !== 'indextts'" class="flex gap-3">
 					<label class="field flex-1">
 						<span class="field-label font-500">{{ I18N.tts.voice }}</span>
 						<input

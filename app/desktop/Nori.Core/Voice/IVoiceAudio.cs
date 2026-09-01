@@ -10,6 +10,14 @@ public sealed record TtsSynthesizeOptions
 
 	/// <summary>语速 (1.0 为常速)</summary>
 	public double Speed { get; init; } = 1.0;
+
+	/// <summary>
+	/// 合成时的情绪倾向 (如 happy/sad/angry 或短描述)。
+	///
+	/// 可选：由 AI 回复或全局情绪状态自动推断，不为 null 时支持的
+	/// Provider (如 IndexTTS-2) 会映射为情感控制参数；其余 Provider 忽略。
+	/// </summary>
+	public string? EmotionText { get; init; }
 }
 
 /// <summary>

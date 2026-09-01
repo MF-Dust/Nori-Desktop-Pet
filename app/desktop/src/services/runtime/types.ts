@@ -172,6 +172,8 @@ export interface VoiceState {
 	gptsovitsRefAudio: string
 	gptsovitsPromptText: string
 	gptsovitsPromptLang: string
+	indexttsTemplateAudio: string
+	indexttsEmoAlpha: number
 	sttProvider: string
 	sttBaseUrl: string
 	hasSttApiKey: boolean

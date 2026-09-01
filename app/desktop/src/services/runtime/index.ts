@@ -393,11 +393,19 @@ export const RUNTIME = {
 		gptsovitsRefAudio: string
 		gptsovitsPromptText: string
 		gptsovitsPromptLang: string
+		indexttsTemplateAudio: string
+		indexttsEmoAlpha: string
 		sttProvider: string
 		sttBaseUrl: string
 		sttApiKey: string
 	}>): Promise<void> {
 		return invoke("settings_update_voice", patch)
+	},
+	pickIndexTtsTemplate(): Promise<string | null> {
+		return invoke("indextts_pick_template")
+	},
+	cloneIndexTtsVoice(filePath?: string): Promise<{voiceId: string}> {
+		return invoke("indextts_clone_voice", {filePath})
 	},
 	updateGeneral(patch: Partial<{language: string; petAutoSummon: boolean; sidebarCollapsed: boolean; telemetryEnabled: boolean}>): Promise<void> {
 		return invoke("settings_update_general", patch)

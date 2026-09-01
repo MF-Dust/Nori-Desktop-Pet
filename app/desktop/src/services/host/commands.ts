@@ -113,6 +113,8 @@ export interface BridgeCommandMap {
 	get_init_config: {args: EmptyCommandArgs; result: CommandArgs}
 	init_ready: {args: EmptyCommandArgs; result: {initStartPending: boolean}}
 	model_import_local: {args: {resourceType: "live2d"; sourceKind: "zip" | "folder"}; result: string[] | null}
+	indextts_pick_template: {args: EmptyCommandArgs; result: string | null}
+	indextts_clone_voice: {args: {filePath?: string}; result: {voiceId: string}}
 	model_get_meta: {args: {modelId: string}; result: ModelMeta}
 	model_set_display: {args: {modelId: string} & CommandArgs; result: void}
 	model_set_interactions: {args: {modelId: string; interactions: InteractionConfig}; result: void}
