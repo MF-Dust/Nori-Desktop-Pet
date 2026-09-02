@@ -1297,7 +1297,7 @@ public sealed class AppRuntime : IAsyncDisposable
 				hasTtsApiKey = config.GetStringOr("tts_api_key", "").Length > 0,
 				ttsVoice = config.GetStringOr("tts_voice", ""),
 				ttsSpeed = ReadFloat(config, "tts_speed") ?? 1.0,
-				ttsAutoPlay = ParseBoolFlag(config.GetStringOr("tts_auto_play", "true")) ?? true,
+				ttsAutoPlay = ParseBoolFlag(config.GetStringOr("tts_auto_play", "")) ?? false,
 				gptsovitsBaseUrl = config.GetStringOr("gptsovits_base_url", "http://127.0.0.1:9880"),
 				gptsovitsRefAudio = config.GetStringOr("gptsovits_ref_audio", ""),
 				gptsovitsPromptText = config.GetStringOr("gptsovits_prompt_text", ""),

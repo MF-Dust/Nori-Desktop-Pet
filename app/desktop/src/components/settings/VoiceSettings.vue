@@ -86,7 +86,7 @@ const ttsSpeed = ttsSpeedField.value
 const ttsAutoPlayField = defineField(
 	"tts_auto_play",
 	snapshot => snapshot.voice.ttsAutoPlay,
-	true,
+	false,
 	val => RUNTIME.updateVoice({ttsAutoPlay: val}),
 )
 const ttsAutoPlay = ttsAutoPlayField.value
