@@ -90,7 +90,7 @@ public static class VoiceTextSanitizer
 
 		while (i < length)
 		{
-			// 跳过 emoji（代理对 / 变体选择符 / ZWJ），IndexTTS 会读成怪叫
+			// 跳过真正的 emoji Unicode scalar 及其变体/ZWJ 组合。
 			if (IsEmojiAt(text, i))
 			{
 				i += EmojiLength(text, i);
@@ -101,7 +101,6 @@ public static class VoiceTextSanitizer
 			int leadStart = i;
 			int cursor = i;
 			while (cursor < length && LeadDecor.Contains(text[cursor])) cursor++;
-			int contentStart = cursor;
 
 			// 是否是开括号
 			bool isOpen = cursor < length && (text[cursor] == '(' || text[cursor] == '（');
@@ -172,82 +171,78 @@ public static class VoiceTextSanitizer
 		return false;
 	}
 
-	/// <summary>判断位置 i 是否处于一个 emoji 序列的起点（代理对 / 变体选择符 / ZWJ / 常见 emoji 符号）。</summary>
+	/// <summary>判断位置 i 是否处于一个 emoji 序列的起点。</summary>
 	private static bool IsEmojiAt(string text, int i)
 	{
 		char c = text[i];
-		// 补充平面（U+10000 以上）：代理对，基本全是 emoji / 罕见表意字，TTS 语境按 emoji 处理
-		if (char.IsHighSurrogate(c)) return true;
-		// 低代理不应出现在这里（前面已被 HighSurrogate 消费），保险起见也跳过
-		if (char.IsLowSurrogate(c)) return true;
-		// 变体选择符 VS16（U+FE0F，emoji 形式）与 VS15（U+FE0E）
-		if (c == '\uFE0F' || c == '\uFE0E') return true;
-		// ZWJ 零宽连接符（多 emoji 组合，如 👨👩👧）
-		if (c == '\u200D') return true;
-		// 杂项符号区中常见 emoji（U+2600–U+27BF 子集）
-		return EmojiSymbol.Contains(c);
+		if (c == '\uFE0F' || c == '\uFE0E' || c == '\u200D') return true;
+		if (!Rune.TryGetRuneAt(text, i, out Rune rune)) return false;
+		return IsEmojiRune(rune);
 	}
 
-	/// <summary>从位置 i 起跳过整个 emoji 序列（含后续变体选择符/ZWJ 组合），返回序列长度。</summary>
+	/// <summary>判断 Unicode scalar 是否属于需要从 TTS 文本中去除的 emoji。</summary>
+	private static bool IsEmojiRune(Rune rune)
+	{
+		int value = rune.Value;
+		if (value <= char.MaxValue) return EmojiSymbol.Contains((char)value);
+
+		return value is 0x1F004 or 0x1F0CF
+			|| value is >= 0x1F1E6 and <= 0x1F1FF
+			|| value is >= 0x1F300 and <= 0x1F5FF
+			|| value is >= 0x1F600 and <= 0x1F64F
+			|| value is >= 0x1F680 and <= 0x1F6FF
+			|| value is >= 0x1F7E0 and <= 0x1F7EB
+			|| value is >= 0x1F900 and <= 0x1F9FF
+			|| value is >= 0x1FA70 and <= 0x1FAFF;
+	}
+
+	/// <summary>从位置 i 起跳过整个 emoji 序列（含后续变体选择符/ZWJ 组合），返回 UTF-16 长度。</summary>
 	private static int EmojiLength(string text, int i)
 	{
-		int count = 0;
-		while (i + count < text.Length)
+		int cursor = i;
+		while (cursor < text.Length)
 		{
-			char c = text[i + count];
-			if (char.IsHighSurrogate(c))
+			char c = text[cursor];
+			if (c == '\uFE0F' || c == '\uFE0E' || c == '\u200D')
 			{
-				if (i + count + 1 < text.Length && char.IsLowSurrogate(text[i + count + 1]))
-				{
-					count += 2;
-					continue;
-				}
-				count++;
+				cursor++;
 				continue;
 			}
-			if (char.IsLowSurrogate(c) || c == '\uFE0F' || c == '\uFE0E' || c == '\u200D')
-			{
-				count++;
-				continue;
-			}
-			if (EmojiSymbol.Contains(c))
-			{
-				count++;
-				continue;
-			}
-			break;
+
+			if (!Rune.TryGetRuneAt(text, cursor, out Rune rune) || !IsEmojiRune(rune)) break;
+			cursor += rune.Utf16SequenceLength;
 		}
-		return Math.Max(1, count);
+		return Math.Max(1, cursor - i);
 	}
 
 	/// <summary>杂项符号/装饰符号区中常见的 emoji 字符（单 char 表示的 emoji）。</summary>
 	private static readonly HashSet<char> EmojiSymbol =
 	[
-		'\u00A9', // ©
-		'\u00AE', // ®
-		'\u203C', // ‼
-		'\u2049', // ⁉
-		'\u2122', // ™
-		'\u2139', // ℹ
-		'\u2194', '\u2195', '\u2196', '\u2197', '\u2198', '\u2199', // ↔ ↕ ↖ ↗ ↘ ↙
-		'\u21A9', '\u21AA', // ↩ ↪
-		'\u231A', '\u231B', // ⌚ ⌛
-		'\u2328', // ⌨
-		'\u23CF', '\u23E9', '\u23EA', '\u23EB', '\u23EC', '\u23ED', '\u23EE', '\u23EF', '\u23F0', '\u23F1', '\u23F2', '\u23F3', // ⏏ ⏩ ⏪ ⏫ ⏬ ⏭ ⏮ ⏯ ⏰ ⏱ ⏲ ⏳
-		'\u23F8', '\u23F9', '\u23FA', // ⏸ ⏹ ⏺
-		'\u24C2', // Ⓜ
-		'\u25AA', '\u25AB', '\u25B6', '\u25C0', '\u25FB', '\u25FC', '\u25FD', '\u25FE', // ▪ ▫ ▶ ◀ ◻ ◼ ◽ ◾
-		'\u2600', '\u2601', '\u2602', '\u2603', '\u2604', '\u260E', '\u2611', '\u2614', '\u2615', // ☀ ☁ ☂ ☃ ☄ ☎ ☑ ☔ ☕
-		'\u2618', '\u261D', '\u2620', '\u2622', '\u2623', '\u2626', '\u262A', '\u262E', '\u262F', '\u2638', '\u2639', '\u263A', // ☘ ☝ ☠ ☢ ☣ ☦ ☪ ☮ ☯ ☸ ☹ ☺
-		'\u2640', '\u2642', '\u2648', '\u2649', '\u264A', '\u264B', '\u264C', '\u264D', '\u264E', '\u264F', '\u2650', '\u2651', '\u2652', '\u2653', // ♀ ♂ 十二星座
-		'\u2660', '\u2663', '\u2665', '\u2666', '\u2668', // ♠ ♣ ♥ ♦ ♨
-		'\u267B', '\u267E', '\u267F', // ♻ ♾ ♿
-		'\u2692', '\u2693', '\u2694', '\u2696', '\u2697', '\u2699', '\u269B', '\u269C', '\u26A0', '\u26A1', '\u26A7', '\u26AA', '\u26AB', // ⚒ ⚓ ⚔ ⚖ ⚗ ⚙ ⚛ ⚜ ⚠ ⚡ ⚧ ⚪ ⚫
-		'\u26B0', '\u26B1', '\u26BD', '\u26BE', // ⚰ ⚱ ⚽ ⚾
-		'\u26C4', '\u26C5', '\u26C8', '\u26CE', '\u26CF', '\u26D1', '\u26D3', '\u26D4', '\u26E9', '\u26EA', '\u26F0', '\u26F1', '\u26F2', '\u26F3', '\u26F4', '\u26F5', '\u26F7', '\u26F8', '\u26F9', '\u26FA', '\u26FD', // ⛄ ⛅ ⛈ ⛎ ⛏ ⛑ ⛓ ⛔ ⛩ ⛪ ⛰ ⛱ ⛲ ⛳ ⛴ ⛵ ⛷ ⛸ ⛹ ⛺ ⛽
-		'\u2702', '\u2705', '\u2708', '\u2709', '\u270A', '\u270B', '\u270C', '\u270D', '\u270F', '\u2712', '\u2714', '\u2716', '\u271D', '\u2721', // ✂ ✅ ✈ ✉ ✊ ✋ ✌ ☝ ✍ ✏ ✒ ✔ ✖ ✝ ✡
-		'\u2728', '\u2733', '\u2734', '\u2744', '\u2747', '\u274C', '\u274E', '\u2753', '\u2754', '\u2755', '\u2757', // ✨ ✳ ✴ ❄ ❇ ❌ ❎ ❓ ❔ ❕ ❗
-		'\u2763', '\u2764', '\u2795', '\u2796', '\u2797', '\u27A1', '\u27B0', '\u27BF', // ❣ ❤ ➕ ➖ ➗ ➡ ➰ ➿
+		'\u00A9',
+		'\u00AE',
+		'\u203C',
+		'\u2049',
+		'\u2122',
+		'\u2139',
+		'\u2194', '\u2195', '\u2196', '\u2197', '\u2198', '\u2199',
+		'\u21A9', '\u21AA',
+		'\u231A', '\u231B',
+		'\u2328',
+		'\u23CF', '\u23E9', '\u23EA', '\u23EB', '\u23EC', '\u23ED', '\u23EE', '\u23EF', '\u23F0', '\u23F1', '\u23F2', '\u23F3',
+		'\u23F8', '\u23F9', '\u23FA',
+		'\u24C2',
+		'\u25AA', '\u25AB', '\u25B6', '\u25C0', '\u25FB', '\u25FC', '\u25FD', '\u25FE',
+		'\u2600', '\u2601', '\u2602', '\u2603', '\u2604', '\u260E', '\u2611', '\u2614', '\u2615',
+		'\u2618', '\u261D', '\u2620', '\u2622', '\u2623', '\u2626', '\u262A', '\u262E', '\u262F', '\u2638', '\u2639', '\u263A',
+		'\u2640', '\u2642', '\u2648', '\u2649', '\u264A', '\u264B', '\u264C', '\u264D', '\u264E', '\u264F', '\u2650', '\u2651', '\u2652', '\u2653',
+		'\u2660', '\u2663', '\u2665', '\u2666', '\u2668',
+		'\u267B', '\u267E', '\u267F',
+		'\u2692', '\u2693', '\u2694', '\u2696', '\u2697', '\u2699', '\u269B', '\u269C', '\u26A0', '\u26A1', '\u26A7', '\u26AA', '\u26AB',
+		'\u26B0', '\u26B1', '\u26BD', '\u26BE',
+		'\u26C4', '\u26C5', '\u26C8', '\u26CE', '\u26CF', '\u26D1', '\u26D3', '\u26D4', '\u26E9', '\u26EA', '\u26F0', '\u26F1', '\u26F2', '\u26F3', '\u26F4', '\u26F5', '\u26F7', '\u26F8', '\u26F9', '\u26FA', '\u26FD',
+		'\u2702', '\u2705', '\u2708', '\u2709', '\u270A', '\u270B', '\u270C', '\u270D', '\u270F', '\u2712', '\u2714', '\u2716', '\u271D', '\u2721',
+		'\u2728', '\u2733', '\u2734', '\u2744', '\u2747', '\u274C', '\u274E', '\u2753', '\u2754', '\u2755', '\u2757',
+		'\u2763', '\u2764', '\u2795', '\u2796', '\u2797', '\u27A1', '\u27B0', '\u27BF',
 	];
 
 	private static bool AllIn(string content, HashSet<char> set)
