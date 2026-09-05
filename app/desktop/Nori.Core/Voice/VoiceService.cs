@@ -247,6 +247,11 @@ public sealed class VoiceService : IDisposable
 			merged = merged with {Voice = resolvedVoice};
 		}
 		string endpoint = ResolveProviderEndpoint(providerName);
+		// IndexTTS 的情绪强度会改变音频结果，也要参与缓存身份；这样配置从任何入口变化都不会命中旧音频。
+		if (provider is IndexTtsProvider cacheAwareIndexTts)
+		{
+			endpoint = $"{endpoint}:{cacheAwareIndexTts.GetSynthesisCacheVariant()}";
+		}
 		string key = AudioSynthesisCache.CreateKey(endpoint, merged.Voice, merged.Speed, text, merged.EmotionText);
 		if (SynthesisCache.TryGet(key, out EncodedAudio cached)) return cached;
 
