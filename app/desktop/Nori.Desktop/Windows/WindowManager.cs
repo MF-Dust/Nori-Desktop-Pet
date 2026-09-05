@@ -114,7 +114,7 @@ public sealed class WindowManager(AssetServer assetServer, IClassicDesktopStyleA
 		window.Show();
 		if (window is PetWindow pet)
 		{
-			// 桌宠不抢当前应用焦点；穿透状态会自行决定 Topmost / 普通 Z 序。
+			// 桌宠不抢当前应用焦点；点击穿透由分层样式实现，窗口保持置顶。
 			pet.ApplyWindowSize();
 			pet.ReapplyInputState();
 			return;

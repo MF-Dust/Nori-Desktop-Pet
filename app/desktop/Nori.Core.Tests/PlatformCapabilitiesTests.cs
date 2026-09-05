@@ -14,6 +14,7 @@ public class PlatformCapabilitiesTests
 	private const int GwlExStyle = -20;
 	private const long WsExTopmost = 0x00000008;
 	private const long WsExTransparent = 0x00000020;
+	private const long WsExLayered = 0x00080000;
 	private const uint WsPopup = 0x80000000;
 
 	[DllImport("user32.dll", EntryPoint = "CreateWindowExW", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -101,7 +102,7 @@ public class PlatformCapabilitiesTests
 	}
 
 	[Fact]
-	public void Windows穿透会切换透明样式与Topmost层级()
+	public void Windows穿透叠加分层透明样式且保持置顶()
 	{
 		if (!OperatingSystem.IsWindows()) return;
 
@@ -113,11 +114,13 @@ public class PlatformCapabilitiesTests
 			services.SetClickThrough(window, true);
 			long throughStyle = GetWindowLongPtr(window, GwlExStyle).ToInt64();
 			Assert.NotEqual(0, throughStyle & WsExTransparent);
-			Assert.Equal(0, throughStyle & WsExTopmost);
+			Assert.NotEqual(0, throughStyle & WsExLayered);
+			Assert.NotEqual(0, throughStyle & WsExTopmost);
 
 			services.SetClickThrough(window, false);
 			long clickableStyle = GetWindowLongPtr(window, GwlExStyle).ToInt64();
 			Assert.Equal(0, clickableStyle & WsExTransparent);
+			Assert.Equal(0, clickableStyle & WsExLayered);
 			Assert.NotEqual(0, clickableStyle & WsExTopmost);
 		}
 		finally

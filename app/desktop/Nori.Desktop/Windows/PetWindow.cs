@@ -19,8 +19,8 @@ namespace Nori.Desktop.Windows;
 ///
 /// 承载 PetGlControl 并接管桌宠的全部交互：
 /// - 模型外接矩形穿透: 约 10Hz 从 alpha 画面更新连续交互范围; Windows 走 WM_NCHITTEST
-///   并按命中状态切换 Topmost Z 序, macOS/Linux(X11) 设置穿透开关/输入形状;
-///   Wayland 无此能力, 降级为整窗可点
+///   逐点判定, 并用 WS_EX_LAYERED|WS_EX_TRANSPARENT 分层样式实现跨进程穿透, 窗口始终置顶;
+///   macOS/Linux(X11) 设置穿透开关/输入形状; Wayland 无此能力, 降级为整窗可点
 /// - 左键拖拽移动窗口 + 坐标持久化（阈值 4px）
 /// - 左键点击触发动作与表情判定
 /// - 深海微光配色原生右键菜单（打开主界面 / 随机动作 / 重置位置 / 隐藏桌宠 / 退出）
@@ -392,7 +392,7 @@ public sealed class PetWindow : Window
 		RefreshInputState();
 	}
 
-	/// <summary>刷新 Windows 桌宠的点击穿透与 Z 序状态。</summary>
+	/// <summary>刷新 Windows 桌宠的点击穿透状态 (窗口保持置顶)。</summary>
 	public void RefreshInputState()
 	{
 		if (!OperatingSystem.IsWindows() || PlatformServices.Current is not WindowsPlatformServices windows) return;
@@ -425,7 +425,6 @@ public sealed class PetWindow : Window
 		try
 		{
 			windows.SetClickThrough(handle, through);
-			Topmost = !through;
 			_lastClickThrough = through;
 		}
 		catch (Exception exception) when (exception is InvalidOperationException or EntryPointNotFoundException or DllNotFoundException)
