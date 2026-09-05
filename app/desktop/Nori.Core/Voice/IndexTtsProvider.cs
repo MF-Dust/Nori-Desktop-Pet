@@ -25,6 +25,7 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 	private const string DefaultModel = "IndexTeam/IndexTTS-2";
 	private const double DefaultEmotionAlpha = 0.3;
 	private const string DefaultTemplateAudioConfigKey = "indextts_template_audio";
+	private const string SpeechEndpointSuffix = "/audio/speech";
 
 	/// <summary>音色有效期 (秒), 与平台 7 天一致。</summary>
 	internal static readonly TimeSpan VoiceTtl = TimeSpan.FromDays(7);
@@ -92,13 +93,22 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 		return model.Length == 0 ? DefaultModel : model;
 	}
 
-	private string ResolveEndpoint()
+	private string ResolveApiBaseUrl()
 	{
 		string baseUrl = (config.GetStringOr("tts_base_url", "") is {Length: > 0} saved ? saved : DefaultBaseUrl)
 			.Trim().TrimEnd('/');
-		return baseUrl.EndsWith("/audio/speech", StringComparison.OrdinalIgnoreCase)
-			? baseUrl
-			: $"{baseUrl}/audio/speech";
+		return baseUrl.EndsWith(SpeechEndpointSuffix, StringComparison.OrdinalIgnoreCase)
+			? baseUrl[..^SpeechEndpointSuffix.Length]
+			: baseUrl;
+	}
+
+	private string ResolveEndpoint() => $"{ResolveApiBaseUrl()}{SpeechEndpointSuffix}";
+
+	/// <summary>返回会影响 IndexTTS 合成结果、需要参与合成缓存身份的配置。</summary>
+	internal string GetSynthesisCacheVariant()
+	{
+		double emotionAlpha = ReadDouble(config, "indextts_emo_alpha", DefaultEmotionAlpha);
+		return $"emo_alpha={emotionAlpha.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}";
 	}
 
 	// ---- 模板音频 → 音色 (上传/存档/缓存/续期) ----
@@ -113,16 +123,33 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 	{
 		string templatePath = config.GetStringOr(DefaultTemplateAudioConfigKey, "").Trim();
 		if (templatePath.Length == 0) return "";
-		if (!File.Exists(templatePath)) throw new InvalidOperationException($"IndexTTS-2 音频模板文件不存在: {templatePath}");
 
 		IndexTtsVoiceCache cache = LoadCache();
-		string? cached = cache.FindBySource(templatePath);
-		if (cached is not null && !cache.IsExpired(templatePath))
+		IndexTtsVoiceEntry? entry = cache.FindEntryBySource(templatePath);
+		if (entry is not null)
 		{
-			return cached;
+			if (!string.IsNullOrWhiteSpace(entry.VoiceId) && !cache.IsExpired(templatePath))
+			{
+				return entry.VoiceId;
+			}
+
+			// 已缓存音色续期时优先读取应用自己的存档；原始模板即使被移动、删除或位于离线盘也不影响续期。
+			if (!string.IsNullOrWhiteSpace(entry.ArchiveFile) && File.Exists(entry.ArchiveFile))
+			{
+				return await UploadAndCacheVoiceAsync(
+					templatePath,
+					entry.ArchiveFile,
+					string.IsNullOrWhiteSpace(entry.Name) ? Path.GetFileNameWithoutExtension(templatePath) : entry.Name,
+					cache,
+					cancellationToken);
+			}
 		}
 
-		// 过期或未缓存：克隆（过期时用存档音频续期，key 不变）。
+		if (!File.Exists(templatePath))
+		{
+			throw new InvalidOperationException($"IndexTTS-2 音频模板文件不存在，且没有可用的本地存档: {templatePath}");
+		}
+
 		return await CloneVoiceAsync(templatePath, cache, cancellationToken);
 	}
 
@@ -137,15 +164,23 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 
 	private async Task<string> CloneVoiceAsync(string templatePath, IndexTtsVoiceCache cache, CancellationToken cancellationToken)
 	{
+		string archiveFile = ArchiveTemplateAudio(templatePath);
+		string name = Path.GetFileNameWithoutExtension(templatePath);
+		return await UploadAndCacheVoiceAsync(templatePath, archiveFile, name, cache, cancellationToken);
+	}
+
+	private async Task<string> UploadAndCacheVoiceAsync(
+		string sourcePath,
+		string archiveFile,
+		string name,
+		IndexTtsVoiceCache cache,
+		CancellationToken cancellationToken)
+	{
 		string apiKey = config.GetStringOr("tts_api_key", "").Trim();
 		if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("未配置 IndexTTS-2 API Key");
 
-		// 存档参考音频（内容 hash 去重），续期走这份存档而不是用户原始路径。
-		string archiveFile = ArchiveTemplateAudio(templatePath);
-		string name = Path.GetFileNameWithoutExtension(templatePath);
 		string voiceId = await UploadVoiceAsync(archiveFile, name, apiKey, cancellationToken);
-
-		cache.Set(templatePath, voiceId, archiveFile, name, DateTimeOffset.UtcNow);
+		cache.Set(sourcePath, voiceId, archiveFile, name, DateTimeOffset.UtcNow);
 		SaveCache(cache);
 		return voiceId;
 	}
@@ -168,9 +203,7 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 
 	private async Task<string> UploadVoiceAsync(string audioFile, string name, string apiKey, CancellationToken cancellationToken)
 	{
-		string baseUrl = (config.GetStringOr("tts_base_url", "") is {Length: > 0} saved ? saved : DefaultBaseUrl)
-			.Trim().TrimEnd('/');
-		string url = $"{baseUrl}/audio/voice/upload";
+		string url = $"{ResolveApiBaseUrl()}/audio/voice/upload";
 
 		using MultipartFormDataContent form = new();
 		byte[] audioBytes = await File.ReadAllBytesAsync(audioFile, cancellationToken);
@@ -178,7 +211,7 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 		file.Headers.TryAddWithoutValidation("Content-Type", InferAudioMime(audioFile));
 		form.Add(file, "speaker_file", Path.GetFileName(audioFile));
 		form.Add(new StringContent(name), "name");
-		form.Add(new StringContent(DefaultModel), "model");
+		form.Add(new StringContent(ResolveModel()), "model");
 
 		using HttpRequestMessage request = new(HttpMethod.Post, url) {Content = form};
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
@@ -266,19 +299,25 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 		/// <remarks>Windows 路径大小写不敏感，统一用忽略大小写比较，避免同一文件不同大小写重复克隆。</remarks>
 		public Dictionary<string, IndexTtsVoiceEntry> Voices { get; set; } = new(PathKeyComparer);
 
+		/// <summary>按源路径查找缓存条目。</summary>
+		public IndexTtsVoiceEntry? FindEntryBySource(string sourcePath)
+		{
+			string key = NormalizeKey(sourcePath);
+			return Voices.TryGetValue(key, out IndexTtsVoiceEntry? entry) ? entry : null;
+		}
+
 		/// <summary>按源路径查找未过期的 voice_id。</summary>
 		public string? FindBySource(string sourcePath)
 		{
-			string key = NormalizeKey(sourcePath);
-			if (!Voices.TryGetValue(key, out IndexTtsVoiceEntry? entry)) return null;
-			return string.IsNullOrWhiteSpace(entry.VoiceId) ? null : entry.VoiceId;
+			IndexTtsVoiceEntry? entry = FindEntryBySource(sourcePath);
+			return entry is null || string.IsNullOrWhiteSpace(entry.VoiceId) ? null : entry.VoiceId;
 		}
 
 		/// <summary>判断源路径对应音色是否已过期。</summary>
 		public bool IsExpired(string sourcePath)
 		{
-			string key = NormalizeKey(sourcePath);
-			if (!Voices.TryGetValue(key, out IndexTtsVoiceEntry? entry)) return true;
+			IndexTtsVoiceEntry? entry = FindEntryBySource(sourcePath);
+			if (entry is null) return true;
 			long uploaded = entry.UploadUnixSeconds;
 			if (uploaded <= 0) return true;
 			return DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(uploaded) > VoiceTtl;
@@ -343,7 +382,7 @@ public sealed class IndexTtsProvider(HttpClient httpClient, ConfigStore config, 
 	/// <summary>读取数值配置, 非法或缺失时回退默认值。</summary>
 	private static double ReadDouble(ConfigStore config, string key, double fallback) =>
 		double.TryParse(config.GetStringOr(key, ""), System.Globalization.NumberStyles.Float,
-			System.Globalization.CultureInfo.InvariantCulture, out double value) && value is > 0 and <= 1 ? value : fallback;
+			System.Globalization.CultureInfo.InvariantCulture, out double value) && value is >= 0 and <= 1 ? value : fallback;
 
 	/// <summary>从配置读取可选扩展字段；配置值存在且非空时才加入 payload。</summary>
 	private static void AppendOptional(JsonObject payload, ConfigStore config, string configKey, string apiField)
