@@ -32,6 +32,9 @@ public sealed class AppStoragePaths
 		Live2DDirectory = Path.Combine(ResourcesInstalledDirectory, "live2d");
 		ResourcesCacheDirectory = Path.Combine(ResourcesDirectory, "cache");
 		ResourcesImportDirectory = Path.Combine(ResourcesDirectory, "temp", "import");
+		IndexTtsDirectory = Path.Combine(ResourcesDirectory, "indextts");
+		IndexTtsVoicesDirectory = Path.Combine(IndexTtsDirectory, "voices");
+		IndexTtsCachePath = Path.Combine(IndexTtsDirectory, "voice_cache.json");
 		PluginsDirectory = Path.Combine(DataRoot, "plugins");
 		PluginsInstalledDirectory = Path.Combine(PluginsDirectory, "installed");
 		PluginsDataDirectory = Path.Combine(PluginsDirectory, "data");
@@ -63,6 +66,9 @@ public sealed class AppStoragePaths
 	public string Live2DDirectory { get; }
 	public string ResourcesCacheDirectory { get; }
 	public string ResourcesImportDirectory { get; }
+	public string IndexTtsDirectory { get; }
+	public string IndexTtsVoicesDirectory { get; }
+	public string IndexTtsCachePath { get; }
 	public string PluginsDirectory { get; }
 	public string PluginsInstalledDirectory { get; }
 	public string PluginsDataDirectory { get; }
@@ -88,6 +94,7 @@ public sealed class AppStoragePaths
 		EnsureDirectory(Live2DDirectory);
 		EnsureDirectory(ResourcesCacheDirectory);
 		EnsureDirectory(ResourcesImportDirectory);
+		EnsureDirectory(IndexTtsVoicesDirectory);
 		EnsureDirectory(PluginsInstalledDirectory);
 		EnsureDirectory(PluginsDataDirectory);
 		EnsureDirectory(PluginsWebViewCacheDirectory);

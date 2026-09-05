@@ -191,7 +191,7 @@ public sealed class AppRuntime : IAsyncDisposable
 		_playback = playback;
 		_recorder = recorder;
 		_audioChannel = channel;
-		Voice = new VoiceService(services.Http, config, playback, () => VoiceRetired() ? null : recorder);
+		Voice = new VoiceService(services.Http, config, playback, () => VoiceRetired() ? null : recorder, services.Paths);
 		_petInteractionService = new PetInteractionReactionService(services.Http, config);
 
 		Tools = BuildToolRegistry(true);
@@ -557,7 +557,9 @@ public sealed class AppRuntime : IAsyncDisposable
 	{
 		try
 		{
-			await Voice.SpeakAsync(text, null, speechCts.Token);
+			// 桌宠互动朗读同样带上全局情绪状态，让 TTS 情感与表情联动一致。
+			TtsSynthesizeOptions speechOptions = new() {EmotionText = Emotion.CurrentType};
+			await Voice.SpeakAsync(text, speechOptions, speechCts.Token);
 		}
 		catch (OperationCanceledException) when (speechCts.IsCancellationRequested)
 		{
@@ -870,7 +872,7 @@ public sealed class AppRuntime : IAsyncDisposable
 					},
 				});
 
-				await AutoSpeakAsync(final.Text, session.SourceLabel, session.Cts.Token);
+				await AutoSpeakAsync(final.Text, final.Emotion, session.SourceLabel, session.Cts.Token);
 			}
 			catch (OperationCanceledException)
 			{
@@ -894,16 +896,20 @@ public sealed class AppRuntime : IAsyncDisposable
 
 	private int _sessionCounter;
 
-	private async Task AutoSpeakAsync(string text, string sourceLabel, CancellationToken ct)
+	private async Task AutoSpeakAsync(string text, string? messageEmotion, string sourceLabel, CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(text)) return;
 		bool autoTts = ParseBoolFlag(Services.Config.GetStringOr("tts_auto_play", "")) ?? false;
 		if (!autoTts) return;
 
+		// 情绪自动推断：优先本条 AI 回复自带情绪，否则用全局情绪状态机当前值；
+		// 都没有 (或为 neutral) 时不传情绪，让 TTS 用音色自带情绪。
+		string? emotion = string.IsNullOrWhiteSpace(messageEmotion) ? Emotion.CurrentType : messageEmotion.Trim();
+		TtsSynthesizeOptions speechOptions = new() {EmotionText = emotion};
 		PostAgentEvent(sourceLabel, new {type = "state", state = AgentRunState.Speaking.ToString().ToLowerInvariant()});
 		try
 		{
-			await Voice.SpeakAsync(text, null, ct);
+			await Voice.SpeakAsync(text, speechOptions, ct);
 		}
 		catch
 		{
@@ -1291,11 +1297,13 @@ public sealed class AppRuntime : IAsyncDisposable
 				hasTtsApiKey = config.GetStringOr("tts_api_key", "").Length > 0,
 				ttsVoice = config.GetStringOr("tts_voice", ""),
 				ttsSpeed = ReadFloat(config, "tts_speed") ?? 1.0,
-				ttsAutoPlay = ParseBoolFlag(config.GetStringOr("tts_auto_play", "true")) ?? true,
+				ttsAutoPlay = ParseBoolFlag(config.GetStringOr("tts_auto_play", "")) ?? false,
 				gptsovitsBaseUrl = config.GetStringOr("gptsovits_base_url", "http://127.0.0.1:9880"),
 				gptsovitsRefAudio = config.GetStringOr("gptsovits_ref_audio", ""),
 				gptsovitsPromptText = config.GetStringOr("gptsovits_prompt_text", ""),
 				gptsovitsPromptLang = config.GetStringOr("gptsovits_prompt_lang", "zh"),
+				indexttsTemplateAudio = config.GetStringOr("indextts_template_audio", ""),
+				indexttsEmoAlpha = ReadFloat(config, "indextts_emo_alpha") ?? 0.3,
 				sttProvider = config.GetStringOr("stt_provider", "whisper"),
 				sttBaseUrl = config.GetStringOr("stt_base_url", ""),
 				hasSttApiKey = config.GetStringOr("stt_api_key", "").Length > 0,

@@ -20,3 +20,5 @@ app/desktop/data.staging-*/
 .nori-storage.json
 .legacy-cleanup-pending.json
 .rpiv/
+
+*_TODO.md

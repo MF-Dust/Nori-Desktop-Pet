@@ -333,6 +333,8 @@ public sealed class ConfigStore(NoriDatabase database, ISecretKeyStore? keyStore
 				("memory_knowledge_enabled", new ConfigValue.Boolean(true)),
 				("memory_knowledge_watch", new ConfigValue.Boolean(true)),
 				("memory_debug_retrieval", new ConfigValue.Boolean(false)),
+				// 对话自动朗读: 默认关闭, 用户手动开启后持久化。前后端读缺省值保持一致 (false)。
+				("tts_auto_play", new ConfigValue.Boolean(false)),
 				(KeyAutomationEnabled, new ConfigValue.Boolean(false)),
 				(KeyAutomationAllowPointer, new ConfigValue.Boolean(false)),
 				(KeyAutomationAllowKeyboard, new ConfigValue.Boolean(false)),

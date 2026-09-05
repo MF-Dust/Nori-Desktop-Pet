@@ -74,6 +74,18 @@ public class ConfigStoreTests : IDisposable
 	}
 
 	[Fact]
+	public void 对话自动朗读默认关闭且重复初始化不覆盖用户开启()
+	{
+		// 初始化后就位为 false (与前端快照缺省一致, 避免"看着开了实际静音")
+		Assert.False(_config.GetBoolOr("tts_auto_play", true));
+
+		// 用户手动开启后, 重复初始化 (INSERT OR IGNORE) 不覆盖
+		_config.Set("tts_auto_play", new ConfigValue.Text("true"));
+		_config.InitDefaults("0.2.0");
+		Assert.True(_config.GetBoolOr("tts_auto_play", false));
+	}
+
+	[Fact]
 	public void 重复初始化不覆盖用户已有配置()
 	{
 		_config.Set(ConfigStore.KeySelectedModel, new ConfigValue.Text("nori"));

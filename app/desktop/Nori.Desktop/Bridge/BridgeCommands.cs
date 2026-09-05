@@ -215,6 +215,8 @@ public sealed class BridgeCommands
 				UpdateOptionalConfig(args, "gptsovitsRefAudio", "gptsovits_ref_audio");
 				UpdateOptionalConfig(args, "gptsovitsPromptText", "gptsovits_prompt_text");
 				UpdateOptionalConfig(args, "gptsovitsPromptLang", "gptsovits_prompt_lang");
+				UpdateOptionalConfig(args, "indexttsTemplateAudio", "indextts_template_audio");
+				UpdateOptionalConfig(args, "indexttsEmoAlpha", "indextts_emo_alpha");
 				UpdateOptionalConfig(args, "sttProvider", "stt_provider");
 				UpdateOptionalConfig(args, "sttBaseUrl", "stt_base_url");
 				UpdateSecretConfig(args, "sttApiKey", "stt_api_key");
@@ -296,6 +298,12 @@ public sealed class BridgeCommands
 
 		// invoke("model_import_local", {resourceType?: "live2d"})
 		"model_import_local" => await ModelImportLocalAsync(source, args, cancellationToken),
+
+		// invoke("indextts_pick_template", {}) — 选择 IndexTTS 音频模板文件并写入配置
+		"indextts_pick_template" => await IndexTtsPickTemplateAsync(source, args, cancellationToken),
+
+		// invoke("indextts_clone_voice", {filePath?}) — 上传模板音频克隆音色并返回 voice_id
+		"indextts_clone_voice" => await IndexTtsCloneVoiceAsync(source, args, cancellationToken),
 
 		// invoke("model_get_meta", {modelId: "arg-nori"})
 		"model_get_meta" => RequireMain(source, () =>
@@ -2032,6 +2040,59 @@ public sealed class BridgeCommands
 			return _services.PetRuntime.PlayMotionByName(name);
 		}
 		return _services.PetRuntime.PlayTapBodyOrRandomMotion();
+	}
+
+	/// <summary>
+	/// 选择 IndexTTS 音频模板文件并写入配置 (仅保存路径, 不克隆)。
+	/// </summary>
+	private async Task<object?> IndexTtsPickTemplateAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		Avalonia.Controls.Window? self = source.Self ?? throw new InvalidOperationException("来源窗口不可用");
+		string? filePath = await _uiDispatcher.InvokeTaskAsync(async () =>
+		{
+			IReadOnlyList<IStorageFile> files = await self.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+			{
+				Title = "选择 IndexTTS 音频模板 (wav/mp3, 5-30 秒)",
+				AllowMultiple = false,
+				FileTypeFilter =
+				[
+					new FilePickerFileType("音频模板 (wav/mp3)") {Patterns = ["*.wav", "*.mp3"]},
+				],
+			});
+			return files.Count > 0 ? files[0].Path.LocalPath : null;
+		});
+		if (string.IsNullOrWhiteSpace(filePath)) return null;
+		_services.Config.Set("indextts_template_audio", new Nori.Core.Configuration.ConfigValue.Text(filePath));
+		Runtime.InvalidateSnapshot("voice");
+		return filePath!;
+	}
+
+	/// <summary>
+	/// 上传 IndexTTS 音频模板克隆音色，返回克隆后的 voice_id。
+	/// 未传 filePath 时使用配置中的模板路径。
+	/// </summary>
+	private async Task<object?> IndexTtsCloneVoiceAsync(
+		IBridgeSource source,
+		JsonElement args,
+		CancellationToken cancellationToken)
+	{
+		RequireMainVoid(source);
+		string templatePath = OptionalStr(args, "filePath") ?? "";
+		if (string.IsNullOrWhiteSpace(templatePath))
+		{
+			templatePath = _services.Config.GetStringOr("indextts_template_audio", "");
+		}
+		if (string.IsNullOrWhiteSpace(templatePath)) throw new InvalidOperationException("请先选择 IndexTTS 音频模板文件");
+
+		Nori.Core.Voice.IndexTtsProvider provider =
+			new(_services.Http, _services.Config, _services.Paths);
+		string voiceId = await provider.CloneVoiceAsync(templatePath, cancellationToken);
+		Runtime.InvalidateSnapshot("voice");
+		return new {voiceId};
 	}
 
 	/// <summary>
